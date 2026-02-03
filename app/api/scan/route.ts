@@ -81,10 +81,11 @@ export async function POST(request: NextRequest) {
     // Add to scanned barcodes
     session.scanned_barcodes.push(scanEntry);
 
-    // Update item totals
-    const sku = boxData.sku;
-    if (!session.scanned_items[sku]) {
-      session.scanned_items[sku] = {
+    // Update item totals - aggregate by item_index, not sku
+    // This ensures multiple boxes of the same item are counted together
+    const itemIndex = matchedItem.item_index;
+    if (!session.scanned_items[itemIndex]) {
+      session.scanned_items[itemIndex] = {
         item_index: matchedItem.item_index,
         item_name: matchedItem.item_name_english,
         scanned_count: 0,
@@ -94,8 +95,8 @@ export async function POST(request: NextRequest) {
       };
     }
 
-    session.scanned_items[sku].scanned_count += 1;
-    session.scanned_items[sku].scanned_weight += boxData.weight;
+    session.scanned_items[itemIndex].scanned_count += 1;
+    session.scanned_items[itemIndex].scanned_weight += boxData.weight;
 
     // Save session
     await sessionStorage.set(token, session, { ex: 3600 });
@@ -113,7 +114,7 @@ export async function POST(request: NextRequest) {
     const response: ScanResponse = {
       success: true,
       is_duplicate: false,
-      matched_item: session.scanned_items[sku],
+      matched_item: session.scanned_items[itemIndex],
       overall_progress: {
         total_items: session.invoice_items.length,
         total_weight_scanned: totalWeightScanned,
