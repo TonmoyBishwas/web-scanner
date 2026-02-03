@@ -28,14 +28,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Check if already completed (idempotency - prevent duplicate webhooks)
+    if (session.status === 'COMPLETED' || session.webhook_sent) {
+      // Already completed, just return success without sending webhook again
+      const response: CompleteResponse = {
+        success: true,
+        summary: session.scanned_items,
+        scanned_barcodes: session.scanned_barcodes
+      };
+      return NextResponse.json(response);
+    }
+
     // Mark as completed
     session.status = 'COMPLETED';
     session.completed_at = new Date().toISOString();
 
+    // Mark webhook as sent (before actually sending to prevent race duplicates)
+    session.webhook_sent = true;
+
     // Save with extended expiry (24 hours)
     await sessionStorage.set(token, session, { ex: 86400 });
 
-    // Send webhook to Telegram bot
+    // Send webhook to Telegram bot (only once)
     const webhookUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
     if (webhookUrl) {
       try {

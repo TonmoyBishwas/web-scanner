@@ -47,6 +47,7 @@ export interface ScanSession {
   expires_at: string;
   status: 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
   completed_at?: string;
+  webhook_sent?: boolean;
 }
 
 export interface SessionResponse {

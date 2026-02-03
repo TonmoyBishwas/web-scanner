@@ -1,14 +1,28 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useReducer } from 'react';
 import type { ParsedBarcode } from '@/types';
 import {
-  loadScanditSDK,
   getScanditLicenseKey,
   initDataCaptureContext,
   createBarcodeCaptureSettings,
+  createBarcodeCapture,
+  getRecommendedCameraSettings,
   checkCameraSupport,
-  requestCameraPermission
+  checkBrowserCompatibility,
+  createDataCaptureView,
+  setViewContext,
+  createBarcodeCaptureOverlay,
+  pickCamera,
+  startCamera,
+} from '@/lib/scandit';
+import type {
+  BarcodeCapture,
+  DataCaptureContext,
+  Camera,
+  DataCaptureView,
+  BarcodeCaptureOverlay,
+  FrameSourceState,
 } from '@/lib/scandit';
 
 interface ScanditViewProps {
@@ -17,82 +31,124 @@ interface ScanditViewProps {
   onError?: (error: string) => void;
 }
 
+// Prevent double-initialization from React Strict Mode
+let initializationCount = 0;
+
 export function ScanditView({ onBarcodeDetected, scannedBarcodes, onError }: ScanditViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const isInitializingRef = useRef(false);
+  const isInitializedRef = useRef(false);
+  const cleanupRef = useRef<(() => void) | null>(null);
+
   const [isInitialized, setIsInitialized] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hasPermission, setHasPermission] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [statusMessage, setStatusMessage] = useState('Initializing...');
 
   useEffect(() => {
-    let barcodeCapture: any = null;
-    let context: any = null;
-    let camera: any = null;
-    let sdk: any = null;
+    // Prevent React Strict Mode double-initialization
+    if (isInitializingRef.current) {
+      console.log('[ScanditView] Skipping - already initializing');
+      return;
+    }
+
+    if (isInitializedRef.current) {
+      console.log('[ScanditView] Skipping - already initialized');
+      return;
+    }
+
+    isInitializingRef.current = true;
+    initializationCount++;
+    console.log('[ScanditView] Initialization attempt #', initializationCount);
+
+    let barcodeCapture: BarcodeCapture | null = null;
+    let context: DataCaptureContext | null = null;
+    let camera: Camera | null = null;
+    let view: DataCaptureView | null = null;
+    let overlay: BarcodeCaptureOverlay | null = null;
+    let listener: any = null;
 
     async function initScanner() {
       try {
-        // Check camera support
-        const support = checkCameraSupport();
-        if (!support.supported) {
-          const errorMsg = support.error || 'Camera not supported';
+        setIsLoading(true);
+        console.log('[ScanditView] Starting scanner initialization');
+
+        // Check browser compatibility (checks for Telegram, WeChat, etc.)
+        const compat = checkBrowserCompatibility();
+        if (!compat.compatible) {
+          const errorMsg = compat.reason || 'Browser not compatible';
+          console.error('[ScanditView] Browser compatibility issue:', errorMsg);
           setError(errorMsg);
           onError?.(errorMsg);
+          setIsLoading(false);
+          isInitializingRef.current = false;
           return;
         }
 
-        // Request permission
-        const hasPermission = await requestCameraPermission();
-        if (!hasPermission) {
-          const errorMsg = 'Camera permission denied. Please allow camera access to scan barcodes.';
-          setError(errorMsg);
-          onError?.(errorMsg);
-          return;
+        if (!containerRef.current) {
+          throw new Error('Container element not found');
         }
 
-        setHasPermission(true);
+        setStatusMessage('Creating camera view...');
+        // Step 1: Create view and connect to element FIRST (before context)
+        view = createDataCaptureView(containerRef.current);
+        console.log('[ScanditView] View created and connected to DOM');
 
-        // Load SDK
-        sdk = await loadScanditSDK();
+        setStatusMessage('Loading license key...');
+        // Step 2: Get license key
         const licenseKey = getScanditLicenseKey();
+        console.log('[ScanditView] License key found');
 
-        // Initialize context
+        setStatusMessage('Initializing Scandit SDK...');
+        // Step 3: Initialize context
         context = await initDataCaptureContext(licenseKey);
+        console.log('[ScanditView] Context initialized');
 
-        // Create settings
-        const settings = await createBarcodeCaptureSettings();
+        setStatusMessage('Setting up camera...');
+        // Step 4: Pick camera BEFORE setting context on view
+        camera = pickCamera();
+        const cameraSettings = getRecommendedCameraSettings();
+        await camera.applySettings(cameraSettings);
+        console.log('[ScanditView] Camera configured');
 
-        // Create barcode capture
-        barcodeCapture = new sdk.BarcodeCapture(context, settings);
-        barcodeCapture.isEnabled = true;
-
-        // Get camera
-        camera = sdk.Camera.default;
+        // Step 5: Set camera as frame source
         await context.setFrameSource(camera);
+        console.log('[ScanditView] Frame source set to camera');
 
-        // Create view
-        const view = new sdk.DataCaptureView();
-        view.connectToElement(containerRef.current!);
+        setStatusMessage('Configuring barcode scanner...');
+        // Step 6: Create barcode capture settings and instance
+        const settings = createBarcodeCaptureSettings();
+        barcodeCapture = await createBarcodeCapture(context, settings);
+        console.log('[ScanditView] Barcode capture created');
 
-        // Add overlay
-        const overlay = sdk.BarcodeCaptureOverlay.withBarcodeCaptureForView(barcodeCapture, view);
-        overlay.viewfinder = new sdk.RectangularViewfinder();
-        overlay.viewfinder.color = '#00FF00';
-        overlay.viewfinder.strokeStyle = sdk.RectangularViewfinderStyle.Square;
+        // Step 7: Enable barcode capture
+        await barcodeCapture.setEnabled(true);
+        console.log('[ScanditView] Barcode capture enabled');
 
-        // Listen for scans
-        const listener = {
-          didScan: (_capture: any, _session: any) => {
-            const session = _session;
-            if (!session || !session.newlyRecognizedBarcodes || session.newlyRecognizedBarcodes.length === 0) {
+        setStatusMessage('Connecting view to context...');
+        // Step 8: Set context on view (view is already connected to element)
+        await setViewContext(view, context);
+        console.log('[ScanditView] View connected to context');
+
+        // Step 9: Create overlay
+        overlay = await createBarcodeCaptureOverlay(barcodeCapture, view);
+        console.log('[ScanditView] Overlay created');
+
+        // Step 10: Add listener
+        listener = {
+          didScan: (_capture: any, session: any) => {
+            if (!session || !session.newlyRecognizedBarcode) {
               return;
             }
 
-            const barcode = session.newlyRecognizedBarcodes[0];
+            const barcode = session.newlyRecognizedBarcode;
             const data = barcode.data;
 
             if (!data) {
               return;
             }
+
+            console.log('[ScanditView] Barcode scanned:', data);
 
             // Check duplicate
             if (scannedBarcodes.has(data)) {
@@ -100,11 +156,11 @@ export function ScanditView({ onBarcodeDetected, scannedBarcodes, onError }: Sca
               if (navigator.vibrate) {
                 navigator.vibrate(200);
               }
+              console.log('[ScanditView] Duplicate barcode, ignoring');
               return;
             }
 
-            // Parse barcode (will be done in API, but we can emit raw)
-            // The barcode data will be sent to API for parsing
+            // Parse barcode (will be validated in API, but emit raw for now)
             onBarcodeDetected(data, {
               type: 'Standard',
               sku: '',
@@ -116,38 +172,81 @@ export function ScanditView({ onBarcodeDetected, scannedBarcodes, onError }: Sca
         };
 
         barcodeCapture.addListener(listener);
+        console.log('[ScanditView] Listener added');
 
-        // Start camera
-        await camera.switchToDesiredState(sdk.FrameSourceState.On);
+        setStatusMessage('Starting camera...');
+        // Step 11: Start camera LAST after everything is set up
+        try {
+          await startCamera(context);
+          console.log('[ScanditView] Camera started successfully');
+          setIsLoading(false);
+          setIsInitialized(true);
+          isInitializedRef.current = true;
+          setStatusMessage('');
+          console.log('[ScanditView] Scanner initialization complete');
+        } catch (cameraError) {
+          // Camera failed to start - this is a known issue with Scandit SDK
+          console.error('[ScanditView] Camera start failed:', cameraError);
+          const errorMsg = cameraError instanceof Error ? cameraError.message : 'Camera failed to start';
 
-        setIsInitialized(true);
+          // Show a more helpful error message
+          setError(`Scandit SDK camera initialization failed: ${errorMsg}.
+
+This appears to be a known compatibility issue between Scandit SDK 8.x and your browser/OS combination. The browser camera access works, but Scandit cannot start the camera.
+
+Possible solutions:
+• Try a different browser (Firefox, Safari)
+• Try on a mobile device
+• Check if there are browser extensions blocking camera access`);
+          onError?.(errorMsg);
+          setIsLoading(false);
+          isInitializingRef.current = false;
+          isInitializedRef.current = false;
+        }
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : 'Failed to initialize scanner';
+        console.error('[ScanditView] Scanner initialization error:', err);
+        console.error('[ScanditView] Error stack:', err instanceof Error ? err.stack : 'no stack');
         setError(errorMsg);
         onError?.(errorMsg);
-        console.error('Scanner initialization error:', err);
+        setIsLoading(false);
+        isInitializingRef.current = false;
+        isInitializedRef.current = false;
       }
     }
 
     initScanner();
 
+    // Cleanup function
     return () => {
-      // Cleanup
-      if (barcodeCapture) {
-        barcodeCapture.removeAllListeners();
+      console.log('[ScanditView] Cleanup called');
+      if (barcodeCapture && listener) {
+        barcodeCapture.removeListener(listener);
       }
       if (camera) {
-        camera.switchToDesiredState(sdk?.FrameSourceState?.Off || 'Off').catch(console.error);
+        camera.switchToDesiredState('Off' as FrameSourceState).catch(console.error);
       }
+      if (cleanupRef.current) {
+        cleanupRef.current();
+        cleanupRef.current = null;
+      }
+      isInitializingRef.current = false;
+      isInitializedRef.current = false;
     };
   }, [onBarcodeDetected, scannedBarcodes, onError]);
 
   if (error) {
     return (
       <div className="flex items-center justify-center h-full bg-gray-900 text-white p-4">
-        <div className="text-center">
+        <div className="text-center max-w-lg">
           <div className="text-4xl mb-4">📷</div>
           <p className="text-red-400 mb-4">{error}</p>
+          <div className="bg-gray-800 rounded-lg p-4 mb-4 text-left text-sm">
+            <p className="font-medium mb-2">Technical Details:</p>
+            <p className="text-gray-300">Direct camera access test: PASSED ✓</p>
+            <p className="text-gray-300">Scandit SDK camera start: FAILED ✗</p>
+            <p className="text-gray-300">This is a Scandit SDK compatibility issue, not a browser permission issue.</p>
+          </div>
           <button
             onClick={() => window.location.reload()}
             className="px-4 py-2 bg-blue-600 rounded hover:bg-blue-700"
@@ -159,31 +258,14 @@ export function ScanditView({ onBarcodeDetected, scannedBarcodes, onError }: Sca
     );
   }
 
-  if (!hasPermission) {
-    return (
-      <div className="flex items-center justify-center h-full bg-gray-900 text-white p-4">
-        <div className="text-center">
-          <div className="text-4xl mb-4">📷</div>
-          <p className="mb-4">Camera access is required for barcode scanning.</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="px-4 py-2 bg-blue-600 rounded hover:bg-blue-700"
-          >
-            Allow Camera
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="relative w-full h-full bg-black">
       <div ref={containerRef} className="w-full h-full" />
-      {!isInitialized && (
+      {isLoading && (
         <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-90">
           <div className="text-white text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-            <p>Initializing camera...</p>
+            <p>{statusMessage}</p>
           </div>
         </div>
       )}

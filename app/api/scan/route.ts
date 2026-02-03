@@ -56,14 +56,15 @@ export async function POST(request: NextRequest) {
     }
 
     // Match to invoice item
+    // Try exact match first, then substring match (item_code may be embedded in SKU)
     const matchedItem = session.invoice_items.find(
-      (item: any) => item.item_code === boxData!.sku
+      (item: any) => item.item_code === boxData!.sku || boxData!.sku.includes(item.item_code)
     );
 
     if (!matchedItem) {
       return NextResponse.json({
         success: false,
-        error: `Barcode ${boxData.sku} does not match any invoice item`
+        error: `Barcode ${boxData.sku} (item_code: ${boxData.sku.slice(-4)}) does not match any invoice item`
       });
     }
 

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ScanditView } from '@/components/scanner/ScanditView';
+import { SmartScanner } from '@/components/scanner/SmartScanner';
 import { ItemProgress } from '@/components/progress/ItemProgress';
 import { ScannedList } from '@/components/progress/ScannedList';
 import { useScanStore } from '@/stores/scan-store';
@@ -69,6 +69,12 @@ export default function ScannerPage() {
       if (result.success && !result.is_duplicate && result.matched_item) {
         addScan(barcode, data, result.matched_item);
         setScanning(false);
+
+        // Refresh session data to get updated scanned_items
+        const updatedSession = await scannerAPI.getSession(token);
+        if (updatedSession) {
+          setSession(updatedSession);
+        }
 
         // Success vibration
         if (navigator.vibrate) {
@@ -171,7 +177,7 @@ export default function ScannerPage() {
 
       {/* Scanner View */}
       <div className="relative h-96 bg-black">
-        <ScanditView
+        <SmartScanner
           onBarcodeDetected={handleBarcodeDetected}
           scannedBarcodes={scannedBarcodes}
           onError={(err) => setError(err)}
