@@ -558,7 +558,7 @@ export function Html5QrcodeScanner({
                 <div className="mt-1 max-h-20 overflow-y-auto bg-black p-2 rounded">
                   {Array.from(scannedBarcodes.entries()).map(([barcode, data], i) => {
                     const ocrResult = ocrResults.get(barcode);
-                    const ocrStatus = ocrResult ? '✓' : (data.barcode === lastDetectedBarcode ? '⋯' : '');
+                    const ocrStatus = ocrResult ? '✓' : (barcode === lastDetectedBarcode ? '⋯' : '');
                     return (
                       <div key={i} className="text-xs mb-1 pb-1 border-b border-gray-700 last:border-0">
                         <div className="flex justify-between items-start">
