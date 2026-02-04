@@ -1,13 +1,15 @@
 'use client';
 
-import type { InvoiceItem, ScannedItem } from '@/types';
+import type { InvoiceItem, ScannedItem, BoxStickerOCR } from '@/types';
 
 interface ItemProgressProps {
   items: InvoiceItem[];
   scanned: ScannedItem[];
+  ocrResults?: Map<string, BoxStickerOCR>;
+  ocrPending?: Set<string>;
 }
 
-export function ItemProgress({ items, scanned }: ItemProgressProps) {
+export function ItemProgress({ items, scanned, ocrResults = new Map(), ocrPending = new Set() }: ItemProgressProps) {
   // Create a map for quick lookup
   const scannedMap = new Map<number, ScannedItem>();
   for (const item of scanned) {
@@ -82,6 +84,39 @@ export function ItemProgress({ items, scanned }: ItemProgressProps) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// Component to display OCR status at the top level
+export function OCRStatusIndicator({
+  ocrPending,
+  ocrResults
+}: {
+  ocrPending: Set<string>;
+  ocrResults: Map<string, BoxStickerOCR>;
+}) {
+  if (ocrPending.size === 0 && ocrResults.size === 0) {
+    return null;
+  }
+
+  return (
+    <div className="bg-gray-800 rounded-lg p-3 mb-4">
+      <div className="flex justify-between items-center">
+        <span className="text-sm font-medium">Product Data (OCR)</span>
+        <div className="flex gap-4 text-xs">
+          {ocrPending.size > 0 && (
+            <span className="text-yellow-400">
+              ⏳ Processing {ocrPending.size}
+            </span>
+          )}
+          {ocrResults.size > 0 && (
+            <span className="text-green-400">
+              ✓ {ocrResults.size} enriched
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

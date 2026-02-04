@@ -3,11 +3,13 @@
 import { useState } from 'react';
 import { Html5QrcodeScanner } from './Html5QrcodeScanner';
 import { ZXingScanner } from './ZXingScanner';
-import type { ParsedBarcode } from '@/types';
+import type { ParsedBarcode, BoxStickerOCR } from '@/types';
 
 interface SmartScannerProps {
   onBarcodeDetected: (barcode: string, data: ParsedBarcode) => void;
+  onImageCaptured: (imageData: string, barcode: string) => void;
   scannedBarcodes: Map<string, ParsedBarcode>;
+  ocrResults: Map<string, BoxStickerOCR>;
   onError?: (error: string) => void;
 }
 
@@ -18,7 +20,7 @@ type ScannerType = 'html5-qrcode' | 'zxing';
  * 1. html5-qrcode (primary) - Best Chrome/Android WebView support
  * 2. zxing - Original implementation (fallback)
  */
-export function SmartScanner({ onBarcodeDetected, scannedBarcodes, onError }: SmartScannerProps) {
+export function SmartScanner({ onBarcodeDetected, onImageCaptured, scannedBarcodes, ocrResults, onError }: SmartScannerProps) {
   const [scannerType, setScannerType] = useState<ScannerType>('html5-qrcode');
 
   const handleFallbackError = (error: string) => {
@@ -44,7 +46,9 @@ export function SmartScanner({ onBarcodeDetected, scannedBarcodes, onError }: Sm
       return (
         <Html5QrcodeScanner
           onBarcodeDetected={onBarcodeDetected}
+          onImageCaptured={onImageCaptured}
           scannedBarcodes={scannedBarcodes}
+          ocrResults={ocrResults}
         />
       );
 
@@ -60,7 +64,9 @@ export function SmartScanner({ onBarcodeDetected, scannedBarcodes, onError }: Sm
       return (
         <Html5QrcodeScanner
           onBarcodeDetected={onBarcodeDetected}
+          onImageCaptured={onImageCaptured}
           scannedBarcodes={scannedBarcodes}
+          ocrResults={ocrResults}
         />
       );
   }

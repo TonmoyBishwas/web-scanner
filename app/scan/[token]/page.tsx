@@ -3,12 +3,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
-import { ItemProgress } from '@/components/progress/ItemProgress';
+import { ItemProgress, OCRStatusIndicator } from '@/components/progress/ItemProgress';
 import { ScannedList } from '@/components/progress/ScannedList';
 import { useScanStore } from '@/stores/scan-store';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
 import { scannerAPI } from '@/lib/api';
-import type { ScanSession, ParsedBarcode } from '@/types';
+import type { ScanSession, ParsedBarcode, BoxStickerOCR } from '@/types';
 
 export default function ScannerPage() {
   const params = useParams();
@@ -20,6 +20,8 @@ export default function ScannerPage() {
   const [error, setError] = useState<string | null>(null);
   const [showDuplicateWarning, setShowDuplicateWarning] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [ocrResults, setOcrResults] = useState<Map<string, BoxStickerOCR>>(new Map());
+  const [ocrPending, setOcrPending] = useState<Set<string>>(new Set());
 
   const { scannedBarcodes, addScan, isDuplicate, setScanning, setError: setStoreError } = useScanStore();
 
@@ -95,6 +97,71 @@ export default function ScannerPage() {
       setIsSubmitting(false);
     }
   }, [token, isDuplicate, addScan, setScanning]);
+
+  // Handle image captured for OCR (non-blocking)
+  const handleImageCaptured = useCallback(async (imageData: string, barcode: string) => {
+    // Don't process OCR if already done or pending
+    if (ocrResults.has(barcode) || ocrPending.has(barcode)) {
+      return;
+    }
+
+    // Mark as pending
+    setOcrPending(prev => new Set(prev).add(barcode));
+
+    // Fire and forget - don't await
+    scannerAPI.submitOCR({
+      token,
+      image: imageData,
+      barcode
+    })
+      .then(result => {
+        if (result.success && result.ocr_data) {
+          console.log('[OCR] Result received for', barcode, result.ocr_data);
+          setOcrResults(prev => new Map(prev).set(barcode, result.ocr_data!));
+        }
+      })
+      .catch(err => {
+        console.error('[OCR] Failed:', err);
+      })
+      .finally(() => {
+        setOcrPending(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(barcode);
+          return newSet;
+        });
+      });
+  }, [token, ocrResults, ocrPending]);
+
+  // Poll for OCR results from session (in case OCR completed while page was inactive)
+  useEffect(() => {
+    if (!session) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const updatedSession = await scannerAPI.getSession(token);
+        if (updatedSession) {
+          // Check for any completed OCR results
+          const newOcrResults = new Map(ocrResults);
+          let hasUpdates = false;
+
+          for (const entry of updatedSession.scanned_barcodes) {
+            if (entry.ocr_status === 'complete' && entry.ocr_data && !ocrResults.has(entry.barcode)) {
+              newOcrResults.set(entry.barcode, entry.ocr_data);
+              hasUpdates = true;
+            }
+          }
+
+          if (hasUpdates) {
+            setOcrResults(newOcrResults);
+          }
+        }
+      } catch (err) {
+        // Ignore polling errors
+      }
+    }, 2000); // Poll every 2 seconds
+
+    return () => clearInterval(interval);
+  }, [session, token, ocrResults]);
 
   // Handle completion
   const handleComplete = async () => {
@@ -179,7 +246,9 @@ export default function ScannerPage() {
       <div className="relative h-96 bg-black">
         <SmartScanner
           onBarcodeDetected={handleBarcodeDetected}
+          onImageCaptured={handleImageCaptured}
           scannedBarcodes={scannedBarcodes}
+          ocrResults={ocrResults}
           onError={(err) => setError(err)}
         />
       </div>
@@ -200,6 +269,12 @@ export default function ScannerPage() {
 
       {/* Progress Section */}
       <div className="flex-1 overflow-y-auto p-4">
+        {/* OCR Status Indicator */}
+        <OCRStatusIndicator
+          ocrPending={ocrPending}
+          ocrResults={ocrResults}
+        />
+
         {session && (
           <ItemProgress
             items={session.invoice_items}

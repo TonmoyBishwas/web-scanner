@@ -7,6 +7,20 @@ export interface ParsedBarcode {
   raw_barcode: string;
 }
 
+// OCR result from box sticker
+export interface BoxStickerOCR {
+  productNameHebrew: string;
+  productNameEnglish: string;
+  sku: string;
+  netWeightKG: number;
+  expiryDate: string;
+  productionDate?: string;
+  barcode: string;
+  storageTemperature?: string;
+  supplier?: string;
+  confidence: 'high' | 'medium' | 'low';
+}
+
 // Session Data Types
 export interface InvoiceItem {
   item_index: number;
@@ -24,6 +38,9 @@ export interface ScanEntry {
   expiry: string;
   scanned_at: string;
   item_index: number;
+  ocr_data?: BoxStickerOCR;
+  ocr_processed_at?: string;
+  ocr_status?: 'pending' | 'complete' | 'failed';
 }
 
 export interface ScannedItem {
@@ -85,6 +102,19 @@ export interface CompleteResponse {
   success: boolean;
   summary: Record<string, ScannedItem>;
   scanned_barcodes: ScanEntry[];
+  error?: string;
+}
+
+// OCR API types
+export interface OCRRequest {
+  token: string;
+  image: string;
+  barcode: string;
+}
+
+export interface OCRResponse {
+  success: boolean;
+  ocr_data?: BoxStickerOCR;
   error?: string;
 }
 

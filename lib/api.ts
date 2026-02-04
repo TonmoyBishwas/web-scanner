@@ -5,7 +5,9 @@ import type {
   ScanResponse,
   CompleteRequest,
   CompleteResponse,
-  InvoiceItem
+  InvoiceItem,
+  OCRRequest,
+  OCRResponse
 } from '@/types';
 
 const API_BASE = process.env.NEXT_PUBLIC_APP_URL || '';
@@ -95,6 +97,23 @@ export class ScannerAPIClient {
   async getInvoiceItems(token: string): Promise<InvoiceItem[]> {
     const session = await this.getSession(token);
     return session.invoice_items;
+  }
+
+  /**
+   * Submit OCR image for processing
+   */
+  async submitOCR(request: OCRRequest): Promise<OCRResponse> {
+    const response = await fetch(`${this.baseUrl}/api/ocr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to submit OCR: ${response.statusText}`);
+    }
+
+    return response.json();
   }
 }
 

@@ -4,10 +4,13 @@ import { useEffect, useRef, useState } from 'react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import type { ParsedBarcode } from '@/types';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
+import type { BoxStickerOCR } from '@/types';
 
 interface Html5QrcodeScannerProps {
   onBarcodeDetected: (barcode: string, data: ParsedBarcode) => void;
+  onImageCaptured: (imageData: string, barcode: string) => void;
   scannedBarcodes: Map<string, ParsedBarcode>;
+  ocrResults: Map<string, BoxStickerOCR>;
 }
 
 interface CameraDevice {
@@ -15,10 +18,16 @@ interface CameraDevice {
   label: string;
 }
 
-export function Html5QrcodeScanner({ onBarcodeDetected, scannedBarcodes }: Html5QrcodeScannerProps) {
+export function Html5QrcodeScanner({
+  onBarcodeDetected,
+  onImageCaptured,
+  scannedBarcodes,
+  ocrResults
+}: Html5QrcodeScannerProps) {
   const qrCodeRegionId = useRef(`html5qr-code-region-${Date.now()}`);
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const captureTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const [isInitialized, setIsInitialized] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +42,7 @@ export function Html5QrcodeScanner({ onBarcodeDetected, scannedBarcodes }: Html5
   const [showDebug, setShowDebug] = useState(true);
   const [scannerState, setScannerState] = useState('Initializing...');
   const isMountedRef = useRef(true);
+  const [isCapturing, setIsCapturing] = useState(false);
 
   // Get cameras and select best one
   const getBestCamera = async (): Promise<string | undefined> => {
@@ -86,6 +96,58 @@ export function Html5QrcodeScanner({ onBarcodeDetected, scannedBarcodes }: Html5
     }
   };
 
+  // Capture video frame for OCR
+  const captureFrame = async (): Promise<string | null> => {
+    try {
+      // Find the video element created by Html5Qrcode
+      const videoElement = document.querySelector(
+        `#${qrCodeRegionId.current} video`
+      ) as HTMLVideoElement;
+
+      if (!videoElement || videoElement.videoWidth === 0) {
+        console.log('[Html5Qrcode] Video element not ready for capture');
+        return null;
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = videoElement.videoWidth;
+      canvas.height = videoElement.videoHeight;
+      const ctx = canvas.getContext('2d');
+
+      if (!ctx) {
+        console.log('[Html5Qrcode] Could not get canvas context');
+        return null;
+      }
+
+      ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+
+      // Return as base64 JPEG with 0.8 quality
+      return canvas.toDataURL('image/jpeg', 0.8);
+    } catch (err) {
+      console.error('[Html5Qrcode] Error capturing frame:', err);
+      return null;
+    }
+  };
+
+  // Manual capture button handler
+  const handleManualCapture = async () => {
+    if (isCapturing) return;
+
+    setIsCapturing(true);
+    try {
+      const imageData = await captureFrame();
+      if (imageData && lastDetectedBarcode) {
+        console.log('[Html5Qrcode] Manual capture for barcode:', lastDetectedBarcode);
+        onImageCaptured(imageData, lastDetectedBarcode);
+
+        // Vibrate to indicate capture
+        if (navigator.vibrate) navigator.vibrate(50);
+      }
+    } finally {
+      setIsCapturing(false);
+    }
+  };
+
   // Handle image upload
   const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -126,6 +188,16 @@ export function Html5QrcodeScanner({ onBarcodeDetected, scannedBarcodes }: Html5
 
           if (navigator.vibrate) navigator.vibrate(100);
           onBarcodeDetected(barcode, parsedData);
+
+          // Also capture the uploaded image for OCR
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const imageData = e.target?.result as string;
+            if (imageData) {
+              onImageCaptured(imageData, barcode);
+            }
+          };
+          reader.readAsDataURL(file);
         } else {
           if (navigator.vibrate) navigator.vibrate(200);
           setError(`Duplicate: ${barcode}`);
@@ -246,6 +318,21 @@ export function Html5QrcodeScanner({ onBarcodeDetected, scannedBarcodes }: Html5
 
             if (navigator.vibrate) navigator.vibrate(100);
             onBarcodeDetected(decodedText, parsedData);
+
+            // Auto-capture image for OCR (non-blocking)
+            // Clear any pending capture
+            if (captureTimeoutRef.current) {
+              clearTimeout(captureTimeoutRef.current);
+            }
+
+            // Capture after a short delay to ensure barcode is properly processed
+            captureTimeoutRef.current = setTimeout(async () => {
+              const imageData = await captureFrame();
+              if (imageData) {
+                console.log('[Html5Qrcode] Auto-captured image for OCR:', decodedText);
+                onImageCaptured(imageData, decodedText);
+              }
+            }, 500);
           } else {
             console.log('[Html5Qrcode] Duplicate barcode');
             if (navigator.vibrate) navigator.vibrate(200);
@@ -306,6 +393,11 @@ export function Html5QrcodeScanner({ onBarcodeDetected, scannedBarcodes }: Html5
     return () => {
       isMountedRef.current = false;
       console.log('[Html5Qrcode] Cleanup');
+
+      // Clear capture timeout
+      if (captureTimeoutRef.current) {
+        clearTimeout(captureTimeoutRef.current);
+      }
 
       if (html5QrCodeRef.current) {
         html5QrCodeRef.current.stop().catch(() => {
@@ -393,6 +485,14 @@ export function Html5QrcodeScanner({ onBarcodeDetected, scannedBarcodes }: Html5
           >
             {isProcessingImage ? '...' : '📁'}
           </button>
+          <button
+            onClick={handleManualCapture}
+            disabled={isCapturing || !lastDetectedBarcode}
+            className="px-3 py-1 bg-purple-600 rounded text-sm hover:bg-purple-700 disabled:bg-gray-600 flex-shrink-0"
+            title="Capture for OCR"
+          >
+            {isCapturing ? '...' : '📷'}
+          </button>
         </div>
       </div>
 
@@ -456,12 +556,22 @@ export function Html5QrcodeScanner({ onBarcodeDetected, scannedBarcodes }: Html5
                   Scanned Barcodes ({scannedBarcodes.size})
                 </summary>
                 <div className="mt-1 max-h-20 overflow-y-auto bg-black p-2 rounded">
-                  {Array.from(scannedBarcodes.entries()).map(([barcode, data], i) => (
-                    <div key={i} className="text-xs mb-1 pb-1 border-b border-gray-700 last:border-0">
-                      <div className="font-mono text-yellow-400 break-all">{barcode}</div>
-                      <div className="text-gray-500">{data.weight} kg | {data.expiry}</div>
-                    </div>
-                  ))}
+                  {Array.from(scannedBarcodes.entries()).map(([barcode, data], i) => {
+                    const ocrResult = ocrResults.get(barcode);
+                    const ocrStatus = ocrResult ? '✓' : (data.barcode === lastDetectedBarcode ? '⋯' : '');
+                    return (
+                      <div key={i} className="text-xs mb-1 pb-1 border-b border-gray-700 last:border-0">
+                        <div className="flex justify-between items-start">
+                          <div className="font-mono text-yellow-400 break-all flex-1">{barcode}</div>
+                          <div className="text-green-400 ml-1">{ocrStatus}</div>
+                        </div>
+                        <div className="text-gray-500">{data.weight} kg | {data.expiry}</div>
+                        {ocrResult && ocrResult.productNameEnglish && (
+                          <div className="text-blue-400 truncate">{ocrResult.productNameEnglish}</div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </details>
             )}
