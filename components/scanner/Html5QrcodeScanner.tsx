@@ -99,10 +99,18 @@ export function Html5QrcodeScanner({
   // Capture video frame for OCR
   const captureFrame = async (): Promise<string | null> => {
     try {
+      console.log('[Html5Qrcode] captureFrame: Looking for video element in', qrCodeRegionId.current);
+
       // Find the video element created by Html5Qrcode
       const videoElement = document.querySelector(
         `#${qrCodeRegionId.current} video`
       ) as HTMLVideoElement;
+
+      console.log('[Html5Qrcode] Video element found:', !!videoElement);
+      if (videoElement) {
+        console.log('[Html5Qrcode] Video dimensions:', videoElement.videoWidth, 'x', videoElement.videoHeight);
+        console.log('[Html5Qrcode] Video readyState:', videoElement.readyState);
+      }
 
       if (!videoElement || videoElement.videoWidth === 0) {
         console.log('[Html5Qrcode] Video element not ready for capture');
@@ -122,7 +130,9 @@ export function Html5QrcodeScanner({
       ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
 
       // Return as base64 JPEG with 0.8 quality
-      return canvas.toDataURL('image/jpeg', 0.8);
+      const result = canvas.toDataURL('image/jpeg', 0.8);
+      console.log('[Html5Qrcode] Frame captured successfully, data URL length:', result.length);
+      return result;
     } catch (err) {
       console.error('[Html5Qrcode] Error capturing frame:', err);
       return null;
@@ -133,16 +143,38 @@ export function Html5QrcodeScanner({
   const handleManualCapture = async () => {
     if (isCapturing) return;
 
+    console.log('[Html5Qrcode] Manual capture button clicked');
+    console.log('[Html5Qrcode] lastDetectedBarcode:', lastDetectedBarcode);
+
     setIsCapturing(true);
     try {
       const imageData = await captureFrame();
-      if (imageData && lastDetectedBarcode) {
-        console.log('[Html5Qrcode] Manual capture for barcode:', lastDetectedBarcode);
-        onImageCaptured(imageData, lastDetectedBarcode);
 
-        // Vibrate to indicate capture
-        if (navigator.vibrate) navigator.vibrate(50);
+      if (!imageData) {
+        console.error('[Html5Qrcode] captureFrame returned null - video element not ready');
+        setError('Camera not ready for capture');
+        setTimeout(() => setError(null), 2000);
+        return;
       }
+
+      console.log('[Html5Qrcode] Image captured successfully, length:', imageData.length);
+
+      // Use lastDetectedBarcode if available, otherwise use a placeholder
+      const barcodeForKey = lastDetectedBarcode || `manual-${Date.now()}`;
+
+      console.log('[Html5Qrcode] Calling onImageCaptured with barcode:', barcodeForKey);
+      onImageCaptured(imageData, barcodeForKey);
+
+      // Vibrate to indicate capture
+      if (navigator.vibrate) navigator.vibrate(50);
+
+      setDebugInfo(`Captured: ${barcodeForKey}`);
+      setTimeout(() => setDebugInfo(''), 2000);
+
+    } catch (err) {
+      console.error('[Html5Qrcode] Manual capture error:', err);
+      setError('Capture failed');
+      setTimeout(() => setError(null), 2000);
     } finally {
       setIsCapturing(false);
     }
@@ -487,9 +519,9 @@ export function Html5QrcodeScanner({
           </button>
           <button
             onClick={handleManualCapture}
-            disabled={isCapturing || !lastDetectedBarcode}
+            disabled={isCapturing}
             className="px-3 py-1 bg-purple-600 rounded text-sm hover:bg-purple-700 disabled:bg-gray-600 flex-shrink-0"
-            title="Capture for OCR"
+            title="Capture for OCR (works even without barcode detected)"
           >
             {isCapturing ? '...' : '📷'}
           </button>
