@@ -6,8 +6,10 @@ import { BrowserMultiFormatReader, type IScannerControls } from '@zxing/browser'
 import { DecodeHintType, BarcodeFormat } from '@zxing/library';
 
 interface ZXingScannerProps {
-  onBarcodeDetected: (barcode: string, data: ParsedBarcode) => void;
+  onBarcodeDetected: (barcode: string, data: ParsedBarcode, imageData?: string) => void;
+  onManualCapture?: (imageData: string) => void;
   scannedBarcodes: Map<string, ParsedBarcode>;
+  onError?: (error: string) => void;
 }
 
 interface CameraDevice {
@@ -15,7 +17,7 @@ interface CameraDevice {
   label: string;
 }
 
-export function ZXingScanner({ onBarcodeDetected, scannedBarcodes }: ZXingScannerProps) {
+export function ZXingScanner({ onBarcodeDetected, onManualCapture, scannedBarcodes, onError }: ZXingScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -122,7 +124,7 @@ export function ZXingScanner({ onBarcodeDetected, scannedBarcodes }: ZXingScanne
         if (!scannedBarcodes.has(barcode)) {
           if (navigator.vibrate) navigator.vibrate(100);
           onBarcodeDetected(barcode, {
-            type: 'Standard', sku: '', weight: 0, expiry: '', raw_barcode: barcode
+            type: 'unknown', sku: barcode, weight: 0, expiry: '', raw_barcode: barcode, expiry_source: 'ocr_required'
           });
         } else {
           if (navigator.vibrate) navigator.vibrate(200);
@@ -216,7 +218,7 @@ export function ZXingScanner({ onBarcodeDetected, scannedBarcodes }: ZXingScanne
                 console.log('[ZXing] New barcode detected:', barcode);
                 if (navigator.vibrate) navigator.vibrate(100);
                 onBarcodeDetected(barcode, {
-                  type: 'Standard', sku: '', weight: 0, expiry: '', raw_barcode: barcode
+                  type: 'unknown', sku: barcode, weight: 0, expiry: '', raw_barcode: barcode, expiry_source: 'ocr_required'
                 });
               } else {
                 console.log('[ZXing] Duplicate barcode');

@@ -1,144 +1,61 @@
 import type { ParsedBarcode } from '@/types';
 
 /**
- * Parses Israeli meat label barcodes in GS1-128 format.
+ * Parses barcodes as identifiers ONLY.
  *
- * Standard format (Brown Box, >28 digits):
- * - SKU: positions 0-13 (13 digits)
- * - Data: positions 13-19 (6 digits)
- * - Weight: positions 19-25 (6 digits, in grams)
- * - Expiry: positions 25-31 (6 digits, DDMMYY)
+ * NEW PHILOSOPHY: Barcodes are just IDs.
+ * All box data (weight, expiry, product info) comes from OCR or manual entry.
  *
- * Variable format (White Label, 24-28 digits):
- * - SKU: positions 0-13 (13 digits)
- * - Weight: positions 12-18 or 13-19 (6 digits, in grams)
- * - Expiry: last 6 digits (DDMMYY)
+ * This function no longer parses weight, expiry, or any other data from barcodes.
+ * It simply returns the barcode as a unique identifier.
  *
  * @param barcodeString - The raw barcode string to parse
- * @returns ParsedBarcode object or null if parsing fails
+ * @returns ParsedBarcode object with barcode as ID only
  */
 export function parseIsraeliBarcode(barcodeString: string): ParsedBarcode | null {
   if (!barcodeString) {
     return null;
   }
 
-  // Clean barcode - remove all non-digit characters
+  // Clean barcode - remove all non-digit characters for the SKU
   const clean = barcodeString.replace(/\D/g, '');
-  const length = clean.length;
 
-  // Minimum length check
-  if (length < 24) {
-    return null;
-  }
-
-  try {
-    // Case A: Brown Box (Standard format, >28 digits)
-    if (length > 28) {
-      return parseStandardFormat(clean, barcodeString);
-    }
-
-    // Case B: White Label (Variable format, 24-28 digits)
-    if (length >= 24 && length <= 28) {
-      return parseVariableFormat(clean, barcodeString);
-    }
-
-    // Case C: OCR noise from brown box (29-31 digits with noise)
-    if (length >= 29 && length <= 31) {
-      // Try using last 25 digits as white label format
-      const cleanWhite = clean.slice(-25);
-      const whiteResult = parseVariableFormat(cleanWhite, barcodeString);
-      if (whiteResult) {
-        return whiteResult;
-      }
-      // Fallback to standard format with first 31 digits
-      return parseStandardFormat(clean.slice(0, 31), barcodeString);
-    }
-
-    return null;
-  } catch (error) {
-    console.error('Error parsing barcode:', error);
-    return null;
-  }
-}
-
-/**
- * Parse Standard format (Brown Box)
- * Format: SKU[0:13] + DATA[13:19] + WEIGHT[19:25] + EXPIRY[25:31]
- */
-function parseStandardFormat(clean: string, rawBarcode: string): ParsedBarcode | null {
-  if (clean.length < 31) {
-    return null;
-  }
-
-  const sku = clean.substring(0, 13);
-  const weightGrams = parseInt(clean.substring(19, 25), 10);
-  const expiry = clean.substring(25, 31);
-
-  // Validate weight
-  if (isNaN(weightGrams) || weightGrams <= 0) {
-    return null;
-  }
-
-  const weight = weightGrams / 1000; // Convert to KG
-
+  // Barcodes are now JUST identifiers
+  // All meaningful data (weight, expiry, product info) MUST come from OCR or manual entry
   return {
-    type: 'Standard',
-    sku,
-    weight,
-    expiry,
-    raw_barcode: rawBarcode
+    type: 'id-only',
+    sku: clean,       // Just the ID
+    weight: 0,        // From OCR only
+    expiry: '',       // From OCR only
+    raw_barcode: barcodeString,
+    expiry_source: 'ocr_required'
   };
 }
 
 /**
- * Parse Variable format (White Label)
- * Format: SKU[0:13] + WEIGHT[12:18 or 13:19] + EXPIRY[-6:]
- *
- * Uses heuristic to determine correct weight position:
- * - Position B (12-18) is preferred if weight is 5-40kg
- * - Otherwise uses Position A (13-19)
+ * Format expiry date from 8-digit DDMMYYYY to DD/MM/YYYY
+ * Example: 29072026 -> 29/07/2026
+ * KEPT FOR OCR PROCESSING COMPATIBILITY
  */
-function parseVariableFormat(clean: string, rawBarcode: string): ParsedBarcode | null {
-  // Normalize to 25 characters if needed
-  let normalized = clean;
-  if (clean.length < 25) {
-    normalized = clean.padEnd(25, '0');
-  } else if (clean.length > 25) {
-    normalized = clean.slice(-25);
+export function formatExpiry8Digit(expiry: string): string {
+  if (!expiry || expiry.length !== 8) {
+    return expiry;
   }
 
-  const sku = normalized.substring(0, 13);
+  const day = expiry.substring(0, 2);
+  const month = expiry.substring(2, 4);
+  const year = expiry.substring(4, 8);
 
-  // Two possible weight positions
-  const weightAGrams = parseInt(normalized.substring(13, 19), 10);
-  const weightBGrams = parseInt(normalized.substring(12, 18), 10);
-
-  // Validate weights
-  const weightA = isNaN(weightAGrams) ? 0 : weightAGrams / 1000;
-  const weightB = isNaN(weightBGrams) ? 0 : weightBGrams / 1000;
-
-  // Heuristic: Prefer B if it's in valid range (5-40kg), otherwise use A
-  let finalWeight = weightA;
-  if (weightB >= 5.0 && weightB <= 40.0) {
-    finalWeight = weightB;
-  }
-
-  // Expiry is always last 6 digits
-  const expiry = normalized.slice(-6);
-
-  return {
-    type: 'Variable',
-    sku,
-    weight: finalWeight,
-    expiry,
-    raw_barcode: rawBarcode
-  };
+  return `${day}/${month}/${year}`;
 }
 
 /**
- * Format expiry date from DDMMYY to a more readable format
+ * Format expiry date from 6-digit DDMMYY to DD/MM/YYYY
+ * Example: 290726 -> 29/07/2026
+ * Assumes years 00-99 are 2000-2099
+ * KEPT FOR OCR PROCESSING COMPATIBILITY
  */
-export function formatExpiry(expiry: string): string {
+export function formatExpiry6Digit(expiry: string): string {
   if (!expiry || expiry.length !== 6) {
     return expiry;
   }
@@ -154,23 +71,40 @@ export function formatExpiry(expiry: string): string {
 }
 
 /**
- * Validate if a barcode string matches expected format
+ * Format expiry date from either 6 or 8 digit format
+ * KEPT FOR OCR PROCESSING COMPATIBILITY
  */
-export function isValidBarcodeFormat(barcodeString: string): boolean {
-  const clean = barcodeString.replace(/\D/g, '');
-  const length = clean.length;
-  return length >= 24 && length <= 35;
+export function formatExpiry(expiry: string): string {
+  if (!expiry) {
+    return '';
+  }
+
+  if (expiry.length === 8) {
+    return formatExpiry8Digit(expiry);
+  }
+
+  if (expiry.length === 6) {
+    return formatExpiry6Digit(expiry);
+  }
+
+  return expiry;
 }
 
 /**
- * Extract GTIN from barcode (first 13 or 14 digits)
+ * Validate if a barcode string is non-empty
+ * Relaxed validation - any non-empty string is valid as an ID
+ */
+export function isValidBarcodeFormat(barcodeString: string): boolean {
+  const clean = barcodeString.replace(/\D/g, '');
+  return clean.length >= 1;  // Any length is valid for ID-only approach
+}
+
+/**
+ * Extract GTIN/SKU from barcode (returns cleaned barcode)
  */
 export function extractGTIN(barcodeString: string): string | null {
   const clean = barcodeString.replace(/\D/g, '');
-  if (clean.length >= 13) {
-    return clean.substring(0, 13);
-  }
-  return null;
+  return clean.length > 0 ? clean : null;
 }
 
 /**
@@ -181,4 +115,40 @@ export function isDuplicateBarcode(
   scannedBarcodes: Map<string, ParsedBarcode>
 ): boolean {
   return scannedBarcodes.has(barcode);
+}
+
+/**
+ * Get barcode type description for UI display
+ */
+export function getBarcodeTypeDescription(type: ParsedBarcode['type']): string {
+  switch (type) {
+    case 'id-only':
+      return 'ID (OCR for data)';
+    case '31-digit':
+      return 'All-in-One (31-digit)';
+    case '25-digit':
+      return 'Jerusalem Poultry (25-digit)';
+    case 'short':
+      return 'Short/EAN-13';
+    case 'unknown':
+      return 'Unknown Format';
+    default:
+      return 'Unknown';
+  }
+}
+
+/**
+ * Check if expiry needs to be obtained from OCR
+ * ALWAYS TRUE in the new system
+ */
+export function needsOcrForExpiry(parsedBarcode: ParsedBarcode | null): boolean {
+  return true;  // All data must come from OCR or manual entry
+}
+
+/**
+ * Check if weight needs to be obtained from OCR
+ * ALWAYS TRUE in the new system
+ */
+export function needsOcrForWeight(parsedBarcode: ParsedBarcode | null): boolean {
+  return true;  // All data must come from OCR or manual entry
 }

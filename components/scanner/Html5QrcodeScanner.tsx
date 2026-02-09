@@ -7,10 +7,12 @@ import { parseIsraeliBarcode } from '@/lib/barcode-parser';
 import type { BoxStickerOCR } from '@/types';
 
 interface Html5QrcodeScannerProps {
-  onBarcodeDetected: (barcode: string, data: ParsedBarcode) => void;
-  onImageCaptured: (imageData: string, barcode: string) => void;
+  onBarcodeDetected: (barcode: string, data: ParsedBarcode, imageData?: string) => void;
+  onManualCapture?: (imageData: string) => void;
+  onImageCaptured?: (imageData: string, barcode: string) => void;  // Deprecated
   scannedBarcodes: Map<string, ParsedBarcode>;
   ocrResults: Map<string, BoxStickerOCR>;
+  onError?: (error: string) => void;
 }
 
 interface CameraDevice {
@@ -20,9 +22,11 @@ interface CameraDevice {
 
 export function Html5QrcodeScanner({
   onBarcodeDetected,
+  onManualCapture,
   onImageCaptured,
   scannedBarcodes,
-  ocrResults
+  ocrResults,
+  onError
 }: Html5QrcodeScannerProps) {
   const qrCodeRegionId = useRef(`html5qr-code-region-${Date.now()}`);
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
@@ -159,11 +163,16 @@ export function Html5QrcodeScanner({
 
       console.log('[Html5Qrcode] Image captured successfully, length:', imageData.length);
 
-      // Use lastDetectedBarcode if available, otherwise use a placeholder
-      const barcodeForKey = lastDetectedBarcode || `manual-${Date.now()}`;
-
-      console.log('[Html5Qrcode] Calling onImageCaptured with barcode:', barcodeForKey);
-      onImageCaptured(imageData, barcodeForKey);
+      // Call onManualCapture if provided
+      if (onManualCapture) {
+        console.log('[Html5Qrcode] Calling onManualCapture');
+        onManualCapture(imageData);
+      } else if (onImageCaptured) {
+        // Fallback to old behavior
+        const barcodeForKey = lastDetectedBarcode || `manual-${Date.now()}`;
+        console.log('[Html5Qrcode] Calling onImageCaptured with barcode:', barcodeForKey);
+        onImageCaptured(imageData, barcodeForKey);
+      }
 
       // Vibrate to indicate capture
       if (navigator.vibrate) navigator.vibrate(50);
@@ -205,11 +214,12 @@ export function Html5QrcodeScanner({
         if (!scannedBarcodes.has(barcode)) {
           // Parse the barcode to extract weight, expiry, etc.
           const parsedData = parseIsraeliBarcode(barcode) || {
-            type: 'Standard',
-            sku: '',
+            type: 'unknown',
+            sku: barcode,
             weight: 0,
             expiry: '',
-            raw_barcode: barcode
+            raw_barcode: barcode,
+            expiry_source: 'ocr_required' as const
           };
 
           setLastDetectedBarcode(barcode);
@@ -218,15 +228,14 @@ export function Html5QrcodeScanner({
 
           console.log('[Html5Qrcode] Parsed data from image:', parsedData);
 
-          if (navigator.vibrate) navigator.vibrate(100);
-          onBarcodeDetected(barcode, parsedData);
-
-          // Also capture the uploaded image for OCR
+          // Also capture the uploaded image and pass it with the barcode detection
           const reader = new FileReader();
           reader.onload = (e) => {
             const imageData = e.target?.result as string;
             if (imageData) {
-              onImageCaptured(imageData, barcode);
+              if (navigator.vibrate) navigator.vibrate(100);
+              // Pass image data directly with barcode detection
+              onBarcodeDetected(barcode, parsedData, imageData);
             }
           };
           reader.readAsDataURL(file);
@@ -338,33 +347,37 @@ export function Html5QrcodeScanner({
 
             // Parse the barcode to extract weight, expiry, etc.
             const parsedData = parseIsraeliBarcode(decodedText) || {
-              type: 'Standard',
-              sku: '',
+              type: 'unknown',
+              sku: decodedText,
               weight: 0,
               expiry: '',
-              raw_barcode: decodedText
+              raw_barcode: decodedText,
+              expiry_source: 'ocr_required' as const
             };
 
             console.log('[Html5Qrcode] Parsed data:', parsedData);
             setLastParsedData(parsedData);
 
-            if (navigator.vibrate) navigator.vibrate(100);
-            onBarcodeDetected(decodedText, parsedData);
-
-            // Auto-capture image for OCR (non-blocking)
+            // NEW: Capture image IMMEDIATELY when barcode is detected
             // Clear any pending capture
             if (captureTimeoutRef.current) {
               clearTimeout(captureTimeoutRef.current);
             }
 
-            // Capture after a short delay to ensure barcode is properly processed
+            // Capture immediately
             captureTimeoutRef.current = setTimeout(async () => {
               const imageData = await captureFrame();
               if (imageData) {
-                console.log('[Html5Qrcode] Auto-captured image for OCR:', decodedText);
-                onImageCaptured(imageData, decodedText);
+                console.log('[Html5Qrcode] Auto-captured image for scan:', decodedText);
+                // Pass image data directly to onBarcodeDetected
+                if (navigator.vibrate) navigator.vibrate(100);
+                onBarcodeDetected(decodedText, parsedData, imageData);
+              } else {
+                // Fallback if capture fails
+                if (navigator.vibrate) navigator.vibrate(100);
+                onBarcodeDetected(decodedText, parsedData);
               }
-            }, 500);
+            }, 100);  // Very short delay for camera to stabilize
           } else {
             console.log('[Html5Qrcode] Duplicate barcode');
             if (navigator.vibrate) navigator.vibrate(200);

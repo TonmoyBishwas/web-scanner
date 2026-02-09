@@ -1,10 +1,11 @@
 // Barcode Data Types
 export interface ParsedBarcode {
-  type: 'Standard' | 'Variable';
-  sku: string;
-  weight: number;
-  expiry: string;
+  type: 'id-only' | '31-digit' | '25-digit' | 'short' | 'unknown';
+  sku: string;  // Just the ID - barcode is identifier only
+  weight: number;  // Always 0 - comes from OCR only
+  expiry: string;  // Always empty - comes from OCR only
   raw_barcode: string;
+  expiry_source: 'ocr_required';  // Always requires OCR
 }
 
 // OCR result from box sticker
@@ -13,12 +14,14 @@ export interface BoxStickerOCR {
   productNameEnglish: string;
   sku: string;
   netWeightKG: number;
-  expiryDate: string;
+  expiryDate: string;  // DD/MM/YYYY or empty
   productionDate?: string;
   barcode: string;
   storageTemperature?: string;
   supplier?: string;
   confidence: 'high' | 'medium' | 'low';
+  weightMatch?: boolean;  // Does weight match barcode?
+  expiryMatch?: boolean;  // Does expiry match barcode?
 }
 
 // Session Data Types
@@ -32,15 +35,32 @@ export interface InvoiceItem {
 }
 
 export interface ScanEntry {
-  barcode: string;
-  sku: string;
-  weight: number;
-  expiry: string;
+  // Barcode is JUST an identifier
+  barcode: string;              // Raw barcode string (any length)
+
+  // All data comes from OCR or manual entry
   scanned_at: string;
   item_index: number;
+
+  // Image storage (REQUIRED for all scans)
+  image_url: string;            // Cloudinary URL (required)
+  image_public_id: string;      // Cloudinary public ID
+
+  // OCR results (primary data source)
   ocr_data?: BoxStickerOCR;
   ocr_processed_at?: string;
-  ocr_status?: 'pending' | 'complete' | 'failed';
+  ocr_status: 'pending' | 'complete' | 'failed' | 'manual';
+
+  // Manual entry fallback
+  manual_entry?: {
+    item_index: number;
+    weight: number;
+    expiry: string;
+    notes?: string;
+  };
+
+  // Metadata
+  scan_method: 'barcode' | 'manual_capture' | 'manual_entry';
 }
 
 export interface ScannedItem {
@@ -65,6 +85,7 @@ export interface ScanSession {
   status: 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
   completed_at?: string;
   webhook_sent?: boolean;
+  invoice_image_url?: string;  // URL of uploaded invoice image
 }
 
 export interface SessionResponse {
@@ -77,7 +98,23 @@ export interface ScanRequest {
   token: string;
   barcode: string;
   parsed_data?: ParsedBarcode;
+  image_url?: string;  // Cloudinary URL (now required for all scans)
+  image_public_id?: string;  // Cloudinary public ID
   detected_at: string;
+  document_number?: string;  // Invoice document number for folder structure
+  scan_method?: 'barcode' | 'manual_capture' | 'manual_entry';
+}
+
+// Manual Entry Data
+export interface ManualEntryData {
+  token: string;
+  item_index: number;
+  weight: number;
+  expiry: string;
+  notes?: string;
+  image_url?: string;
+  image_public_id?: string;
+  document_number?: string;
 }
 
 export interface ScanResponse {
@@ -108,7 +145,8 @@ export interface CompleteResponse {
 // OCR API types
 export interface OCRRequest {
   token: string;
-  image: string;
+  image?: string;  // base64 image (deprecated)
+  image_url?: string;  // Cloudinary URL (preferred)
   barcode: string;
 }
 

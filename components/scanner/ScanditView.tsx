@@ -162,11 +162,12 @@ export function ScanditView({ onBarcodeDetected, scannedBarcodes, onError }: Sca
 
             // Parse barcode (will be validated in API, but emit raw for now)
             onBarcodeDetected(data, {
-              type: 'Standard',
-              sku: '',
+              type: 'unknown',
+              sku: data,
               weight: 0,
               expiry: '',
-              raw_barcode: data
+              raw_barcode: data,
+              expiry_source: 'ocr_required'
             });
           }
         };

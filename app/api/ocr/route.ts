@@ -10,10 +10,10 @@ import type { OCRRequest, OCRResponse, ScanEntry } from '@/types';
 export async function POST(request: NextRequest) {
   try {
     const body: OCRRequest = await request.json();
-    const { token, image, barcode } = body;
+    const { token, image, image_url, barcode } = body;
 
-    // Validate required fields
-    if (!token || !image || !barcode) {
+    // Validate required fields - need at least one image source
+    if (!token || !barcode || (!image && !image_url)) {
       return NextResponse.json(
         { success: false, error: 'Missing required fields' },
         { status: 400 }
@@ -49,6 +49,11 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Update image_url if provided (from Cloudinary)
+    if (image_url && !scanEntry.image_url) {
+      scanEntry.image_url = image_url;
+    }
+
     // Mark OCR as pending
     scanEntry.ocr_status = 'pending';
     await sessionStorage.set(token, session, { ex: 3600 });
@@ -63,12 +68,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Prepare image data - prefer Cloudinary URL, fall back to base64
+    let imageToSend = image_url || image;
+
+    // If image_url is provided, fetch it and convert to base64 for OCR
+    if (image_url && !image) {
+      try {
+        const response = await fetch(image_url);
+        const buffer = await response.arrayBuffer();
+        const base64 = Buffer.from(buffer).toString('base64');
+        imageToSend = `data:image/jpeg;base64,${base64}`;
+      } catch (fetchError) {
+        console.error('Failed to fetch image from Cloudinary:', fetchError);
+        // Fall back to base64 if provided
+        imageToSend = image;
+      }
+    }
+
     // Call bot webhook for OCR processing (fire and forget)
     // Process asynchronously to avoid blocking the scanner
     fetch(`${botWebhookUrl}/webhook/process-box-ocr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image, barcode })
+      body: JSON.stringify({ image: imageToSend, barcode })
     })
       .then(async (response) => {
         if (!response.ok) {

@@ -7,7 +7,8 @@ import type {
   CompleteResponse,
   InvoiceItem,
   OCRRequest,
-  OCRResponse
+  OCRResponse,
+  ManualEntryData
 } from '@/types';
 
 const API_BASE = process.env.NEXT_PUBLIC_APP_URL || '';
@@ -111,6 +112,23 @@ export class ScannerAPIClient {
 
     if (!response.ok) {
       throw new Error(`Failed to submit OCR: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Submit manual entry (without barcode)
+   */
+  async submitManualEntry(request: ManualEntryData): Promise<ScanResponse> {
+    const response = await fetch(`${this.baseUrl}/api/manual-entry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to submit manual entry: ${response.statusText}`);
     }
 
     return response.json();

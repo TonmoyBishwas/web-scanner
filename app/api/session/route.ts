@@ -10,7 +10,13 @@ import type { ScanSession, SessionResponse } from '@/types';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { chat_id, operation_type, invoice_items, document_number } = body;
+    const {
+      chat_id,
+      operation_type,
+      invoice_items,
+      document_number,
+      invoice_image_url
+    } = body;
 
     // Validate required fields
     if (!chat_id || !operation_type || !invoice_items || !Array.isArray(invoice_items)) {
@@ -34,7 +40,8 @@ export async function POST(request: NextRequest) {
       scanned_items: {},
       created_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 3600000).toISOString(), // 1 hour
-      status: 'ACTIVE'
+      status: 'ACTIVE',
+      invoice_image_url  // Store invoice image URL if provided
     };
 
     // Store in Redis

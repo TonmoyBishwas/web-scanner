@@ -6,8 +6,9 @@ import { ZXingScanner } from './ZXingScanner';
 import type { ParsedBarcode, BoxStickerOCR } from '@/types';
 
 interface SmartScannerProps {
-  onBarcodeDetected: (barcode: string, data: ParsedBarcode) => void;
-  onImageCaptured: (imageData: string, barcode: string) => void;
+  onBarcodeDetected: (barcode: string, data: ParsedBarcode, imageData?: string) => void;
+  onManualCapture?: (imageData: string) => void;
+  onImageCaptured?: (imageData: string, barcode: string) => void;  // Deprecated - use onBarcodeDetected
   scannedBarcodes: Map<string, ParsedBarcode>;
   ocrResults: Map<string, BoxStickerOCR>;
   onError?: (error: string) => void;
@@ -19,8 +20,17 @@ type ScannerType = 'html5-qrcode' | 'zxing';
  * SmartScanner with fallback strategy:
  * 1. html5-qrcode (primary) - Best Chrome/Android WebView support
  * 2. zxing - Original implementation (fallback)
+ *
+ * NEW: Barcode detection now triggers immediate image capture
  */
-export function SmartScanner({ onBarcodeDetected, onImageCaptured, scannedBarcodes, ocrResults, onError }: SmartScannerProps) {
+export function SmartScanner({
+  onBarcodeDetected,
+  onManualCapture,
+  onImageCaptured,
+  scannedBarcodes,
+  ocrResults,
+  onError
+}: SmartScannerProps) {
   const [scannerType, setScannerType] = useState<ScannerType>('html5-qrcode');
 
   const handleFallbackError = (error: string) => {
@@ -46,9 +56,11 @@ export function SmartScanner({ onBarcodeDetected, onImageCaptured, scannedBarcod
       return (
         <Html5QrcodeScanner
           onBarcodeDetected={onBarcodeDetected}
+          onManualCapture={onManualCapture}
           onImageCaptured={onImageCaptured}
           scannedBarcodes={scannedBarcodes}
           ocrResults={ocrResults}
+          onError={handleFallbackError}
         />
       );
 
@@ -56,7 +68,9 @@ export function SmartScanner({ onBarcodeDetected, onImageCaptured, scannedBarcod
       return (
         <ZXingScanner
           onBarcodeDetected={onBarcodeDetected}
+          onManualCapture={onManualCapture}
           scannedBarcodes={scannedBarcodes}
+          onError={handleFallbackError}
         />
       );
 
@@ -64,9 +78,11 @@ export function SmartScanner({ onBarcodeDetected, onImageCaptured, scannedBarcod
       return (
         <Html5QrcodeScanner
           onBarcodeDetected={onBarcodeDetected}
+          onManualCapture={onManualCapture}
           onImageCaptured={onImageCaptured}
           scannedBarcodes={scannedBarcodes}
           ocrResults={ocrResults}
+          onError={handleFallbackError}
         />
       );
   }

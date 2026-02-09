@@ -1,21 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sessionStorage } from '@/lib/redis';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
-import type { ScanRequest, ScanResponse, ScanEntry, ScannedItem, ParsedBarcode } from '@/types';
+import type { ScanRequest, ScanResponse, ScanEntry, ScannedItem, ParsedBarcode, BoxStickerOCR } from '@/types';
 
 /**
  * POST /api/scan
  * Submit a barcode scan
+ *
+ * New philosophy: Barcodes are IDs only. All data comes from OCR or manual entry.
  */
 export async function POST(request: NextRequest) {
   try {
     const body: ScanRequest = await request.json();
-    const { token, barcode, parsed_data, detected_at } = body;
+    const {
+      token,
+      barcode,
+      parsed_data,
+      image_url,
+      image_public_id,
+      detected_at,
+      document_number,
+      scan_method = 'barcode'
+    } = body;
 
     // Validate required fields
     if (!token || !barcode) {
       return NextResponse.json(
-        { success: false, error: 'Missing required fields' },
+        { success: false, error: 'Missing required fields: token and barcode are required' },
+        { status: 400 }
+      );
+    }
+
+    // image_url is now required for all scans
+    if (!image_url) {
+      return NextResponse.json(
+        { success: false, error: 'Missing required field: image_url is required for all scans' },
         { status: 400 }
       );
     }
@@ -42,7 +61,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Parse barcode if not provided
+    // Parse barcode as ID only (no data extraction)
     let boxData: ParsedBarcode | null = parsed_data || null;
     if (!boxData) {
       boxData = parseIsraeliBarcode(barcode);
@@ -64,25 +83,26 @@ export async function POST(request: NextRequest) {
     if (!matchedItem) {
       return NextResponse.json({
         success: false,
-        error: `Barcode ${boxData.sku} (item_code: ${boxData.sku.slice(-4)}) does not match any invoice item`
+        error: `Barcode ${boxData.sku} does not match any invoice item. Please use manual entry or scan a different barcode.`
       });
     }
 
-    // Create scan entry
+    // Create scan entry with new structure
     const scanEntry: ScanEntry = {
-      barcode: boxData.raw_barcode,
-      sku: boxData.sku,
-      weight: boxData.weight,
-      expiry: boxData.expiry,
+      barcode: boxData.raw_barcode,  // Just an ID
       scanned_at: detected_at || new Date().toISOString(),
-      item_index: matchedItem.item_index
+      item_index: matchedItem.item_index,
+      image_url: image_url,  // Required
+      image_public_id: image_public_id || '',  // Cloudinary public ID
+      ocr_status: 'pending',  // Will be updated by OCR
+      scan_method: scan_method  // Track how this was captured
     };
 
     // Add to scanned barcodes
     session.scanned_barcodes.push(scanEntry);
 
-    // Update item totals - aggregate by item_index, not sku
-    // This ensures multiple boxes of the same item are counted together
+    // Update item totals - aggregate by item_index
+    // Note: weight will be 0 initially, will be updated after OCR
     const itemIndex = matchedItem.item_index;
     if (!session.scanned_items[itemIndex]) {
       session.scanned_items[itemIndex] = {
@@ -96,7 +116,8 @@ export async function POST(request: NextRequest) {
     }
 
     session.scanned_items[itemIndex].scanned_count += 1;
-    session.scanned_items[itemIndex].scanned_weight += boxData.weight;
+    // Weight stays at 0 until OCR completes
+    // session.scanned_items[itemIndex].scanned_weight += boxData.weight;
 
     // Save session
     await sessionStorage.set(token, session, { ex: 3600 });
