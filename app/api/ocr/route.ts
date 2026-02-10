@@ -93,74 +93,63 @@ export async function POST(request: NextRequest) {
       .then(async (response) => {
         if (!response.ok) {
           console.error('OCR processing failed:', response.statusText);
-          const updatedSession = await sessionStorage.get(token);
-          if (updatedSession) {
-            const entry = updatedSession.scanned_barcodes.find(
-              (b: ScanEntry) => b.barcode === barcode
-            );
-            if (entry) {
-              entry.ocr_status = 'failed';
-              await sessionStorage.set(token, updatedSession, { ex: 3600 });
-            }
+          try {
+            await sessionStorage.withLock(token, async () => {
+              const updatedSession = await sessionStorage.get(token);
+              if (updatedSession) {
+                const entry = updatedSession.scanned_barcodes.find(
+                  (b: ScanEntry) => b.barcode === barcode
+                );
+                if (entry) {
+                  entry.ocr_status = 'failed';
+                  // Save session inside lock
+                  await sessionStorage.set(token, updatedSession, { ex: 3600 });
+                }
+              }
+            });
+          } catch (lockError) {
+            console.error('Failed to acquire lock for OCR failure update:', lockError);
           }
           return;
         }
 
         const ocrResult = await response.json();
         if (ocrResult.status === 'success' && ocrResult.ocr_data) {
-          const updatedSession = await sessionStorage.get(token);
-          if (updatedSession) {
-            const entry = updatedSession.scanned_barcodes.find(
-              (b: ScanEntry) => b.barcode === barcode
-            );
-            if (entry) {
-              // New OCR format: { product_name, weight_kg, production_date, expiry_date, barcode_digits }
-              const ocrData: BoxStickerOCR = {
-                product_name: ocrResult.ocr_data.product_name || null,
-                weight_kg: ocrResult.ocr_data.weight_kg || null,
-                production_date: ocrResult.ocr_data.production_date || null,
-                expiry_date: ocrResult.ocr_data.expiry_date || null,
-                barcode_digits: ocrResult.ocr_data.barcode_digits || null,
-              };
+          try {
+            await sessionStorage.withLock(token, async () => {
+              // Re-fetch session inside lock (CRITICAL)
+              const latestSession = await sessionStorage.get(token);
 
-              entry.ocr_data = ocrData;
-              entry.ocr_status = 'complete';
-              entry.ocr_processed_at = new Date().toISOString();
+              if (latestSession) {
+                const entryToUpdate = latestSession.scanned_barcodes.find(
+                  (b: ScanEntry) => b.barcode === barcode
+                );
 
-              // Match OCR product name to invoice item and update scanned_items
-              if (ocrData.product_name) {
-                const productName = ocrData.product_name;
+                if (entryToUpdate) {
+                  // New OCR format
+                  const ocrData: BoxStickerOCR = {
+                    product_name: ocrResult.ocr_data.product_name || null,
+                    weight_kg: ocrResult.ocr_data.weight_kg || null,
+                    production_date: ocrResult.ocr_data.production_date || null,
+                    expiry_date: ocrResult.ocr_data.expiry_date || null,
+                    barcode_digits: ocrResult.ocr_data.barcode_digits || null,
+                  };
 
-                // CRITICAL FIX: Re-fetch session to minimize race condition
-                // Other scans might have happened while OCR was processing
-                // We must apply our changes to the LATEST session state
-                const latestSession = await sessionStorage.get(token);
+                  entryToUpdate.ocr_data = ocrData;
+                  entryToUpdate.ocr_status = 'complete';
+                  entryToUpdate.ocr_processed_at = new Date().toISOString();
 
-                if (latestSession) {
-                  console.log(`[API/ocr] Applying OCR for ${barcode}. Session barcodes count: ${latestSession.scanned_barcodes.length}`);
-
-                  // Find the entry in the LATEST session
-                  const entryToUpdate = latestSession.scanned_barcodes.find(
-                    (b: ScanEntry) => b.barcode === barcode
-                  );
-
-                  if (entryToUpdate) {
-                    // Update OCR data
-                    entryToUpdate.ocr_data = ocrData;
-                    entryToUpdate.ocr_status = 'complete';
-                    entryToUpdate.ocr_processed_at = new Date().toISOString();
-
-                    // Update scanned items aggregate
+                  // Match OCR product name to invoice item and update scanned_items
+                  if (ocrData.product_name) {
+                    const productName = ocrData.product_name;
+                    // ... matching logic ...
                     const matchedItem = latestSession.invoice_items.find(
                       (item: any) => {
-                        // Exact Hebrew match
                         if (item.item_name_hebrew === productName) return true;
-                        // Substring containment (either direction) for Hebrew
                         if (item.item_name_hebrew && (
                           productName.includes(item.item_name_hebrew) ||
                           item.item_name_hebrew.includes(productName)
                         )) return true;
-                        // Case-insensitive English match
                         if (item.item_name_english &&
                           item.item_name_english.toLowerCase() === productName.toLowerCase()
                         ) return true;
@@ -188,27 +177,19 @@ export async function POST(request: NextRequest) {
                     } else {
                       console.log(`[API/ocr] No matching item found for product: ${productName}`);
                     }
+                  }
 
-                    // Save the LATEST session
-                    await sessionStorage.set(token, latestSession, { ex: 3600 });
-                    console.log(`[API/ocr] Saved session with OCR update for ${barcode}`);
-                  } else {
-                    console.warn(`[API/ocr] Barcode ${barcode} not found in latest session!`);
-                  }
-                }
-              } else {
-                // No product name, just save OCR data to latest session
-                const latestSession = await sessionStorage.get(token);
-                if (latestSession) {
-                  const entryToUpdate = latestSession.scanned_barcodes.find((b: ScanEntry) => b.barcode === barcode);
-                  if (entryToUpdate) {
-                    entryToUpdate.ocr_data = ocrData;
-                    entryToUpdate.ocr_status = 'complete';
-                    await sessionStorage.set(token, latestSession, { ex: 3600 });
-                  }
+                  // Save the LATEST session inside lock
+                  await sessionStorage.set(token, latestSession, { ex: 3600 });
+                  console.log(`[API/ocr] Saved session with OCR update for ${barcode}`);
+                } else {
+                  // Barcode not found (maybe session expired or cleared?)
+                  console.warn(`[API/ocr] Barcode ${barcode} not found in latest locked session`);
                 }
               }
-            }
+            });
+          } catch (lockError) {
+            console.error('Failed to acquire lock for OCR success update:', lockError);
           }
         }
       })
