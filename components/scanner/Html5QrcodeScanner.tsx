@@ -177,7 +177,7 @@ export function Html5QrcodeScanner({
       // Vibrate to indicate capture
       if (navigator.vibrate) navigator.vibrate(50);
 
-      setDebugInfo(`Captured: ${barcodeForKey}`);
+      setDebugInfo('Captured!');
       setTimeout(() => setDebugInfo(''), 2000);
 
     } catch (err) {
@@ -611,8 +611,8 @@ export function Html5QrcodeScanner({
                           <div className="text-green-400 ml-1">{ocrStatus}</div>
                         </div>
                         <div className="text-gray-500">{data.weight} kg | {data.expiry}</div>
-                        {ocrResult && ocrResult.productNameEnglish && (
-                          <div className="text-blue-400 truncate">{ocrResult.productNameEnglish}</div>
+                        {ocrResult && ocrResult.product_name && (
+                          <div className="text-blue-400 truncate">{ocrResult.product_name}</div>
                         )}
                       </div>
                     );
