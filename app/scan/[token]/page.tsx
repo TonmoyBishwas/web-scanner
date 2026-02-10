@@ -40,6 +40,7 @@ export default function ScanPage({
   const [scannedBarcodes, setScannedBarcodes] = useState<Map<string, ParsedBarcode>>(new Map());
   const [ocrResults, setOcrResults] = useState<Map<string, BoxStickerOCR>>(new Map());
   const [boxesScanned, setBoxesScanned] = useState(0);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [boxesExpected, setBoxesExpected] = useState(0);
 
   // OCR tracking
@@ -288,7 +289,7 @@ export default function ScanPage({
       return; // Exit early - don't process duplicate
     }
 
-    // Add to scanned set immediately
+    // Add to scanned set and increment counter (only for non-duplicates)
     setScannedBarcodes(prev => new Map(prev).set(barcode, data));
     setBoxesScanned(prev => prev + 1);
 
@@ -684,71 +685,107 @@ export default function ScanPage({
         )}
       </div>
 
-      {/* ── Error Log Panel (Mobile Debug) ──────────────────── */}
-      {errorLog.length > 0 && (
-        <div className="fixed bottom-20 right-4 z-50">
-          {!showErrorLog ? (
-            <button
-              onClick={() => setShowErrorLog(true)}
-              className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-full shadow-lg text-sm font-bold"
-            >
-              🐛 Debug Log ({errorLog.length})
-            </button>
-          ) : (
-            <div className="bg-gray-900 border border-red-500 rounded-lg shadow-2xl w-80 max-h-96 flex flex-col">
-              <div className="flex justify-between items-center p-3 border-b border-gray-700">
-                <span className="text-white font-bold text-sm">🐛 Debug Log</span>
-                <button
-                  onClick={() => setShowErrorLog(false)}
-                  className="text-gray-400 hover:text-white text-lg"
-                >
-                  ✕
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                {errorLog.map((entry, i) => (
-                  <div key={i} className="text-xs bg-black/50 p-2 rounded">
-                    <span className="text-gray-500">{entry.time}</span>
-                    <div className="text-yellow-300 mt-1">{entry.msg}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="p-2 border-t border-gray-700">
-                <button
-                  onClick={() => {
-                    const text = errorLog.map(e => `${e.time}: ${e.msg}`).join('\n');
-                    navigator.clipboard.writeText(text);
-                    alert('Log copied to clipboard!');
-                  }}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs"
-                >
-                  Copy All
-                </button>
-              </div>
+      {/* ── OCR Status Panel (New) ──────────────────────────── */}
+      {pendingOCR.size > 0 && (
+        <div className="fixed top-20 left-4 right-4 z-40 bg-blue-900/90 backdrop-blur-sm border border-blue-500 rounded-lg p-3 shadow-xl">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
+              <span className="text-white font-bold text-sm">Processing OCR ({pendingOCR.size})</span>
             </div>
-          )}
+          </div>
+          <div className="space-y-1 max-h-32 overflow-y-auto">
+            {Array.from(pendingOCR).slice(0, 3).map((barcode) => {
+              const result = ocrResults.get(barcode);
+              return (
+                <div key={barcode} className="text-xs bg-black/30 p-2 rounded">
+                  <div className="text-blue-200 font-mono truncate">#{barcode.slice(-8)}</div>
+                  {result && (
+                    <div className="text-green-300 mt-1">
+                      ✓ {result.product_name || 'N/A'} • {result.weight_kg ? `${result.weight_kg} kg` : 'No weight'}
+                    </div>
+                  )}
+                  {!result && <div className="text-yellow-300 mt-1">⏳ Waiting for Gemini...</div>}
+                </div>
+              );
+            })}
+            {pendingOCR.size > 3 && (
+              <div className="text-xs text-blue-300 text-center py-1">
+                +{pendingOCR.size - 3} more processing...
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Debug Toggle Button (Always Visible) ──────────────────── */}
+      {errorLog.length > 0 && (
+        <button
+          onClick={() => setShowDebugPanel(!showDebugPanel)}
+          className="fixed bottom-24 right-4 z-50 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-full shadow-lg text-sm font-bold"
+        >
+          🐛 {showDebugPanel ? 'Hide' : 'Debug'} ({errorLog.length})
+        </button>
+      )}
+
+      {/* ── Debug Panel (Bottom Drawer) ──────────────────────────── */}
+      {showDebugPanel && errorLog.length > 0 && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-gray-900 border-t-2 border-red-500 shadow-2xl" style={{ maxHeight: '40vh' }}>
+          <div className="flex justify-between items-center p-3 border-b border-gray-700 bg-gray-800">
+            <span className="text-white font-bold text-sm">🐛 Debug Log</span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  const text = errorLog.map(e => `${e.time}: ${e.msg}`).join('\n');
+                  navigator.clipboard.writeText(text);
+                  alert('Debug log copied!');
+                }}
+                className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded"
+              >
+                📋 Copy All
+              </button>
+              <button
+                onClick={() => setShowDebugPanel(false)}
+                className="text-gray-400 hover:text-white text-lg px-2"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          <div className="overflow-y-auto p-3 space-y-1" style={{ maxHeight: 'calc(40vh - 60px)' }}>
+            {errorLog.map((entry, i) => (
+              <div key={i} className="text-xs bg-black/50 p-2 rounded border border-gray-800">
+                <span className="text-gray-500">{entry.time}</span>
+                <div className={`mt-1 ${entry.msg.includes('DUPLICATE') || entry.msg.includes('⚠️') ? 'text-red-400' : entry.msg.includes('✓') || entry.msg.includes('Uploaded') ? 'text-green-400' : 'text-yellow-300'}`}>
+                  {entry.msg}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
       {/* ── Force Confirm Modal ───────────────────────────────── */}
-      {showForceConfirm && session && (
-        <ForceConfirmModal
-          session={session}
-          boxesScanned={boxesScanned}
-          boxesExpected={boxesExpected}
-          onAddEntry={handleForceConfirmEntry}
-          onClose={() => {
-            setShowForceConfirm(false);
-            // After force confirm entries are added, check progress
-            if (pendingOCR.size > 0) {
-              setPhase('processing');
-            } else {
-              setPhase('ready_confirm');
-            }
-          }}
-        />
-      )}
-    </div>
+      {
+        showForceConfirm && session && (
+          <ForceConfirmModal
+            session={session}
+            boxesScanned={boxesScanned}
+            boxesExpected={boxesExpected}
+            onAddEntry={handleForceConfirmEntry}
+            onClose={() => {
+              setShowForceConfirm(false);
+              // After force confirm entries are added, check progress
+              if (pendingOCR.size > 0) {
+                setPhase('processing');
+              } else {
+                setPhase('ready_confirm');
+              }
+            }}
+          />
+        )
+      }
+    </div >
   );
 }
 
