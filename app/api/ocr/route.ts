@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sessionStorage } from '@/lib/redis';
-import type { OCRRequest, OCRResponse, ScanEntry } from '@/types';
+import type { OCRRequest, OCRResponse, ScanEntry, BoxStickerOCR } from '@/types';
 
 /**
  * POST /api/ocr
- * Submit an image for OCR processing
+ * Submit an image for OCR processing via bot webhook (Gemini 2.5 Flash Lite)
  * This endpoint is non-blocking - OCR is processed asynchronously
  */
 export async function POST(request: NextRequest) {
@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
     const body: OCRRequest = await request.json();
     const { token, image, image_url, barcode } = body;
 
-    // Validate required fields - need at least one image source
+    // Validate required fields
     if (!token || !barcode || (!image && !image_url)) {
       return NextResponse.json(
         { success: false, error: 'Missing required fields' },
@@ -80,13 +80,11 @@ export async function POST(request: NextRequest) {
         imageToSend = `data:image/jpeg;base64,${base64}`;
       } catch (fetchError) {
         console.error('Failed to fetch image from Cloudinary:', fetchError);
-        // Fall back to base64 if provided
         imageToSend = image;
       }
     }
 
     // Call bot webhook for OCR processing (fire and forget)
-    // Process asynchronously to avoid blocking the scanner
     fetch(`${botWebhookUrl}/webhook/process-box-ocr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -95,7 +93,6 @@ export async function POST(request: NextRequest) {
       .then(async (response) => {
         if (!response.ok) {
           console.error('OCR processing failed:', response.statusText);
-          // Update session with failed status
           const updatedSession = await sessionStorage.get(token);
           if (updatedSession) {
             const entry = updatedSession.scanned_barcodes.find(
@@ -111,16 +108,50 @@ export async function POST(request: NextRequest) {
 
         const ocrResult = await response.json();
         if (ocrResult.status === 'success' && ocrResult.ocr_data) {
-          // Update session with OCR data
           const updatedSession = await sessionStorage.get(token);
           if (updatedSession) {
             const entry = updatedSession.scanned_barcodes.find(
               (b: ScanEntry) => b.barcode === barcode
             );
             if (entry) {
-              entry.ocr_data = ocrResult.ocr_data;
+              // New OCR format: { product_name, weight_kg, production_date, expiry_date, barcode_digits }
+              const ocrData: BoxStickerOCR = {
+                product_name: ocrResult.ocr_data.product_name || null,
+                weight_kg: ocrResult.ocr_data.weight_kg || null,
+                production_date: ocrResult.ocr_data.production_date || null,
+                expiry_date: ocrResult.ocr_data.expiry_date || null,
+                barcode_digits: ocrResult.ocr_data.barcode_digits || null,
+              };
+
+              entry.ocr_data = ocrData;
               entry.ocr_status = 'complete';
               entry.ocr_processed_at = new Date().toISOString();
+
+              // Match OCR product name to invoice item and update scanned_items
+              if (ocrData.product_name) {
+                const matchedItem = updatedSession.invoice_items.find(
+                  (item: any) => item.item_name_hebrew === ocrData.product_name
+                );
+
+                if (matchedItem) {
+                  const itemIndex = matchedItem.item_index;
+                  if (!updatedSession.scanned_items[itemIndex]) {
+                    updatedSession.scanned_items[itemIndex] = {
+                      item_index: matchedItem.item_index,
+                      item_name: matchedItem.item_name_english,
+                      scanned_count: 0,
+                      scanned_weight: 0,
+                      expected_weight: matchedItem.quantity_kg,
+                      expected_boxes: matchedItem.expected_boxes
+                    };
+                  }
+                  updatedSession.scanned_items[itemIndex].scanned_count += 1;
+                  if (ocrData.weight_kg) {
+                    updatedSession.scanned_items[itemIndex].scanned_weight += ocrData.weight_kg;
+                  }
+                }
+              }
+
               await sessionStorage.set(token, updatedSession, { ex: 3600 });
             }
           }

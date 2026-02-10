@@ -9,8 +9,6 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@scandit/web-datacapture-barcode": "^8.1.0",
-    "@scandit/web-datacapture-core": "^8.1.0",
     "@tanstack/react-query": "^5.90.20",
     "@upstash/redis": "^1.36.1",
     "@zxing/browser": "^0.1.5",

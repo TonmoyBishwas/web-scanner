@@ -1,580 +1,786 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useEffect, useState, useCallback, useRef, use } from 'react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
-import { ItemProgress, OCRStatusIndicator } from '@/components/progress/ItemProgress';
-import { ScannedList } from '@/components/progress/ScannedList';
-import { useScanStore } from '@/stores/scan-store';
-import { parseIsraeliBarcode } from '@/lib/barcode-parser';
-import { scannerAPI } from '@/lib/api';
-import { uploadBoxImage } from '@/lib/cloudinary';
-import type { ScanSession, ParsedBarcode, BoxStickerOCR } from '@/types';
+import { IssueResolution } from '@/components/progress/IssueResolution';
+import type {
+  ParsedBarcode,
+  BoxStickerOCR,
+  ScanSession,
+  ScanEntry,
+  InvoiceItem,
+  OCRIssue,
+  ManualEntryData,
+} from '@/types';
 
-export default function ScannerPage() {
-  const params = useParams();
-  const router = useRouter();
-  const token = params.token as string;
+// Phase enum for flow control
+type ScanPhase =
+  | 'loading'          // Fetching session
+  | 'scanning'         // Active scanning
+  | 'processing'       // Waiting for background OCR
+  | 'issues'           // Resolving OCR issues
+  | 'ready_confirm'    // All clear, ready to confirm
+  | 'confirming'       // Submitting to backend
+  | 'complete'         // Done
+  | 'error';
 
+export default function ScanPage({
+  params,
+}: {
+  params: Promise<{ token: string }>;
+}) {
+  const { token } = use(params);
+
+  // Session state
   const [session, setSession] = useState<ScanSession | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [phase, setPhase] = useState<ScanPhase>('loading');
   const [error, setError] = useState<string | null>(null);
-  const [showDuplicateWarning, setShowDuplicateWarning] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Scan tracking
+  const [scannedBarcodes, setScannedBarcodes] = useState<Map<string, ParsedBarcode>>(new Map());
   const [ocrResults, setOcrResults] = useState<Map<string, BoxStickerOCR>>(new Map());
-  const [ocrPending, setOcrPending] = useState<Set<string>>(new Set());
-  const [showManualEntry, setShowManualEntry] = useState(false);
+  const [boxesScanned, setBoxesScanned] = useState(0);
+  const [boxesExpected, setBoxesExpected] = useState(0);
 
-  const { scannedBarcodes, addScan, isDuplicate, setScanning, setError: setStoreError } = useScanStore();
+  // OCR tracking
+  const [pendingOCR, setPendingOCR] = useState<Set<string>>(new Set());
+  const [ocrIssues, setOcrIssues] = useState<OCRIssue[]>([]);
+  const [allIssuesResolved, setAllIssuesResolved] = useState(true);
 
-  // Load session
+  // Force confirm
+  const [showForceConfirm, setShowForceConfirm] = useState(false);
+  const [manualEntries, setManualEntries] = useState<ManualEntryData[]>([]);
+
+  // Polling ref
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // ── Load Session ──────────────────────────────────────────────
   useEffect(() => {
-    async function loadSession() {
+    async function fetchSession() {
       try {
-        const data = await scannerAPI.getSession(token);
-        if (data.status !== 'ACTIVE') {
-          throw new Error('Session is not active');
+        const res = await fetch(`/api/session?token=${token}`);
+        if (!res.ok) throw new Error('Session not found or expired');
+        const sessionData: ScanSession = await res.json();
+        setSession(sessionData);
+
+        // Calculate expected boxes
+        const totalExpected = sessionData.invoice_items.reduce(
+          (sum: number, item: InvoiceItem) => sum + (item.expected_boxes || 0),
+          0
+        );
+        setBoxesExpected(totalExpected);
+        setBoxesScanned(sessionData.scanned_barcodes?.length || 0);
+
+        // Load existing scanned barcodes
+        if (sessionData.scanned_barcodes) {
+          const barcodeMap = new Map<string, ParsedBarcode>();
+          sessionData.scanned_barcodes.forEach((entry: ScanEntry) => {
+            barcodeMap.set(entry.barcode, {
+              type: 'id-only',
+              sku: entry.barcode,
+              weight: 0,
+              expiry: '',
+              raw_barcode: entry.barcode,
+              expiry_source: 'ocr_required',
+            });
+          });
+          setScannedBarcodes(barcodeMap);
         }
-        setSession(data);
+
+        setPhase('scanning');
       } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : 'Failed to load session';
-        setError(errorMsg);
-        setStoreError(errorMsg);
-      } finally {
-        setLoading(false);
+        setError(err instanceof Error ? err.message : 'Failed to load session');
+        setPhase('error');
       }
     }
-    loadSession();
-  }, [token, setStoreError]);
+    fetchSession();
+  }, [token]);
 
-  // Handle barcode detection - NEW: Image capture happens immediately
-  const handleBarcodeDetected = useCallback(async (barcode: string, data: ParsedBarcode, imageData?: string) => {
-    if (isDuplicate(barcode)) {
-      setShowDuplicateWarning(true);
-      setTimeout(() => setShowDuplicateWarning(false), 2000);
-      // Vibrate to indicate duplicate
-      if (navigator.vibrate) {
-        navigator.vibrate([100, 50, 100]);
-      }
-      return;
-    }
-
-    setIsSubmitting(true);
-
+  // ── Upload Image to Cloudinary ────────────────────────────────
+  const uploadToCloudinary = useCallback(async (imageData: string): Promise<{ url: string, publicId: string } | null> => {
     try {
-      // Image is now REQUIRED - must be captured before this point
-      if (!imageData) {
-        throw new Error('Image capture failed. Please try again or use manual entry.');
-      }
-
-      // 1. Upload image to Cloudinary with document_number
-      const documentNumber = session?.document_number || '';
-      let imageUrl = '';
-      let publicId = '';
-
-      try {
-        const uploadResult = await uploadBoxImage(imageData, barcode, {
-          document_number: documentNumber,
-          image_type: 'box'
-        });
-        imageUrl = uploadResult.secure_url;
-        publicId = uploadResult.public_id;
-        console.log('[Cloudinary] Image uploaded:', imageUrl, 'public_id:', publicId);
-      } catch (uploadError) {
-        console.error('[Cloudinary] Upload failed:', uploadError);
-        throw new Error('Failed to upload image. Please try again.');
-      }
-
-      // 2. Submit scan with image URL
-      const result = await scannerAPI.submitScan({
-        token,
-        barcode,
-        parsed_data: data,
-        image_url: imageUrl,
-        image_public_id: publicId,
-        document_number: documentNumber,
-        detected_at: new Date().toISOString(),
-        scan_method: 'barcode'
+      const res = await fetch('/api/cloudinary/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: imageData,
+          barcode: `capture_${Date.now()}`,
+          document_number: session?.document_number,
+        })
       });
-
-      if (result.success && !result.is_duplicate && result.matched_item) {
-        addScan(barcode, data, result.matched_item);
-        setScanning(false);
-
-        // Refresh session data to get updated scanned_items
-        const updatedSession = await scannerAPI.getSession(token);
-        if (updatedSession) {
-          setSession(updatedSession);
-        }
-
-        // Success vibration
-        if (navigator.vibrate) {
-          navigator.vibrate(100);
-        }
-
-        // Trigger OCR in background (all data comes from OCR now)
-        triggerOCR(barcode, imageUrl);
-      } else if (result.is_duplicate) {
-        setShowDuplicateWarning(true);
-        setTimeout(() => setShowDuplicateWarning(false), 2000);
-      } else if (result.error) {
-        setError(result.error);
-        setTimeout(() => setError(null), 3000);
-      }
+      if (!res.ok) throw new Error('Upload failed');
+      const data = await res.json();
+      return { url: data.secure_url, publicId: data.public_id };
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to submit scan';
-      setError(errorMsg);
-      setTimeout(() => setError(null), 3000);
-    } finally {
-      setIsSubmitting(false);
+      console.error('Cloudinary upload error:', err);
+      return null;
     }
-  }, [token, session, isDuplicate, addScan, setScanning]);
+  }, []);
 
-  // Trigger OCR after barcode scan (background process)
+  // ── Trigger Background OCR ───────────────────────────────────
   const triggerOCR = useCallback(async (barcode: string, imageUrl: string) => {
-    // Don't process OCR if already done or pending
-    if (ocrResults.has(barcode) || ocrPending.has(barcode)) {
+    setPendingOCR(prev => new Set(prev).add(barcode));
+
+    try {
+      await fetch('/api/ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token,
+          barcode,
+          image_url: imageUrl,
+        })
+      });
+    } catch (err) {
+      console.error('OCR trigger error:', err);
+    }
+  }, [token]);
+
+  // ── Poll for OCR Results ─────────────────────────────────────
+  const pollForResults = useCallback(async () => {
+    if (pendingOCR.size === 0) return;
+
+    try {
+      const res = await fetch(`/api/session?token=${token}`);
+      if (!res.ok) return;
+      const updatedSession: ScanSession = await res.json();
+      setSession(updatedSession);
+
+      // Check which OCR calls are done
+      const stillPending = new Set<string>();
+      const newOcrResults = new Map(ocrResults);
+      const issues: OCRIssue[] = [];
+
+      updatedSession.scanned_barcodes.forEach((entry: ScanEntry) => {
+        if (entry.ocr_status === 'pending') {
+          stillPending.add(entry.barcode);
+        } else if (entry.ocr_status === 'complete' && entry.ocr_data) {
+          newOcrResults.set(entry.barcode, entry.ocr_data);
+
+          // Check for issues
+          if (!entry.ocr_data.product_name && !entry.ocr_data.weight_kg) {
+            issues.push({
+              barcode: entry.barcode,
+              image_url: entry.image_url,
+              type: 'missing_both',
+              ocr_data: entry.ocr_data
+            });
+          } else if (!entry.ocr_data.product_name) {
+            issues.push({
+              barcode: entry.barcode,
+              image_url: entry.image_url,
+              type: 'missing_name',
+              ocr_data: entry.ocr_data
+            });
+          } else if (!entry.ocr_data.weight_kg) {
+            // Try smart weight inference
+            const inferredWeight = inferWeight(entry, updatedSession);
+            issues.push({
+              barcode: entry.barcode,
+              image_url: entry.image_url,
+              type: 'missing_weight',
+              inferred_weight: inferredWeight,
+              ocr_data: entry.ocr_data
+            });
+          }
+        } else if (entry.ocr_status === 'failed') {
+          issues.push({
+            barcode: entry.barcode,
+            image_url: entry.image_url,
+            type: 'missing_both',
+          });
+        }
+      });
+
+      setPendingOCR(stillPending);
+      setOcrResults(newOcrResults);
+
+      if (issues.length > 0) {
+        setOcrIssues(issues);
+        setAllIssuesResolved(false);
+      }
+
+      // If nothing pending and we have issues, go to issues phase
+      if (stillPending.size === 0 && issues.length > 0) {
+        setPhase('issues');
+      } else if (stillPending.size === 0 && issues.length === 0) {
+        // All done with no issues
+        setPhase('ready_confirm');
+      }
+    } catch (err) {
+      console.error('Poll error:', err);
+    }
+  }, [token, pendingOCR, ocrResults]);
+
+  // Smart weight inference
+  function inferWeight(entry: ScanEntry, session: ScanSession): number | undefined {
+    if (!entry.ocr_data?.product_name) return undefined;
+
+    // Find matching invoice item
+    const matchedItem = session.invoice_items.find(
+      i => i.item_name_hebrew === entry.ocr_data?.product_name
+    );
+    if (!matchedItem) return undefined;
+
+    // Get all scanned entries for the same product with weights
+    const sameProductEntries = session.scanned_barcodes.filter(
+      e => e.ocr_data?.product_name === entry.ocr_data?.product_name &&
+        e.ocr_data?.weight_kg && e.barcode !== entry.barcode
+    );
+
+    const scannedWeight = sameProductEntries.reduce(
+      (sum, e) => sum + (e.ocr_data?.weight_kg || 0), 0
+    );
+
+    const remainingWeight = matchedItem.quantity_kg - scannedWeight;
+    const remainingBoxes = matchedItem.expected_boxes - sameProductEntries.length - 1;
+
+    if (remainingBoxes <= 0) return remainingWeight > 0 ? remainingWeight : undefined;
+    return remainingWeight / (remainingBoxes + 1);
+  }
+
+  // ── Start/stop polling ────────────────────────────────────────
+  useEffect(() => {
+    if (pendingOCR.size > 0) {
+      pollIntervalRef.current = setInterval(pollForResults, 3000);
+    }
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, [pendingOCR.size, pollForResults]);
+
+  // ── Barcode Detected Handler ─────────────────────────────────
+  const handleBarcodeDetected = useCallback(async (
+    barcode: string,
+    data: ParsedBarcode,
+    imageData?: string
+  ) => {
+    // Already scanned?
+    if (scannedBarcodes.has(barcode)) return;
+
+    // Add to scanned set immediately
+    setScannedBarcodes(prev => new Map(prev).set(barcode, data));
+    setBoxesScanned(prev => prev + 1);
+
+    // Upload image to Cloudinary
+    let imageUrl = '';
+    let publicId = '';
+    if (imageData) {
+      const upload = await uploadToCloudinary(imageData);
+      if (upload) {
+        imageUrl = upload.url;
+        publicId = upload.publicId;
+      }
+    }
+
+    // Submit scan to API (deduplication + session update)
+    try {
+      const res = await fetch('/api/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token,
+          barcode,
+          parsed_data: data,
+          image_url: imageUrl,
+          image_public_id: publicId,
+          detected_at: new Date().toISOString(),
+          scan_method: 'barcode'
+        })
+      });
+      const result = await res.json();
+
+      if (!result.success) {
+        if (result.is_duplicate) {
+          // Already handled above
+          return;
+        }
+        console.error('Scan error:', result.error);
+        return;
+      }
+
+      // Trigger background OCR
+      if (imageUrl) {
+        triggerOCR(barcode, imageUrl);
+      }
+    } catch (err) {
+      console.error('Scan submit error:', err);
+    }
+  }, [scannedBarcodes, token, uploadToCloudinary, triggerOCR]);
+
+  // ── Manual Capture Handler ────────────────────────────────────
+  const handleManualCapture = useCallback(async (imageData: string) => {
+    const tempBarcode = `manual_${Date.now()}`;
+
+    setBoxesScanned(prev => prev + 1);
+
+    // Upload to Cloudinary
+    const upload = await uploadToCloudinary(imageData);
+    if (!upload) {
+      console.error('Manual capture upload failed');
       return;
     }
 
-    // Mark as pending
-    setOcrPending(prev => new Set(prev).add(barcode));
-
-    // Fire and forget - don't await
-    (async () => {
-      try {
-        // Submit OCR with Cloudinary URL
-        const result = await scannerAPI.submitOCR({
+    // Submit as a manual capture scan
+    try {
+      await fetch('/api/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           token,
+          barcode: tempBarcode,
+          image_url: upload.url,
+          image_public_id: upload.publicId,
+          detected_at: new Date().toISOString(),
+          scan_method: 'manual_capture'
+        })
+      });
+
+      // Trigger OCR
+      triggerOCR(tempBarcode, upload.url);
+    } catch (err) {
+      console.error('Manual capture error:', err);
+    }
+  }, [token, uploadToCloudinary, triggerOCR]);
+
+  // ── Force Confirm (add remaining boxes manually) ─────────────
+  const handleForceConfirmEntry = useCallback(async (entry: ManualEntryData) => {
+    const tempBarcode = `force_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+    // Upload photo if provided
+    let imageUrl = '';
+    let publicId = '';
+    if (entry.image_url) {
+      const upload = await uploadToCloudinary(entry.image_url);
+      if (upload) {
+        imageUrl = upload.url;
+        publicId = upload.publicId;
+      }
+    }
+
+    // Submit as force confirm entry
+    try {
+      await fetch('/api/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token,
+          barcode: tempBarcode,
           image_url: imageUrl,
-          barcode
-        });
+          image_public_id: publicId,
+          detected_at: new Date().toISOString(),
+          scan_method: 'force_confirm'
+        })
+      });
 
-        if (result.success && result.ocr_data) {
-          console.log('[OCR] Result received for', barcode, result.ocr_data);
-          setOcrResults(prev => new Map(prev).set(barcode, result.ocr_data!));
+      setBoxesScanned(prev => prev + 1);
+      setManualEntries(prev => [...prev, { ...entry, image_url: imageUrl }]);
+    } catch (err) {
+      console.error('Force confirm entry error:', err);
+    }
+  }, [token, uploadToCloudinary]);
 
-          // Refresh session to get updated weights
-          const updatedSession = await scannerAPI.getSession(token);
-          if (updatedSession) {
-            setSession(updatedSession);
-          }
-        }
-      } catch (err) {
-        console.error('[OCR] Failed:', err);
-      } finally {
-        setOcrPending(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(barcode);
-          return newSet;
-        });
-      }
-    })();
-  }, [token, ocrResults, ocrPending]);
-
-  // Handle manual capture button (scan without barcode)
-  const handleManualCapture = useCallback(async (imageData: string) => {
-    setIsSubmitting(true);
-
+  // ── Issue Resolution Handler ──────────────────────────────────
+  const handleIssueResolve = useCallback(async (
+    barcode: string,
+    resolved: { item_name?: string; weight?: number; expiry?: string }
+  ) => {
+    // Update session data with resolved values
     try {
-      // Generate a temporary barcode ID for manual capture
-      const tempBarcode = `manual-${Date.now()}`;
-
-      // Upload to Cloudinary
-      const documentNumber = session?.document_number || '';
-      const uploadResult = await uploadBoxImage(imageData, tempBarcode, {
-        document_number: documentNumber,
-        image_type: 'box'
+      await fetch('/api/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token,
+          barcode,
+          resolved_item_name: resolved.item_name,
+          resolved_weight: resolved.weight,
+          resolved_expiry: resolved.expiry,
+        })
       });
+    } catch (err) {
+      console.error('Issue resolve error:', err);
+    }
+  }, [token]);
 
-      // Submit as manual capture
-      const result = await scannerAPI.submitScan({
-        token,
-        barcode: tempBarcode,
-        image_url: uploadResult.secure_url,
-        image_public_id: uploadResult.public_id,
-        document_number: documentNumber,
-        detected_at: new Date().toISOString(),
-        scan_method: 'manual_capture'
+  // ── Final Confirm ─────────────────────────────────────────────
+  const handleConfirm = useCallback(async () => {
+    setPhase('confirming');
+    try {
+      const res = await fetch('/api/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
       });
-
+      const result = await res.json();
       if (result.success) {
-        // Trigger OCR to try to identify the item
-        triggerOCR(tempBarcode, uploadResult.secure_url);
-
-        // Refresh session
-        const updatedSession = await scannerAPI.getSession(token);
-        if (updatedSession) {
-          setSession(updatedSession);
-        }
-
-        if (navigator.vibrate) {
-          navigator.vibrate(100);
-        }
-      } else if (result.error) {
-        setError(result.error);
-        setTimeout(() => setError(null), 3000);
+        setPhase('complete');
+      } else {
+        setError(result.error || 'Failed to complete scan');
+        setPhase('error');
       }
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to capture';
-      setError(errorMsg);
-      setTimeout(() => setError(null), 3000);
-    } finally {
-      setIsSubmitting(false);
+      setError('Network error during confirmation');
+      setPhase('error');
     }
-  }, [token, session, triggerOCR]);
+  }, [token]);
 
-  // Poll for OCR results from session (in case OCR completed while page was inactive)
+  // Check transition to processing
+  const handleCheckProgress = useCallback(() => {
+    if (boxesScanned >= boxesExpected && boxesExpected > 0) {
+      if (pendingOCR.size > 0) {
+        setPhase('processing');
+      } else if (ocrIssues.length > 0 && !allIssuesResolved) {
+        setPhase('issues');
+      } else {
+        setPhase('ready_confirm');
+      }
+    }
+  }, [boxesScanned, boxesExpected, pendingOCR.size, ocrIssues.length, allIssuesResolved]);
+
   useEffect(() => {
-    if (!session) return;
+    if (phase === 'scanning') handleCheckProgress();
+  }, [boxesScanned, phase, handleCheckProgress]);
 
-    const interval = setInterval(async () => {
-      try {
-        const updatedSession = await scannerAPI.getSession(token);
-        if (updatedSession) {
-          // Check for any completed OCR results
-          const newOcrResults = new Map(ocrResults);
-          let hasUpdates = false;
+  // ── RENDER ────────────────────────────────────────────────────
 
-          for (const entry of updatedSession.scanned_barcodes) {
-            if (entry.ocr_status === 'complete' && entry.ocr_data && !ocrResults.has(entry.barcode)) {
-              newOcrResults.set(entry.barcode, entry.ocr_data);
-              hasUpdates = true;
-            }
-          }
-
-          if (hasUpdates) {
-            setOcrResults(newOcrResults);
-            setSession(updatedSession); // Update session with OCR data
-          }
-        }
-      } catch (err) {
-        // Ignore polling errors
-      }
-    }, 2000); // Poll every 2 seconds
-
-    return () => clearInterval(interval);
-  }, [session, token, ocrResults]);
-
-  // Handle completion
-  const handleComplete = async () => {
-    if (!session) return;
-
-    const totalWeightScanned = Object.values(session.scanned_items || {}).reduce(
-      (sum: number, item: any) => sum + (item.scanned_weight || 0),
-      0
-    );
-    const totalWeightExpected = session.invoice_items.reduce(
-      (sum: number, item: any) => sum + item.quantity_kg,
-      0
-    );
-
-    if (totalWeightScanned < totalWeightExpected * 0.9) {
-      const confirmed = confirm(
-        `You've only scanned ${totalWeightScanned.toFixed(2)} kg of ${totalWeightExpected.toFixed(2)} kg expected. Are you sure you want to complete?`
-      );
-      if (!confirmed) return;
-    }
-
-    try {
-      await scannerAPI.completeSession({ token });
-      router.push(`/complete/${token}`);
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to complete session';
-      setError(errorMsg);
-      setTimeout(() => setError(null), 3000);
-    }
-  };
-
-  // Get scanned items for display
-  const scannedList = Array.from(scannedBarcodes.entries()).map(([barcode, data]) => ({
-    barcode,
-    data,
-    time: new Date().toISOString()
-  }));
-
-  if (loading) {
+  // Loading
+  if (phase === 'loading') {
     return (
-      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-          <p>Loading scanner...</p>
+          <div className="animate-spin w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+          <p className="text-gray-300">Loading scanner session...</p>
         </div>
       </div>
     );
   }
 
-  if (error && !session) {
+  // Error
+  if (phase === 'error') {
     return (
-      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center p-4">
-        <div className="text-center">
-          <div className="text-4xl mb-4">⚠️</div>
-          <p className="text-red-400 mb-4">{error}</p>
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
+        <div className="bg-red-900/30 border border-red-600 rounded-lg p-6 max-w-md text-center">
+          <p className="text-2xl mb-2">❌</p>
+          <p className="text-red-400 font-medium">{error}</p>
           <button
-            onClick={() => window.close()}
-            className="px-4 py-2 bg-gray-700 rounded hover:bg-gray-600"
+            onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-sm"
           >
-            Close
+            Retry
           </button>
         </div>
       </div>
     );
   }
 
+  // Complete
+  if (phase === 'complete') {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
+        <div className="bg-green-900/30 border border-green-600 rounded-lg p-6 max-w-md text-center">
+          <p className="text-4xl mb-3">✅</p>
+          <h2 className="text-xl font-bold text-green-400 mb-2">Scan Complete!</h2>
+          <p className="text-gray-300 text-sm mb-1">
+            {boxesScanned} boxes scanned and submitted
+          </p>
+          <p className="text-gray-400 text-xs">
+            Data has been sent to warehouse system. You can close this page.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Processing (OCR in progress - full page loading)
+  if (phase === 'processing') {
+    const totalPending = pendingOCR.size;
+    const totalScanned = boxesScanned;
+    const completed = totalScanned - totalPending;
+
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
+        <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 max-w-md text-center">
+          <div className="animate-spin w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+          <h2 className="text-lg font-bold text-white mb-2">Processing OCR...</h2>
+          <p className="text-gray-400 text-sm mb-3">
+            Extracting data from box stickers via Gemini AI
+          </p>
+          <div className="bg-gray-900 rounded-full h-2 mb-2">
+            <div
+              className="bg-blue-500 h-2 rounded-full transition-all duration-500"
+              style={{ width: `${totalScanned > 0 ? (completed / totalScanned) * 100 : 0}%` }}
+            ></div>
+          </div>
+          <p className="text-xs text-gray-500">
+            {completed} / {totalScanned} processed ({totalPending} remaining)
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Confirming
+  if (phase === 'confirming') {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin w-12 h-12 border-4 border-green-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+          <p className="text-gray-300">Submitting scan data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Main Scanner UI ───────────────────────────────────────────
+  const isReadyToConfirm = phase === 'ready_confirm' ||
+    (boxesScanned >= boxesExpected && pendingOCR.size === 0 && allIssuesResolved);
+
+  const canForceConfirm = boxesScanned < boxesExpected && boxesScanned > 0;
+
   return (
     <div className="min-h-screen bg-gray-900 text-white flex flex-col">
-      {/* Header */}
-      <header className="p-4 flex justify-between items-center bg-gray-800">
-        <div>
-          <h1 className="text-xl font-bold">📦 Barcode Scanner</h1>
-          {session?.document_number && (
-            <p className="text-xs text-gray-400">Invoice: {session.document_number}</p>
-          )}
+      {/* ── Header: Box Counter ──────────────────────────────── */}
+      <div className="sticky top-0 z-50 bg-gray-800/95 backdrop-blur border-b border-gray-700 px-4 py-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">📦</span>
+            <div>
+              <h1 className="text-lg font-bold">
+                <span className={boxesScanned >= boxesExpected ? 'text-green-400' : 'text-white'}>
+                  {boxesScanned}
+                </span>
+                <span className="text-gray-500 mx-1">/</span>
+                <span className="text-gray-400">{boxesExpected}</span>
+                <span className="text-sm text-gray-500 ml-2">boxes</span>
+              </h1>
+              <p className="text-xs text-gray-500">
+                {session?.document_number ? `Doc: ${session.document_number}` : 'Scanning...'}
+              </p>
+            </div>
+          </div>
+
+          {/* Status indicator */}
+          <div className="flex items-center gap-2">
+            {pendingOCR.size > 0 && (
+              <span className="flex items-center gap-1 text-xs text-yellow-400">
+                <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
+                OCR: {pendingOCR.size}
+              </span>
+            )}
+          </div>
         </div>
-        <button
-          onClick={() => setShowManualEntry(!showManualEntry)}
-          className="px-3 py-1 bg-blue-600 rounded text-sm hover:bg-blue-700"
-        >
-          {showManualEntry ? '📷 Scan' : '✏️ Manual Entry'}
-        </button>
-      </header>
 
-      {showManualEntry ? (
-        // Manual Entry Form
-        <div className="flex-1 p-4">
-          <ManualEntryForm
-            invoiceItems={session?.invoice_items || []}
-            onSubmit={async (data) => {
-              setIsSubmitting(true);
-              try {
-                const documentNumber = session?.document_number || '';
-                const result = await scannerAPI.submitManualEntry({
-                  ...data,
-                  token,
-                  document_number: documentNumber
-                });
+        {/* Progress bar */}
+        <div className="mt-2 bg-gray-700 rounded-full h-1.5">
+          <div
+            className={`h-1.5 rounded-full transition-all duration-500 ${boxesScanned >= boxesExpected ? 'bg-green-500' : 'bg-blue-500'
+              }`}
+            style={{ width: `${boxesExpected > 0 ? Math.min(100, (boxesScanned / boxesExpected) * 100) : 0}%` }}
+          ></div>
+        </div>
+      </div>
 
-                if (result.success) {
-                  // Refresh session
-                  const updatedSession = await scannerAPI.getSession(token);
-                  if (updatedSession) {
-                    setSession(updatedSession);
-                  }
-                  setShowManualEntry(false);
-                } else if (result.error) {
-                  setError(result.error);
-                  setTimeout(() => setError(null), 3000);
-                }
-              } catch (err) {
-                const errorMsg = err instanceof Error ? err.message : 'Failed to submit';
-                setError(errorMsg);
-                setTimeout(() => setError(null), 3000);
-              } finally {
-                setIsSubmitting(false);
-              }
-            }}
-            onCancel={() => setShowManualEntry(false)}
-            scannedItems={session?.scanned_items || {}}
+      {/* ── Scanner View ─────────────────────────────────────── */}
+      {(phase === 'scanning' || phase === 'ready_confirm') && (
+        <div className="flex-1">
+          <SmartScanner
+            onBarcodeDetected={handleBarcodeDetected}
+            onManualCapture={handleManualCapture}
+            scannedBarcodes={scannedBarcodes}
+            ocrResults={ocrResults}
           />
         </div>
-      ) : (
-        <>
-          {/* Scanner View */}
-          <div className="relative h-96 bg-black">
-            <SmartScanner
-              onBarcodeDetected={handleBarcodeDetected}
-              onManualCapture={handleManualCapture}
-              scannedBarcodes={scannedBarcodes}
-              ocrResults={ocrResults}
-              onError={(err) => setError(err)}
-            />
-          </div>
+      )}
 
-          {/* Duplicate Warning */}
-          {showDuplicateWarning && (
-            <div className="absolute top-20 left-4 right-4 bg-yellow-600 text-white p-3 rounded-lg shadow-lg z-10">
-              <p className="text-sm font-medium">⚠️ Barcode already scanned!</p>
-            </div>
-          )}
+      {/* ── Issue Resolution Phase ────────────────────────────── */}
+      {phase === 'issues' && session && (
+        <div className="flex-1 p-4 overflow-y-auto">
+          <IssueResolution
+            issues={ocrIssues}
+            invoiceItems={session.invoice_items}
+            onResolve={handleIssueResolve}
+            onAllResolved={() => {
+              setAllIssuesResolved(true);
+              setPhase('ready_confirm');
+            }}
+          />
+        </div>
+      )}
 
-          {/* Error Message */}
-          {error && (
-            <div className="mx-4 mt-4 bg-red-600 text-white p-3 rounded-lg">
-              <p className="text-sm">{error}</p>
-            </div>
-          )}
+      {/* ── Footer: Action Buttons ────────────────────────────── */}
+      <div className="sticky bottom-0 bg-gray-800/95 backdrop-blur border-t border-gray-700 p-4 space-y-2">
+        {/* Force Confirm button */}
+        {canForceConfirm && phase === 'scanning' && (
+          <button
+            onClick={() => setShowForceConfirm(true)}
+            className="w-full py-3 bg-yellow-600 hover:bg-yellow-700 rounded-lg text-sm font-medium transition-colors"
+          >
+            ⚡ Force Confirm ({boxesExpected - boxesScanned} boxes remaining)
+          </button>
+        )}
 
-          {/* Progress Section */}
-          <div className="flex-1 overflow-y-auto p-4">
-            {/* OCR Status Indicator */}
-            <OCRStatusIndicator
-              ocrPending={ocrPending}
-              ocrResults={ocrResults}
-            />
+        {/* Confirm button */}
+        {isReadyToConfirm && (
+          <button
+            onClick={handleConfirm}
+            className="w-full py-3 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-bold transition-colors"
+          >
+            ✓ Confirm All Scans
+          </button>
+        )}
 
-            {session && (
-              <ItemProgress
-                items={session.invoice_items}
-                scanned={Object.values(session.scanned_items || {})}
-              />
-            )}
-            <div className="mt-4">
-              <ScannedList scanned={scannedList} />
-            </div>
-          </div>
+        {/* Scanned barcodes summary */}
+        {boxesScanned > 0 && phase === 'scanning' && (
+          <p className="text-center text-xs text-gray-500">
+            {boxesScanned} box{boxesScanned !== 1 ? 'es' : ''} scanned
+            {pendingOCR.size > 0 ? ` • ${pendingOCR.size} OCR pending` : ''}
+          </p>
+        )}
+      </div>
 
-          {/* Actions */}
-          <div className="p-4 bg-gray-800 flex gap-2">
-            <button
-              onClick={handleComplete}
-              disabled={isSubmitting || !session || scannedBarcodes.size === 0}
-              className="flex-1 bg-green-600 py-3 rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
-            >
-              {isSubmitting ? 'Processing...' : '✓ Complete Scanning'}
-            </button>
-          </div>
-        </>
+      {/* ── Force Confirm Modal ───────────────────────────────── */}
+      {showForceConfirm && session && (
+        <ForceConfirmModal
+          session={session}
+          boxesScanned={boxesScanned}
+          boxesExpected={boxesExpected}
+          onAddEntry={handleForceConfirmEntry}
+          onClose={() => {
+            setShowForceConfirm(false);
+            // After force confirm entries are added, check progress
+            if (pendingOCR.size > 0) {
+              setPhase('processing');
+            } else {
+              setPhase('ready_confirm');
+            }
+          }}
+        />
       )}
     </div>
   );
 }
 
-// Manual Entry Form Component
-interface ManualEntryFormProps {
-  invoiceItems: Array<{
-    item_index: number;
-    item_name_english: string;
-    expected_boxes: number;
-  }>;
-  onSubmit: (data: {
-    item_index: number;
-    weight: number;
+// ── Force Confirm Modal ─────────────────────────────────────────
+function ForceConfirmModal({
+  session,
+  boxesScanned,
+  boxesExpected,
+  onAddEntry,
+  onClose,
+}: {
+  session: ScanSession;
+  boxesScanned: number;
+  boxesExpected: number;
+  onAddEntry: (entry: ManualEntryData) => Promise<void>;
+  onClose: () => void;
+}) {
+  const remaining = boxesExpected - boxesScanned;
+  const [entries, setEntries] = useState<Array<{
+    item_name: string;
+    weight: string;
     expiry: string;
-    notes?: string;
-  }) => void;
-  onCancel: () => void;
-  scannedItems: Record<string, {
-    scanned_count: number;
-    expected_boxes: number;
-  }>;
-}
+    submitted: boolean;
+  }>>(
+    Array.from({ length: remaining }, () => ({
+      item_name: '',
+      weight: '',
+      expiry: '',
+      submitted: false,
+    }))
+  );
 
-function ManualEntryForm({ invoiceItems, onSubmit, onCancel, scannedItems }: ManualEntryFormProps) {
-  const [selectedItem, setSelectedItem] = useState<number | null>(null);
-  const [weight, setWeight] = useState('');
-  const [expiry, setExpiry] = useState('');
-  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (selectedItem === null) return;
+  const handleSubmitAll = async () => {
+    setSubmitting(true);
+    for (const entry of entries) {
+      if (entry.submitted) continue;
+      if (!entry.item_name || !entry.weight) continue;
 
-    onSubmit({
-      item_index: selectedItem,
-      weight: parseFloat(weight),
-      expiry,
-      notes: notes || undefined
-    });
-
-    // Reset form
-    setSelectedItem(null);
-    setWeight('');
-    setExpiry('');
-    setNotes('');
+      await onAddEntry({
+        token: session.token,
+        item_name: entry.item_name,
+        weight: parseFloat(entry.weight),
+        expiry: entry.expiry,
+      });
+    }
+    setSubmitting(false);
+    onClose();
   };
 
-  // Get remaining boxes for each item
-  const getRemainingBoxes = (itemIndex: number) => {
-    const item = invoiceItems.find(i => i.item_index === itemIndex);
-    const scanned = scannedItems[itemIndex]?.scanned_count || 0;
-    return item ? item.expected_boxes - scanned : 0;
-  };
+  const allFilled = entries.every(e => e.item_name && e.weight);
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <h2 className="text-xl font-bold mb-4">✏️ Manual Entry</h2>
+    <div className="fixed inset-0 z-60 bg-black/80 flex items-end xl:items-center justify-center">
+      <div className="bg-gray-800 w-full max-w-md max-h-[85vh] overflow-y-auto rounded-t-2xl xl:rounded-2xl p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-bold text-yellow-400">
+            ⚡ Manual Entry ({remaining} boxes)
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl">✕</button>
+        </div>
 
-      {/* Select Item */}
-      <div>
-        <label className="block text-sm font-medium mb-2">Select Item *</label>
-        <select
-          value={selectedItem || ''}
-          onChange={(e) => setSelectedItem(Number(e.target.value))}
-          className="w-full p-3 bg-gray-800 rounded-lg border border-gray-700"
-          required
-        >
-          <option value="">-- Select an item --</option>
-          {invoiceItems.map((item) => {
-            const remaining = getRemainingBoxes(item.item_index);
-            return (
-              <option
-                key={item.item_index}
-                value={item.item_index}
-                disabled={remaining <= 0}
-              >
-                {item.item_name_english} (Remaining: {remaining})
-              </option>
-            );
-          })}
-        </select>
-      </div>
+        <p className="text-xs text-gray-400">
+          Enter details for the remaining {remaining} unscanned boxes.
+        </p>
 
-      {/* Weight */}
-      <div>
-        <label className="block text-sm font-medium mb-2">Weight (kg) *</label>
-        <input
-          type="number"
-          step="0.01"
-          value={weight}
-          onChange={(e) => setWeight(e.target.value)}
-          className="w-full p-3 bg-gray-800 rounded-lg border border-gray-700"
-          placeholder="e.g., 5.25"
-          required
-        />
-      </div>
+        {entries.map((entry, idx) => (
+          <div key={idx} className="bg-gray-900 rounded-lg p-3 space-y-2">
+            <p className="text-sm font-medium text-gray-300">Box #{boxesScanned + idx + 1}</p>
 
-      {/* Expiry Date */}
-      <div>
-        <label className="block text-sm font-medium mb-2">Expiry Date (DD/MM/YYYY) *</label>
-        <input
-          type="text"
-          value={expiry}
-          onChange={(e) => setExpiry(e.target.value)}
-          className="w-full p-3 bg-gray-800 rounded-lg border border-gray-700"
-          placeholder="e.g., 29/07/2026"
-          pattern="[0-9]{2}/[0-9]{2}/[0-9]{4}"
-          required
-        />
-      </div>
+            <select
+              value={entry.item_name}
+              onChange={e => {
+                const updated = [...entries];
+                updated[idx].item_name = e.target.value;
+                setEntries(updated);
+              }}
+              className="w-full p-2 bg-gray-800 border border-gray-700 rounded text-sm"
+            >
+              <option value="">Select item *</option>
+              {session.invoice_items.map(item => (
+                <option key={item.item_index} value={item.item_name_english}>
+                  {item.item_name_english} ({item.quantity_kg} kg)
+                </option>
+              ))}
+            </select>
 
-      {/* Notes */}
-      <div>
-        <label className="block text-sm font-medium mb-2">Notes (optional)</label>
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          className="w-full p-3 bg-gray-800 rounded-lg border border-gray-700"
-          rows={2}
-          placeholder="Any additional notes..."
-        />
-      </div>
+            <input
+              type="number"
+              step="0.001"
+              placeholder="Weight (kg) *"
+              value={entry.weight}
+              onChange={e => {
+                const updated = [...entries];
+                updated[idx].weight = e.target.value;
+                setEntries(updated);
+              }}
+              className="w-full p-2 bg-gray-800 border border-gray-700 rounded text-sm"
+            />
 
-      {/* Actions */}
-      <div className="flex gap-2 pt-4">
+            <input
+              type="date"
+              placeholder="Expiry (optional)"
+              value={entry.expiry}
+              onChange={e => {
+                const updated = [...entries];
+                updated[idx].expiry = e.target.value;
+                setEntries(updated);
+              }}
+              className="w-full p-2 bg-gray-800 border border-gray-700 rounded text-sm"
+            />
+          </div>
+        ))}
+
         <button
-          type="button"
-          onClick={onCancel}
-          className="flex-1 bg-gray-700 py-3 rounded-lg font-medium hover:bg-gray-600"
+          onClick={handleSubmitAll}
+          disabled={!allFilled || submitting}
+          className="w-full py-3 bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg text-sm font-bold transition-colors"
         >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          className="flex-1 bg-blue-600 py-3 rounded-lg font-medium hover:bg-blue-700"
-        >
-          Add Box
+          {submitting ? 'Submitting...' : `Submit ${remaining} Manual Entries`}
         </button>
       </div>
-    </form>
+    </div>
   );
 }

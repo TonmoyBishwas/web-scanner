@@ -8,20 +8,13 @@ export interface ParsedBarcode {
   expiry_source: 'ocr_required';  // Always requires OCR
 }
 
-// OCR result from box sticker
+// OCR result from box sticker (new Gemini format)
 export interface BoxStickerOCR {
-  productNameHebrew: string;
-  productNameEnglish: string;
-  sku: string;
-  netWeightKG: number;
-  expiryDate: string;  // DD/MM/YYYY or empty
-  productionDate?: string;
-  barcode: string;
-  storageTemperature?: string;
-  supplier?: string;
-  confidence: 'high' | 'medium' | 'low';
-  weightMatch?: boolean;  // Does weight match barcode?
-  expiryMatch?: boolean;  // Does expiry match barcode?
+  product_name: string | null;     // Hebrew product name
+  weight_kg: number | null;        // Net weight in KG
+  production_date: string | null;  // YYYY-MM-DD
+  expiry_date: string | null;      // YYYY-MM-DD
+  barcode_digits: string | null;   // Barcode digits from image
 }
 
 // Session Data Types
@@ -35,12 +28,11 @@ export interface InvoiceItem {
 }
 
 export interface ScanEntry {
-  // Barcode is JUST an identifier
-  barcode: string;              // Raw barcode string (any length)
+  // Barcode is JUST an identifier for deduplication
+  barcode: string;
 
-  // All data comes from OCR or manual entry
+  // Timestamp
   scanned_at: string;
-  item_index: number;
 
   // Image storage (REQUIRED for all scans)
   image_url: string;            // Cloudinary URL (required)
@@ -53,14 +45,22 @@ export interface ScanEntry {
 
   // Manual entry fallback
   manual_entry?: {
-    item_index: number;
+    item_name: string;
     weight: number;
     expiry: string;
     notes?: string;
   };
 
+  // Resolved by user (when OCR fails)
+  resolved_item_name?: string;
+  resolved_weight?: number;
+  resolved_expiry?: string;
+
+  // Smart inference
+  inferred_weight?: number;
+
   // Metadata
-  scan_method: 'barcode' | 'manual_capture' | 'manual_entry';
+  scan_method: 'barcode' | 'manual_capture' | 'force_confirm';
 }
 
 export interface ScannedItem {
@@ -85,7 +85,7 @@ export interface ScanSession {
   status: 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
   completed_at?: string;
   webhook_sent?: boolean;
-  invoice_image_url?: string;  // URL of uploaded invoice image
+  invoice_image_url?: string;
 }
 
 export interface SessionResponse {
@@ -98,17 +98,17 @@ export interface ScanRequest {
   token: string;
   barcode: string;
   parsed_data?: ParsedBarcode;
-  image_url?: string;  // Cloudinary URL (now required for all scans)
-  image_public_id?: string;  // Cloudinary public ID
+  image_url?: string;
+  image_public_id?: string;
   detected_at: string;
-  document_number?: string;  // Invoice document number for folder structure
-  scan_method?: 'barcode' | 'manual_capture' | 'manual_entry';
+  document_number?: string;
+  scan_method?: 'barcode' | 'manual_capture' | 'force_confirm';
 }
 
 // Manual Entry Data
 export interface ManualEntryData {
   token: string;
-  item_index: number;
+  item_name: string;
   weight: number;
   expiry: string;
   notes?: string;
@@ -126,6 +126,8 @@ export interface ScanResponse {
     total_weight_scanned: number;
     total_weight_expected: number;
     completion_rate: number;
+    total_boxes_scanned: number;
+    total_boxes_expected: number;
   };
   error?: string;
   message?: string;
@@ -145,7 +147,7 @@ export interface CompleteResponse {
 // OCR API types
 export interface OCRRequest {
   token: string;
-  image?: string;  // base64 image (deprecated)
+  image?: string;      // base64 image (deprecated)
   image_url?: string;  // Cloudinary URL (preferred)
   barcode: string;
 }
@@ -154,6 +156,15 @@ export interface OCRResponse {
   success: boolean;
   ocr_data?: BoxStickerOCR;
   error?: string;
+}
+
+// Issue types for OCR resolution
+export interface OCRIssue {
+  barcode: string;
+  image_url: string;
+  type: 'missing_name' | 'missing_weight' | 'missing_both';
+  inferred_weight?: number;
+  ocr_data?: BoxStickerOCR;
 }
 
 // UI State Types
