@@ -95,6 +95,8 @@ export async function POST(request: NextRequest) {
             requestBody: fileMetadata,
             media: media,
             fields: 'id, name, webViewLink, webContentLink',
+            supportsAllDrives: true,  // CRITICAL: Enable Shared Drives support
+            supportsTeamDrives: true, // Legacy parameter for compatibility
         });
 
         const fileId = uploadResponse.data.id;
@@ -106,6 +108,8 @@ export async function POST(request: NextRequest) {
                 role: 'reader',
                 type: 'anyone',
             },
+            supportsAllDrives: true,  // CRITICAL: Enable Shared Drives support
+            supportsTeamDrives: true, // Legacy parameter for compatibility
         });
 
         // Generate public URL
