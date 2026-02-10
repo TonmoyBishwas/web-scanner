@@ -98,24 +98,49 @@ export async function POST(request: NextRequest) {
       publicId = `box-${barcode}-${Date.now()}`;
     }
 
-    // Upload to Cloudinary
-    const uploadOptions: any = {
-      folder,
-      public_id: publicId,
-      resource_type: 'image',
-      transformation: [
-        { quality: 'auto', fetch_format: 'auto' },
-      ],
-      overwrite: true,
-    };
+    // Upload to Cloudinary with retry logic
+    let result;
 
-    if (process.env.CLOUDINARY_UPLOAD_PRESET) {
-      uploadOptions.upload_preset = process.env.CLOUDINARY_UPLOAD_PRESET;
+    // Attempt 1: With preset (if configured)
+    try {
+      const uploadOptions: any = {
+        folder,
+        public_id: publicId,
+        resource_type: 'image',
+        transformation: [
+          { quality: 'auto', fetch_format: 'auto' },
+        ],
+        overwrite: true,
+      };
+
+      if (process.env.CLOUDINARY_UPLOAD_PRESET) {
+        uploadOptions.upload_preset = process.env.CLOUDINARY_UPLOAD_PRESET;
+      }
+
+      console.log(`[API/cloudinary] Uploading to folder: ${folder}, public_id: ${publicId}, preset: ${uploadOptions.upload_preset || 'none'}`);
+      result = await cloudinary.uploader.upload(uploadSource, uploadOptions);
+
+    } catch (presetError) {
+      console.warn('[API/cloudinary] Upload with preset failed, retrying without preset...', presetError);
+
+      // Attempt 2: Without preset (fallback to default authenticated upload)
+      try {
+        const fallbackOptions: any = {
+          folder,
+          public_id: publicId,
+          resource_type: 'image',
+          overwrite: true,
+        };
+
+        result = await cloudinary.uploader.upload(uploadSource, fallbackOptions);
+        console.log('[API/cloudinary] Fallback upload succeeded');
+
+      } catch (fallbackError) {
+        // Both failed
+        console.error('[API/cloudinary] Fallback upload failed:', fallbackError);
+        throw fallbackError;
+      }
     }
-
-    console.log(`[API/cloudinary] Uploading to folder: ${folder}, public_id: ${publicId}`);
-
-    const result = await cloudinary.uploader.upload(uploadSource, uploadOptions);
 
     return NextResponse.json({
       success: true,
