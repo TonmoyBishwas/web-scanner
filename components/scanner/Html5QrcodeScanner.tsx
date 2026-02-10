@@ -96,6 +96,9 @@ export function Html5QrcodeScanner({
       return selectedCamera.id;
     } catch (err) {
       console.error('[Html5Qrcode] Error getting cameras:', err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setScannerState(`Camera error: ${errMsg}`);
+      setError(`Camera access failed: ${errMsg}`);
       return undefined;
     }
   };
@@ -426,9 +429,10 @@ export function Html5QrcodeScanner({
         // Start scanning
         await startScanning(cameraId);
       } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : 'Failed to initialize scanner';
-        console.error('[Html5Qrcode] Initialization error:', err);
-        setError(errorMsg);
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const fullError = `Camera Error: ${errorMsg}\n\nTroubleshooting:\n- Check camera permissions in browser settings\n- Ensure you're using HTTPS (not HTTP)\n- Try refreshing the page\n- Check if another app is using the camera`;
+        console.error('[Html5Qrcode] Initialization error:', err, JSON.stringify(err));
+        setError(fullError);
         setIsScanning(false);
       }
     }
@@ -456,9 +460,12 @@ export function Html5QrcodeScanner({
   if (error && !error.includes('Duplicate') && !error.includes('No barcode')) {
     return (
       <div className="flex items-center justify-center h-full bg-gray-900 text-white p-4">
-        <div className="text-center">
+        <div className="text-center max-w-md">
           <div className="text-4xl mb-4">📷</div>
-          <p className="text-red-400 mb-4">{error}</p>
+          <p className="text-red-400 mb-4 text-sm whitespace-pre-line">{error}</p>
+          <div className="text-xs text-gray-400 mb-4">
+            Protocol: {window.location.protocol}
+          </div>
           <button onClick={() => window.location.reload()} className="px-4 py-2 bg-blue-600 rounded hover:bg-blue-700">
             Retry
           </button>
