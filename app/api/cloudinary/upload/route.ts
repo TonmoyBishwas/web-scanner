@@ -151,9 +151,11 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('Cloudinary upload error:', error);
+    console.error('Cloudinary upload error (full):', JSON.stringify(error, null, 2));
+    const errorMsg = error instanceof Error ? error.message : 'Upload failed';
+    const errorDetails = error && typeof error === 'object' ? JSON.stringify(error) : errorMsg;
     return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : 'Upload failed' },
+      { success: false, error: errorMsg, details: errorDetails },
       { status: 500 }
     );
   }

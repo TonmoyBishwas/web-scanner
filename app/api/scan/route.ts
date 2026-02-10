@@ -32,13 +32,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // image_url is now required for all scans
-    if (!image_url) {
-      return NextResponse.json(
-        { success: false, error: 'Missing required field: image_url is required for all scans' },
-        { status: 400 }
-      );
-    }
+    // image_url is optional - scans can proceed without images (manual entry fallback)
 
     let response: ScanResponse | null = null;
     let errorResponse: NextResponse | null = null;
@@ -81,7 +75,7 @@ export async function POST(request: NextRequest) {
         const scanEntry: ScanEntry = {
           barcode: boxData?.raw_barcode || barcode,
           scanned_at: detected_at || new Date().toISOString(),
-          image_url: image_url,
+          image_url: image_url || '',  // Optional - empty if Cloudinary fails
           image_public_id: image_public_id || '',
           ocr_status: 'pending',
           scan_method: scan_method as 'barcode' | 'manual_capture' | 'force_confirm'
