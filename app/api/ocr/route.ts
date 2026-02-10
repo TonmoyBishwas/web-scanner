@@ -129,8 +129,22 @@ export async function POST(request: NextRequest) {
 
               // Match OCR product name to invoice item and update scanned_items
               if (ocrData.product_name) {
+                const productName = ocrData.product_name;
                 const matchedItem = updatedSession.invoice_items.find(
-                  (item: any) => item.item_name_hebrew === ocrData.product_name
+                  (item: any) => {
+                    // Exact Hebrew match
+                    if (item.item_name_hebrew === productName) return true;
+                    // Substring containment (either direction) for Hebrew
+                    if (item.item_name_hebrew && (
+                      productName.includes(item.item_name_hebrew) ||
+                      item.item_name_hebrew.includes(productName)
+                    )) return true;
+                    // Case-insensitive English match
+                    if (item.item_name_english &&
+                      item.item_name_english.toLowerCase() === productName.toLowerCase()
+                    ) return true;
+                    return false;
+                  }
                 );
 
                 if (matchedItem) {
