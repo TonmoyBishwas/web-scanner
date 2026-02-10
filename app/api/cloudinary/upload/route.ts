@@ -99,16 +99,23 @@ export async function POST(request: NextRequest) {
     }
 
     // Upload to Cloudinary
-    const result = await cloudinary.uploader.upload(uploadSource, {
+    const uploadOptions: any = {
       folder,
       public_id: publicId,
-      upload_preset: process.env.CLOUDINARY_UPLOAD_PRESET || 'warehouse_scans',
       resource_type: 'image',
       transformation: [
         { quality: 'auto', fetch_format: 'auto' },
       ],
-      overwrite: true,  // Allow overwriting if same barcode in same invoice
-    });
+      overwrite: true,
+    };
+
+    if (process.env.CLOUDINARY_UPLOAD_PRESET) {
+      uploadOptions.upload_preset = process.env.CLOUDINARY_UPLOAD_PRESET;
+    }
+
+    console.log(`[API/cloudinary] Uploading to folder: ${folder}, public_id: ${publicId}`);
+
+    const result = await cloudinary.uploader.upload(uploadSource, uploadOptions);
 
     return NextResponse.json({
       success: true,

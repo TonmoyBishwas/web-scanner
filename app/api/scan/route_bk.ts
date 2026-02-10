@@ -79,12 +79,10 @@ export async function POST(request: NextRequest) {
     };
 
     // Add to scanned barcodes
-    console.log(`[API/scan] Adding barcode ${barcode} to session ${token}. Previous count: ${session.scanned_barcodes.length}`);
     session.scanned_barcodes.push(scanEntry);
 
     // Save session
     await sessionStorage.set(token, session, { ex: 3600 });
-    console.log(`[API/scan] Saved session ${token}. New count: ${session.scanned_barcodes.length}`);
 
     // Calculate box progress
     const totalBoxesScanned = session.scanned_barcodes.length;

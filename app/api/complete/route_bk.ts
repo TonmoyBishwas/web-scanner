@@ -21,7 +21,6 @@ export async function POST(request: NextRequest) {
     // Get session
     const session = await sessionStorage.get(token);
     console.log(`[API/complete] Completing session ${token}. Scanned barcodes: ${session?.scanned_barcodes?.length}, Scanned items keys: ${Object.keys(session?.scanned_items || {}).join(',')}`);
-    console.log(`[API/complete] Completing session ${token}. Scanned barcodes: ${session?.scanned_barcodes?.length}, Scanned items keys: ${Object.keys(session?.scanned_items || {}).join(',')}`);
 
     if (!session) {
       return NextResponse.json(

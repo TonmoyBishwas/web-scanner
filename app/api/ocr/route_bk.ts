@@ -130,84 +130,43 @@ export async function POST(request: NextRequest) {
               // Match OCR product name to invoice item and update scanned_items
               if (ocrData.product_name) {
                 const productName = ocrData.product_name;
-
-                // CRITICAL FIX: Re-fetch session to minimize race condition
-                // Other scans might have happened while OCR was processing
-                // We must apply our changes to the LATEST session state
-                const latestSession = await sessionStorage.get(token);
-
-                if (latestSession) {
-                  console.log(`[API/ocr] Applying OCR for ${barcode}. Session barcodes count: ${latestSession.scanned_barcodes.length}`);
-
-                  // Find the entry in the LATEST session
-                  const entryToUpdate = latestSession.scanned_barcodes.find(
-                    (b: ScanEntry) => b.barcode === barcode
-                  );
-
-                  if (entryToUpdate) {
-                    // Update OCR data
-                    entryToUpdate.ocr_data = ocrData;
-                    entryToUpdate.ocr_status = 'complete';
-                    entryToUpdate.ocr_processed_at = new Date().toISOString();
-
-                    // Update scanned items aggregate
-                    const matchedItem = latestSession.invoice_items.find(
-                      (item: any) => {
-                        // Exact Hebrew match
-                        if (item.item_name_hebrew === productName) return true;
-                        // Substring containment (either direction) for Hebrew
-                        if (item.item_name_hebrew && (
-                          productName.includes(item.item_name_hebrew) ||
-                          item.item_name_hebrew.includes(productName)
-                        )) return true;
-                        // Case-insensitive English match
-                        if (item.item_name_english &&
-                          item.item_name_english.toLowerCase() === productName.toLowerCase()
-                        ) return true;
-                        return false;
-                      }
-                    );
-
-                    if (matchedItem) {
-                      const itemIndex = matchedItem.item_index;
-                      if (!latestSession.scanned_items[itemIndex]) {
-                        latestSession.scanned_items[itemIndex] = {
-                          item_index: matchedItem.item_index,
-                          item_name: matchedItem.item_name_english,
-                          scanned_count: 0,
-                          scanned_weight: 0,
-                          expected_weight: matchedItem.quantity_kg,
-                          expected_boxes: matchedItem.expected_boxes
-                        };
-                      }
-                      latestSession.scanned_items[itemIndex].scanned_count += 1;
-                      if (ocrData.weight_kg) {
-                        latestSession.scanned_items[itemIndex].scanned_weight += ocrData.weight_kg;
-                      }
-                      console.log(`[API/ocr] Matched item ${itemIndex} (${matchedItem.item_name_english}). New count: ${latestSession.scanned_items[itemIndex].scanned_count}`);
-                    } else {
-                      console.log(`[API/ocr] No matching item found for product: ${productName}`);
-                    }
-
-                    // Save the LATEST session
-                    await sessionStorage.set(token, latestSession, { ex: 3600 });
-                    console.log(`[API/ocr] Saved session with OCR update for ${barcode}`);
-                  } else {
-                    console.warn(`[API/ocr] Barcode ${barcode} not found in latest session!`);
+                const matchedItem = updatedSession.invoice_items.find(
+                  (item: any) => {
+                    // Exact Hebrew match
+                    if (item.item_name_hebrew === productName) return true;
+                    // Substring containment (either direction) for Hebrew
+                    if (item.item_name_hebrew && (
+                      productName.includes(item.item_name_hebrew) ||
+                      item.item_name_hebrew.includes(productName)
+                    )) return true;
+                    // Case-insensitive English match
+                    if (item.item_name_english &&
+                      item.item_name_english.toLowerCase() === productName.toLowerCase()
+                    ) return true;
+                    return false;
                   }
-                }
-              } else {
-                // No product name, just save OCR data to latest session
-                const latestSession = await sessionStorage.get(token);
-                if (latestSession) {
-                  const entryToUpdate = latestSession.scanned_barcodes.find((b: ScanEntry) => b.barcode === barcode);
-                  if (entryToUpdate) {
-                    entryToUpdate.ocr_data = ocrData;
-                    entryToUpdate.ocr_status = 'complete';
-                    await sessionStorage.set(token, latestSession, { ex: 3600 });
+                );
+
+                if (matchedItem) {
+                  const itemIndex = matchedItem.item_index;
+                  if (!updatedSession.scanned_items[itemIndex]) {
+                    updatedSession.scanned_items[itemIndex] = {
+                      item_index: matchedItem.item_index,
+                      item_name: matchedItem.item_name_english,
+                      scanned_count: 0,
+                      scanned_weight: 0,
+                      expected_weight: matchedItem.quantity_kg,
+                      expected_boxes: matchedItem.expected_boxes
+                    };
+                  }
+                  updatedSession.scanned_items[itemIndex].scanned_count += 1;
+                  if (ocrData.weight_kg) {
+                    updatedSession.scanned_items[itemIndex].scanned_weight += ocrData.weight_kg;
                   }
                 }
               }
+
+              await sessionStorage.set(token, updatedSession, { ex: 3600 });
             }
           }
         }
