@@ -40,7 +40,7 @@ export const sessionStorage = {
     const redis = getRedisClient();
     const key = `session:${token}`;
     if (options?.ex) {
-      await redis.setex(key, options.ex, JSON.stringify(data));
+      await redis.set(key, JSON.stringify(data), { ex: options.ex });
     } else {
       await redis.set(key, JSON.stringify(data));
     }
