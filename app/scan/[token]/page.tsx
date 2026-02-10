@@ -128,7 +128,7 @@ export default function ScanPage({
       addErrorLog(msg);
       return null;
     }
-  }, [addErrorLog]);
+  }, [addErrorLog, session]);
 
   // ── Trigger Background OCR ───────────────────────────────────
   const triggerOCR = useCallback(async (barcode: string, imageUrl: string) => {
