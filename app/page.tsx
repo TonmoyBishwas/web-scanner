@@ -17,7 +17,7 @@ export default function Home() {
           </ul>
         </div>
         <p className="mt-8 text-sm text-gray-500">
-          Powered by Scandit SDK
+          Powered by html5-qrcode
         </p>
       </div>
     </div>
