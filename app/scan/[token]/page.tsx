@@ -289,9 +289,8 @@ export default function ScanPage({
       return; // Exit early - don't process duplicate
     }
 
-    // Add to scanned set and increment counter (only for non-duplicates)
+    // Add to scanned set (counter uses scannedBarcodes.size to avoid duplicate bugs)
     setScannedBarcodes(prev => new Map(prev).set(barcode, data));
-    setBoxesScanned(prev => prev + 1);
 
     // Check if image was captured
     if (!imageData) {
@@ -593,8 +592,8 @@ export default function ScanPage({
             <span className="text-2xl">📦</span>
             <div>
               <h1 className="text-lg font-bold">
-                <span className={boxesScanned >= boxesExpected ? 'text-green-400' : 'text-white'}>
-                  {boxesScanned}
+                <span className={scannedBarcodes.size >= boxesExpected ? 'text-green-400' : 'text-white'}>
+                  {scannedBarcodes.size}
                 </span>
                 <span className="text-gray-500 mx-1">/</span>
                 <span className="text-gray-400">{boxesExpected}</span>
@@ -620,9 +619,9 @@ export default function ScanPage({
         {/* Progress bar */}
         <div className="mt-2 bg-gray-700 rounded-full h-1.5">
           <div
-            className={`h-1.5 rounded-full transition-all duration-500 ${boxesScanned >= boxesExpected ? 'bg-green-500' : 'bg-blue-500'
-              }`}
-            style={{ width: `${boxesExpected > 0 ? Math.min(100, (boxesScanned / boxesExpected) * 100) : 0}%` }}
+            className={`h-1.5 rounded-full transition-all duration-500 ${scannedBarcodes.size >= boxesExpected ? 'bg-green-500' : 'bg-blue-500'}`}
+            aria-label="Progress"
+            style={{ width: `${boxesExpected > 0 ? Math.min(100, (scannedBarcodes.size / boxesExpected) * 100) : 0}%` }}
           ></div>
         </div>
       </div>
@@ -685,33 +684,58 @@ export default function ScanPage({
         )}
       </div>
 
-      {/* ── OCR Status Panel (New) ──────────────────────────── */}
+      {/* ── OCR Status Panel (Redesigned) ──────────────────────────── */}
       {pendingOCR.size > 0 && (
-        <div className="fixed top-20 left-4 right-4 z-40 bg-blue-900/90 backdrop-blur-sm border border-blue-500 rounded-lg p-3 shadow-xl">
+        <div className="fixed top-24 left-2 right-2 z-40 bg-gradient-to-r from-purple-900/95 to-blue-900/95 backdrop-blur-sm border border-purple-400 rounded-xl p-3 shadow-2xl">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
-              <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
-              <span className="text-white font-bold text-sm">Processing OCR ({pendingOCR.size})</span>
+              <div className="relative">
+                <div className="animate-spin h-5 w-5 border-3 border-purple-300 border-t-transparent rounded-full"></div>
+                <div className="absolute inset-0 animate-pulse">🤖</div>
+              </div>
+              <div>
+                <div className="text-white font-bold text-sm">AI Reading Box Labels...</div>
+                <div className="text-purple-200 text-xs">Extracting product names &amp; weights from {pendingOCR.size} {pendingOCR.size === 1 ? 'box' : 'boxes'}</div>
+              </div>
             </div>
           </div>
-          <div className="space-y-1 max-h-32 overflow-y-auto">
+          <div className="space-y-1.5 max-h-40 overflow-y-auto">
             {Array.from(pendingOCR).slice(0, 3).map((barcode) => {
               const result = ocrResults.get(barcode);
               return (
-                <div key={barcode} className="text-xs bg-black/30 p-2 rounded">
-                  <div className="text-blue-200 font-mono truncate">#{barcode.slice(-8)}</div>
-                  {result && (
-                    <div className="text-green-300 mt-1">
-                      ✓ {result.product_name || 'N/A'} • {result.weight_kg ? `${result.weight_kg} kg` : 'No weight'}
+                <div key={barcode} className="bg-black/40 p-2.5 rounded-lg border border-purple-500/30">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-purple-200 text-xs font-mono mb-1">Box #{barcode.slice(-6)}</div>
+                      {result ? (
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1">
+                            <span className="text-green-400 text-lg">✓</span>
+                            <span className="text-green-300 text-sm font-semibold truncate">
+                              {result.product_name || 'Product name unclear'}
+                            </span>
+                          </div>
+                          <div className="text-blue-200 text-xs ml-6">
+                            {result.weight_kg ? `Weight: ${result.weight_kg} kg` : 'Weight: Not found on label'}
+                          </div>
+                          {result.expiry_date && (
+                            <div className="text-yellow-200 text-xs ml-6">Expiry: {result.expiry_date}</div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <div className="animate-bounce text-yellow-400">⏳</div>
+                          <span className="text-yellow-200 text-xs">Gemini AI analyzing image...</span>
+                        </div>
+                      )}
                     </div>
-                  )}
-                  {!result && <div className="text-yellow-300 mt-1">⏳ Waiting for Gemini...</div>}
+                  </div>
                 </div>
               );
             })}
             {pendingOCR.size > 3 && (
-              <div className="text-xs text-blue-300 text-center py-1">
-                +{pendingOCR.size - 3} more processing...
+              <div className="text-center py-2 text-purple-300 text-xs font-medium">
+                + {pendingOCR.size - 3} more boxes being analyzed...
               </div>
             )}
           </div>
