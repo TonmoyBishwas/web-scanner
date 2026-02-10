@@ -108,7 +108,7 @@ export default function ScanPage({
   // ── Upload Image to Cloudinary ────────────────────────────────
   const uploadToCloudinary = useCallback(async (imageData: string): Promise<{ url: string, publicId: string } | null> => {
     try {
-      const res = await fetch('/api/gdrive/upload', {
+      const res = await fetch('/api/cloudinary/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
