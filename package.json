@@ -15,6 +15,7 @@
     "@zxing/library": "^0.21.3",
     "axios": "^1.13.4",
     "cloudinary": "^2.9.0",
+    "googleapis": "^144.0.0",
     "html5-qrcode": "^2.3.8",
     "nanoid": "^5.1.6",
     "next": "16.1.6",
