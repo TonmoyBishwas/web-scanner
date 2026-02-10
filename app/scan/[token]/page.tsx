@@ -51,6 +51,15 @@ export default function ScanPage({
   const [showForceConfirm, setShowForceConfirm] = useState(false);
   const [manualEntries, setManualEntries] = useState<ManualEntryData[]>([]);
 
+  // Error logging for mobile debugging
+  const [errorLog, setErrorLog] = useState<Array<{ time: string, msg: string }>>([]);
+  const [showErrorLog, setShowErrorLog] = useState(false);
+  const addErrorLog = useCallback((msg: string) => {
+    const time = new Date().toLocaleTimeString();
+    setErrorLog(prev => [...prev, { time, msg }]);
+    console.error(`[ERROR ${time}]`, msg);
+  }, []);
+
   // Polling ref
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -108,14 +117,18 @@ export default function ScanPage({
           document_number: session?.document_number,
         })
       });
-      if (!res.ok) throw new Error('Upload failed');
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`Upload failed (${res.status}): ${errorText}`);
+      }
       const data = await res.json();
       return { url: data.secure_url, publicId: data.public_id };
     } catch (err) {
-      console.error('Cloudinary upload error:', err);
+      const msg = `Cloudinary upload error: ${err instanceof Error ? err.message : String(err)}`;
+      addErrorLog(msg);
       return null;
     }
-  }, []);
+  }, [addErrorLog]);
 
   // ── Trigger Background OCR ───────────────────────────────────
   const triggerOCR = useCallback(async (barcode: string, imageUrl: string) => {
@@ -262,6 +275,13 @@ export default function ScanPage({
     setScannedBarcodes(prev => new Map(prev).set(barcode, data));
     setBoxesScanned(prev => prev + 1);
 
+    // Check if image was captured
+    if (!imageData) {
+      addErrorLog(`Barcode ${barcode}: No image captured by scanner`);
+    } else {
+      addErrorLog(`Barcode ${barcode}: Image captured (${Math.round(imageData.length / 1024)}KB)`);
+    }
+
     // Upload image to Cloudinary
     let imageUrl = '';
     let publicId = '';
@@ -270,6 +290,9 @@ export default function ScanPage({
       if (upload) {
         imageUrl = upload.url;
         publicId = upload.publicId;
+        addErrorLog(`Barcode ${barcode}: Uploaded to Cloudinary`);
+      } else {
+        addErrorLog(`Barcode ${barcode}: Cloudinary upload failed`);
       }
     }
 
@@ -292,21 +315,26 @@ export default function ScanPage({
 
       if (!result.success) {
         if (result.is_duplicate) {
-          // Already handled above
+          addErrorLog(`Barcode ${barcode}: Duplicate (ignored)`);
           return;
         }
-        console.error('Scan error:', result.error);
+        addErrorLog(`/api/scan failed: ${result.error}`);
         return;
       }
+
+      addErrorLog(`Barcode ${barcode}: Saved to session`);
 
       // Trigger background OCR
       if (imageUrl) {
         triggerOCR(barcode, imageUrl);
+        addErrorLog(`Barcode ${barcode}: OCR started`);
+      } else {
+        addErrorLog(`Barcode ${barcode}: No OCR (no image)`);
       }
     } catch (err) {
-      console.error('Scan submit error:', err);
+      addErrorLog(`/api/scan error: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }, [scannedBarcodes, token, uploadToCloudinary, triggerOCR]);
+  }, [scannedBarcodes, token, uploadToCloudinary, triggerOCR, addErrorLog]);
 
   // ── Manual Capture Handler ────────────────────────────────────
   const handleManualCapture = useCallback(async (imageData: string) => {
@@ -638,6 +666,52 @@ export default function ScanPage({
           </p>
         )}
       </div>
+
+      {/* ── Error Log Panel (Mobile Debug) ──────────────────── */}
+      {errorLog.length > 0 && (
+        <div className="fixed bottom-20 right-4 z-50">
+          {!showErrorLog ? (
+            <button
+              onClick={() => setShowErrorLog(true)}
+              className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-full shadow-lg text-sm font-bold"
+            >
+              🐛 Debug Log ({errorLog.length})
+            </button>
+          ) : (
+            <div className="bg-gray-900 border border-red-500 rounded-lg shadow-2xl w-80 max-h-96 flex flex-col">
+              <div className="flex justify-between items-center p-3 border-b border-gray-700">
+                <span className="text-white font-bold text-sm">🐛 Debug Log</span>
+                <button
+                  onClick={() => setShowErrorLog(false)}
+                  className="text-gray-400 hover:text-white text-lg"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                {errorLog.map((entry, i) => (
+                  <div key={i} className="text-xs bg-black/50 p-2 rounded">
+                    <span className="text-gray-500">{entry.time}</span>
+                    <div className="text-yellow-300 mt-1">{entry.msg}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="p-2 border-t border-gray-700">
+                <button
+                  onClick={() => {
+                    const text = errorLog.map(e => `${e.time}: ${e.msg}`).join('\n');
+                    navigator.clipboard.writeText(text);
+                    alert('Log copied to clipboard!');
+                  }}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs"
+                >
+                  Copy All
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Force Confirm Modal ───────────────────────────────── */}
       {showForceConfirm && session && (
