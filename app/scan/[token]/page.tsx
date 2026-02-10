@@ -41,6 +41,8 @@ export default function ScanPage({
   const [ocrResults, setOcrResults] = useState<Map<string, BoxStickerOCR>>(new Map());
   const [boxesScanned, setBoxesScanned] = useState(0);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const [showOCRDrawer, setShowOCRDrawer] = useState(false);
+  const [ocrImageUrls, setOcrImageUrls] = useState<Map<string, string>>(new Map());
   const [boxesExpected, setBoxesExpected] = useState(0);
 
   // OCR tracking
@@ -134,6 +136,7 @@ export default function ScanPage({
   // ── Trigger Background OCR ───────────────────────────────────
   const triggerOCR = useCallback(async (barcode: string, imageUrl: string) => {
     setPendingOCR(prev => new Set(prev).add(barcode));
+    setOcrImageUrls(prev => new Map(prev).set(barcode, imageUrl));
 
     try {
       await fetch('/api/ocr', {
@@ -661,7 +664,7 @@ export default function ScanPage({
             onClick={() => setShowForceConfirm(true)}
             className="w-full py-3 bg-yellow-600 hover:bg-yellow-700 rounded-lg text-sm font-medium transition-colors"
           >
-            ⚡ Force Confirm ({boxesExpected - boxesScanned} boxes remaining)
+            ⚡ Force Confirm ({boxesExpected - scannedBarcodes.size} boxes remaining)
           </button>
         )}
 
@@ -676,80 +679,125 @@ export default function ScanPage({
         )}
 
         {/* Scanned barcodes summary */}
-        {boxesScanned > 0 && phase === 'scanning' && (
+        {scannedBarcodes.size > 0 && phase === 'scanning' && (
           <p className="text-center text-xs text-gray-500">
-            {boxesScanned} box{boxesScanned !== 1 ? 'es' : ''} scanned
+            {scannedBarcodes.size} box{scannedBarcodes.size !== 1 ? 'es' : ''} scanned
             {pendingOCR.size > 0 ? ` • ${pendingOCR.size} OCR pending` : ''}
           </p>
         )}
       </div>
 
-      {/* ── OCR Status Panel (Redesigned) ──────────────────────────── */}
-      {pendingOCR.size > 0 && (
-        <div className="fixed top-24 left-2 right-2 z-40 bg-gradient-to-r from-purple-900/95 to-blue-900/95 backdrop-blur-sm border border-purple-400 rounded-xl p-3 shadow-2xl">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <div className="animate-spin h-5 w-5 border-3 border-purple-300 border-t-transparent rounded-full"></div>
-                <div className="absolute inset-0 animate-pulse">🤖</div>
-              </div>
-              <div>
-                <div className="text-white font-bold text-sm">AI Reading Box Labels...</div>
-                <div className="text-purple-200 text-xs">Extracting product names &amp; weights from {pendingOCR.size} {pendingOCR.size === 1 ? 'box' : 'boxes'}</div>
-              </div>
+      {/* ── OCR Circular FAB (Bottom-Left) ──────────────────────────── */}
+      {ocrImageUrls.size > 0 && (
+        <button
+          onClick={() => setShowOCRDrawer(!showOCRDrawer)}
+          className="fixed bottom-24 left-4 z-50 w-14 h-14 rounded-full shadow-2xl flex items-center justify-center transition-all active:scale-95"
+          style={{
+            background: pendingOCR.size > 0
+              ? 'linear-gradient(135deg, #7c3aed, #3b82f6)'
+              : 'linear-gradient(135deg, #059669, #10b981)',
+          }}
+        >
+          {/* SVG Progress Ring */}
+          <svg className="absolute inset-0 w-14 h-14 -rotate-90" viewBox="0 0 56 56">
+            <circle cx="28" cy="28" r="24" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="3" />
+            <circle
+              cx="28" cy="28" r="24" fill="none"
+              stroke={pendingOCR.size > 0 ? '#a78bfa' : '#34d399'}
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeDasharray={`${2 * Math.PI * 24}`}
+              strokeDashoffset={`${2 * Math.PI * 24 * (1 - (ocrResults.size / Math.max(ocrImageUrls.size, 1)))}`}
+              className="transition-all duration-700"
+            />
+          </svg>
+          {/* Center content */}
+          <div className="relative z-10 text-center">
+            {pendingOCR.size > 0 ? (
+              <div className="text-white text-lg animate-pulse">🤖</div>
+            ) : (
+              <div className="text-white text-lg">✓</div>
+            )}
+            <div className="text-white text-[9px] font-bold leading-none">
+              {ocrResults.size}/{ocrImageUrls.size}
             </div>
           </div>
-          <div className="space-y-1.5 max-h-40 overflow-y-auto">
-            {Array.from(pendingOCR).slice(0, 3).map((barcode) => {
+        </button>
+      )}
+
+      {/* ── Debug Toggle Button (Bottom-Right) ──────────────────── */}
+      {errorLog.length > 0 && (
+        <button
+          onClick={() => { setShowDebugPanel(!showDebugPanel); setShowOCRDrawer(false); }}
+          className="fixed bottom-24 right-4 z-50 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-full shadow-lg text-sm font-bold"
+        >
+          🐛 {showDebugPanel ? 'Hide' : 'Debug'} ({errorLog.length})
+        </button>
+      )}
+
+      {/* ── OCR Details Bottom Drawer ──────────────────────────── */}
+      {showOCRDrawer && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-gray-900 border-t-2 border-purple-500 shadow-2xl transition-transform" style={{ maxHeight: '55vh' }}>
+          <div className="flex justify-between items-center p-3 border-b border-gray-700 bg-gradient-to-r from-purple-900 to-blue-900">
+            <div>
+              <span className="text-white font-bold text-sm">🤖 AI OCR Results</span>
+              <span className="text-purple-300 text-xs ml-2">
+                {ocrResults.size}/{ocrImageUrls.size} complete
+              </span>
+            </div>
+            <button
+              onClick={() => setShowOCRDrawer(false)}
+              className="text-gray-400 hover:text-white text-lg px-2"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="overflow-y-auto p-3 space-y-3" style={{ maxHeight: 'calc(55vh - 50px)' }}>
+            {Array.from(ocrImageUrls.entries()).map(([barcode, imageUrl]) => {
               const result = ocrResults.get(barcode);
+              const isPending = pendingOCR.has(barcode);
               return (
-                <div key={barcode} className="bg-black/40 p-2.5 rounded-lg border border-purple-500/30">
-                  <div className="flex items-start justify-between gap-2">
+                <div key={barcode} className="bg-black/40 rounded-lg border border-gray-700 overflow-hidden">
+                  <div className="flex gap-3 p-3">
+                    {/* Image thumbnail */}
+                    <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-gray-800">
+                      <img
+                        src={imageUrl}
+                        alt={`Box ${barcode.slice(-6)}`}
+                        className="w-full h-full object-cover"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                      />
+                    </div>
+                    {/* OCR data */}
                     <div className="flex-1 min-w-0">
-                      <div className="text-purple-200 text-xs font-mono mb-1">Box #{barcode.slice(-6)}</div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-purple-300 text-xs font-mono">Box #{barcode.slice(-6)}</span>
+                        {result ? (
+                          <span className="text-green-400 text-xs px-1.5 py-0.5 bg-green-900/50 rounded-full">✓ Done</span>
+                        ) : isPending ? (
+                          <span className="text-yellow-400 text-xs px-1.5 py-0.5 bg-yellow-900/50 rounded-full animate-pulse">⏳ Analyzing</span>
+                        ) : null}
+                      </div>
                       {result ? (
                         <div className="space-y-0.5">
-                          <div className="flex items-center gap-1">
-                            <span className="text-green-400 text-lg">✓</span>
-                            <span className="text-green-300 text-sm font-semibold truncate">
-                              {result.product_name || 'Product name unclear'}
-                            </span>
+                          <div className="text-green-300 text-sm font-semibold truncate">
+                            {result.product_name || 'Product unclear'}
                           </div>
-                          <div className="text-blue-200 text-xs ml-6">
-                            {result.weight_kg ? `Weight: ${result.weight_kg} kg` : 'Weight: Not found on label'}
+                          <div className="text-blue-200 text-xs">
+                            {result.weight_kg ? `${result.weight_kg} kg` : 'No weight'}
+                            {result.expiry_date ? ` · Exp: ${result.expiry_date}` : ''}
                           </div>
-                          {result.expiry_date && (
-                            <div className="text-yellow-200 text-xs ml-6">Expiry: {result.expiry_date}</div>
-                          )}
                         </div>
                       ) : (
-                        <div className="flex items-center gap-1.5">
-                          <div className="animate-bounce text-yellow-400">⏳</div>
-                          <span className="text-yellow-200 text-xs">Gemini AI analyzing image...</span>
-                        </div>
+                        <div className="text-yellow-200 text-xs">Gemini analyzing image...</div>
                       )}
                     </div>
                   </div>
                 </div>
               );
             })}
-            {pendingOCR.size > 3 && (
-              <div className="text-center py-2 text-purple-300 text-xs font-medium">
-                + {pendingOCR.size - 3} more boxes being analyzed...
-              </div>
-            )}
           </div>
         </div>
-      )}
-
-      {/* ── Debug Toggle Button (Always Visible) ──────────────────── */}
-      {errorLog.length > 0 && (
-        <button
-          onClick={() => setShowDebugPanel(!showDebugPanel)}
-          className="fixed bottom-24 right-4 z-50 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-full shadow-lg text-sm font-bold"
-        >
-          🐛 {showDebugPanel ? 'Hide' : 'Debug'} ({errorLog.length})
-        </button>
       )}
 
       {/* ── Debug Panel (Bottom Drawer) ──────────────────────────── */}

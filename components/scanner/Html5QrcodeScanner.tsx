@@ -548,85 +548,12 @@ export function Html5QrcodeScanner({
         </div>
       </div>
 
-      {/* Debug panel - shows last detected barcode */}
-      {showDebug && (
-        <div className="absolute bottom-4 left-4 right-4 max-w-md mx-auto">
-          <div className="bg-gray-900 bg-opacity-90 text-white p-3 rounded-lg shadow-lg">
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-xs font-bold text-green-400">🔍 DEBUG PANEL</span>
-              <button
-                onClick={() => setShowDebug(false)}
-                className="text-xs text-gray-400 hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Scanner State - most important for debugging */}
-            <div className="mb-2 bg-blue-900 bg-opacity-50 p-2 rounded">
-              <div className="text-xs text-gray-400">Status:</div>
-              <div className="text-sm font-bold text-blue-300">
-                {scannerState}
-              </div>
-            </div>
-
-            {/* Last detected barcode */}
-            <div className="mb-2">
-              <div className="text-xs text-gray-400">Raw Barcode:</div>
-              <div className="bg-black p-2 rounded mt-1 break-all font-mono text-xs">
-                {lastDetectedBarcode ? (
-                  <span className="text-green-400">{lastDetectedBarcode}</span>
-                ) : (
-                  <span className="text-gray-500">No barcode detected yet</span>
-                )}
-              </div>
-            </div>
-
-            {/* Parsed data */}
-            {lastParsedData && (
-              <div className="mb-2 bg-black p-2 rounded">
-                <div className="text-xs text-gray-400 mb-1">Parsed Data:</div>
-                <div className="grid grid-cols-2 gap-1 text-xs">
-                  <div>SKU: <span className="text-blue-400">{lastParsedData.sku || 'N/A'}</span></div>
-                  <div>Type: <span className="text-purple-400">{lastParsedData.type}</span></div>
-                  <div>Weight: <span className="text-yellow-400">{lastParsedData.weight} kg</span></div>
-                  <div>Expiry: <span className="text-orange-400">{lastParsedData.expiry || 'N/A'}</span></div>
-                </div>
-              </div>
-            )}
-
-            {/* Scan count */}
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-400">Detections: <span className="text-white">{scanCount}</span></span>
-              <span className="text-gray-400">Already Scanned: <span className="text-yellow-400">{scannedBarcodes.size}</span></span>
-            </div>
-
-            {/* Already scanned barcodes list */}
-            {scannedBarcodes.size > 0 && (
-              <details className="mt-2">
-                <summary className="text-xs text-gray-400 cursor-pointer hover:text-white">
-                  Scanned Barcodes ({scannedBarcodes.size})
-                </summary>
-                <div className="mt-1 max-h-20 overflow-y-auto bg-black p-2 rounded">
-                  {Array.from(scannedBarcodes.entries()).map(([barcode, data], i) => {
-                    const ocrResult = ocrResults.get(barcode);
-                    const ocrStatus = ocrResult ? '✓' : (barcode === lastDetectedBarcode ? '⋯' : '');
-                    return (
-                      <div key={i} className="text-xs mb-1 pb-1 border-b border-gray-700 last:border-0">
-                        <div className="flex justify-between items-start">
-                          <div className="font-mono text-yellow-400 break-all flex-1">{barcode}</div>
-                          <div className="text-green-400 ml-1">{ocrStatus}</div>
-                        </div>
-                        <div className="text-gray-500">{data.weight} kg | {data.expiry}</div>
-                        {ocrResult && ocrResult.product_name && (
-                          <div className="text-blue-400 truncate">{ocrResult.product_name}</div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </details>
-            )}
+      {/* Minimal scan status bar - doesn't block camera */}
+      {lastDetectedBarcode && (
+        <div className="absolute bottom-2 left-2 right-2 z-10">
+          <div className="bg-black/60 backdrop-blur-sm text-white px-3 py-1.5 rounded-full flex items-center justify-between text-xs">
+            <span className="text-green-400 truncate flex-1">✓ {lastDetectedBarcode.slice(-10)}</span>
+            <span className="text-gray-400 ml-2 flex-shrink-0">{scannedBarcodes.size} scanned</span>
           </div>
         </div>
       )}
