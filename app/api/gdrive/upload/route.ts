@@ -11,6 +11,51 @@ export interface GDriveUploadRequest {
 }
 
 /**
+ * Get or create the uploads folder inside the Shared Drive
+ */
+async function getOrCreateUploadFolder(drive: any, sharedDriveId: string): Promise<string> {
+    const folderName = 'Scanner-Uploads';
+
+    try {
+        // Search for existing folder
+        const searchResponse = await drive.files.list({
+            q: `name='${folderName}' and '${sharedDriveId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+            fields: 'files(id, name)',
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true,
+            corpora: 'drive',
+            driveId: sharedDriveId,
+        });
+
+        if (searchResponse.data.files && searchResponse.data.files.length > 0) {
+            console.log(`[API/gdrive] Using existing folder: ${folderName}`);
+            return searchResponse.data.files[0].id!;
+        }
+
+        // Create new folder
+        console.log(`[API/gdrive] Creating new folder: ${folderName}`);
+        const folderMetadata = {
+            name: folderName,
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: [sharedDriveId],
+        };
+
+        const folderResponse = await drive.files.create({
+            requestBody: folderMetadata,
+            fields: 'id',
+            supportsAllDrives: true,
+        });
+
+        return folderResponse.data.id!;
+    } catch (error) {
+        console.error('[API/gdrive] Error with upload folder, using root:', error);
+        // Fallback to using the Shared Drive root
+        return sharedDriveId;
+    }
+}
+
+
+/**
  * POST /api/gdrive/upload
  * Upload a box image to Google Drive
  */
@@ -72,18 +117,22 @@ export async function POST(request: NextRequest) {
             );
         }
 
+
+        // Get or create subfolder in Shared Drive
+        const uploadFolderId = await getOrCreateUploadFolder(drive, folderId);
+
         // Create filename
         const timestamp = Date.now();
         const fileName = document_number
             ? `${document_number}/${image_type}-${barcode}.jpg`
             : `box-${barcode}-${timestamp}.jpg`;
 
-        console.log(`[API/gdrive] Uploading to Google Drive: ${fileName}`);
+        console.log(`[API/gdrive] Uploading to Google Drive subfolder: ${fileName}`);
 
         // Upload to Google Drive
         const fileMetadata = {
             name: fileName,
-            parents: [folderId],
+            parents: [uploadFolderId],
         };
 
         const media = {
