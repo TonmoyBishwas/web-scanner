@@ -84,15 +84,19 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Call bot webhook for OCR processing (fire and forget)
-    fetch(`${botWebhookUrl}/webhook/process-box-ocr`, {
+    // Call bot webhook for OCR processing with 30-second timeout
+    const ocrPromise = fetch(`${botWebhookUrl}/webhook/process-box-ocr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageToSend, barcode })
-    })
+      body: JSON.stringify({ image: imageToSend, barcode }),
+      signal: AbortSignal.timeout(30000) // 30 second timeout
+    });
+
+    // Process OCR result (fire and forget with timeout handling)
+    ocrPromise
       .then(async (response) => {
         if (!response.ok) {
-          console.error('OCR processing failed:', response.statusText);
+          console.error(`[API/ocr] OCR processing failed for ${barcode}:`, response.statusText);
           try {
             await sessionStorage.withLock(token, async () => {
               const updatedSession = await sessionStorage.get(token);
@@ -102,8 +106,10 @@ export async function POST(request: NextRequest) {
                 );
                 if (entry) {
                   entry.ocr_status = 'failed';
+                  entry.ocr_error = `Webhook returned ${response.status}`;
                   // Save session inside lock
                   await sessionStorage.set(token, updatedSession, { ex: 3600 });
+                  console.log(`[API/ocr] Marked ${barcode} as failed due to webhook error`);
                 }
               }
             });
@@ -181,7 +187,7 @@ export async function POST(request: NextRequest) {
 
                   // Save the LATEST session inside lock
                   await sessionStorage.set(token, latestSession, { ex: 3600 });
-                  console.log(`[API/ocr] Saved session with OCR update for ${barcode}`);
+                  console.log(`[API/ocr] ✅ Completed OCR for ${barcode}`);
                 } else {
                   // Barcode not found (maybe session expired or cleared?)
                   console.warn(`[API/ocr] Barcode ${barcode} not found in latest locked session`);
@@ -193,8 +199,29 @@ export async function POST(request: NextRequest) {
           }
         }
       })
-      .catch((error) => {
-        console.error('OCR webhook error:', error);
+      .catch(async (error) => {
+        const isTimeout = error.name === 'TimeoutError' || error.name === 'AbortError';
+        console.error(`[API/ocr] ${isTimeout ? 'TIMEOUT' : 'ERROR'} for ${barcode}:`, error.message);
+
+        // Mark as failed on timeout or error
+        try {
+          await sessionStorage.withLock(token, async () => {
+            const updatedSession = await sessionStorage.get(token);
+            if (updatedSession) {
+              const entry = updatedSession.scanned_barcodes.find(
+                (b: ScanEntry) => b.barcode === barcode
+              );
+              if (entry && entry.ocr_status === 'pending') {
+                entry.ocr_status = 'failed';
+                entry.ocr_error = isTimeout ? 'Gemini timeout (30s)' : error.message;
+                await sessionStorage.set(token, updatedSession, { ex: 3600 });
+                console.log(`[API/ocr] ⚠️ Marked ${barcode} as failed: ${entry.ocr_error}`);
+              }
+            }
+          });
+        } catch (lockError) {
+          console.error('Failed to acquire lock for timeout update:', lockError);
+        }
       });
 
     // Return immediately - OCR is processed in background
