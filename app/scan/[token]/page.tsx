@@ -134,9 +134,10 @@ export default function ScanPage({
   }, [playSuccessSound]);
 
   const triggerDuplicateFeedback = useCallback(() => {
-    // 1. Screen flash (longer, red)
-    setFlashColor('red');
-    setTimeout(() => setFlashColor(null), 300);
+    // 1. Camera flash (red) - trigger in SmartScanner
+    if (redFlashTriggerRef.current) {
+      redFlashTriggerRef.current();
+    }
 
     // 2. Error sound
     playErrorSound();
@@ -145,16 +146,15 @@ export default function ScanPage({
     if ('vibrate' in navigator) {
       navigator.vibrate([200, 100, 200]);
     }
-
-    // 4. Toast message
-    setShowToast('⚠️ Already scanned!');
-    setTimeout(() => setShowToast(null), 2000);
   }, [playErrorSound]);
 
   // Polling ref
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   // Synchronous duplicate tracking (useRef updates immediately, unlike setState)
   const processedBarcodesRef = useRef<Set<string>>(new Set());
+
+  // Red flash trigger from SmartScanner
+  const redFlashTriggerRef = useRef<(() => void) | null>(null);
 
   // ── Load Session ──────────────────────────────────────────────
   useEffect(() => {
@@ -727,6 +727,9 @@ export default function ScanPage({
             scannedBarcodes={scannedBarcodes}
             ocrResults={ocrResults}
             onScannerTypeDetected={setScannerType}
+            onDuplicateFlash={(triggerFn) => {
+              redFlashTriggerRef.current = triggerFn;
+            }}
           />
         </div>
       )}

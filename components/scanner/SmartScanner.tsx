@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { Html5QrcodeScanner } from './Html5QrcodeScanner';
 import type { ParsedBarcode, BoxStickerOCR } from '@/types';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
@@ -12,6 +12,7 @@ interface SmartScannerProps {
   ocrResults: Map<string, BoxStickerOCR>;
   onError?: (error: string) => void;
   onScannerTypeDetected?: (type: 'native' | 'fallback') => void;
+  onDuplicateFlash?: (triggerFn: () => void) => void; // Parent gets function to trigger red flash
 }
 
 // Declare BarcodeDetector types
@@ -32,7 +33,8 @@ export function SmartScanner({
   scannedBarcodes,
   ocrResults,
   onError,
-  onScannerTypeDetected
+  onScannerTypeDetected,
+  onDuplicateFlash
 }: SmartScannerProps) {
   const [useNative, setUseNative] = useState<boolean | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -60,7 +62,20 @@ export function SmartScanner({
       isMountedRef.current = false;
       stopNativeScanning();
     };
+  }, [onScannerTypeDetected]);
+
+  // Function to trigger red flash (called by parent on duplicate detection)
+  const triggerRedFlash = useCallback(() => {
+    setFlashColor('red');
+    setTimeout(() => setFlashColor(null), 300);
   }, []);
+
+  // Expose flash trigger to parent
+  useEffect(() => {
+    if (onDuplicateFlash) {
+      onDuplicateFlash(triggerRedFlash as any);
+    }
+  }, [onDuplicateFlash, triggerRedFlash]);
 
   const stopNativeScanning = () => {
     if (animationFrameRef.current) {
