@@ -358,6 +358,47 @@ export default function ScanPage({
     };
   }, [pendingOCR.size, pollForResults]);
 
+  // ── Client-side OCR timeout fallback (mark as failed after 40s) ──
+  useEffect(() => {
+    const checkStuckOCR = () => {
+      const now = Date.now();
+      const TIMEOUT_MS = 40000; // 40 seconds
+
+      scannedBarcodes.forEach((entry) => {
+        if (entry.ocr_status === 'pending') {
+          // Calculate how long it's been pending
+          const createdAt = entry.scanned_at ? new Date(entry.scanned_at).getTime() : now;
+          const elapsed = now - createdAt;
+
+          if (elapsed > TIMEOUT_MS) {
+            console.warn(`[Client] OCR timeout for ${entry.barcode} after ${Math.floor(elapsed / 1000)}s - marking as failed`);
+
+            // Mark as failed client-side so user can manually enter
+            setScannedBarcodes(prev => {
+              const updated = new Map(prev);
+              const item = updated.get(entry.barcode);
+              if (item && item.ocr_status === 'pending') {
+                item.ocr_status = 'failed';
+                item.ocr_data = {
+                  product_name: null,
+                  weight_kg: null,
+                  production_date: null,
+                  expiry_date: null,
+                  barcode_digits: null
+                };
+              }
+              return updated;
+            });
+          }
+        }
+      });
+    };
+
+    // Check every 5 seconds
+    const interval = setInterval(checkStuckOCR, 5000);
+    return () => clearInterval(interval);
+  }, [scannedBarcodes]);
+
   // ── Barcode Detected Handler ─────────────────────────────────
   const handleBarcodeDetected = useCallback(async (
     barcode: string,
