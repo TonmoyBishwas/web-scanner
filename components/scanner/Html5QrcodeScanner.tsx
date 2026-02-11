@@ -289,8 +289,8 @@ export function Html5QrcodeScanner({
       setScannerState('Starting scanner...');
 
       const config = {
-        fps: 10,
-        qrbox: { width: 250, height: 250 },
+        fps: 30, // Increased from 10 to 30 for faster detection (3x improvement)
+        qrbox: { width: 300, height: 300 }, // Slightly larger target box
         formatsToSupport: [
           Html5QrcodeSupportedFormats.CODE_128,
           Html5QrcodeSupportedFormats.CODE_39,
@@ -302,12 +302,18 @@ export function Html5QrcodeScanner({
           Html5QrcodeSupportedFormats.QR_CODE,
         ],
         aspectRatio: 1.0,
+        // Request higher resolution and advanced camera features
+        videoConstraints: {
+          facingMode: 'environment',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        }
       };
 
-      // For Chrome/Android, use videoConstraints instead of cameraId
+      // Camera config with device ID or fallback to environment facing
       const cameraConfig = cameraId
         ? { deviceId: { exact: cameraId } }
-        : { facingMode: 'environment' };
+        : { facingMode: { exact: 'environment' } };
 
       // If we have a previous instance, clean it up
       if (html5QrCodeRef.current) {
