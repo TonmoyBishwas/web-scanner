@@ -360,44 +360,66 @@ export default function ScanPage({
 
   // ── Client-side OCR timeout fallback (mark as failed after 40s) ──
   useEffect(() => {
-    const checkStuckOCR = () => {
+    if (!session) return;
+
+    const checkStuckOCR = async () => {
       const now = Date.now();
       const TIMEOUT_MS = 40000; // 40 seconds
 
-      scannedBarcodes.forEach((entry) => {
+      let needsUpdate = false;
+      const updatedBarcodes = session.scanned_barcodes.map((entry: ScanEntry) => {
         if (entry.ocr_status === 'pending') {
           // Calculate how long it's been pending
           const createdAt = entry.scanned_at ? new Date(entry.scanned_at).getTime() : now;
           const elapsed = now - createdAt;
 
           if (elapsed > TIMEOUT_MS) {
-            console.warn(`[Client] OCR timeout for ${entry.barcode} after ${Math.floor(elapsed / 1000)}s - marking as failed`);
+            console.warn(`[Client] ⏱️ OCR timeout for ${entry.barcode} after ${Math.floor(elapsed / 1000)}s - marking as failed`);
+            needsUpdate = true;
 
-            // Mark as failed client-side so user can manually enter
-            setScannedBarcodes(prev => {
-              const updated = new Map(prev);
-              const item = updated.get(entry.barcode);
-              if (item && item.ocr_status === 'pending') {
-                item.ocr_status = 'failed';
-                item.ocr_data = {
-                  product_name: null,
-                  weight_kg: null,
-                  production_date: null,
-                  expiry_date: null,
-                  barcode_digits: null
-                };
+            return {
+              ...entry,
+              ocr_status: 'failed' as const,
+              ocr_data: {
+                product_name: null,
+                weight_kg: null,
+                production_date: null,
+                expiry_date: null,
+                barcode_digits: null
               }
-              return updated;
-            });
+            };
           }
         }
+        return entry;
       });
+
+      // Update session if any timeouts occurred
+      if (needsUpdate) {
+        try {
+          await fetch(`/api/session?token=${token}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ...session,
+              scanned_barcodes: updatedBarcodes
+            })
+          });
+          // Trigger reload by fetching session again
+          const response = await fetch(`/api/session?token=${token}`);
+          if (response.ok) {
+            const data = await response.json();
+            setSession(data);
+          }
+        } catch (error) {
+          console.error('[Client] Failed to update timed-out OCR:', error);
+        }
+      }
     };
 
     // Check every 5 seconds
     const interval = setInterval(checkStuckOCR, 5000);
     return () => clearInterval(interval);
-  }, [scannedBarcodes]);
+  }, [session, token]);
 
   // ── Barcode Detected Handler ─────────────────────────────────
   const handleBarcodeDetected = useCallback(async (
