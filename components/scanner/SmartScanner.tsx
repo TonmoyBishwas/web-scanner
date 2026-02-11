@@ -42,6 +42,7 @@ export function SmartScanner({
   const lastScannedRef = useRef<string>('');
   const lastScanTimeRef = useRef<number>(0);
   const isMountedRef = useRef(true);
+  const [flashColor, setFlashColor] = useState<'green' | 'red' | null>(null);
 
   useEffect(() => {
     // Check if native BarcodeDetector is available
@@ -141,6 +142,10 @@ export function SmartScanner({
             lastScannedRef.current = barcode;
             lastScanTimeRef.current = now;
 
+            // Camera flash feedback (green for success)
+            setFlashColor('green');
+            setTimeout(() => setFlashColor(null), 200);
+
             // Vibrate on detection
             if ('vibrate' in navigator) {
               navigator.vibrate(100);
@@ -199,6 +204,18 @@ export function SmartScanner({
         />
         <canvas ref={canvasRef} className="hidden" />
 
+        {/* Camera flash overlay - green for success */}
+        {flashColor && (
+          <div
+            className={`absolute inset-0 pointer-events-none ${flashColor === 'green' ? 'bg-green-400/70' : 'bg-red-500/70'
+              }`}
+            style={{
+              animation: 'cameraFlash 0.2s ease-out',
+              zIndex: 10
+            }}
+          />
+        )}
+
         {/* Minimal scanning indicator */}
         <div className="absolute inset-0 pointer-events-none">
           {/* Target box */}
@@ -213,6 +230,14 @@ export function SmartScanner({
             </div>
           </div>
         </div>
+
+        {/* Flash animation CSS */}
+        <style jsx>{`
+          @keyframes cameraFlash {
+            0% { opacity: 1; }
+            100% { opacity: 0; }
+          }
+        `}</style>
       </div>
     );
   }
