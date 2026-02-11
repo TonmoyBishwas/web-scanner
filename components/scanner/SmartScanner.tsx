@@ -184,6 +184,7 @@ export function SmartScanner({
 
   // Use native scanner (hardware accelerated!)
   if (useNative) {
+    console.log('🚀 [SmartScanner] USING NATIVE HARDWARE BARCODE SCANNER (60 FPS - like Play Store apps!)');
     return (
       <div className="relative w-full aspect-square bg-black rounded-lg overflow-hidden">
         <video
@@ -194,16 +195,17 @@ export function SmartScanner({
         />
         <canvas ref={canvasRef} className="hidden" />
 
-        {/* Scanning overlay */}
+        {/* Minimal scanning indicator */}
         <div className="absolute inset-0 pointer-events-none">
+          {/* Target box */}
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="w-72 h-72 border-4 border-green-400 rounded-lg animate-pulse" />
           </div>
-          <div className="absolute bottom-4 left-0 right-0 text-center">
-            <div className="inline-block bg-black/70 px-4 py-2 rounded-full">
-              <p className="text-white text-sm font-medium">
-                ⚡ Native Hardware Scanner - Instant Detection!
-              </p>
+          {/* Small indicator that native scanner is active */}
+          <div className="absolute top-2 left-2">
+            <div className="flex items-center gap-1 bg-green-600/80 px-2 py-1 rounded-full">
+              <div className="w-2 h-2 bg-green-300 rounded-full animate-pulse"></div>
+              <span className="text-white text-xs font-medium">⚡</span>
             </div>
           </div>
         </div>
@@ -212,6 +214,7 @@ export function SmartScanner({
   }
 
   // Fallback to html5-qrcode
+  console.log('📱 [SmartScanner] Native scanner not available - using html5-qrcode fallback');
   return (
     <Html5QrcodeScanner
       onBarcodeDetected={onBarcodeDetected}
