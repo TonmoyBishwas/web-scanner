@@ -1,7 +1,9 @@
 'use client';
 
+import { useEffect, useState, useRef } from 'react';
 import { Html5QrcodeScanner } from './Html5QrcodeScanner';
 import type { ParsedBarcode, BoxStickerOCR } from '@/types';
+import { parseIsraeliBarcode } from '@/lib/barcode-parser';
 
 interface SmartScannerProps {
   onBarcodeDetected: (barcode: string, data: ParsedBarcode, imageData?: string) => void;
@@ -11,9 +13,17 @@ interface SmartScannerProps {
   onError?: (error: string) => void;
 }
 
+// Declare BarcodeDetector types
+declare global {
+  interface Window {
+    BarcodeDetector: any;
+  }
+}
+
 /**
- * SmartScanner - uses html5-qrcode for barcode scanning.
- * Barcode detection triggers immediate image capture.
+ * SmartScanner - intelligently selects scanner:
+ * 1. Try native BarcodeDetector API (hardware accelerated, instant like Play Store apps)
+ * 2. Fall back to html5-qrcode (software, slower but works everywhere)
  */
 export function SmartScanner({
   onBarcodeDetected,
@@ -22,6 +32,186 @@ export function SmartScanner({
   ocrResults,
   onError
 }: SmartScannerProps) {
+  const [useNative, setUseNative] = useState<boolean | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const animationFrameRef = useRef<number>(0);
+  const lastScannedRef = useRef<string>('');
+  const lastScanTimeRef = useRef<number>(0);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    // Check if native BarcodeDetector is available
+    if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
+      console.log('[SmartScanner] Native BarcodeDetector API available - using hardware scanner!');
+      setUseNative(true);
+    } else {
+      console.log('[SmartScanner] Native API not available - falling back to html5-qrcode');
+      setUseNative(false);
+    }
+
+    return () => {
+      isMountedRef.current = false;
+      stopNativeScanning();
+    };
+  }, []);
+
+  const stopNativeScanning = () => {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+  };
+
+  const startNativeScanning = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+        audio: false,
+      });
+
+      streamRef.current = stream;
+
+      if (videoRef.current && isMountedRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+        scanContinuously();
+      }
+    } catch (err) {
+      console.error('[SmartScanner] Camera error:', err);
+      onError?.(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const scanContinuously = async () => {
+    if (!videoRef.current || !canvasRef.current || !isMountedRef.current) return;
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Create BarcodeDetector instance
+    const barcodeDetector = new window.BarcodeDetector({
+      formats: [
+        'code_128',
+        'code_39',
+        'ean_13',
+        'ean_8',
+        'upc_a',
+        'upc_e',
+        'qr_code',
+        'data_matrix',
+      ],
+    });
+
+    const detect = async () => {
+      if (!isMountedRef.current) return;
+
+      if (!video.readyState || video.readyState < 2) {
+        animationFrameRef.current = requestAnimationFrame(detect);
+        return;
+      }
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      try {
+        const barcodes = await barcodeDetector.detect(canvas);
+
+        if (barcodes.length > 0) {
+          const barcode = barcodes[0].rawValue;
+          const now = Date.now();
+
+          // Debounce: same barcode within 2 seconds
+          if (barcode !== lastScannedRef.current || now - lastScanTimeRef.current > 2000) {
+            lastScannedRef.current = barcode;
+            lastScanTimeRef.current = now;
+
+            // Vibrate on detection
+            if ('vibrate' in navigator) {
+              navigator.vibrate(100);
+            }
+
+            // Parse barcode
+            const parsedData = parseIsraeliBarcode(barcode) || {
+              type: 'unknown',
+              sku: barcode,
+              weight: 0,
+              expiry: '',
+              raw_barcode: barcode,
+              expiry_source: 'ocr_required' as const
+            };
+
+            // Capture image for OCR
+            const imageData = canvas.toDataURL('image/jpeg', 0.8);
+            onBarcodeDetected(barcode, parsedData, imageData);
+          }
+        }
+      } catch (err) {
+        console.error('[SmartScanner] Detection error:', err);
+      }
+
+      animationFrameRef.current = requestAnimationFrame(detect);
+    };
+
+    detect();
+  };
+
+  useEffect(() => {
+    if (useNative === true) {
+      startNativeScanning();
+    }
+  }, [useNative]);
+
+  // Loading state
+  if (useNative === null) {
+    return (
+      <div className="w-full aspect-square bg-gray-800 rounded-lg flex items-center justify-center">
+        <p className="text-gray-400">Initializing scanner...</p>
+      </div>
+    );
+  }
+
+  // Use native scanner (hardware accelerated!)
+  if (useNative) {
+    return (
+      <div className="relative w-full aspect-square bg-black rounded-lg overflow-hidden">
+        <video
+          ref={videoRef}
+          className="absolute inset-0 w-full h-full object-cover"
+          playsInline
+          muted
+        />
+        <canvas ref={canvasRef} className="hidden" />
+
+        {/* Scanning overlay */}
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="w-72 h-72 border-4 border-green-400 rounded-lg animate-pulse" />
+          </div>
+          <div className="absolute bottom-4 left-0 right-0 text-center">
+            <div className="inline-block bg-black/70 px-4 py-2 rounded-full">
+              <p className="text-white text-sm font-medium">
+                ⚡ Native Hardware Scanner - Instant Detection!
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Fallback to html5-qrcode
   return (
     <Html5QrcodeScanner
       onBarcodeDetected={onBarcodeDetected}
@@ -32,3 +222,4 @@ export function SmartScanner({
     />
   );
 }
+
