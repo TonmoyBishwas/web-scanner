@@ -58,11 +58,98 @@ export default function ScanPage({
   const [errorLog, setErrorLog] = useState<Array<{ time: string, msg: string }>>([]);
   const [showErrorLog, setShowErrorLog] = useState(false);
   const [scannerType, setScannerType] = useState<'native' | 'fallback' | null>(null);
+
+  // Feedback states
+  const [flashColor, setFlashColor] = useState<'green' | 'red' | null>(null);
+  const [showToast, setShowToast] = useState<string | null>(null);
+  const [counterBounce, setCounterBounce] = useState(false);
   const addErrorLog = useCallback((msg: string) => {
     const time = new Date().toLocaleTimeString();
     setErrorLog(prev => [...prev, { time, msg }]);
     console.error(`[ERROR ${time}]`, msg);
   }, []);
+
+  // ──  Audio feedback using Web Audio API ──────────────────────
+  const playSuccessSound = useCallback(() => {
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      oscillator.frequency.value = 800; // Pleasant ding
+      oscillator.type = 'sine';
+
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.15);
+    } catch (e) {
+      console.log('Audio not supported');
+    }
+  }, []);
+
+  const playErrorSound = useCallback(() => {
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      oscillator.frequency.value = 200; // Low buzz
+      oscillator.type = 'sawtooth';
+
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.3);
+    } catch (e) {
+      console.log('Audio not supported');
+    }
+  }, []);
+
+  // ── Visual feedback ──────────────────────────────────────────
+  const triggerSuccessFeedback = useCallback(() => {
+    // 1. Screen flash
+    setFlashColor('green');
+    setTimeout(() => setFlashColor(null), 150);
+
+    // 2. Sound
+    playSuccessSound();
+
+    // 3. Vibration (if supported)
+    if ('vibrate' in navigator) {
+      navigator.vibrate(100);
+    }
+
+    // 4. Counter bounce
+    setCounterBounce(true);
+    setTimeout(() => setCounterBounce(false), 300);
+  }, [playSuccessSound]);
+
+  const triggerDuplicateFeedback = useCallback(() => {
+    // 1. Screen flash (longer, red)
+    setFlashColor('red');
+    setTimeout(() => setFlashColor(null), 300);
+
+    // 2. Error sound
+    playErrorSound();
+
+    // 3. Double vibration
+    if ('vibrate' in navigator) {
+      navigator.vibrate([200, 100, 200]);
+    }
+
+    // 4. Toast message
+    setShowToast('⚠️ Already scanned!');
+    setTimeout(() => setShowToast(null), 2000);
+  }, [playErrorSound]);
 
   // Polling ref
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -279,10 +366,8 @@ export default function ScanPage({
   ) => {
     // ── SYNCHRONOUS duplicate check (ref updates immediately, no race condition) ──
     if (processedBarcodesRef.current.has(barcode)) {
-      // Vibrate if supported
-      if ('vibrate' in navigator) {
-        navigator.vibrate([200, 100, 200]);
-      }
+      // OPTION 5: Combined duplicate feedback
+      triggerDuplicateFeedback();
       addErrorLog(`⚠️ Barcode ${barcode}: DUPLICATE - Already scanned!`);
       return;
     }
@@ -292,6 +377,9 @@ export default function ScanPage({
 
     // Also update React state for UI rendering
     setScannedBarcodes(prev => new Map(prev).set(barcode, data));
+
+    // OPTION 5: Combined success feedback
+    triggerSuccessFeedback();
 
     // Check if image was captured
     if (!imageData) {
@@ -593,7 +681,10 @@ export default function ScanPage({
             <span className="text-2xl">📦</span>
             <div>
               <h1 className="text-lg font-bold">
-                <span className={scannedBarcodes.size >= boxesExpected ? 'text-green-400' : 'text-white'}>
+                <span
+                  className={`${scannedBarcodes.size >= boxesExpected ? 'text-green-400' : 'text-white'} transition-transform duration-300`}
+                  style={counterBounce ? { transform: 'scale(1.3)', display: 'inline-block' } : {}}
+                >
                   {scannedBarcodes.size}
                 </span>
                 <span className="text-gray-500 mx-1">/</span>
@@ -985,6 +1076,33 @@ function ForceConfirmModal({
           {submitting ? 'Submitting...' : `Submit ${remaining} Manual Entries`}
         </button>
       </div>
+
+      {/* ── Screen Flash Feedback ────────────────────────────────── */}
+      {flashColor && (
+        <div
+          className={`fixed inset-0 z-[9999] pointer-events-none transition-opacity ${flashColor === 'green' ? 'bg-green-500/40' : 'bg-red-500/50'
+            }`}
+          style={{ animation: flashColor === 'green' ? 'flash 0.15s ease-out' : 'flash 0.3s ease-out' }}
+        />
+      )}
+
+      {/* ── Toast Notification ────────────────────────────────────── */}
+      {showToast && (
+        <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-[9999] animate-bounce">
+          <div className="bg-red-600 text-white px-6 py-3 rounded-full shadow-2xl font-bold text-sm">
+            {showToast}
+          </div>
+        </div>
+      )}
+
+      {/* CSS for flash animation */}
+      <style jsx>{`
+        @keyframes flash {
+          0% { opacity: 0; }
+          50% { opacity: 1; }
+          100% { opacity: 0; }
+        }
+      `}</style>
     </div>
   );
 }
