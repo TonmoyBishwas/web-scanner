@@ -57,6 +57,7 @@ export default function ScanPage({
   // Error logging for mobile debugging
   const [errorLog, setErrorLog] = useState<Array<{ time: string, msg: string }>>([]);
   const [showErrorLog, setShowErrorLog] = useState(false);
+  const [scannerType, setScannerType] = useState<'native' | 'fallback' | null>(null);
   const addErrorLog = useCallback((msg: string) => {
     const time = new Date().toLocaleTimeString();
     setErrorLog(prev => [...prev, { time, msg }]);
@@ -634,6 +635,7 @@ export default function ScanPage({
             onManualCapture={handleManualCapture}
             scannedBarcodes={scannedBarcodes}
             ocrResults={ocrResults}
+            onScannerTypeDetected={setScannerType}
           />
         </div>
       )}
@@ -726,9 +728,14 @@ export default function ScanPage({
       {errorLog.length > 0 && (
         <button
           onClick={() => { setShowDebugPanel(!showDebugPanel); setShowOCRDrawer(false); }}
-          className="fixed bottom-24 right-4 z-50 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-full shadow-lg text-sm font-bold"
+          className="fixed bottom-24 right-4 z-50 bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-full shadow-lg text-xs font-bold flex items-center gap-2"
         >
           🐛 {showDebugPanel ? 'Hide' : 'Debug'} ({errorLog.length})
+          {scannerType && (
+            <span className="text-[10px] opacity-80">
+              {scannerType === 'native' ? '⚡Native' : '📱Software'}
+            </span>
+          )}
         </button>
       )}
 

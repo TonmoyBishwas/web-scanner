@@ -11,6 +11,7 @@ interface SmartScannerProps {
   scannedBarcodes: Map<string, ParsedBarcode>;
   ocrResults: Map<string, BoxStickerOCR>;
   onError?: (error: string) => void;
+  onScannerTypeDetected?: (type: 'native' | 'fallback') => void;
 }
 
 // Declare BarcodeDetector types
@@ -30,7 +31,8 @@ export function SmartScanner({
   onManualCapture,
   scannedBarcodes,
   ocrResults,
-  onError
+  onError,
+  onScannerTypeDetected
 }: SmartScannerProps) {
   const [useNative, setUseNative] = useState<boolean | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -46,9 +48,11 @@ export function SmartScanner({
     if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
       console.log('[SmartScanner] Native BarcodeDetector API available - using hardware scanner!');
       setUseNative(true);
+      onScannerTypeDetected?.('native');
     } else {
       console.log('[SmartScanner] Native API not available - falling back to html5-qrcode');
       setUseNative(false);
+      onScannerTypeDetected?.('fallback');
     }
 
     return () => {
