@@ -1077,6 +1077,24 @@ function ForceConfirmModal({
         </button>
       </div>
 
+      {/* ── Screen Flash Feedback ────────────────────────────────── */}
+      {flashColor && (
+        <div
+          className={`fixed inset-0 z-[9999] pointer-events-none transition-opacity ${flashColor === 'green' ? 'bg-green-500/40' : 'bg-red-500/50'
+            }`}
+          style={{ animation: flashColor === 'green' ? 'flash 0.15s ease-out' : 'flash 0.3s ease-out' }}
+        />
+      )}
+
+      {/* ── Toast Notification ────────────────────────────────────── */}
+      {showToast && (
+        <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-[9999] animate-bounce">
+          <div className="bg-red-600 text-white px-6 py-3 rounded-full shadow-2xl font-bold text-sm">
+            {showToast}
+          </div>
+        </div>
+      )}
+
       {/* CSS for flash animation */}
       <style jsx>{`
         @keyframes flash {
