@@ -10,11 +10,13 @@ export interface ParsedBarcode {
 
 // OCR result from box sticker (new Gemini format)
 export interface BoxStickerOCR {
-  product_name: string | null;     // Hebrew product name
-  weight_kg: number | null;        // Net weight in KG
-  production_date: string | null;  // YYYY-MM-DD
-  expiry_date: string | null;      // YYYY-MM-DD
-  barcode_digits: string | null;   // Barcode digits from image
+  product_name?: string | null;           // DEPRECATED: Legacy field for backwards compatibility
+  product_name_hebrew?: string | null;    // Hebrew product name (primary)
+  product_name_english?: string | null;   // English product name (for matching fallback)
+  weight_kg: number | null;              // Net weight in KG
+  production_date: string | null;        // YYYY-MM-DD
+  expiry_date: string | null;            // YYYY-MM-DD
+  barcode_digits: string | null;         // Barcode digits from image
 }
 
 // Session Data Types

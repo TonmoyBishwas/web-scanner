@@ -151,22 +151,31 @@ export async function POST(request: NextRequest) {
                 );
 
                 if (entryToUpdate) {
-                  // New OCR format
+                  // New OCR format with dual-language support
                   const ocrData: BoxStickerOCR = {
-                    product_name: ocrResult.ocr_data.product_name || null,
+                    product_name_hebrew: ocrResult.ocr_data.product_name_hebrew || ocrResult.ocr_data.product_name || null,
+                    product_name_english: ocrResult.ocr_data.product_name_english || null,
                     weight_kg: ocrResult.ocr_data.weight_kg || null,
                     production_date: ocrResult.ocr_data.production_date || null,
                     expiry_date: ocrResult.ocr_data.expiry_date || null,
                     barcode_digits: ocrResult.ocr_data.barcode_digits || null,
+                    // Legacy field for backwards compatibility
+                    product_name: ocrResult.ocr_data.product_name_hebrew || ocrResult.ocr_data.product_name || null,
                   };
 
                   entryToUpdate.ocr_data = ocrData;
                   entryToUpdate.ocr_status = 'complete';
                   entryToUpdate.ocr_processed_at = new Date().toISOString();
 
+                  console.log(`[API/ocr] Stored OCR data: Hebrew="${ocrData.product_name_hebrew}", English="${ocrData.product_name_english}"`);
+
                   // Match OCR product name to invoice item and update scanned_items
-                  if (ocrData.product_name) {
-                    const productName = ocrData.product_name;
+                  // Use Hebrew name as primary, fallback to legacy field
+                  const productNameHebrew = ocrData.product_name_hebrew;
+                  const productNameEnglish = ocrData.product_name_english;
+
+                  if (productNameHebrew || productNameEnglish) {
+                    const productName = productNameHebrew || productNameEnglish;
                     // ... matching logic ...
                     const matchedItem = latestSession.invoice_items.find(
                       (item: any) => {

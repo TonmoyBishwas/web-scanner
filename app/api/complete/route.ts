@@ -2,6 +2,135 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sessionStorage } from '@/lib/redis';
 import type { CompleteRequest, CompleteResponse, ScannedItem, ScanEntry } from '@/types';
 import { normalizeString } from '@/lib/string-utils';
+import { validateMatchWithLLM } from '@/lib/llm-matcher';
+
+/**
+ * Multi-layer matching strategy for invoice items
+ *
+ * Tries progressively more sophisticated matching until a confident match is found
+ */
+async function findMatchingInvoiceItem(
+  productNameHebrew: string | null | undefined,
+  productNameEnglish: string | null | undefined,
+  invoiceItems: any[]
+): Promise<{ match: any | null; confidence: string; reasoning: string }> {
+  // Fallback for backwards compatibility
+  const hebName = productNameHebrew || '';
+  const engName = productNameEnglish || '';
+
+  console.log(`[Matching] Starting multi-layer match for Hebrew="${hebName}", English="${engName}"`);
+  console.log(`[Matching] Invoice items count: ${invoiceItems.length}`);
+
+  // Layer 1: Exact Hebrew Match
+  console.log('[Matching] Layer 1: Exact Hebrew match...');
+  const exactHebrewMatch = invoiceItems.find(item => {
+    const match = normalizeString(hebName) === normalizeString(item.item_name_hebrew);
+    if (match) {
+      console.log(`[Matching] ✅ Layer 1 MATCH: "${hebName}" === "${item.item_name_hebrew}"`);
+    }
+    return match;
+  });
+  if (exactHebrewMatch) {
+    return {
+      match: exactHebrewMatch,
+      confidence: 'high',
+      reasoning: 'Exact Hebrew name match'
+    };
+  }
+
+  // Layer 2: Exact English Match
+  console.log('[Matching] Layer 2: Exact English match...');
+  const exactEnglishMatch = invoiceItems.find(item => {
+    const match = normalizeString(engName) === normalizeString(item.item_name_english);
+    if (match) {
+      console.log(`[Matching] ✅ Layer 2 MATCH: "${engName}" === "${item.item_name_english}"`);
+    }
+    return match;
+  });
+  if (exactEnglishMatch) {
+    return {
+      match: exactEnglishMatch,
+      confidence: 'high',
+      reasoning: 'Exact English name match'
+    };
+  }
+
+  // Layer 3: Fuzzy Hebrew Substring Match
+  console.log('[Matching] Layer 3: Fuzzy Hebrew substring match...');
+  const fuzzyHebrewMatches = invoiceItems.filter(item => {
+    const pName = normalizeString(hebName);
+    const iName = normalizeString(item.item_name_hebrew);
+    return (pName.includes(iName) || iName.includes(pName)) && iName.length > 3;
+  });
+
+  console.log(`[Matching] Layer 3 found ${fuzzyHebrewMatches.length} candidates`);
+
+  if (fuzzyHebrewMatches.length === 1) {
+    console.log(`[Matching] ✅ Layer 3 MATCH (single candidate): "${hebName}" ~= "${fuzzyHebrewMatches[0].item_name_hebrew}"`);
+    return {
+      match: fuzzyHebrewMatches[0],
+      confidence: 'medium',
+      reasoning: 'Fuzzy Hebrew substring match (single candidate)'
+    };
+  }
+
+  // Layer 4: Fuzzy English Substring Match
+  console.log('[Matching] Layer 4: Fuzzy English substring match...');
+  const fuzzyEnglishMatches = invoiceItems.filter(item => {
+    const pName = normalizeString(engName);
+    const iName = normalizeString(item.item_name_english);
+    return (pName.includes(iName) || iName.includes(pName)) && iName.length > 3;
+  });
+
+  console.log(`[Matching] Layer 4 found ${fuzzyEnglishMatches.length} candidates`);
+
+  if (fuzzyEnglishMatches.length === 1) {
+    console.log(`[Matching] ✅ Layer 4 MATCH (single candidate): "${engName}" ~= "${fuzzyEnglishMatches[0].item_name_english}"`);
+    return {
+      match: fuzzyEnglishMatches[0],
+      confidence: 'medium',
+      reasoning: 'Fuzzy English substring match (single candidate)'
+    };
+  }
+
+  // Layer 5: LLM Cross-Validation
+  console.log('[Matching] Layer 5: LLM cross-validation...');
+  try {
+    const llmResult = await validateMatchWithLLM({
+      product_name_hebrew: hebName,
+      product_name_english: engName,
+      invoice_items: invoiceItems.map(item => ({
+        item_index: item.item_index,
+        item_name_hebrew: item.item_name_hebrew,
+        item_name_english: item.item_name_english
+      }))
+    });
+
+    console.log(`[Matching] LLM result: confidence=${llmResult.confidence}, reasoning="${llmResult.reasoning}"`);
+
+    if (llmResult.confidence !== 'none' && llmResult.matched_index !== null) {
+      const match = invoiceItems.find(item => item.item_index === llmResult.matched_index);
+      if (match) {
+        console.log(`[Matching] ✅ Layer 5 MATCH: Index ${llmResult.matched_index} (${match.item_name_english})`);
+        return {
+          match,
+          confidence: llmResult.confidence,
+          reasoning: `LLM validation: ${llmResult.reasoning}`
+        };
+      }
+    }
+  } catch (llmError) {
+    console.error('[Matching] LLM validation failed:', llmError);
+  }
+
+  // No match found
+  console.log(`[Matching] ❌ NO MATCH found for Hebrew="${hebName}", English="${engName}"`);
+  return {
+    match: null,
+    confidence: 'none',
+    reasoning: 'No matching invoice item found across all layers'
+  };
+}
 
 /**
  * POST /api/complete
@@ -72,11 +201,23 @@ export async function POST(request: NextRequest) {
 
         for (const scan of validScans) {
           // Determine the product name and weight for this scan
-          // Determine final product name (priority: manual > resolved > ocr)
-          let productName = null;
-          if (scan.manual_entry?.item_name) productName = scan.manual_entry.item_name;
-          else if (scan.resolved_item_name) productName = scan.resolved_item_name;
-          else if (scan.ocr_data?.product_name) productName = scan.ocr_data.product_name;
+          // Determine final product names (priority: manual > resolved > ocr)
+          // Support both old (single product_name) and new (dual-language) formats
+          let productNameHebrew = null;
+          let productNameEnglish = null;
+
+          if (scan.manual_entry?.item_name) {
+            // Manual entry uses single name field (could be either language)
+            productNameHebrew = scan.manual_entry.item_name;
+            productNameEnglish = scan.manual_entry.item_name;
+          } else if (scan.resolved_item_name) {
+            productNameHebrew = scan.resolved_item_name;
+            productNameEnglish = scan.resolved_item_name;
+          } else if (scan.ocr_data) {
+            // New format: dual-language
+            productNameHebrew = scan.ocr_data.product_name_hebrew || scan.ocr_data.product_name;
+            productNameEnglish = scan.ocr_data.product_name_english || scan.ocr_data.product_name;
+          }
 
           // Determine final weight (priority: manual > resolved > ocr)
           let weight = 0;
@@ -84,29 +225,25 @@ export async function POST(request: NextRequest) {
           else if (scan.resolved_weight !== undefined && scan.resolved_weight !== null) weight = scan.resolved_weight;
           else if (scan.ocr_data?.weight_kg) weight = scan.ocr_data.weight_kg;
 
-          if (!productName) {
+          if (!productNameHebrew && !productNameEnglish) {
             // Should not happen for completed/manual scans, but safe fallback
-            productName = "Unknown Item";
+            productNameHebrew = "Unknown Item";
+            productNameEnglish = "Unknown Item";
           }
 
           totalWeightScanned += weight;
 
-          // 3. Try to match to an invoice item
-          const matchedItem = session.invoice_items.find((item: any) => {
-            const pName = normalizeString(productName);
-            const iNameHeb = normalizeString(item.item_name_hebrew);
-            const iNameEng = normalizeString(item.item_name_english);
+          // 3. Try to match to an invoice item using multi-layer matching
+          const matchResult = await findMatchingInvoiceItem(
+            productNameHebrew,
+            productNameEnglish,
+            session.invoice_items
+          );
 
-            // Exact match or substring
-            const isMatch = pName === iNameHeb || pName === iNameEng ||
-              (iNameHeb && iNameHeb.length > 3 && pName.includes(iNameHeb)) ||
-              (iNameHeb && iNameHeb.length > 3 && iNameHeb.includes(pName));
+          const matchedItem = matchResult.match;
 
-            if (!isMatch && (pName.includes(iNameHeb) || iNameHeb.includes(pName))) {
-              console.log(`[FuzzyMatch] Miss: '${productName}' (${pName}) vs '${item.item_name_hebrew}' (${iNameHeb})`);
-            }
-            return isMatch;
-          });
+          console.log(`[API/complete] Match result for Hebrew="${productNameHebrew}", English="${productNameEnglish}": ` +
+            `${matchedItem ? `MATCHED (${matchResult.confidence})` : 'UNMATCHED'} - ${matchResult.reasoning}`);
 
           // 4. Update the fresh summary
           if (matchedItem) {
@@ -126,11 +263,12 @@ export async function POST(request: NextRequest) {
           } else {
             // UNMATCHED ITEM - Create a special entry
             // Use a key that won't collide with numeric item_index
-            const unmatchedKey = `unmatched_${productName.replace(/\s+/g, '_')}`;
+            const displayName = productNameHebrew || productNameEnglish || 'Unknown';
+            const unmatchedKey = `unmatched_${displayName.replace(/\s+/g, '_')}`;
             if (!freshSummary[unmatchedKey]) {
               freshSummary[unmatchedKey] = {
                 item_index: -1, // -1 indicates unmatched
-                item_name: `[Unmatched] ${productName}`,
+                item_name: `[Unmatched] ${displayName}`,
                 scanned_count: 0,
                 scanned_weight: 0,
                 expected_weight: 0,
