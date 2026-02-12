@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback, forwardRef, useImperativeHand
 import { Html5QrcodeScanner } from './Html5QrcodeScanner';
 import type { ParsedBarcode, BoxStickerOCR } from '@/types';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
+import { assessImageQuality, QUALITY_THRESHOLDS } from '@/lib/image-quality';
 
 interface SmartScannerProps {
   onBarcodeDetected: (barcode: string, data: ParsedBarcode, imageData?: string) => void;
@@ -21,6 +22,15 @@ declare global {
     BarcodeDetector: any;
   }
 }
+
+// Smart Capture Configuration
+const SMART_CAPTURE_CONFIG = {
+  INITIAL_DELAY_MS: 800,           // Wait for camera to stabilize after barcode detected
+  MAX_CAPTURE_ATTEMPTS: 3,         // Maximum retry attempts if image is blurry
+  RETRY_DELAY_MS: 500,             // Delay between retry attempts
+  MIN_SHARPNESS: QUALITY_THRESHOLDS.SHARPNESS_GOOD, // Minimum acceptable sharpness
+  ENABLE_QUALITY_CHECK: true,      // Toggle quality checking (can disable for fallback)
+} as const;
 
 /**
  * SmartScanner - intelligently selects scanner:
@@ -45,6 +55,8 @@ export function SmartScanner({
   const lastScanTimeRef = useRef<number>(0);
   const isMountedRef = useRef(true);
   const [flashColor, setFlashColor] = useState<'green' | 'red' | null>(null);
+  const [captureStatus, setCaptureStatus] = useState<string | null>(null); // User feedback during smart capture
+  const isCapturingRef = useRef(false); // Prevent concurrent capture attempts
 
   useEffect(() => {
     // Check if native BarcodeDetector is available
@@ -108,6 +120,110 @@ export function SmartScanner({
     } catch (err) {
       console.error('[SmartScanner] Camera error:', err);
       onError?.(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  /**
+   * Smart Image Capture with Quality Check
+   *
+   * Implements Option 5: Hybrid Smart Delay + Quality Check
+   * 1. Wait for camera to stabilize (INITIAL_DELAY_MS)
+   * 2. Capture frame
+   * 3. Check image sharpness
+   * 4. Retry if blurry (up to MAX_CAPTURE_ATTEMPTS)
+   * 5. Return best quality image
+   */
+  const captureHighQualityImage = async (
+    video: HTMLVideoElement,
+    canvas: HTMLCanvasElement,
+    ctx: CanvasRenderingContext2D,
+    sx: number,
+    sy: number,
+    sWidth: number,
+    sHeight: number
+  ): Promise<string> => {
+    // Prevent concurrent capture attempts
+    if (isCapturingRef.current) {
+      throw new Error('Capture already in progress');
+    }
+
+    isCapturingRef.current = true;
+
+    try {
+      // Step 1: Initial delay for camera stabilization
+      setCaptureStatus('Focusing...');
+      await new Promise(resolve => setTimeout(resolve, SMART_CAPTURE_CONFIG.INITIAL_DELAY_MS));
+
+      let bestImage: string | null = null;
+      let bestSharpness = 0;
+      let attempts = 0;
+
+      // Step 2-4: Capture and quality check loop
+      while (attempts < SMART_CAPTURE_CONFIG.MAX_CAPTURE_ATTEMPTS) {
+        attempts++;
+
+        // Draw current video frame to canvas
+        ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
+
+        // Check image quality if enabled
+        if (SMART_CAPTURE_CONFIG.ENABLE_QUALITY_CHECK) {
+          const quality = assessImageQuality(canvas);
+
+          console.log(
+            `[SmartCapture] Attempt ${attempts}/${SMART_CAPTURE_CONFIG.MAX_CAPTURE_ATTEMPTS}: ` +
+            `Sharpness=${quality.sharpness.toFixed(2)}, ` +
+            `Brightness=${quality.brightness.toFixed(2)}, ` +
+            `Quality=${quality.overallQuality}`
+          );
+
+          // Update user feedback
+          setCaptureStatus(quality.feedback);
+
+          // Save this image if it's better than previous
+          if (quality.sharpness > bestSharpness) {
+            bestSharpness = quality.sharpness;
+            bestImage = canvas.toDataURL('image/jpeg', 0.8);
+          }
+
+          // If quality is good enough, stop retrying
+          if (quality.sharpness >= SMART_CAPTURE_CONFIG.MIN_SHARPNESS) {
+            console.log(`[SmartCapture] ✓ Quality acceptable (sharpness=${quality.sharpness.toFixed(2)})`);
+            setCaptureStatus('Image captured!');
+            break;
+          }
+
+          // Not sharp enough, wait and retry
+          if (attempts < SMART_CAPTURE_CONFIG.MAX_CAPTURE_ATTEMPTS) {
+            setCaptureStatus('Hold steady...');
+            await new Promise(resolve => setTimeout(resolve, SMART_CAPTURE_CONFIG.RETRY_DELAY_MS));
+          }
+        } else {
+          // Quality check disabled, just capture
+          bestImage = canvas.toDataURL('image/jpeg', 0.8);
+          break;
+        }
+      }
+
+      // Step 5: Return best image (or last attempt if none were sharp enough)
+      if (!bestImage) {
+        console.warn('[SmartCapture] No image captured, using last frame');
+        ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
+        bestImage = canvas.toDataURL('image/jpeg', 0.8);
+      }
+
+      if (bestSharpness < SMART_CAPTURE_CONFIG.MIN_SHARPNESS) {
+        console.warn(
+          `[SmartCapture] ⚠️ Image quality below threshold (sharpness=${bestSharpness.toFixed(2)}). ` +
+          `OCR may produce errors. Consider improving lighting or holding camera steadier.`
+        );
+      }
+
+      // Clear status after a moment
+      setTimeout(() => setCaptureStatus(null), 1500);
+
+      return bestImage;
+    } finally {
+      isCapturingRef.current = false;
     }
   };
 
@@ -206,9 +322,28 @@ export function SmartScanner({
               expiry_source: 'ocr_required' as const
             };
 
-            // Capture image for OCR
-            const imageData = canvas.toDataURL('image/jpeg', 0.8);
-            onBarcodeDetected(barcode, parsedData, imageData);
+            // === SMART CAPTURE: Wait + Quality Check ===
+            // Capture high-quality image for OCR (with delay and quality verification)
+            try {
+              const imageData = await captureHighQualityImage(
+                video,
+                canvas,
+                ctx,
+                sx,
+                sy,
+                sWidth,
+                sHeight
+              );
+              onBarcodeDetected(barcode, parsedData, imageData);
+            } catch (captureError) {
+              console.error('[SmartScanner] Smart capture failed:', captureError);
+              // Fallback: immediate capture if smart capture fails
+              ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
+              const fallbackImage = canvas.toDataURL('image/jpeg', 0.8);
+              onBarcodeDetected(barcode, parsedData, fallbackImage);
+              setCaptureStatus('Using fallback capture');
+              setTimeout(() => setCaptureStatus(null), 1500);
+            }
           }
         }
       } catch (err) {
@@ -259,6 +394,15 @@ export function SmartScanner({
               zIndex: 10
             }}
           />
+        )}
+
+        {/* Smart Capture Status Overlay */}
+        {captureStatus && (
+          <div className="absolute bottom-8 left-0 right-0 flex justify-center pointer-events-none z-20">
+            <div className="bg-black/80 text-white px-4 py-2 rounded-full text-sm font-medium backdrop-blur-sm">
+              {captureStatus}
+            </div>
+          </div>
         )}
 
         {/* Minimal scanning indicator */}
