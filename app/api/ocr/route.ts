@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sessionStorage } from '@/lib/redis';
 import type { OCRRequest, OCRResponse, ScanEntry, BoxStickerOCR } from '@/types';
+import { normalizeString } from '@/lib/string-utils';
 
 /**
  * POST /api/ocr
@@ -169,14 +170,20 @@ export async function POST(request: NextRequest) {
                     // ... matching logic ...
                     const matchedItem = latestSession.invoice_items.find(
                       (item: any) => {
-                        if (item.item_name_hebrew === productName) return true;
-                        if (item.item_name_hebrew && (
-                          productName.includes(item.item_name_hebrew) ||
-                          item.item_name_hebrew.includes(productName)
-                        )) return true;
-                        if (item.item_name_english &&
-                          item.item_name_english.toLowerCase() === productName.toLowerCase()
-                        ) return true;
+                        const pName = normalizeString(productName);
+                        const iHebMatches = item.item_name_hebrew && (
+                          normalizeString(item.item_name_hebrew) === pName ||
+                          normalizeString(item.item_name_hebrew).includes(pName) ||
+                          pName.includes(normalizeString(item.item_name_hebrew))
+                        );
+
+                        if (iHebMatches) return true;
+
+                        const iEngMatches = item.item_name_english &&
+                          normalizeString(item.item_name_english) === pName;
+
+                        if (iEngMatches) return true;
+
                         return false;
                       }
                     );

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sessionStorage } from '@/lib/redis';
 import type { ScanEntry } from '@/types';
+import { normalizeString } from '@/lib/string-utils';
 
 /**
  * POST /api/resolve
@@ -74,9 +75,11 @@ export async function POST(request: NextRequest) {
                 const itemName = resolved_item_name || entry.ocr_data?.product_name || entry.resolved_item_name;
                 if (itemName) {
                     const matchedItem = session.invoice_items.find(
-                        (item: any) =>
-                            item.item_name_hebrew === itemName ||
-                            item.item_name_english === itemName
+                        (item: any) => {
+                            const pName = normalizeString(itemName);
+                            return normalizeString(item.item_name_hebrew) === pName ||
+                                normalizeString(item.item_name_english) === pName;
+                        }
                     );
                     if (matchedItem) {
                         const itemIndex = matchedItem.item_index;

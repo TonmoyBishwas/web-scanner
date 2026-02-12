@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sessionStorage } from '@/lib/redis';
 import type { CompleteRequest, CompleteResponse, ScannedItem, ScanEntry } from '@/types';
+import { normalizeString } from '@/lib/string-utils';
 
 /**
  * POST /api/complete
@@ -94,9 +95,9 @@ export async function POST(request: NextRequest) {
 
           // 3. Try to match to an invoice item
           const matchedItem = session.invoice_items.find((item: any) => {
-            const pName = productName!.toLowerCase().trim(); // Non-null assertion safe due to check above
-            const iNameHeb = item.item_name_hebrew?.toLowerCase().trim() || "";
-            const iNameEng = item.item_name_english?.toLowerCase().trim() || "";
+            const pName = normalizeString(productName);
+            const iNameHeb = normalizeString(item.item_name_hebrew);
+            const iNameEng = normalizeString(item.item_name_english);
 
             return pName === iNameHeb || pName === iNameEng ||
               (iNameHeb && pName.includes(iNameHeb)) ||
