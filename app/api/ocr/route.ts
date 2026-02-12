@@ -198,8 +198,27 @@ export async function POST(request: NextRequest) {
                         latestSession.scanned_items[itemIndex].scanned_weight += ocrData.weight_kg;
                       }
                       console.log(`[API/ocr] Matched item ${itemIndex} (${matchedItem.item_name_english}). New count: ${latestSession.scanned_items[itemIndex].scanned_count}`);
+                      console.log(`[API/ocr] Matched item ${itemIndex} (${matchedItem.item_name_english}). New count: ${latestSession.scanned_items[itemIndex].scanned_count}`);
                     } else {
-                      console.log(`[API/ocr] No matching item found for product: ${productName}`);
+                      // Fallback: Add as unmatched item so it appears in summary
+                      console.log(`[API/ocr] No matching invoice item found for product: ${productName}. Adding as extra.`);
+                      const unmatchedKey = `unmatched_${productName.replace(/\s+/g, '_')}`;
+
+                      if (!latestSession.scanned_items[unmatchedKey]) {
+                        latestSession.scanned_items[unmatchedKey] = {
+                          item_index: -1, // Special index for unmatched
+                          item_name: productName, // Use the OCR name
+                          scanned_count: 0,
+                          scanned_weight: 0,
+                          expected_weight: 0,
+                          expected_boxes: 0
+                        };
+                      }
+
+                      latestSession.scanned_items[unmatchedKey].scanned_count += 1;
+                      if (ocrData.weight_kg) {
+                        latestSession.scanned_items[unmatchedKey].scanned_weight += ocrData.weight_kg;
+                      }
                     }
                   }
 
