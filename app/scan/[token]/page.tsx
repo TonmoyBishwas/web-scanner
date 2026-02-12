@@ -498,11 +498,21 @@ export default function ScanPage({
         });
 
         if (updates.length > 0) {
-          await fetch(`/api/session?token=${token}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ updates })
-          });
+          try {
+            const putRes = await fetch(`/api/session?token=${token}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ updates })
+            });
+
+            if (!putRes.ok) {
+              addErrorLog(`CheckStuckOCR PUT failed: ${putRes.status} ${putRes.statusText}`);
+            } else {
+              // Success - triggering refresh
+            }
+          } catch (putErr) {
+            addErrorLog(`CheckStuckOCR PUT error: ${putErr}`);
+          }
 
           // Trigger UI update by fetching again
           const updatedResponse = await fetch(`/api/session?token=${token}&t=${Date.now()}`, {

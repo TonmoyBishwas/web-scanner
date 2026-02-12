@@ -20,43 +20,61 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get session
-    const session = await sessionStorage.get(token);
-    if (!session || session.status !== 'ACTIVE') {
-      return NextResponse.json(
-        { success: false, error: 'Invalid or expired session' },
-        { status: 400 }
+    // Use locking to prevent race conditions when updating session
+    type ValidationResult = { success: boolean; error?: string; status?: number; ocr_data?: any; session?: any };
+    let validationResult = null as ValidationResult | null;
+
+    await sessionStorage.withLock(token, async () => {
+      // Re-fetch session inside lock
+      const session = await sessionStorage.get(token);
+      if (!session || session.status !== 'ACTIVE') {
+        validationResult = { success: false, error: 'Invalid or expired session', status: 400 };
+        return;
+      }
+
+      // Find the scan entry for this barcode
+      const scanEntry = session.scanned_barcodes.find(
+        (b: ScanEntry) => b.barcode === barcode
       );
+
+      if (!scanEntry) {
+        validationResult = { success: false, error: 'Barcode not found in session', status: 400 };
+        return;
+      }
+
+      // Check if OCR was already processed for this barcode
+      if (scanEntry.ocr_status === 'complete') {
+        validationResult = { success: true, ocr_data: scanEntry.ocr_data };
+        return;
+      }
+
+      // Update image_url if provided (from Cloudinary)
+      if (image_url && !scanEntry.image_url) {
+        scanEntry.image_url = image_url;
+      }
+
+      // Mark OCR as pending
+      scanEntry.ocr_status = 'pending';
+      await sessionStorage.set(token, session, { ex: 3600 });
+
+      validationResult = { success: true, session }; // Return session to use image_url/image outside lock
+    });
+
+    if (validationResult && !validationResult.success) {
+      if (validationResult.ocr_data) {
+        return NextResponse.json({ success: true, ocr_data: validationResult.ocr_data });
+      }
+      return NextResponse.json({ success: false, error: validationResult.error }, { status: validationResult.status || 500 });
     }
 
-    // Find the scan entry for this barcode
-    const scanEntry = session.scanned_barcodes.find(
-      (b: ScanEntry) => b.barcode === barcode
-    );
-
-    if (!scanEntry) {
-      return NextResponse.json(
-        { success: false, error: 'Barcode not found in session' },
-        { status: 400 }
-      );
+    // Check if we got a valid result from the lock
+    if (!validationResult) {
+      // Should not happen if lock works, but acts as fallback for lock failure
+      return NextResponse.json({ success: false, error: 'Session lock failed' }, { status: 500 });
     }
 
-    // Check if OCR was already processed for this barcode
-    if (scanEntry.ocr_status === 'complete') {
-      return NextResponse.json({
-        success: true,
-        ocr_data: scanEntry.ocr_data
-      });
-    }
+    // Continue with webhook call...
 
-    // Update image_url if provided (from Cloudinary)
-    if (image_url && !scanEntry.image_url) {
-      scanEntry.image_url = image_url;
-    }
-
-    // Mark OCR as pending
-    scanEntry.ocr_status = 'pending';
-    await sessionStorage.set(token, session, { ex: 3600 });
 
     // Get bot webhook URL from environment
     const botWebhookUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
