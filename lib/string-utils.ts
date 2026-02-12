@@ -8,8 +8,9 @@
  */
 export function normalizeString(str: string | null | undefined): string {
     if (!str) return '';
-    // Remove all characters except word chars (a-z, 0-9, _) and Hebrew chars
+    // Remove ALL characters except English (a-z, 0-9) and Hebrew (\u0590-\u05FF)
+    // This removes spaces, dots, hyphens, quotes, underscores, etc.
     return str
         .toLowerCase()
-        .replace(/[^\w\u0590-\u05FF]/g, '');
+        .replace(/[^a-z0-9\u0590-\u05FF]/g, '');
 }

@@ -72,19 +72,17 @@ export async function POST(request: NextRequest) {
 
         for (const scan of validScans) {
           // Determine the product name and weight for this scan
+          // Determine final product name (priority: manual > resolved > ocr)
           let productName = null;
-          let weight = 0;
+          if (scan.manual_entry?.item_name) productName = scan.manual_entry.item_name;
+          else if (scan.resolved_item_name) productName = scan.resolved_item_name;
+          else if (scan.ocr_data?.product_name) productName = scan.ocr_data.product_name;
 
-          if (scan.ocr_status === 'manual' && scan.manual_entry) {
-            productName = scan.manual_entry.item_name;
-            weight = scan.manual_entry.weight || 0;
-          } else if (scan.resolved_item_name) {
-            productName = scan.resolved_item_name;
-            weight = scan.resolved_weight || (scan.ocr_data?.weight_kg || 0);
-          } else if (scan.ocr_data) {
-            productName = scan.ocr_data.product_name;
-            weight = scan.ocr_data.weight_kg || 0;
-          }
+          // Determine final weight (priority: manual > resolved > ocr)
+          let weight = 0;
+          if (scan.manual_entry?.weight) weight = scan.manual_entry.weight;
+          else if (scan.resolved_weight !== undefined && scan.resolved_weight !== null) weight = scan.resolved_weight;
+          else if (scan.ocr_data?.weight_kg) weight = scan.ocr_data.weight_kg;
 
           if (!productName) {
             // Should not happen for completed/manual scans, but safe fallback
@@ -99,9 +97,15 @@ export async function POST(request: NextRequest) {
             const iNameHeb = normalizeString(item.item_name_hebrew);
             const iNameEng = normalizeString(item.item_name_english);
 
-            return pName === iNameHeb || pName === iNameEng ||
-              (iNameHeb && pName.includes(iNameHeb)) ||
-              (iNameHeb && iNameHeb.includes(pName));
+            // Exact match or substring
+            const isMatch = pName === iNameHeb || pName === iNameEng ||
+              (iNameHeb && iNameHeb.length > 3 && pName.includes(iNameHeb)) ||
+              (iNameHeb && iNameHeb.length > 3 && iNameHeb.includes(pName));
+
+            if (!isMatch && (pName.includes(iNameHeb) || iNameHeb.includes(pName))) {
+              console.log(`[FuzzyMatch] Miss: '${productName}' (${pName}) vs '${item.item_name_hebrew}' (${iNameHeb})`);
+            }
+            return isMatch;
           });
 
           // 4. Update the fresh summary

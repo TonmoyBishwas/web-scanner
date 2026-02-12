@@ -764,13 +764,16 @@ export default function ScanPage({
 
       // ── Optimistic Update ──
       // 1. Add to results
-      setOcrResults(prev => new Map(prev).set(barcode, {
-        product_name: resolved.item_name || null,
-        weight_kg: resolved.weight || null,
-        expiry_date: resolved.expiry || null,
-        production_date: null,
-        barcode_digits: null
-      }));
+      setOcrResults(prev => {
+        const existing = prev.get(barcode);
+        return new Map(prev).set(barcode, {
+          product_name: resolved.item_name || existing?.product_name || null,
+          weight_kg: resolved.weight ?? existing?.weight_kg ?? null,
+          expiry_date: resolved.expiry || existing?.expiry_date || null,
+          production_date: existing?.production_date || null,
+          barcode_digits: existing?.barcode_digits || null
+        });
+      });
 
       // 2. Remove from issues
       setOcrIssues(prev => {
