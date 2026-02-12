@@ -217,13 +217,14 @@ export async function POST(request: NextRequest) {
                       console.log(`[API/ocr] Matched item ${itemIndex} (${matchedItem.item_name_english}). New count: ${latestSession.scanned_items[itemIndex].scanned_count}`);
                     } else {
                       // Fallback: Add as unmatched item so it appears in summary
-                      console.log(`[API/ocr] No matching invoice item found for product: ${productName}. Adding as extra.`);
-                      const unmatchedKey = `unmatched_${productName.replace(/\s+/g, '_')}`;
+                      const displayName = productName || 'Unknown';
+                      console.log(`[API/ocr] No matching invoice item found for product: ${displayName}. Adding as extra.`);
+                      const unmatchedKey = `unmatched_${displayName.replace(/\s+/g, '_')}`;
 
                       if (!latestSession.scanned_items[unmatchedKey]) {
                         latestSession.scanned_items[unmatchedKey] = {
                           item_index: -1, // Special index for unmatched
-                          item_name: productName, // Use the OCR name
+                          item_name: displayName, // Use the OCR name
                           scanned_count: 0,
                           scanned_weight: 0,
                           expected_weight: 0,
