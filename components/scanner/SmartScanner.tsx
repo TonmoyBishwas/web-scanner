@@ -141,9 +141,39 @@ export function SmartScanner({
         return;
       }
 
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      // ── MATCHING "object-fit: cover" CROP LOGIC ──
+      // The video element is styled with object-cover in a square container.
+      // We must crop the source video to match what the user sees.
+
+      const videoRatio = video.videoWidth / video.videoHeight;
+      // We assume a square aspect ratio for the container (as per className="aspect-square")
+      const targetRatio = 1;
+
+      let sWidth, sHeight, sx, sy;
+
+      if (videoRatio > targetRatio) {
+        // Source is wider than target (landscape video in square container)
+        // Crop width, keep full height
+        sHeight = video.videoHeight;
+        sWidth = sHeight * targetRatio;
+        sx = (video.videoWidth - sWidth) / 2;
+        sy = 0;
+      } else {
+        // Source is taller than target (portrait video in square container)
+        // Crop height, keep full width
+        sWidth = video.videoWidth;
+        sHeight = sWidth / targetRatio;
+        sx = 0;
+        sy = (video.videoHeight - sHeight) / 2;
+      }
+
+      // Set canvas to match the CROP dimensions (or a fixed high-res square)
+      // Here we set it to the crop dimension to maintain 1:1 aspect ratio
+      canvas.width = sWidth;
+      canvas.height = sHeight;
+
+      // Draw ONLY the visible portion
+      ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
 
       try {
         const barcodes = await barcodeDetector.detect(canvas);
@@ -258,7 +288,6 @@ export function SmartScanner({
   }
 
   // Fallback to html5-qrcode
-  console.log('📱 [SmartScanner] Native scanner not available - using html5-qrcode fallback');
   return (
     <Html5QrcodeScanner
       onBarcodeDetected={onBarcodeDetected}

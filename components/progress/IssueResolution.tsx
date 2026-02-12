@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { OCRIssue, InvoiceItem } from '@/types';
+import { ImageModal } from '@/components/shared/ImageModal';
 
 interface IssueResolutionProps {
     issues: OCRIssue[];
@@ -78,6 +79,7 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
     );
     const [expiry, setExpiry] = useState(issue.ocr_data?.expiry_date || '');
     const [resolved, setResolved] = useState(false);
+    const [showImageModal, setShowImageModal] = useState(false);
 
     if (resolved) {
         return (
@@ -103,13 +105,27 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
 
             {/* Show captured image */}
             {issue.image_url && (
-                <div className="rounded-lg overflow-hidden border border-gray-700">
-                    <img
-                        src={issue.image_url}
-                        alt="Box sticker"
-                        className="w-full h-32 object-cover"
-                    />
-                </div>
+                <>
+                    <div
+                        className="rounded-lg overflow-hidden border border-gray-700 cursor-pointer hover:border-yellow-500 transition-colors"
+                        onClick={() => setShowImageModal(true)}
+                    >
+                        <img
+                            src={issue.image_url}
+                            alt="Box sticker"
+                            className="w-full h-32 object-cover"
+                        />
+                        <div className="text-center text-xs text-gray-400 py-1 bg-gray-900/50">
+                            🔍 Click to enlarge
+                        </div>
+                    </div>
+                    {showImageModal && (
+                        <ImageModal
+                            imageUrl={issue.image_url}
+                            onClose={() => setShowImageModal(false)}
+                        />
+                    )}
+                </>
             )}
 
             {/* Item name selector (when name is missing) */}

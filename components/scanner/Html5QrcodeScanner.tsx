@@ -55,7 +55,7 @@ export function Html5QrcodeScanner({
       // Html5Qrcode.getCameras() handles permission and enumeration together
       const cameras = await Html5Qrcode.getCameras();
 
-      console.log('[Html5Qrcode] Available cameras:', cameras);
+
       setScannerState(`Found ${cameras.length} camera(s)`);
 
       const cameraDevices: CameraDevice[] = cameras.map((cam, i) => ({
@@ -72,7 +72,7 @@ export function Html5QrcodeScanner({
       // Check for saved selection first
       const savedCameraId = sessionStorage.getItem('selectedCameraId');
       if (savedCameraId && cameraDevices.find(c => c.id === savedCameraId)) {
-        console.log('[Html5Qrcode] Using saved camera:', cameraDevices.find(c => c.id === savedCameraId)?.label);
+
         setSelectedCameraId(savedCameraId);
         return savedCameraId;
       }
@@ -84,14 +84,14 @@ export function Html5QrcodeScanner({
       });
 
       if (backCamera) {
-        console.log('[Html5Qrcode] Selected back camera:', backCamera.label);
+
         setSelectedCameraId(backCamera.id);
         return backCamera.id;
       }
 
       // Fallback to first camera
       const selectedCamera = cameraDevices[0];
-      console.log('[Html5Qrcode] No back camera found, using first camera:', selectedCamera.label);
+
       setSelectedCameraId(selectedCamera.id);
       return selectedCamera.id;
     } catch (err) {
@@ -106,39 +106,51 @@ export function Html5QrcodeScanner({
   // Capture video frame for OCR
   const captureFrame = async (): Promise<string | null> => {
     try {
-      console.log('[Html5Qrcode] captureFrame: Looking for video element in', qrCodeRegionId.current);
-
       // Find the video element created by Html5Qrcode
       const videoElement = document.querySelector(
         `#${qrCodeRegionId.current} video`
       ) as HTMLVideoElement;
 
-      console.log('[Html5Qrcode] Video element found:', !!videoElement);
-      if (videoElement) {
-        console.log('[Html5Qrcode] Video dimensions:', videoElement.videoWidth, 'x', videoElement.videoHeight);
-        console.log('[Html5Qrcode] Video readyState:', videoElement.readyState);
-      }
-
       if (!videoElement || videoElement.videoWidth === 0) {
-        console.log('[Html5Qrcode] Video element not ready for capture');
         return null;
       }
 
       const canvas = document.createElement('canvas');
-      canvas.width = videoElement.videoWidth;
-      canvas.height = videoElement.videoHeight;
+
+      // ── MATCHING "object-fit: cover" CROP LOGIC ──
+      const videoRatio = videoElement.videoWidth / videoElement.videoHeight;
+      const targetRatio = 1; // Square container
+
+      let sWidth, sHeight, sx, sy;
+
+      if (videoRatio > targetRatio) {
+        // Landscape source in square container -> Crop width
+        sHeight = videoElement.videoHeight;
+        sWidth = sHeight * targetRatio;
+        sx = (videoElement.videoWidth - sWidth) / 2;
+        sy = 0;
+      } else {
+        // Portrait source in square container -> Crop height
+        sWidth = videoElement.videoWidth;
+        sHeight = sWidth / targetRatio;
+        sx = 0;
+        sy = (videoElement.videoHeight - sHeight) / 2;
+      }
+
+      // Set canvas to the crop dimensions (square)
+      canvas.width = sWidth;
+      canvas.height = sHeight;
       const ctx = canvas.getContext('2d');
 
       if (!ctx) {
-        console.log('[Html5Qrcode] Could not get canvas context');
         return null;
       }
 
-      ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+      // Draw cropped portion
+      ctx.drawImage(videoElement, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
 
       // Return as base64 JPEG with 0.8 quality
       const result = canvas.toDataURL('image/jpeg', 0.8);
-      console.log('[Html5Qrcode] Frame captured successfully, data URL length:', result.length);
       return result;
     } catch (err) {
       console.error('[Html5Qrcode] Error capturing frame:', err);
@@ -150,8 +162,7 @@ export function Html5QrcodeScanner({
   const handleManualCapture = async () => {
     if (isCapturing) return;
 
-    console.log('[Html5Qrcode] Manual capture button clicked');
-    console.log('[Html5Qrcode] lastDetectedBarcode:', lastDetectedBarcode);
+
 
     setIsCapturing(true);
     try {
@@ -197,7 +208,7 @@ export function Html5QrcodeScanner({
     const file = event.target.files?.[0];
     if (!file) return;
 
-    console.log('[Html5Qrcode] Processing uploaded image:', file.name);
+
     setIsProcessingImage(true);
 
     try {
@@ -212,7 +223,7 @@ export function Html5QrcodeScanner({
         const barcode = result;
         setLastDetectedBarcode(barcode);
         setScanCount(c => c + 1);
-        console.log('[Html5Qrcode] Barcode detected from image:', barcode);
+
 
         if (!scannedBarcodes.has(barcode)) {
           // Parse the barcode to extract weight, expiry, etc.
@@ -229,7 +240,7 @@ export function Html5QrcodeScanner({
           setLastParsedData(parsedData);
           setScanCount(c => c + 1);
 
-          console.log('[Html5Qrcode] Parsed data from image:', parsedData);
+
 
           // Also capture the uploaded image and pass it with the barcode detection
           const reader = new FileReader();
@@ -352,7 +363,7 @@ export function Html5QrcodeScanner({
           lastScanTime = now;
 
           if (!scannedBarcodes.has(decodedText)) {
-            console.log('[Html5Qrcode] New barcode detected:', decodedText);
+
 
             // Parse the barcode to extract weight, expiry, etc.
             const parsedData = parseIsraeliBarcode(decodedText) || {
@@ -364,7 +375,7 @@ export function Html5QrcodeScanner({
               expiry_source: 'ocr_required' as const
             };
 
-            console.log('[Html5Qrcode] Parsed data:', parsedData);
+
             setLastParsedData(parsedData);
 
             // NEW: Capture image IMMEDIATELY when barcode is detected
@@ -377,7 +388,7 @@ export function Html5QrcodeScanner({
             captureTimeoutRef.current = setTimeout(async () => {
               const imageData = await captureFrame();
               if (imageData) {
-                console.log('[Html5Qrcode] Auto-captured image for scan:', decodedText);
+
                 // Pass image data directly to onBarcodeDetected
                 if (navigator.vibrate) navigator.vibrate(100);
                 onBarcodeDetected(decodedText, parsedData, imageData);
@@ -388,7 +399,7 @@ export function Html5QrcodeScanner({
               }
             }, 100);  // Very short delay for camera to stabilize
           } else {
-            console.log('[Html5Qrcode] Duplicate barcode');
+
             if (navigator.vibrate) navigator.vibrate(200);
             setError(`Duplicate: ${decodedText}`);
             setTimeout(() => setError(null), 2000);
@@ -406,7 +417,7 @@ export function Html5QrcodeScanner({
         setIsInitialized(true);
         setIsScanning(false);
         setScannerState('Scanning active - point at barcode');
-        console.log('[Html5Qrcode] Scanner started successfully');
+
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to start scanner';
@@ -422,7 +433,7 @@ export function Html5QrcodeScanner({
 
     async function initScanner() {
       try {
-        console.log('[Html5Qrcode] Initializing scanner...');
+
 
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           throw new Error('Camera not supported in this browser');
@@ -430,7 +441,7 @@ export function Html5QrcodeScanner({
 
         // Get best camera
         const cameraId = await getBestCamera();
-        console.log('[Html5Qrcode] Using camera:', cameraId || 'default');
+
 
         // Start scanning
         await startScanning(cameraId);
@@ -447,7 +458,7 @@ export function Html5QrcodeScanner({
 
     return () => {
       isMountedRef.current = false;
-      console.log('[Html5Qrcode] Cleanup');
+
 
       // Clear capture timeout
       if (captureTimeoutRef.current) {

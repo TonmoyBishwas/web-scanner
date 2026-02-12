@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef, use } from 'react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
 import { IssueResolution } from '@/components/progress/IssueResolution';
+import { ImageModal } from '@/components/shared/ImageModal';
 import type {
   ParsedBarcode,
   BoxStickerOCR,
@@ -39,8 +40,7 @@ export default function ScanPage({
   // Scan tracking
   const [scannedBarcodes, setScannedBarcodes] = useState<Map<string, ParsedBarcode>>(new Map());
   const [ocrResults, setOcrResults] = useState<Map<string, BoxStickerOCR>>(new Map());
-  const [boxesScanned, setBoxesScanned] = useState(0);
-  const [showDebugPanel, setShowDebugPanel] = useState(false);
+
   const [showOCRDrawer, setShowOCRDrawer] = useState(false);
   const [ocrImageUrls, setOcrImageUrls] = useState<Map<string, string>>(new Map());
   const [boxesExpected, setBoxesExpected] = useState(0);
@@ -52,22 +52,25 @@ export default function ScanPage({
 
   // Force confirm
   const [showForceConfirm, setShowForceConfirm] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [manualEntries, setManualEntries] = useState<ManualEntryData[]>([]);
 
   // Error logging for mobile debugging
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [errorLog, setErrorLog] = useState<Array<{ time: string, msg: string }>>([]);
-  const [showErrorLog, setShowErrorLog] = useState(false);
   const [scannerType, setScannerType] = useState<'native' | 'fallback' | null>(null);
 
   // Feedback states
   const [flashColor, setFlashColor] = useState<'green' | 'red' | null>(null);
   const [showToast, setShowToast] = useState<string | null>(null);
   const [counterBounce, setCounterBounce] = useState(false);
+
   const addErrorLog = useCallback((msg: string) => {
     const time = new Date().toLocaleTimeString();
     setErrorLog(prev => [...prev, { time, msg }]);
     console.error(`[ERROR ${time}]`, msg);
   }, []);
+
 
   // ──  Audio feedback using Web Audio API ──────────────────────
   const playSuccessSound = useCallback(() => {
@@ -88,7 +91,7 @@ export default function ScanPage({
       oscillator.start(audioContext.currentTime);
       oscillator.stop(audioContext.currentTime + 0.15);
     } catch (e) {
-      console.log('Audio not supported');
+      // Audio not supported
     }
   }, []);
 
@@ -110,7 +113,7 @@ export default function ScanPage({
       oscillator.start(audioContext.currentTime);
       oscillator.stop(audioContext.currentTime + 0.3);
     } catch (e) {
-      console.log('Audio not supported');
+      // Audio not supported
     }
   }, []);
 
@@ -156,6 +159,9 @@ export default function ScanPage({
   // Red flash trigger from SmartScanner
   const redFlashTriggerRef = useRef<(() => void) | null>(null);
 
+  // Track resolved barcodes to prevent UI flicker/revert
+  const resolvedBarcodesRef = useRef<Set<string>>(new Set());
+
   // ── Load Session ──────────────────────────────────────────────
   useEffect(() => {
     async function fetchSession() {
@@ -171,12 +177,18 @@ export default function ScanPage({
           0
         );
         setBoxesExpected(totalExpected);
-        setBoxesScanned(sessionData.scanned_barcodes?.length || 0);
+        setBoxesExpected(totalExpected);
 
         // Load existing scanned barcodes
         if (sessionData.scanned_barcodes) {
           const barcodeMap = new Map<string, ParsedBarcode>();
+          const urlMap = new Map<string, string>(); // Hydrate image URLs
+          const initialIssues: OCRIssue[] = [];
+          const initialResults = new Map<string, BoxStickerOCR>();
+          const initialPending = new Set<string>();
+
           sessionData.scanned_barcodes.forEach((entry: ScanEntry) => {
+            // 1. Basic Barcode Data
             barcodeMap.set(entry.barcode, {
               type: 'id-only',
               sku: entry.barcode,
@@ -185,13 +197,83 @@ export default function ScanPage({
               raw_barcode: entry.barcode,
               expiry_source: 'ocr_required',
             });
+
+            // 2. Image URL Hydration
+            if (entry.image_url) {
+              urlMap.set(entry.barcode, entry.image_url);
+            }
+
+            // 3. Status State Hydration
+            // 3. Status State Hydration
+            if (entry.ocr_status === 'failed') {
+              initialIssues.push({
+                barcode: entry.barcode,
+                image_url: entry.image_url || '',
+                type: 'missing_both', // Default fallback
+                inferred_weight: entry.inferred_weight
+              });
+            } else if (entry.ocr_status === 'pending') {
+              initialPending.add(entry.barcode);
+            } else if (entry.ocr_status === 'complete' && entry.ocr_data) {
+              initialResults.set(entry.barcode, entry.ocr_data);
+
+              // ── CRITICAL FIX: Re-run issue detection for completed items on refresh ──
+              if (!entry.ocr_data.product_name && !entry.ocr_data.weight_kg) {
+                initialIssues.push({
+                  barcode: entry.barcode,
+                  image_url: entry.image_url || '',
+                  type: 'missing_both',
+                  ocr_data: entry.ocr_data
+                });
+              } else if (!entry.ocr_data.product_name) {
+                initialIssues.push({
+                  barcode: entry.barcode,
+                  image_url: entry.image_url || '',
+                  type: 'missing_name',
+                  ocr_data: entry.ocr_data
+                });
+              } else if (!entry.ocr_data.weight_kg) {
+                // Try smart weight inference
+                const inferredWeight = inferWeight(entry, sessionData);
+                initialIssues.push({
+                  barcode: entry.barcode,
+                  image_url: entry.image_url || '',
+                  type: 'missing_weight',
+                  inferred_weight: inferredWeight,
+                  ocr_data: entry.ocr_data
+                });
+              }
+
+            } else if (entry.ocr_status === 'manual') {
+              initialResults.set(entry.barcode, {
+                product_name: entry.resolved_item_name || null,
+                weight_kg: entry.resolved_weight || null,
+                expiry_date: entry.resolved_expiry || null,
+                production_date: null,
+                barcode_digits: null
+              });
+            }
           });
+
           setScannedBarcodes(barcodeMap);
+          setOcrImageUrls(urlMap);
+          setOcrIssues(initialIssues);
+          setOcrResults(initialResults);
+          setPendingOCR(initialPending);
+
           // Also initialize synchronous ref for duplicate detection
           barcodeMap.forEach((_, key) => processedBarcodesRef.current.add(key));
+
+          // Determine Phase based on loaded state
+          if (initialIssues.length > 0) {
+            setPhase('issues');
+          } else if (initialPending.size > 0) {
+            setPhase('processing');
+          } else {
+            setPhase('scanning');
+          }
         }
 
-        setPhase('scanning');
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load session');
         setPhase('error');
@@ -250,7 +332,10 @@ export default function ScanPage({
     if (pendingOCR.size === 0) return;
 
     try {
-      const res = await fetch(`/api/session?token=${token}`);
+      // Add timestamp to prevent caching
+      const res = await fetch(`/api/session?token=${token}&t=${Date.now()}`, {
+        cache: 'no-store'
+      });
       if (!res.ok) return;
       const updatedSession: ScanSession = await res.json();
       setSession(updatedSession);
@@ -261,6 +346,12 @@ export default function ScanPage({
       const issues: OCRIssue[] = [];
 
       updatedSession.scanned_barcodes.forEach((entry: ScanEntry) => {
+        // Skip if locally resolved (prevents "Analyzing..." stuck state)
+        if (resolvedBarcodesRef.current.has(entry.barcode)) {
+          // It's resolved, don't look at remote 'pending' status
+          return;
+        }
+
         if (entry.ocr_status === 'pending') {
           stillPending.add(entry.barcode);
         } else if (entry.ocr_status === 'complete' && entry.ocr_data) {
@@ -270,14 +361,15 @@ export default function ScanPage({
           if (!entry.ocr_data.product_name && !entry.ocr_data.weight_kg) {
             issues.push({
               barcode: entry.barcode,
-              image_url: entry.image_url,
+              image_url: entry.image_url || ocrImageUrls.get(entry.barcode) || '',
+              // ...
               type: 'missing_both',
               ocr_data: entry.ocr_data
             });
           } else if (!entry.ocr_data.product_name) {
             issues.push({
               barcode: entry.barcode,
-              image_url: entry.image_url,
+              image_url: entry.image_url || ocrImageUrls.get(entry.barcode) || '',
               type: 'missing_name',
               ocr_data: entry.ocr_data
             });
@@ -286,16 +378,26 @@ export default function ScanPage({
             const inferredWeight = inferWeight(entry, updatedSession);
             issues.push({
               barcode: entry.barcode,
-              image_url: entry.image_url,
+              image_url: entry.image_url || ocrImageUrls.get(entry.barcode) || '',
               type: 'missing_weight',
               inferred_weight: inferredWeight,
               ocr_data: entry.ocr_data
             });
           }
+        } else if (entry.ocr_status === 'manual') {
+          // ...
+          newOcrResults.set(entry.barcode, {
+            // ...
+            product_name: entry.resolved_item_name || null,
+            weight_kg: entry.resolved_weight || null,
+            expiry_date: entry.resolved_expiry || null,
+            production_date: null,
+            barcode_digits: null
+          });
         } else if (entry.ocr_status === 'failed') {
           issues.push({
             barcode: entry.barcode,
-            image_url: entry.image_url,
+            image_url: entry.image_url || ocrImageUrls.get(entry.barcode) || '',
             type: 'missing_both',
           });
         }
@@ -360,66 +462,101 @@ export default function ScanPage({
 
   // ── Client-side OCR timeout fallback (mark as failed after 40s) ──
   useEffect(() => {
-    if (!session) return;
-
     const checkStuckOCR = async () => {
-      const now = Date.now();
-      const TIMEOUT_MS = 40000; // 40 seconds
+      try {
+        // Fetch FRESH session data on each check (avoid stale closure)
+        // Add timestamp and no-store to ensure we truly get latest from server
+        const response = await fetch(`/api/session?token=${token}&t=${Date.now()}`, {
+          cache: 'no-store'
+        });
+        if (!response.ok) return;
 
-      let needsUpdate = false;
-      const updatedBarcodes = session.scanned_barcodes.map((entry: ScanEntry) => {
-        if (entry.ocr_status === 'pending') {
-          // Calculate how long it's been pending
-          const createdAt = entry.scanned_at ? new Date(entry.scanned_at).getTime() : now;
-          const elapsed = now - createdAt;
+        const freshSession = await response.json();
+        if (!freshSession || !freshSession.scanned_barcodes) return;
 
-          if (elapsed > TIMEOUT_MS) {
-            console.warn(`[Client] ⏱️ OCR timeout for ${entry.barcode} after ${Math.floor(elapsed / 1000)}s - marking as failed`);
-            needsUpdate = true;
+        const now = Date.now();
+        const TIMEOUT_MS = 40000; // 40 seconds
 
-            return {
-              ...entry,
-              ocr_status: 'failed' as const,
-              ocr_data: {
-                product_name: null,
-                weight_kg: null,
-                production_date: null,
-                expiry_date: null,
-                barcode_digits: null
-              }
-            };
+        const updates: any[] = [];
+
+        freshSession.scanned_barcodes.forEach((entry: ScanEntry) => {
+          if (entry.ocr_status === 'pending') {
+            const createdAt = entry.scanned_at ? new Date(entry.scanned_at).getTime() : now;
+            const elapsed = now - createdAt;
+
+            if (elapsed > TIMEOUT_MS) {
+              const msg = `⏱️ OCR timeout for ${entry.barcode} after ${Math.floor(elapsed / 1000)}s - marking as failed`;
+              addErrorLog(msg);
+
+              updates.push({
+                barcode: entry.barcode,
+                ocr_status: 'failed',
+                ocr_error: 'Client timeout (40s)'
+              });
+            }
           }
-        }
-        return entry;
-      });
+        });
 
-      // Update session if any timeouts occurred
-      if (needsUpdate) {
-        try {
+        if (updates.length > 0) {
           await fetch(`/api/session?token=${token}`, {
-            method: 'POST',
+            method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              ...session,
-              scanned_barcodes: updatedBarcodes
-            })
+            body: JSON.stringify({ updates })
           });
-          // Trigger reload by fetching session again
-          const response = await fetch(`/api/session?token=${token}`);
-          if (response.ok) {
-            const data = await response.json();
-            setSession(data);
+
+          // Trigger UI update by fetching again
+          const updatedResponse = await fetch(`/api/session?token=${token}&t=${Date.now()}`, {
+            cache: 'no-store'
+          });
+          if (updatedResponse.ok) {
+            const updatedData = await updatedResponse.json();
+            setSession(updatedData);
+
+            // ── CRITICAL FIX: Sync local state for timed-out items ──
+            // 1. Remove from pendingOCR
+            // 2. Add to ocrIssues (so user can resolve manually)
+            updatedData.scanned_barcodes.forEach((entry: ScanEntry) => {
+              if (entry.ocr_status === 'failed') {
+                const barcode = entry.barcode;
+
+                // Remove from pending
+                setPendingOCR(prev => {
+                  const next = new Set(prev);
+                  next.delete(barcode);
+                  return next;
+                });
+
+                // Add to issues if not already present
+                setOcrIssues(prev => {
+                  if (prev.some(i => i.barcode === barcode)) return prev;
+                  return [...prev, {
+                    barcode,
+                    scanned_at: entry.scanned_at || new Date().toISOString(),
+                    type: 'missing_both' as const, // Default to missing_both for timeouts
+                    error_type: 'blur',
+                    image_url: ocrImageUrls.get(barcode) || entry.image_url || ''
+                  }];
+                });
+              }
+            });
+
+            // If we have issues, ensure we're in the right phase
+            if (updatedData.scanned_barcodes.some((e: ScanEntry) => e.ocr_status === 'failed')) {
+              setAllIssuesResolved(false);
+              setPhase('issues');
+            }
           }
-        } catch (error) {
-          console.error('[Client] Failed to update timed-out OCR:', error);
         }
+      } catch (error) {
+        console.error('[Client] Timeout checker error:', error);
+        addErrorLog(`[Client] Timeout checker error: ${error instanceof Error ? error.message : String(error)}`);
       }
     };
 
     // Check every 5 seconds
     const interval = setInterval(checkStuckOCR, 5000);
     return () => clearInterval(interval);
-  }, [session, token]);
+  }, [token, addErrorLog, ocrImageUrls]); // Added ocrImageUrls to dependency
 
   // ── Barcode Detected Handler ─────────────────────────────────
   const handleBarcodeDetected = useCallback(async (
@@ -427,11 +564,19 @@ export default function ScanPage({
     data: ParsedBarcode,
     imageData?: string
   ) => {
+    // ── Validation: Reject malformed barcodes (ghost scans) ──
+    // Allow only alphanumeric characters (no quotes, backslashes, or special symbols)
+    const isValidBarcode = /^[A-Za-z0-9]+$/.test(barcode);
+    if (!isValidBarcode) {
+      addErrorLog(`Ignored invalid barcode: ${barcode}`);
+      return;
+    }
+
     // ── SYNCHRONOUS duplicate check (ref updates immediately, no race condition) ──
     if (processedBarcodesRef.current.has(barcode)) {
       // OPTION 5: Combined duplicate feedback
       triggerDuplicateFeedback();
-      addErrorLog(`⚠️ Barcode ${barcode}: DUPLICATE - Already scanned!`);
+      addErrorLog(`Barcode ${barcode}: Duplicate (ignored)`);
       return;
     }
 
@@ -450,6 +595,7 @@ export default function ScanPage({
     } else {
       addErrorLog(`Barcode ${barcode}: Image captured (${Math.round(imageData.length / 1024)}KB)`);
     }
+
 
     // Upload image to Cloudinary
     let imageUrl = '';
@@ -503,20 +649,21 @@ export default function ScanPage({
     } catch (err) {
       addErrorLog(`/api/scan error: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }, [scannedBarcodes, token, uploadToCloudinary, triggerOCR, addErrorLog]);
+  }, [addErrorLog, scannedBarcodes, token, triggerDuplicateFeedback, triggerOCR, triggerSuccessFeedback, uploadToCloudinary]);
 
   // ── Manual Capture Handler ────────────────────────────────────
   const handleManualCapture = useCallback(async (imageData: string) => {
     const tempBarcode = `manual_${Date.now()}`;
 
-    setBoxesScanned(prev => prev + 1);
+    addErrorLog(`Manual capture: Image captured (${Math.round(imageData.length / 1024)}KB)`);
 
     // Upload to Cloudinary
     const upload = await uploadToCloudinary(imageData);
     if (!upload) {
-      console.error('Manual capture upload failed');
+      addErrorLog('Manual capture upload failed');
       return;
     }
+    addErrorLog(`Manual capture: Uploaded to Cloudinary`);
 
     // Submit as a manual capture scan
     try {
@@ -532,13 +679,15 @@ export default function ScanPage({
           scan_method: 'manual_capture'
         })
       });
+      addErrorLog(`Manual capture: Saved to session`);
 
       // Trigger OCR
       triggerOCR(tempBarcode, upload.url);
+      addErrorLog(`Manual capture: OCR started`);
     } catch (err) {
-      console.error('Manual capture error:', err);
+      addErrorLog(`Manual capture error: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }, [token, uploadToCloudinary, triggerOCR]);
+  }, [addErrorLog, token, triggerOCR, uploadToCloudinary]);
 
   // ── Force Confirm (add remaining boxes manually) ─────────────
   const handleForceConfirmEntry = useCallback(async (entry: ManualEntryData) => {
@@ -548,10 +697,14 @@ export default function ScanPage({
     let imageUrl = '';
     let publicId = '';
     if (entry.image_url) {
+      addErrorLog(`Force confirm ${tempBarcode}: Image captured (${Math.round(entry.image_url.length / 1024)}KB)`);
       const upload = await uploadToCloudinary(entry.image_url);
       if (upload) {
         imageUrl = upload.url;
         publicId = upload.publicId;
+        addErrorLog(`Force confirm ${tempBarcode}: Uploaded to Cloudinary`);
+      } else {
+        addErrorLog(`Force confirm ${tempBarcode}: Cloudinary upload failed`);
       }
     }
 
@@ -570,7 +723,7 @@ export default function ScanPage({
         })
       });
 
-      setBoxesScanned(prev => prev + 1);
+
       setManualEntries(prev => [...prev, { ...entry, image_url: imageUrl }]);
     } catch (err) {
       console.error('Force confirm entry error:', err);
@@ -582,6 +735,9 @@ export default function ScanPage({
     barcode: string,
     resolved: { item_name?: string; weight?: number; expiry?: string }
   ) => {
+    // Track resolved barcode to prevent poll from reverting status
+    resolvedBarcodesRef.current.add(barcode);
+
     // Update session data with resolved values
     try {
       await fetch('/api/resolve', {
@@ -595,10 +751,41 @@ export default function ScanPage({
           resolved_expiry: resolved.expiry,
         })
       });
+
+      // ── Optimistic Update ──
+      // 1. Add to results
+      setOcrResults(prev => new Map(prev).set(barcode, {
+        product_name: resolved.item_name || null,
+        weight_kg: resolved.weight || null,
+        expiry_date: resolved.expiry || null,
+        production_date: null,
+        barcode_digits: null
+      }));
+
+      // 2. Remove from issues
+      setOcrIssues(prev => {
+        const next = prev.filter(i => i.barcode !== barcode);
+        if (next.length === 0) {
+          setAllIssuesResolved(true);
+          // If no pending, go to ready
+          if (pendingOCR.size === 0) setPhase('ready_confirm');
+        }
+        return next;
+      });
+
+      // 3. Ensure no longer pending
+      setPendingOCR(prev => {
+        const next = new Set(prev);
+        next.delete(barcode);
+        return next;
+      });
+
+
     } catch (err) {
       console.error('Issue resolve error:', err);
+      // Revert lock if failed? No, keep it to avoid UI flap.
     }
-  }, [token]);
+  }, [token, setOcrResults, setOcrIssues, setAllIssuesResolved, pendingOCR, setPhase, setPendingOCR]);
 
   // ── Final Confirm ─────────────────────────────────────────────
   const handleConfirm = useCallback(async () => {
@@ -614,17 +801,19 @@ export default function ScanPage({
         setPhase('complete');
       } else {
         setError(result.error || 'Failed to complete scan');
-        setPhase('error');
       }
     } catch (err) {
+      const msg = `Confirmation error: ${err instanceof Error ? err.message : String(err)}`;
+      addErrorLog(msg);
       setError('Network error during confirmation');
       setPhase('error');
     }
-  }, [token]);
+  }, [token, addErrorLog]);
 
   // Check transition to processing
   const handleCheckProgress = useCallback(() => {
-    if (boxesScanned >= boxesExpected && boxesExpected > 0) {
+    const scCount = scannedBarcodes.size;
+    if (scCount >= boxesExpected && boxesExpected > 0) {
       if (pendingOCR.size > 0) {
         setPhase('processing');
       } else if (ocrIssues.length > 0 && !allIssuesResolved) {
@@ -633,11 +822,11 @@ export default function ScanPage({
         setPhase('ready_confirm');
       }
     }
-  }, [boxesScanned, boxesExpected, pendingOCR.size, ocrIssues.length, allIssuesResolved]);
+  }, [scannedBarcodes.size, boxesExpected, pendingOCR.size, ocrIssues.length, allIssuesResolved]);
 
   useEffect(() => {
     if (phase === 'scanning') handleCheckProgress();
-  }, [boxesScanned, phase, handleCheckProgress]);
+  }, [scannedBarcodes.size, phase, handleCheckProgress]);
 
   // ── RENDER ────────────────────────────────────────────────────
 
@@ -679,7 +868,7 @@ export default function ScanPage({
           <p className="text-4xl mb-3">✅</p>
           <h2 className="text-xl font-bold text-green-400 mb-2">Scan Complete!</h2>
           <p className="text-gray-300 text-sm mb-1">
-            {boxesScanned} boxes scanned and submitted
+            {scannedBarcodes.size} boxes scanned and submitted
           </p>
           <p className="text-gray-400 text-xs">
             Data has been sent to warehouse system. You can close this page.
@@ -692,7 +881,7 @@ export default function ScanPage({
   // Processing (OCR in progress - full page loading)
   if (phase === 'processing') {
     const totalPending = pendingOCR.size;
-    const totalScanned = boxesScanned;
+    const totalScanned = scannedBarcodes.size;
     const completed = totalScanned - totalPending;
 
     return (
@@ -731,9 +920,9 @@ export default function ScanPage({
 
   // ── Main Scanner UI ───────────────────────────────────────────
   const isReadyToConfirm = phase === 'ready_confirm' ||
-    (boxesScanned >= boxesExpected && pendingOCR.size === 0 && allIssuesResolved);
+    (scannedBarcodes.size >= boxesExpected && pendingOCR.size === 0 && allIssuesResolved);
 
-  const canForceConfirm = boxesScanned < boxesExpected && boxesScanned > 0;
+  const canForceConfirm = scannedBarcodes.size < boxesExpected && scannedBarcodes.size > 0;
 
   return (
     <div className="min-h-screen bg-gray-900 text-white flex flex-col">
@@ -921,13 +1110,19 @@ export default function ScanPage({
                 <div key={barcode} className="bg-black/40 rounded-lg border border-gray-700 overflow-hidden">
                   <div className="flex gap-3 p-3">
                     {/* Image thumbnail */}
-                    <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-gray-800">
+                    <div
+                      className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-gray-800 cursor-pointer hover:ring-2 hover:ring-purple-500 transition-all relative group"
+                      onClick={() => setSelectedImage(imageUrl)}
+                    >
                       <img
                         src={imageUrl}
                         alt={`Box ${barcode.slice(-6)}`}
                         className="w-full h-full object-cover"
                         onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                       />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                        <span className="text-[10px] text-white">🔍</span>
+                      </div>
                     </div>
                     {/* OCR data */}
                     <div className="flex-1 min-w-0">
@@ -988,7 +1183,7 @@ export default function ScanPage({
           <div className="overflow-y-auto p-3 space-y-1" style={{ maxHeight: 'calc(40vh - 60px)' }}>
             {errorLog.map((entry, i) => (
               <div key={i} className="text-xs bg-black/50 p-2 rounded border border-gray-800">
-                <span className="text-gray-500">{entry.time}</span>
+                <span className="text-gray-500">[{entry.time}]</span>
                 <div className={`mt-1 ${entry.msg.includes('DUPLICATE') || entry.msg.includes('⚠️') ? 'text-red-400' : entry.msg.includes('✓') || entry.msg.includes('Uploaded') ? 'text-green-400' : 'text-yellow-300'}`}>
                   {entry.msg}
                 </div>
@@ -998,12 +1193,12 @@ export default function ScanPage({
         </div>
       )}
 
-      {/* ── Force Confirm Modal ───────────────────────────────── */}
+
       {
         showForceConfirm && session && (
           <ForceConfirmModal
             session={session}
-            boxesScanned={boxesScanned}
+            boxesScanned={scannedBarcodes.size}
             boxesExpected={boxesExpected}
             onAddEntry={handleForceConfirmEntry}
             onClose={() => {
@@ -1018,6 +1213,14 @@ export default function ScanPage({
           />
         )
       }
+
+      {/* ── Image Modal (Global) ───────────────────────────────── */}
+      {selectedImage && (
+        <ImageModal
+          imageUrl={selectedImage}
+          onClose={() => setSelectedImage(null)}
+        />
+      )}
     </div >
   );
 }
