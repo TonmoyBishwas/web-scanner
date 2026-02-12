@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback, forwardRef, useImperativeHand
 import { Html5QrcodeScanner } from './Html5QrcodeScanner';
 import type { ParsedBarcode, BoxStickerOCR } from '@/types';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
+import { calculateSharpness } from '@/lib/image-quality';
 
 interface SmartScannerProps {
   onBarcodeDetected: (barcode: string, data: ParsedBarcode, imageData?: string) => void;
@@ -21,6 +22,15 @@ declare global {
     BarcodeDetector: any;
   }
 }
+
+// Fast Burst Capture Configuration
+const SMART_CAPTURE_CONFIG = {
+  INITIAL_DELAY_MS: 800,        // Wait for camera to stabilize after barcode detected
+  BURST_CAPTURES: 3,            // Number of rapid captures to take
+  BURST_INTERVAL_MS: 100,       // Milliseconds between burst captures
+  MIN_SHARPNESS: 150,           // Minimum acceptable sharpness (raised from 100)
+  ENABLE_QUALITY_CHECK: true,   // Toggle quality checking
+} as const;
 
 /**
  * SmartScanner - intelligently selects scanner:
@@ -44,6 +54,7 @@ export function SmartScanner({
   const lastScannedRef = useRef<string>('');
   const lastScanTimeRef = useRef<number>(0);
   const isMountedRef = useRef(true);
+  const isCapturingRef = useRef(false); // Prevent concurrent capture attempts
   const [flashColor, setFlashColor] = useState<'green' | 'red' | null>(null);
 
   useEffect(() => {
@@ -84,6 +95,95 @@ export function SmartScanner({
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
+    }
+  };
+
+  /**
+   * Fast Burst Capture with Quality Selection
+   *
+   * Implements fast burst capture approach:
+   * 1. Wait for camera to stabilize (INITIAL_DELAY_MS)
+   * 2. Capture 3 images rapidly (BURST_INTERVAL_MS apart)
+   * 3. Calculate sharpness for each image
+   * 4. Return the sharpest image
+   *
+   * Total time: ~1100ms (800ms + 3×100ms + processing)
+   */
+  const captureHighQualityImage = async (
+    video: HTMLVideoElement,
+    canvas: HTMLCanvasElement,
+    ctx: CanvasRenderingContext2D,
+    sx: number,
+    sy: number,
+    sWidth: number,
+    sHeight: number
+  ): Promise<string> => {
+    // Prevent concurrent capture attempts
+    if (isCapturingRef.current) {
+      console.warn('[FastBurstCapture] Capture already in progress, skipping...');
+      // Return a quick snapshot instead
+      ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/jpeg', 0.8);
+    }
+
+    isCapturingRef.current = true;
+
+    try {
+      // Step 1: Initial delay for camera stabilization
+      console.log('[FastBurstCapture] Waiting for camera to stabilize...');
+      await new Promise(resolve => setTimeout(resolve, SMART_CAPTURE_CONFIG.INITIAL_DELAY_MS));
+
+      // Step 2-3: Burst capture loop
+      const captures: Array<{ imageData: string; sharpness: number }> = [];
+
+      for (let i = 0; i < SMART_CAPTURE_CONFIG.BURST_CAPTURES; i++) {
+        // Draw current video frame to canvas
+        ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
+
+        // Calculate sharpness
+        const sharpness = SMART_CAPTURE_CONFIG.ENABLE_QUALITY_CHECK
+          ? calculateSharpness(canvas)
+          : 0;
+
+        // Save image data
+        const imageData = canvas.toDataURL('image/jpeg', 0.8);
+        captures.push({ imageData, sharpness });
+
+        console.log(
+          `[FastBurstCapture] Capture ${i + 1}/${SMART_CAPTURE_CONFIG.BURST_CAPTURES}: ` +
+          `Sharpness=${sharpness.toFixed(2)}`
+        );
+
+        // Wait before next capture (except after last one)
+        if (i < SMART_CAPTURE_CONFIG.BURST_CAPTURES - 1) {
+          await new Promise(resolve => setTimeout(resolve, SMART_CAPTURE_CONFIG.BURST_INTERVAL_MS));
+        }
+      }
+
+      // Step 4: Select the sharpest image
+      captures.sort((a, b) => b.sharpness - a.sharpness);
+      const best = captures[0];
+
+      // Log quality result
+      if (best.sharpness >= SMART_CAPTURE_CONFIG.MIN_SHARPNESS) {
+        console.log(`[FastBurstCapture] ✓ Excellent quality (sharpness=${best.sharpness.toFixed(2)})`);
+      } else if (best.sharpness > 0) {
+        console.warn(
+          `[FastBurstCapture] ⚠️ Best available quality (sharpness=${best.sharpness.toFixed(2)}). ` +
+          `Below threshold of ${SMART_CAPTURE_CONFIG.MIN_SHARPNESS}. OCR may have errors.`
+        );
+      } else {
+        console.log('[FastBurstCapture] Quality check disabled, using captured image.');
+      }
+
+      return best.imageData;
+    } catch (error) {
+      console.error('[FastBurstCapture] Error during capture:', error);
+      // Fallback: capture current frame
+      ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/jpeg', 0.8);
+    } finally {
+      isCapturingRef.current = false;
     }
   };
 
@@ -206,8 +306,16 @@ export function SmartScanner({
               expiry_source: 'ocr_required' as const
             };
 
-            // Capture image for OCR
-            const imageData = canvas.toDataURL('image/jpeg', 0.8);
+            // Capture high-quality image for OCR using fast burst capture
+            const imageData = await captureHighQualityImage(
+              video,
+              canvas,
+              ctx,
+              sx,
+              sy,
+              sWidth,
+              sHeight
+            );
             onBarcodeDetected(barcode, parsedData, imageData);
           }
         }
