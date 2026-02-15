@@ -1060,21 +1060,10 @@ export default function ScanPage({
         </div>
       )}
 
-      {/* ── Scanning / Ready Confirm Phases (Flipped Layout) ─── */}
+      {/* ── Scanning / Ready Confirm Phases ────────────────────── */}
       {(phase === 'scanning' || phase === 'ready_confirm') && (
         <>
-          {/* Scanned list (TOP) - scrollable */}
-          <div className="flex-1 overflow-y-auto min-h-0">
-            <ScannedList
-              scannedBarcodes={scannedBarcodes}
-              ocrResults={ocrResults}
-              ocrImageUrls={ocrImageUrls}
-              pendingOCR={pendingOCR}
-              onImageClick={setSelectedImage}
-            />
-          </div>
-
-          {/* Scanner camera (BOTTOM) - fixed height ~50vh */}
+          {/* Scanner camera (TOP) - fixed height ~50vh */}
           <div className="shrink-0">
             <SmartScanner
               onBarcodeDetected={handleBarcodeDetected}
@@ -1086,6 +1075,17 @@ export default function ScanPage({
                 redFlashTriggerRef.current = triggerFn;
               }}
               className="h-[50vh]"
+            />
+          </div>
+
+          {/* Scanned list (BOTTOM) - scrollable */}
+          <div className="flex-1 overflow-y-auto min-h-0">
+            <ScannedList
+              scannedBarcodes={scannedBarcodes}
+              ocrResults={ocrResults}
+              ocrImageUrls={ocrImageUrls}
+              pendingOCR={pendingOCR}
+              onImageClick={setSelectedImage}
             />
           </div>
         </>
