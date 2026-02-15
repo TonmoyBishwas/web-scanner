@@ -5,6 +5,12 @@ import { useSettingsStore } from '@/stores/settings-store';
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const theme = useSettingsStore(s => s.theme);
+  const hydrate = useSettingsStore(s => s.hydrate);
+
+  // Hydrate settings from localStorage on client mount (avoids SSR mismatch)
+  useEffect(() => {
+    hydrate();
+  }, [hydrate]);
 
   useEffect(() => {
     const root = document.documentElement;
