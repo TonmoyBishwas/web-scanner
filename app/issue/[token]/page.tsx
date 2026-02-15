@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef, use } from 'react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
 import { BoxDetailModal } from '@/components/issue/BoxDetailModal';
 import { IssuedBoxList } from '@/components/issue/IssuedBoxList';
+import { AlertTriangle, CheckCircle } from 'lucide-react';
 import type {
   ParsedBarcode,
   BoxStickerOCR,
@@ -332,7 +333,7 @@ export default function IssuePage({
     return (
       <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center p-4">
         <div className="text-center">
-          <div className="text-4xl mb-4">&#x26A0;&#xFE0F;</div>
+          <AlertTriangle className="w-10 h-10 text-amber-400 mx-auto mb-4" />
           <p className="mb-2 text-lg font-medium">Session Error</p>
           <p className="text-gray-400">{error}</p>
         </div>
@@ -347,7 +348,7 @@ export default function IssuePage({
       <div className="min-h-screen bg-gray-900 text-white p-4">
         <div className="max-w-md mx-auto">
           <div className="text-center mb-8">
-            <div className="text-6xl mb-4">&#x2705;</div>
+            <CheckCircle className="w-16 h-16 text-green-400 mx-auto mb-4" />
             <h1 className="text-2xl font-bold mb-2">Issue Complete!</h1>
             <p className="text-gray-400">
               {issuedBoxes.length} box{issuedBoxes.length !== 1 ? 'es' : ''} issued,{' '}

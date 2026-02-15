@@ -4,6 +4,20 @@ import { useEffect, useState, useCallback, useRef, use } from 'react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
 import { IssueResolution } from '@/components/progress/IssueResolution';
 import { ImageModal } from '@/components/shared/ImageModal';
+import {
+  Package,
+  XCircle,
+  CheckCircle,
+  Cpu,
+  Search,
+  Clock,
+  Bug,
+  ClipboardList,
+  Check,
+  X,
+  Zap,
+  AlertTriangle,
+} from 'lucide-react';
 import type {
   ParsedBarcode,
   BoxStickerOCR,
@@ -464,8 +478,6 @@ export default function ScanPage({
   useEffect(() => {
     const checkStuckOCR = async () => {
       try {
-        // Fetch FRESH session data on each check (avoid stale closure)
-        // Add timestamp and no-store to ensure we truly get latest from server
         const response = await fetch(`/api/session?token=${token}&t=${Date.now()}`, {
           cache: 'no-store'
         });
@@ -485,7 +497,7 @@ export default function ScanPage({
             const elapsed = now - createdAt;
 
             if (elapsed > TIMEOUT_MS) {
-              const msg = `⏱️ OCR timeout for ${entry.barcode} after ${Math.floor(elapsed / 1000)}s - marking as failed`;
+              const msg = `OCR timeout for ${entry.barcode} after ${Math.floor(elapsed / 1000)}s - marking as failed`;
               addErrorLog(msg);
 
               updates.push({
@@ -507,8 +519,6 @@ export default function ScanPage({
 
             if (!putRes.ok) {
               addErrorLog(`CheckStuckOCR PUT failed: ${putRes.status} ${putRes.statusText}`);
-            } else {
-              // Success - triggering refresh
             }
           } catch (putErr) {
             addErrorLog(`CheckStuckOCR PUT error: ${putErr}`);
@@ -522,27 +532,22 @@ export default function ScanPage({
             const updatedData = await updatedResponse.json();
             setSession(updatedData);
 
-            // ── CRITICAL FIX: Sync local state for timed-out items ──
-            // 1. Remove from pendingOCR
-            // 2. Add to ocrIssues (so user can resolve manually)
             updatedData.scanned_barcodes.forEach((entry: ScanEntry) => {
               if (entry.ocr_status === 'failed') {
                 const barcode = entry.barcode;
 
-                // Remove from pending
                 setPendingOCR(prev => {
                   const next = new Set(prev);
                   next.delete(barcode);
                   return next;
                 });
 
-                // Add to issues if not already present
                 setOcrIssues(prev => {
                   if (prev.some(i => i.barcode === barcode)) return prev;
                   return [...prev, {
                     barcode,
                     scanned_at: entry.scanned_at || new Date().toISOString(),
-                    type: 'missing_both' as const, // Default to missing_both for timeouts
+                    type: 'missing_both' as const,
                     error_type: 'blur',
                     image_url: ocrImageUrls.get(barcode) || entry.image_url || ''
                   }];
@@ -550,7 +555,6 @@ export default function ScanPage({
               }
             });
 
-            // If we have issues, ensure we're in the right phase
             if (updatedData.scanned_barcodes.some((e: ScanEntry) => e.ocr_status === 'failed')) {
               setAllIssuesResolved(false);
               setPhase('issues');
@@ -563,10 +567,9 @@ export default function ScanPage({
       }
     };
 
-    // Check every 5 seconds
     const interval = setInterval(checkStuckOCR, 5000);
     return () => clearInterval(interval);
-  }, [token, addErrorLog, ocrImageUrls]); // Added ocrImageUrls to dependency
+  }, [token, addErrorLog, ocrImageUrls]);
 
   // ── Barcode Detected Handler ─────────────────────────────────
   const handleBarcodeDetected = useCallback(async (
@@ -575,31 +578,27 @@ export default function ScanPage({
     imageData?: string
   ) => {
     // ── Validation: Reject malformed barcodes (ghost scans) ──
-    // Allow only alphanumeric characters (no quotes, backslashes, or special symbols)
     const isValidBarcode = /^[A-Za-z0-9]+$/.test(barcode);
     if (!isValidBarcode) {
       addErrorLog(`Ignored invalid barcode: ${barcode}`);
       return;
     }
 
-    // ── SYNCHRONOUS duplicate check (ref updates immediately, no race condition) ──
+    // ── SYNCHRONOUS duplicate check ──
     if (processedBarcodesRef.current.has(barcode)) {
-      // OPTION 5: Combined duplicate feedback
       triggerDuplicateFeedback();
       addErrorLog(`Barcode ${barcode}: Duplicate (ignored)`);
       return;
     }
 
-    // Mark as processed IMMEDIATELY (synchronous - prevents race condition)
+    // Mark as processed IMMEDIATELY
     processedBarcodesRef.current.add(barcode);
 
     // Also update React state for UI rendering
     setScannedBarcodes(prev => new Map(prev).set(barcode, data));
 
-    // OPTION 5: Combined success feedback
     triggerSuccessFeedback();
 
-    // Check if image was captured
     if (!imageData) {
       addErrorLog(`Barcode ${barcode}: No image captured by scanner`);
     } else {
@@ -621,7 +620,7 @@ export default function ScanPage({
       }
     }
 
-    // Submit scan to API (deduplication + session update)
+    // Submit scan to API
     try {
       const res = await fetch('/api/scan', {
         method: 'POST',
@@ -796,7 +795,6 @@ export default function ScanPage({
 
     } catch (err) {
       console.error('Issue resolve error:', err);
-      // Revert lock if failed? No, keep it to avoid UI flap.
     }
   }, [token, setOcrResults, setOcrIssues, setAllIssuesResolved, pendingOCR, setPhase, setPendingOCR]);
 
@@ -860,11 +858,11 @@ export default function ScanPage({
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
         <div className="bg-red-900/30 border border-red-600 rounded-lg p-6 max-w-md text-center">
-          <p className="text-2xl mb-2">❌</p>
+          <XCircle className="w-10 h-10 text-red-400 mx-auto mb-3" />
           <p className="text-red-400 font-medium">{error}</p>
           <button
             onClick={() => window.location.reload()}
-            className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-sm"
+            className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-white text-sm"
           >
             Retry
           </button>
@@ -878,7 +876,7 @@ export default function ScanPage({
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
         <div className="bg-green-900/30 border border-green-600 rounded-lg p-6 max-w-md text-center">
-          <p className="text-4xl mb-3">✅</p>
+          <CheckCircle className="w-12 h-12 text-green-400 mx-auto mb-3" />
           <h2 className="text-xl font-bold text-green-400 mb-2">Scan Complete!</h2>
           <p className="text-gray-300 text-sm mb-1">
             {scannedBarcodes.size} boxes scanned and submitted
@@ -943,7 +941,7 @@ export default function ScanPage({
       <div className="sticky top-0 z-50 bg-gray-800/95 backdrop-blur border-b border-gray-700 px-4 py-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="text-2xl">📦</span>
+            <Package className="w-6 h-6 text-gray-300" />
             <div>
               <h1 className="text-lg font-bold">
                 <span
@@ -1020,9 +1018,10 @@ export default function ScanPage({
         {canForceConfirm && phase === 'scanning' && (
           <button
             onClick={() => setShowForceConfirm(true)}
-            className="w-full py-3 bg-yellow-600 hover:bg-yellow-700 rounded-lg text-sm font-medium transition-colors"
+            className="w-full py-3 bg-yellow-600 hover:bg-yellow-700 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
           >
-            ⚡ Force Confirm ({boxesExpected - scannedBarcodes.size} boxes remaining)
+            <Zap className="w-4 h-4" />
+            Force Confirm ({boxesExpected - scannedBarcodes.size} boxes remaining)
           </button>
         )}
 
@@ -1030,9 +1029,10 @@ export default function ScanPage({
         {isReadyToConfirm && (
           <button
             onClick={handleConfirm}
-            className="w-full py-3 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-bold transition-colors"
+            className="w-full py-3 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-bold transition-colors flex items-center justify-center gap-2"
           >
-            ✓ Confirm All Scans
+            <Check className="w-4 h-4" />
+            Confirm All Scans
           </button>
         )}
 
@@ -1040,7 +1040,7 @@ export default function ScanPage({
         {scannedBarcodes.size > 0 && phase === 'scanning' && (
           <p className="text-center text-xs text-gray-500">
             {scannedBarcodes.size} box{scannedBarcodes.size !== 1 ? 'es' : ''} scanned
-            {pendingOCR.size > 0 ? ` • ${pendingOCR.size} OCR pending` : ''}
+            {pendingOCR.size > 0 ? ` \u00B7 ${pendingOCR.size} OCR pending` : ''}
           </p>
         )}
       </div>
@@ -1072,9 +1072,9 @@ export default function ScanPage({
           {/* Center content */}
           <div className="relative z-10 text-center">
             {pendingOCR.size > 0 ? (
-              <div className="text-white text-lg animate-pulse">🤖</div>
+              <Cpu className="w-5 h-5 text-white mx-auto animate-pulse" />
             ) : (
-              <div className="text-white text-lg">✓</div>
+              <Check className="w-5 h-5 text-white mx-auto" />
             )}
             <div className="text-white text-[9px] font-bold leading-none">
               {ocrResults.size}/{ocrImageUrls.size}
@@ -1089,10 +1089,11 @@ export default function ScanPage({
           onClick={() => { setShowDebugPanel(!showDebugPanel); setShowOCRDrawer(false); }}
           className="fixed bottom-24 right-4 z-50 bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-full shadow-lg text-xs font-bold flex items-center gap-2"
         >
-          🐛 {showDebugPanel ? 'Hide' : 'Debug'} ({errorLog.length})
+          <Bug className="w-3.5 h-3.5" />
+          {showDebugPanel ? 'Hide' : 'Debug'} ({errorLog.length})
           {scannerType && (
             <span className="text-[10px] opacity-80">
-              {scannerType === 'native' ? '⚡Native' : '📱Software'}
+              {scannerType === 'native' ? 'Native' : 'Software'}
             </span>
           )}
         </button>
@@ -1102,17 +1103,18 @@ export default function ScanPage({
       {showOCRDrawer && (
         <div className="fixed bottom-0 left-0 right-0 z-40 bg-gray-900 border-t-2 border-purple-500 shadow-2xl transition-transform" style={{ maxHeight: '55vh' }}>
           <div className="flex justify-between items-center p-3 border-b border-gray-700 bg-gradient-to-r from-purple-900 to-blue-900">
-            <div>
-              <span className="text-white font-bold text-sm">🤖 AI OCR Results</span>
-              <span className="text-purple-300 text-xs ml-2">
+            <div className="flex items-center gap-2">
+              <Cpu className="w-4 h-4 text-purple-300" />
+              <span className="text-white font-bold text-sm">AI OCR Results</span>
+              <span className="text-purple-300 text-xs ml-1">
                 {ocrResults.size}/{ocrImageUrls.size} complete
               </span>
             </div>
             <button
               onClick={() => setShowOCRDrawer(false)}
-              className="text-gray-400 hover:text-white text-lg px-2"
+              className="text-gray-400 hover:text-white p-1"
             >
-              ✕
+              <X className="w-5 h-5" />
             </button>
           </div>
           <div className="overflow-y-auto p-3 space-y-3" style={{ maxHeight: 'calc(55vh - 50px)' }}>
@@ -1134,7 +1136,7 @@ export default function ScanPage({
                         onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                       />
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                        <span className="text-[10px] text-white">🔍</span>
+                        <Search className="w-4 h-4 text-white" />
                       </div>
                     </div>
                     {/* OCR data */}
@@ -1142,9 +1144,13 @@ export default function ScanPage({
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-purple-300 text-xs font-mono">Box #{barcode.slice(-6)}</span>
                         {result ? (
-                          <span className="text-green-400 text-xs px-1.5 py-0.5 bg-green-900/50 rounded-full">✓ Done</span>
+                          <span className="flex items-center gap-1 text-green-400 text-xs px-1.5 py-0.5 bg-green-900/50 rounded-full">
+                            <Check className="w-3 h-3" /> Done
+                          </span>
                         ) : isPending ? (
-                          <span className="text-yellow-400 text-xs px-1.5 py-0.5 bg-yellow-900/50 rounded-full animate-pulse">⏳ Analyzing</span>
+                          <span className="flex items-center gap-1 text-yellow-400 text-xs px-1.5 py-0.5 bg-yellow-900/50 rounded-full animate-pulse">
+                            <Clock className="w-3 h-3" /> Analyzing
+                          </span>
                         ) : null}
                       </div>
                       {result ? (
@@ -1154,7 +1160,7 @@ export default function ScanPage({
                           </div>
                           <div className="text-blue-200 text-xs">
                             {result.weight_kg ? `${result.weight_kg} kg` : 'No weight'}
-                            {result.expiry_date ? ` · Exp: ${result.expiry_date}` : ''}
+                            {result.expiry_date ? ` \u00B7 Exp: ${result.expiry_date}` : ''}
                           </div>
                         </div>
                       ) : (
@@ -1173,7 +1179,10 @@ export default function ScanPage({
       {showDebugPanel && errorLog.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 z-40 bg-gray-900 border-t-2 border-red-500 shadow-2xl" style={{ maxHeight: '40vh' }}>
           <div className="flex justify-between items-center p-3 border-b border-gray-700 bg-gray-800">
-            <span className="text-white font-bold text-sm">🐛 Debug Log</span>
+            <div className="flex items-center gap-2">
+              <Bug className="w-4 h-4 text-red-400" />
+              <span className="text-white font-bold text-sm">Debug Log</span>
+            </div>
             <div className="flex gap-2">
               <button
                 onClick={() => {
@@ -1181,15 +1190,15 @@ export default function ScanPage({
                   navigator.clipboard.writeText(text);
                   alert('Debug log copied!');
                 }}
-                className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded"
+                className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-lg flex items-center gap-1"
               >
-                📋 Copy All
+                <ClipboardList className="w-3 h-3" /> Copy All
               </button>
               <button
                 onClick={() => setShowDebugPanel(false)}
-                className="text-gray-400 hover:text-white text-lg px-2"
+                className="text-gray-400 hover:text-white p-1"
               >
-                ✕
+                <X className="w-5 h-5" />
               </button>
             </div>
           </div>
@@ -1197,7 +1206,7 @@ export default function ScanPage({
             {errorLog.map((entry, i) => (
               <div key={i} className="text-xs bg-black/50 p-2 rounded border border-gray-800">
                 <span className="text-gray-500">[{entry.time}]</span>
-                <div className={`mt-1 ${entry.msg.includes('DUPLICATE') || entry.msg.includes('⚠️') ? 'text-red-400' : entry.msg.includes('✓') || entry.msg.includes('Uploaded') ? 'text-green-400' : 'text-yellow-300'}`}>
+                <div className={`mt-1 ${entry.msg.includes('DUPLICATE') || entry.msg.includes('warning') ? 'text-red-400' : entry.msg.includes('Uploaded') || entry.msg.includes('Saved') ? 'text-green-400' : 'text-yellow-300'}`}>
                   {entry.msg}
                 </div>
               </div>
@@ -1292,10 +1301,15 @@ function ForceConfirmModal({
     <div className="fixed inset-0 z-60 bg-black/80 flex items-end xl:items-center justify-center">
       <div className="bg-gray-800 w-full max-w-md max-h-[85vh] overflow-y-auto rounded-t-2xl xl:rounded-2xl p-4 space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-bold text-yellow-400">
-            ⚡ Manual Entry ({remaining} boxes)
-          </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl">✕</button>
+          <div className="flex items-center gap-2">
+            <Zap className="w-5 h-5 text-yellow-400" />
+            <h3 className="text-lg font-bold text-yellow-400">
+              Manual Entry ({remaining} boxes)
+            </h3>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-white p-1">
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         <p className="text-xs text-gray-400">
@@ -1313,7 +1327,7 @@ function ForceConfirmModal({
                 updated[idx].item_name = e.target.value;
                 setEntries(updated);
               }}
-              className="w-full p-2 bg-gray-800 border border-gray-700 rounded text-sm"
+              className="w-full p-2 bg-gray-800 border border-gray-700 rounded-lg text-sm"
             >
               <option value="">Select item *</option>
               {session.invoice_items.map(item => (
@@ -1333,7 +1347,7 @@ function ForceConfirmModal({
                 updated[idx].weight = e.target.value;
                 setEntries(updated);
               }}
-              className="w-full p-2 bg-gray-800 border border-gray-700 rounded text-sm"
+              className="w-full p-2 bg-gray-800 border border-gray-700 rounded-lg text-sm"
             />
 
             <input
@@ -1345,7 +1359,7 @@ function ForceConfirmModal({
                 updated[idx].expiry = e.target.value;
                 setEntries(updated);
               }}
-              className="w-full p-2 bg-gray-800 border border-gray-700 rounded text-sm"
+              className="w-full p-2 bg-gray-800 border border-gray-700 rounded-lg text-sm"
             />
           </div>
         ))}

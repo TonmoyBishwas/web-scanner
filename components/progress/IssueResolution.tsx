@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { AlertTriangle, CheckCircle, Check, Search } from 'lucide-react';
 import type { OCRIssue, InvoiceItem } from '@/types';
 import { ImageModal } from '@/components/shared/ImageModal';
 
@@ -42,9 +43,10 @@ export function IssueResolution({
 
     return (
         <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-yellow-400" />
                 <h3 className="text-lg font-bold text-yellow-400">
-                    ⚠️ Issues Found ({issues.length - resolvedCount} remaining)
+                    Issues Found ({issues.length - resolvedCount} remaining)
                 </h3>
             </div>
 
@@ -83,8 +85,9 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
 
     if (resolved) {
         return (
-            <div className="bg-green-900/30 border border-green-600 rounded-lg p-3">
-                <p className="text-green-400 text-sm">✅ Issue #{index + 1} resolved</p>
+            <div className="bg-green-900/30 border border-green-600 rounded-lg p-3 flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-green-400" />
+                <p className="text-green-400 text-sm">Issue #{index + 1} resolved</p>
             </div>
         );
     }
@@ -95,7 +98,7 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
     return (
         <div className="bg-gray-800 border border-yellow-600/50 rounded-lg p-4 space-y-3">
             <div className="flex items-center gap-2 text-sm text-yellow-400">
-                <span>⚠️</span>
+                <AlertTriangle className="w-4 h-4" />
                 <span>Issue #{index + 1}: {
                     issue.type === 'missing_name' ? 'Product name not readable' :
                         issue.type === 'missing_weight' ? 'Weight not readable' :
@@ -115,8 +118,9 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
                             alt="Box sticker"
                             className="w-full h-32 object-cover"
                         />
-                        <div className="text-center text-xs text-gray-400 py-1 bg-gray-900/50">
-                            🔍 Click to enlarge
+                        <div className="flex items-center justify-center gap-1 text-xs text-gray-400 py-1 bg-gray-900/50">
+                            <Search className="w-3 h-3" />
+                            Click to enlarge
                         </div>
                     </div>
                     {showImageModal && (
@@ -135,7 +139,7 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
                     <select
                         value={selectedItem}
                         onChange={(e) => setSelectedItem(e.target.value)}
-                        className="w-full p-2 bg-gray-900 border border-gray-700 rounded text-sm"
+                        className="w-full p-2 bg-gray-900 border border-gray-700 rounded-lg text-sm"
                     >
                         <option value="">-- Select item --</option>
                         {invoiceItems.map((item) => (
@@ -163,7 +167,7 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
                         step="0.001"
                         value={weight}
                         onChange={(e) => setWeight(e.target.value)}
-                        className="w-full p-2 bg-gray-900 border border-gray-700 rounded text-sm"
+                        className="w-full p-2 bg-gray-900 border border-gray-700 rounded-lg text-sm"
                         placeholder="e.g., 10.150"
                     />
                 </div>
@@ -176,7 +180,7 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
                     type="date"
                     value={expiry}
                     onChange={(e) => setExpiry(e.target.value)}
-                    className="w-full p-2 bg-gray-900 border border-gray-700 rounded text-sm"
+                    className="w-full p-2 bg-gray-900 border border-gray-700 rounded-lg text-sm"
                 />
             </div>
 
@@ -194,9 +198,10 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
                     });
                 }}
                 disabled={(needsName && !selectedItem) || (needsWeight && !weight)}
-                className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded text-sm font-medium transition-colors"
+                className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
             >
-                ✓ Resolve Issue
+                <Check className="w-4 h-4" />
+                Resolve Issue
             </button>
         </div>
     );

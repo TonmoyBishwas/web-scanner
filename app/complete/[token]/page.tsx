@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { scannerAPI } from '@/lib/api';
+import { CheckCircle, AlertTriangle, Check } from 'lucide-react';
 import type { ScanSession } from '@/types';
 
 export default function CompletePage() {
@@ -41,7 +42,7 @@ export default function CompletePage() {
     return (
       <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center p-4">
         <div className="text-center">
-          <div className="text-4xl mb-4">⚠️</div>
+          <AlertTriangle className="w-10 h-10 text-amber-400 mx-auto mb-4" />
           <p className="mb-4">Session not found</p>
         </div>
       </div>
@@ -57,7 +58,7 @@ export default function CompletePage() {
       <div className="max-w-md mx-auto">
         {/* Success Header */}
         <div className="text-center mb-8">
-          <div className="text-6xl mb-4">✅</div>
+          <CheckCircle className="w-16 h-16 text-green-400 mx-auto mb-4" />
           <h1 className="text-2xl font-bold mb-2">Scanning Complete!</h1>
           <p className="text-gray-400">
             Return to Telegram to confirm and save your items.
@@ -95,7 +96,7 @@ export default function CompletePage() {
                 <div key={item.item_index} className="border-b border-gray-700 pb-3 last:border-0">
                   <div className="flex justify-between items-start mb-1">
                     <span className="font-medium">{item.item_name}</span>
-                    {isComplete && <span className="text-green-500">✓</span>}
+                    {isComplete && <Check className="w-4 h-4 text-green-500" />}
                   </div>
                   <div className="text-sm text-gray-400 space-y-1">
                     <p>{item.scanned_count} boxes</p>
