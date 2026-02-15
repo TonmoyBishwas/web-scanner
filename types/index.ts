@@ -88,6 +88,7 @@ export interface ScanSession {
   completed_at?: string;
   webhook_sent?: boolean;
   invoice_image_url?: string;
+  issued_boxes?: IssuedBox[];
 }
 
 export interface SessionResponse {
@@ -167,6 +168,41 @@ export interface OCRIssue {
   type: 'missing_name' | 'missing_weight' | 'missing_both';
   inferred_weight?: number;
   ocr_data?: BoxStickerOCR;
+}
+
+// Issue (Issue to Production) types
+export interface IssuedBox {
+  barcode: string;
+  sku: string;
+  item_name: string;
+  weight: number;
+  expiry: string;
+  supplier: string;
+  invoice_number: string;
+  box_record_id: string;
+  batch_id: string;
+  transaction_id: string;
+  issued_at: string;
+}
+
+export interface BoxLookupResult {
+  found: boolean;
+  box?: {
+    record_id: string;
+    barcode: string;
+    sku: string;
+    weight: number;
+    expiry: string;
+    status: string;
+    batch_id: string;
+    item_name: string;
+    supplier: string;
+    invoice_number: string;
+    received_date: string;
+    production_date?: string;
+  };
+  error?: 'not_found' | 'already_issued' | 'error';
+  message?: string;
 }
 
 // UI State Types

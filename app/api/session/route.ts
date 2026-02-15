@@ -19,9 +19,17 @@ export async function POST(request: NextRequest) {
     } = body;
 
     // Validate required fields
-    if (!chat_id || !operation_type || !invoice_items || !Array.isArray(invoice_items)) {
+    // ISSUE type doesn't require invoice_items
+    if (!chat_id || !operation_type) {
       return NextResponse.json(
-        { error: 'Missing required fields' },
+        { error: 'Missing required fields: chat_id, operation_type' },
+        { status: 400 }
+      );
+    }
+
+    if (operation_type !== 'ISSUE' && (!invoice_items || !Array.isArray(invoice_items))) {
+      return NextResponse.json(
+        { error: 'Missing required fields: invoice_items (required for non-ISSUE operations)' },
         { status: 400 }
       );
     }
@@ -35,23 +43,25 @@ export async function POST(request: NextRequest) {
       chat_id,
       operation_type,
       document_number: document_number || '',
-      invoice_items,
+      invoice_items: invoice_items || [],
       scanned_barcodes: [],
       scanned_items: {},
       created_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 3600000).toISOString(), // 1 hour
       status: 'ACTIVE',
-      invoice_image_url  // Store invoice image URL if provided
+      invoice_image_url,  // Store invoice image URL if provided
+      ...(operation_type === 'ISSUE' ? { issued_boxes: [] } : {}),
     };
 
     // Store in Redis
     await sessionStorage.set(token, session, { ex: 3600 });
 
-    // Build response
+    // Build response - use /issue/ path for ISSUE type, /scan/ for others
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
+    const scanPath = operation_type === 'ISSUE' ? 'issue' : 'scan';
     const response: SessionResponse = {
       token,
-      scan_url: `${appUrl}/scan/${token}`,
+      scan_url: `${appUrl}/${scanPath}/${token}`,
       expires_at: session.expires_at
     };
 
