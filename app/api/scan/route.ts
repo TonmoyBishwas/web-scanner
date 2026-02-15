@@ -4,6 +4,57 @@ import { parseIsraeliBarcode } from '@/lib/barcode-parser';
 import type { ScanRequest, ScanResponse, ScanEntry, ParsedBarcode } from '@/types';
 
 /**
+ * DELETE /api/scan
+ * Undo (remove) the last scanned barcode from the session
+ */
+export async function DELETE(request: NextRequest) {
+  try {
+    const { token, barcode } = await request.json();
+
+    if (!token || !barcode) {
+      return NextResponse.json(
+        { success: false, error: 'Missing required fields: token and barcode' },
+        { status: 400 }
+      );
+    }
+
+    let success = false;
+
+    try {
+      await sessionStorage.withLock(token, async () => {
+        const session = await sessionStorage.get(token);
+        if (!session || session.status !== 'ACTIVE') return;
+
+        const idx = session.scanned_barcodes.findIndex(
+          (b: ScanEntry) => b.barcode === barcode
+        );
+
+        if (idx === -1) return;
+
+        session.scanned_barcodes.splice(idx, 1);
+        await sessionStorage.set(token, session, { ex: 3600 });
+        success = true;
+        console.log(`[API/scan DELETE] Removed barcode ${barcode} from session ${token}`);
+      });
+    } catch (lockError) {
+      console.error('[API/scan DELETE] Lock error:', lockError);
+      return NextResponse.json(
+        { success: false, error: 'System busy, please try again' },
+        { status: 503 }
+      );
+    }
+
+    return NextResponse.json({ success });
+  } catch (error) {
+    console.error('Error deleting scan:', error);
+    return NextResponse.json(
+      { success: false, error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+
+/**
  * POST /api/scan
  * Submit a barcode scan
  *

@@ -1,5 +1,6 @@
 'use client';
 
+import { Check, Clock } from 'lucide-react';
 import type { InvoiceItem, ScannedItem, BoxStickerOCR } from '@/types';
 
 interface ItemProgressProps {
@@ -60,7 +61,7 @@ export function ItemProgress({ items, scanned, ocrResults = new Map(), ocrPendin
                   <p className="text-xs text-gray-400">{item.item_code}</p>
                 </div>
                 {isComplete && (
-                  <span className="text-green-500 text-lg">✓</span>
+                  <Check className="w-5 h-5 text-green-400" />
                 )}
               </div>
 
@@ -107,13 +108,13 @@ export function OCRStatusIndicator({
         <span className="text-sm font-medium">Product Data (OCR)</span>
         <div className="flex gap-4 text-xs">
           {ocrPending.size > 0 && (
-            <span className="text-yellow-400">
-              ⏳ Processing {ocrPending.size}
+            <span className="flex items-center gap-1 text-yellow-400">
+              <Clock className="w-3 h-3" /> Processing {ocrPending.size}
             </span>
           )}
           {ocrResults.size > 0 && (
-            <span className="text-green-400">
-              ✓ {ocrResults.size} enriched
+            <span className="flex items-center gap-1 text-green-400">
+              <Check className="w-3 h-3" /> {ocrResults.size} enriched
             </span>
           )}
         </div>

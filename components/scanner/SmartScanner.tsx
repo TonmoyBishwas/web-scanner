@@ -13,6 +13,7 @@ interface SmartScannerProps {
   onError?: (error: string) => void;
   onScannerTypeDetected?: (type: 'native' | 'fallback') => void;
   onDuplicateFlash?: (triggerFn: () => void) => void;
+  className?: string;
 }
 
 // Declare BarcodeDetector types
@@ -33,7 +34,8 @@ export function SmartScanner({
   ocrResults,
   onError,
   onScannerTypeDetected,
-  onDuplicateFlash
+  onDuplicateFlash,
+  className
 }: SmartScannerProps) {
   const [isSupported, setIsSupported] = useState<boolean | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -137,8 +139,12 @@ export function SmartScanner({
         return;
       }
 
+      // Compute target ratio from container dimensions (dynamic for layout flip)
+      const container = video.parentElement;
+      const containerW = container?.clientWidth || video.videoWidth;
+      const containerH = container?.clientHeight || video.videoHeight;
       const videoRatio = video.videoWidth / video.videoHeight;
-      const targetRatio = 1;
+      const targetRatio = containerW / Math.max(containerH, 1);
 
       let sWidth, sHeight, sx, sy;
 
@@ -209,7 +215,7 @@ export function SmartScanner({
   // Loading state
   if (isSupported === null) {
     return (
-      <div className="w-full aspect-square bg-gray-800 rounded-lg flex items-center justify-center">
+      <div className={`w-full bg-gray-800 rounded-lg flex items-center justify-center ${className || 'aspect-square'}`}>
         <p className="text-gray-400">Initializing scanner...</p>
       </div>
     );
@@ -218,7 +224,7 @@ export function SmartScanner({
   // Browser not supported
   if (!isSupported) {
     return (
-      <div className="w-full aspect-square bg-gray-800 rounded-lg flex flex-col items-center justify-center gap-3 p-6">
+      <div className={`w-full bg-gray-800 rounded-lg flex flex-col items-center justify-center gap-3 p-6 ${className || 'aspect-square'}`}>
         <AlertTriangle className="w-10 h-10 text-amber-400" />
         <p className="text-white font-medium text-center">Browser Not Supported</p>
         <p className="text-gray-400 text-sm text-center">
@@ -231,7 +237,7 @@ export function SmartScanner({
 
   // Native scanner
   return (
-    <div className="relative w-full aspect-square bg-black rounded-lg overflow-hidden">
+    <div className={`relative w-full bg-black rounded-lg overflow-hidden ${className || 'aspect-square'}`}>
       <video
         ref={videoRef}
         className="absolute inset-0 w-full h-full object-cover"
