@@ -49,6 +49,8 @@ export function SmartScanner({
   const lastScanTimeRef = useRef<number>(0);
   const isMountedRef = useRef(true);
   const [flashColor, setFlashColor] = useState<'green' | 'red' | null>(null);
+  const [isInCooldown, setIsInCooldown] = useState(false);
+  const [cooldownTimeLeft, setCooldownTimeLeft] = useState(0);
 
   // Enumerate available cameras (AFTER getting initial permission for labels)
   const enumerateCameras = useCallback(async () => {
@@ -292,28 +294,51 @@ export function SmartScanner({
           const barcode = barcodes[0].rawValue;
           const now = Date.now();
 
-          // Increase cooldown to 5 seconds to prevent rapid duplicate scans
-          if (barcode !== lastScannedRef.current || now - lastScanTimeRef.current > 5000) {
-            lastScannedRef.current = barcode;
-            lastScanTimeRef.current = now;
+          // CRITICAL: Enforce minimum 5-second gap between ANY scans
+          // This prevents rapid-fire captures of the same box with barcode variations
+          const timeSinceLastScan = now - lastScanTimeRef.current;
 
-            setFlashColor('green');
-            setTimeout(() => setFlashColor(null), 200);
-
-            // Vibration handled by parent component with settings check
-
-            const parsedData = parseIsraeliBarcode(barcode) || {
-              type: 'unknown',
-              sku: barcode,
-              weight: 0,
-              expiry: '',
-              raw_barcode: barcode,
-              expiry_source: 'ocr_required' as const
-            };
-
-            const imageData = canvas.toDataURL('image/jpeg', 0.8);
-            onBarcodeDetected(barcode, parsedData, imageData);
+          if (timeSinceLastScan < 5000) {
+            // Still in cooldown period - skip this scan
+            animationFrameRef.current = requestAnimationFrame(detect);
+            return;
           }
+
+          // Cooldown passed - process this scan
+          lastScannedRef.current = barcode;
+          lastScanTimeRef.current = now;
+
+          // Set cooldown state
+          setIsInCooldown(true);
+          setCooldownTimeLeft(5);
+
+          // Start cooldown countdown timer
+          let countdown = 5;
+          const countdownInterval = setInterval(() => {
+            countdown--;
+            setCooldownTimeLeft(countdown);
+            if (countdown <= 0) {
+              clearInterval(countdownInterval);
+              setIsInCooldown(false);
+            }
+          }, 1000);
+
+          setFlashColor('green');
+          setTimeout(() => setFlashColor(null), 200);
+
+          // Vibration handled by parent component with settings check
+
+          const parsedData = parseIsraeliBarcode(barcode) || {
+            type: 'unknown',
+            sku: barcode,
+            weight: 0,
+            expiry: '',
+            raw_barcode: barcode,
+            expiry_source: 'ocr_required' as const
+          };
+
+          const imageData = canvas.toDataURL('image/jpeg', 0.8);
+          onBarcodeDetected(barcode, parsedData, imageData);
         }
       } catch (err) {
         console.error('[SmartScanner] Detection error:', err);
@@ -385,13 +410,30 @@ export function SmartScanner({
       <div className="absolute inset-0 pointer-events-none">
         {/* Target box */}
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="w-72 h-72 border-4 border-green-400 rounded-lg animate-pulse" />
+          {isInCooldown ? (
+            <div className="w-72 h-72 border-4 border-yellow-400 rounded-lg flex items-center justify-center bg-black/50">
+              <div className="text-center">
+                <div className="text-6xl font-bold text-yellow-400">{cooldownTimeLeft}</div>
+                <div className="text-sm text-yellow-300 mt-2">Cooldown...</div>
+              </div>
+            </div>
+          ) : (
+            <div className="w-72 h-72 border-4 border-green-400 rounded-lg animate-pulse" />
+          )}
         </div>
         {/* Active scanner indicator */}
         <div className="absolute top-2 left-2">
-          <div className="flex items-center gap-1 bg-green-600/80 px-2 py-1 rounded-full">
-            <div className="w-2 h-2 bg-green-300 rounded-full animate-pulse"></div>
-            <ScanLine className="w-3 h-3 text-white" />
+          <div className={`flex items-center gap-1 px-2 py-1 rounded-full ${
+            isInCooldown ? 'bg-yellow-600/80' : 'bg-green-600/80'
+          }`}>
+            <div className={`w-2 h-2 rounded-full ${
+              isInCooldown ? 'bg-yellow-300' : 'bg-green-300 animate-pulse'
+            }`}></div>
+            {isInCooldown ? (
+              <span className="text-white text-xs font-bold">{cooldownTimeLeft}s</span>
+            ) : (
+              <ScanLine className="w-3 h-3 text-white" />
+            )}
           </div>
         </div>
         {/* Camera switch button */}

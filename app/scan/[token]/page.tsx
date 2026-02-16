@@ -653,14 +653,17 @@ export default function ScanPage({
       return;
     }
 
-    // Additional check: detect similar barcodes (last 10 digits match)
+    // Additional check: detect similar barcodes (last 6 digits match = same box)
     // This prevents scanning the same box multiple times with slight barcode variations
-    const barcodeEnd = barcode.slice(-10);
-    for (const processedBarcode of processedBarcodesRef.current) {
-      if (processedBarcode.slice(-10) === barcodeEnd && barcode.length > 10) {
-        triggerDuplicateFeedback();
-        addErrorLog(`Barcode ${barcode}: Similar to ${processedBarcode} (last 10 digits match, ignored)`);
-        return;
+    // The last 6 digits typically represent the box identifier in GS1-128 format
+    if (barcode.length >= 6) {
+      const barcodeEnd = barcode.slice(-6);
+      for (const processedBarcode of processedBarcodesRef.current) {
+        if (processedBarcode.length >= 6 && processedBarcode.slice(-6) === barcodeEnd) {
+          triggerDuplicateFeedback();
+          addErrorLog(`Barcode ${barcode}: Similar to ${processedBarcode} (last 6 digits [${barcodeEnd}] match, ignored)`);
+          return;
+        }
       }
     }
 
