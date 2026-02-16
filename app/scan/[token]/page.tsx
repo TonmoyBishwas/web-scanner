@@ -60,7 +60,7 @@ export default function ScanPage({
   const { token } = use(params);
 
   // Settings
-  const { soundEnabled, vibrationEnabled, hydrate } = useSettingsStore();
+  const { soundEnabled, vibrationEnabled, _hydrated, hydrate } = useSettingsStore();
 
   // Session state
   const [session, setSession] = useState<ScanSession | null>(null);
@@ -114,7 +114,8 @@ export default function ScanPage({
 
   // ──  Audio feedback using Web Audio API ──────────────────────
   const playSuccessSound = useCallback(() => {
-    if (!soundEnabled) return;
+    // Check hydrated flag and current setting value
+    if (!_hydrated || !soundEnabled) return;
     try {
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       const oscillator = audioContext.createOscillator();
@@ -134,10 +135,11 @@ export default function ScanPage({
     } catch (e) {
       // Audio not supported
     }
-  }, [soundEnabled]);
+  }, [soundEnabled, _hydrated]);
 
   const playErrorSound = useCallback(() => {
-    if (!soundEnabled) return;
+    // Check hydrated flag and current setting value
+    if (!_hydrated || !soundEnabled) return;
     try {
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       const oscillator = audioContext.createOscillator();
@@ -157,7 +159,7 @@ export default function ScanPage({
     } catch (e) {
       // Audio not supported
     }
-  }, [soundEnabled]);
+  }, [soundEnabled, _hydrated]);
 
   // ── Visual feedback ──────────────────────────────────────────
   const triggerSuccessFeedback = useCallback(() => {
@@ -166,13 +168,13 @@ export default function ScanPage({
 
     playSuccessSound();
 
-    if (vibrationEnabled && 'vibrate' in navigator) {
+    if (_hydrated && vibrationEnabled && 'vibrate' in navigator) {
       navigator.vibrate(100);
     }
 
     setCounterBounce(true);
     setTimeout(() => setCounterBounce(false), 300);
-  }, [playSuccessSound, vibrationEnabled]);
+  }, [playSuccessSound, vibrationEnabled, _hydrated]);
 
   const triggerDuplicateFeedback = useCallback(() => {
     if (redFlashTriggerRef.current) {
@@ -181,10 +183,10 @@ export default function ScanPage({
 
     playErrorSound();
 
-    if (vibrationEnabled && 'vibrate' in navigator) {
+    if (_hydrated && vibrationEnabled && 'vibrate' in navigator) {
       navigator.vibrate([200, 100, 200]);
     }
-  }, [playErrorSound, vibrationEnabled]);
+  }, [playErrorSound, vibrationEnabled, _hydrated]);
 
   // Polling ref
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);

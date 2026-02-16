@@ -38,7 +38,9 @@ export function SmartScanner({
   className
 }: SmartScannerProps) {
   const [isSupported, setIsSupported] = useState<boolean | null>(null);
-  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+  const [currentCameraIndex, setCurrentCameraIndex] = useState(0);
+  const [currentCameraLabel, setCurrentCameraLabel] = useState('Back Camera');
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -48,11 +50,40 @@ export function SmartScanner({
   const isMountedRef = useRef(true);
   const [flashColor, setFlashColor] = useState<'green' | 'red' | null>(null);
 
+  // Enumerate available cameras
+  const enumerateCameras = useCallback(async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(device => device.kind === 'videoinput');
+      setCameras(videoDevices);
+
+      // Find back camera as default
+      const backCameraIndex = videoDevices.findIndex(device =>
+        device.label.toLowerCase().includes('back') ||
+        device.label.toLowerCase().includes('rear') ||
+        device.label.toLowerCase().includes('environment')
+      );
+
+      if (backCameraIndex !== -1) {
+        setCurrentCameraIndex(backCameraIndex);
+        setCurrentCameraLabel(videoDevices[backCameraIndex].label || 'Back Camera');
+      } else if (videoDevices.length > 0) {
+        setCurrentCameraIndex(0);
+        setCurrentCameraLabel(videoDevices[0].label || 'Camera');
+      }
+
+      console.log('[SmartScanner] Found cameras:', videoDevices.map(d => d.label));
+    } catch (err) {
+      console.error('[SmartScanner] Failed to enumerate cameras:', err);
+    }
+  }, []);
+
   useEffect(() => {
     if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
       console.log('[SmartScanner] Native BarcodeDetector API available');
       setIsSupported(true);
       onScannerTypeDetected?.('native');
+      enumerateCameras();
     } else {
       console.log('[SmartScanner] Native BarcodeDetector API not available');
       setIsSupported(false);
@@ -62,7 +93,7 @@ export function SmartScanner({
       isMountedRef.current = false;
       stopNativeScanning();
     };
-  }, [onScannerTypeDetected]);
+  }, [onScannerTypeDetected, enumerateCameras]);
 
   // Function to trigger red flash (called by parent on duplicate detection)
   const triggerRedFlash = useCallback(() => {
@@ -88,20 +119,37 @@ export function SmartScanner({
   };
 
   const switchCamera = useCallback(() => {
+    if (cameras.length === 0) return;
+
     stopNativeScanning();
-    setFacingMode(prev => prev === 'environment' ? 'user' : 'environment');
-  }, []);
+
+    // Cycle to next camera
+    const nextIndex = (currentCameraIndex + 1) % cameras.length;
+    setCurrentCameraIndex(nextIndex);
+    setCurrentCameraLabel(cameras[nextIndex].label || `Camera ${nextIndex + 1}`);
+
+    console.log('[SmartScanner] Switching to camera:', cameras[nextIndex].label);
+  }, [cameras, currentCameraIndex]);
 
   const startNativeScanning = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: facingMode },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
+      const currentCamera = cameras[currentCameraIndex];
+      const constraints: MediaStreamConstraints = {
+        video: currentCamera?.deviceId
+          ? {
+              deviceId: { exact: currentCamera.deviceId },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+            }
+          : {
+              facingMode: { ideal: 'environment' },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+            },
         audio: false,
-      });
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
 
       streamRef.current = stream;
 
@@ -213,13 +261,14 @@ export function SmartScanner({
   };
 
   useEffect(() => {
-    if (isSupported === true) {
+    if (isSupported === true && cameras.length > 0) {
       startNativeScanning();
     }
     return () => {
       stopNativeScanning();
     };
-  }, [isSupported, facingMode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSupported, currentCameraIndex, cameras.length]);
 
   // Loading state
   if (isSupported === null) {
@@ -281,18 +330,24 @@ export function SmartScanner({
           </div>
         </div>
         {/* Camera switch button */}
-        <div className="absolute top-2 right-2 pointer-events-auto">
-          <button
-            onClick={switchCamera}
-            className="flex items-center gap-1.5 bg-gray-900/80 hover:bg-gray-800/80 px-3 py-2 rounded-full text-white text-xs font-medium transition-colors backdrop-blur-sm border border-gray-600/50"
-            aria-label="Switch camera"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            <span>{facingMode === 'environment' ? 'Back' : 'Front'}</span>
-          </button>
-        </div>
+        {cameras.length > 1 && (
+          <div className="absolute top-2 right-2 pointer-events-auto">
+            <button
+              onClick={switchCamera}
+              className="flex items-center gap-1.5 bg-gray-900/80 hover:bg-gray-800/80 px-3 py-2 rounded-full text-white text-xs font-medium transition-colors backdrop-blur-sm border border-gray-600/50"
+              aria-label="Switch camera"
+              title={`Switch camera (${currentCameraIndex + 1}/${cameras.length})`}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span className="max-w-[120px] truncate">
+                {currentCameraLabel.replace(/\(.*?\)/g, '').trim() || 'Camera'}
+              </span>
+            </button>
+          </div>
+        )}
+
       </div>
 
       {/* Flash animation CSS */}
