@@ -226,16 +226,15 @@ export function SmartScanner({
           const barcode = barcodes[0].rawValue;
           const now = Date.now();
 
-          if (barcode !== lastScannedRef.current || now - lastScanTimeRef.current > 2000) {
+          // Increase cooldown to 5 seconds to prevent rapid duplicate scans
+          if (barcode !== lastScannedRef.current || now - lastScanTimeRef.current > 5000) {
             lastScannedRef.current = barcode;
             lastScanTimeRef.current = now;
 
             setFlashColor('green');
             setTimeout(() => setFlashColor(null), 200);
 
-            if ('vibrate' in navigator) {
-              navigator.vibrate(100);
-            }
+            // Vibration handled by parent component with settings check
 
             const parsedData = parseIsraeliBarcode(barcode) || {
               type: 'unknown',

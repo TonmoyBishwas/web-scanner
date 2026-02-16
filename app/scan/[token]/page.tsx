@@ -114,8 +114,8 @@ export default function ScanPage({
 
   // ──  Audio feedback using Web Audio API ──────────────────────
   const playSuccessSound = useCallback(() => {
-    // Check hydrated flag and current setting value
-    if (!_hydrated || !soundEnabled) return;
+    // Only block if hydrated AND disabled (allow before hydration)
+    if (_hydrated && !soundEnabled) return;
     try {
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       const oscillator = audioContext.createOscillator();
@@ -138,8 +138,8 @@ export default function ScanPage({
   }, [soundEnabled, _hydrated]);
 
   const playErrorSound = useCallback(() => {
-    // Check hydrated flag and current setting value
-    if (!_hydrated || !soundEnabled) return;
+    // Only block if hydrated AND disabled (allow before hydration)
+    if (_hydrated && !soundEnabled) return;
     try {
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       const oscillator = audioContext.createOscillator();
@@ -168,7 +168,8 @@ export default function ScanPage({
 
     playSuccessSound();
 
-    if (_hydrated && vibrationEnabled && 'vibrate' in navigator) {
+    // Only vibrate if hydrated AND enabled (or if not hydrated yet)
+    if ((!_hydrated || vibrationEnabled) && 'vibrate' in navigator) {
       navigator.vibrate(100);
     }
 
@@ -183,7 +184,8 @@ export default function ScanPage({
 
     playErrorSound();
 
-    if (_hydrated && vibrationEnabled && 'vibrate' in navigator) {
+    // Only vibrate if hydrated AND enabled (or if not hydrated yet)
+    if ((!_hydrated || vibrationEnabled) && 'vibrate' in navigator) {
       navigator.vibrate([200, 100, 200]);
     }
   }, [playErrorSound, vibrationEnabled, _hydrated]);
@@ -644,10 +646,22 @@ export default function ScanPage({
       return;
     }
 
+    // Enhanced duplicate detection: check exact match
     if (processedBarcodesRef.current.has(barcode)) {
       triggerDuplicateFeedback();
       addErrorLog(`Barcode ${barcode}: Duplicate (ignored)`);
       return;
+    }
+
+    // Additional check: detect similar barcodes (last 10 digits match)
+    // This prevents scanning the same box multiple times with slight barcode variations
+    const barcodeEnd = barcode.slice(-10);
+    for (const processedBarcode of processedBarcodesRef.current) {
+      if (processedBarcode.slice(-10) === barcodeEnd && barcode.length > 10) {
+        triggerDuplicateFeedback();
+        addErrorLog(`Barcode ${barcode}: Similar to ${processedBarcode} (last 10 digits match, ignored)`);
+        return;
+      }
     }
 
     processedBarcodesRef.current.add(barcode);
