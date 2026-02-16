@@ -427,6 +427,11 @@ export default function IssuePage({
         <div>
           <h1 className="text-lg font-bold">Issue to Production</h1>
           <p className="text-gray-400 text-sm">Scan box barcodes to issue</p>
+          {session?.user_info && (
+            <p className="text-xs text-green-400 font-medium mt-1">
+              Scanning as: {session.user_info.nickname}
+            </p>
+          )}
         </div>
         <button
           onClick={handleComplete}

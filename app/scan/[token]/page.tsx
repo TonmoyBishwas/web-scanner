@@ -1021,10 +1021,20 @@ export default function ScanPage({
                 <span className="text-gray-400">{boxesExpected}</span>
                 <span className="text-xs text-gray-500 ml-1.5">boxes</span>
               </h1>
-              <div className="flex items-center gap-2">
-                <p className="text-xs text-gray-500">
-                  {session?.document_number ? `Doc: ${session.document_number}` : 'Scanning...'}
-                </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                {session?.document_number && (
+                  <p className="text-xs text-gray-500">
+                    Doc: {session.document_number}
+                  </p>
+                )}
+                {session?.user_info && (
+                  <>
+                    {session?.document_number && <span className="text-xs text-gray-600">•</span>}
+                    <p className="text-xs text-green-400 font-medium">
+                      Scanning as: {session.user_info.nickname}
+                    </p>
+                  </>
+                )}
                 {session?.created_at && (
                   <SessionTimer createdAt={session.created_at} />
                 )}

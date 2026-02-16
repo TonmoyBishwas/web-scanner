@@ -89,6 +89,12 @@ export interface ScanSession {
   webhook_sent?: boolean;
   invoice_image_url?: string;
   issued_boxes?: IssuedBox[];
+  user_info?: {
+    chat_id: string;
+    nickname: string;
+    role: string;
+    phone?: string;
+  };
 }
 
 export interface SessionResponse {
