@@ -51,6 +51,11 @@ export function SmartScanner({
   const [flashColor, setFlashColor] = useState<'green' | 'red' | null>(null);
   const [isInCooldown, setIsInCooldown] = useState(false);
   const [cooldownTimeLeft, setCooldownTimeLeft] = useState(0);
+  const [isValidating, setIsValidating] = useState(false);
+  const [validationProgress, setValidationProgress] = useState(0);
+
+  // Multi-read validation to ensure barcode is read correctly
+  const pendingReadsRef = useRef<{ barcode: string; count: number; timestamp: number } | null>(null);
 
   // Enumerate available cameras (AFTER getting initial permission for labels)
   const enumerateCameras = useCallback(async () => {
@@ -294,26 +299,65 @@ export function SmartScanner({
           const barcode = barcodes[0].rawValue;
           const now = Date.now();
 
-          // CRITICAL: Enforce minimum 5-second gap between ANY scans
-          // This prevents rapid-fire captures of the same box with barcode variations
-          const timeSinceLastScan = now - lastScanTimeRef.current;
-
-          if (timeSinceLastScan < 5000) {
-            // Still in cooldown period - skip this scan
+          // Validate barcode format (GS1-128 should be 25 or 31 digits)
+          const isValidFormat = /^\d{25}$|^\d{31}$/.test(barcode);
+          if (!isValidFormat && barcode.length > 10) {
+            console.warn('[SmartScanner] Invalid barcode format (expected 25 or 31 digits):', barcode.length, 'digits');
+            // Continue scanning, don't process this invalid read
             animationFrameRef.current = requestAnimationFrame(detect);
             return;
           }
 
-          // Cooldown passed - process this scan
+          // CRITICAL: Multi-read validation to ensure barcode is read correctly
+          // The barcode reader can misread due to blur, motion, lighting, etc.
+          // We require 3 consecutive identical reads within 1 second to confirm accuracy
+          const pending = pendingReadsRef.current;
+
+          if (!pending || pending.barcode !== barcode || now - pending.timestamp > 1000) {
+            // First read or different barcode or timeout - start new validation
+            pendingReadsRef.current = { barcode, count: 1, timestamp: now };
+            setIsValidating(true);
+            setValidationProgress(1);
+            console.log('[SmartScanner] Barcode read 1/3:', barcode);
+            animationFrameRef.current = requestAnimationFrame(detect);
+            return;
+          }
+
+          // Same barcode read again - increment count
+          pending.count++;
+          setValidationProgress(pending.count);
+          console.log(`[SmartScanner] Barcode read ${pending.count}/3:`, barcode);
+
+          if (pending.count < 3) {
+            // Need more confirmations
+            animationFrameRef.current = requestAnimationFrame(detect);
+            return;
+          }
+
+          // SUCCESS: 3 identical reads confirmed! Process the scan
+          console.log('[SmartScanner] Barcode CONFIRMED after 3 identical reads:', barcode);
+          pendingReadsRef.current = null;
+          setIsValidating(false);
+          setValidationProgress(0);
+
+          // Check cooldown
+          const timeSinceLastScan = now - lastScanTimeRef.current;
+          if (timeSinceLastScan < 3000) {
+            console.log('[SmartScanner] Cooldown active, ignoring confirmed scan');
+            animationFrameRef.current = requestAnimationFrame(detect);
+            return;
+          }
+
+          // Process confirmed scan
           lastScannedRef.current = barcode;
           lastScanTimeRef.current = now;
 
           // Set cooldown state
           setIsInCooldown(true);
-          setCooldownTimeLeft(5);
+          setCooldownTimeLeft(3);
 
           // Start cooldown countdown timer
-          let countdown = 5;
+          let countdown = 3;
           const countdownInterval = setInterval(() => {
             countdown--;
             setCooldownTimeLeft(countdown);
@@ -417,6 +461,23 @@ export function SmartScanner({
                 <div className="text-sm text-yellow-300 mt-2">Cooldown...</div>
               </div>
             </div>
+          ) : isValidating ? (
+            <div className="w-72 h-72 border-4 border-blue-400 rounded-lg flex items-center justify-center bg-black/50">
+              <div className="text-center">
+                <div className="text-5xl font-bold text-blue-400">{validationProgress}/3</div>
+                <div className="text-sm text-blue-300 mt-2">Validating read...</div>
+                <div className="mt-3 flex gap-2 justify-center">
+                  {[1, 2, 3].map(i => (
+                    <div
+                      key={i}
+                      className={`w-3 h-3 rounded-full ${
+                        i <= validationProgress ? 'bg-blue-400' : 'bg-gray-600'
+                      }`}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
           ) : (
             <div className="w-72 h-72 border-4 border-green-400 rounded-lg animate-pulse" />
           )}
@@ -424,13 +485,15 @@ export function SmartScanner({
         {/* Active scanner indicator */}
         <div className="absolute top-2 left-2">
           <div className={`flex items-center gap-1 px-2 py-1 rounded-full ${
-            isInCooldown ? 'bg-yellow-600/80' : 'bg-green-600/80'
+            isInCooldown ? 'bg-yellow-600/80' : isValidating ? 'bg-blue-600/80' : 'bg-green-600/80'
           }`}>
             <div className={`w-2 h-2 rounded-full ${
-              isInCooldown ? 'bg-yellow-300' : 'bg-green-300 animate-pulse'
+              isInCooldown ? 'bg-yellow-300' : isValidating ? 'bg-blue-300 animate-pulse' : 'bg-green-300 animate-pulse'
             }`}></div>
             {isInCooldown ? (
               <span className="text-white text-xs font-bold">{cooldownTimeLeft}s</span>
+            ) : isValidating ? (
+              <span className="text-white text-xs font-bold">{validationProgress}/3</span>
             ) : (
               <ScanLine className="w-3 h-3 text-white" />
             )}
