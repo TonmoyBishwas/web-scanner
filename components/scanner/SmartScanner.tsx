@@ -50,33 +50,57 @@ export function SmartScanner({
   const isMountedRef = useRef(true);
   const [flashColor, setFlashColor] = useState<'green' | 'red' | null>(null);
 
-  // Enumerate available cameras
+  // Enumerate available cameras (AFTER getting initial permission for labels)
   const enumerateCameras = useCallback(async () => {
     try {
+      // First request permission to get proper camera labels
+      const tempStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' }
+      });
+      tempStream.getTracks().forEach(track => track.stop());
+
+      // Now enumerate - labels will be available
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+      console.log('[SmartScanner] Found cameras:', videoDevices.map(d => ({
+        id: d.deviceId.slice(0, 8) + '...',
+        label: d.label
+      })));
+
+      if (videoDevices.length === 0) {
+        console.error('[SmartScanner] No cameras found');
+        return;
+      }
+
       setCameras(videoDevices);
 
-      // Find back camera as default
-      const backCameraIndex = videoDevices.findIndex(device =>
+      // Find back camera as default (check for back/rear/environment keywords)
+      let backCameraIndex = videoDevices.findIndex(device =>
         device.label.toLowerCase().includes('back') ||
         device.label.toLowerCase().includes('rear') ||
-        device.label.toLowerCase().includes('environment')
+        device.label.toLowerCase().includes('environment') ||
+        device.label.toLowerCase().includes('traseira') // Portuguese
       );
+
+      // If no back camera found by label, assume first camera is back (mobile convention)
+      if (backCameraIndex === -1 && videoDevices.length > 1) {
+        backCameraIndex = 0;
+        console.log('[SmartScanner] No back camera label found, using first camera');
+      }
 
       if (backCameraIndex !== -1) {
         setCurrentCameraIndex(backCameraIndex);
         setCurrentCameraLabel(videoDevices[backCameraIndex].label || 'Back Camera');
-      } else if (videoDevices.length > 0) {
+      } else {
         setCurrentCameraIndex(0);
         setCurrentCameraLabel(videoDevices[0].label || 'Camera');
       }
-
-      console.log('[SmartScanner] Found cameras:', videoDevices.map(d => d.label));
     } catch (err) {
       console.error('[SmartScanner] Failed to enumerate cameras:', err);
+      onError?.(err instanceof Error ? err.message : String(err));
     }
-  }, []);
+  }, [onError]);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
@@ -125,31 +149,73 @@ export function SmartScanner({
 
     // Cycle to next camera
     const nextIndex = (currentCameraIndex + 1) % cameras.length;
-    setCurrentCameraIndex(nextIndex);
-    setCurrentCameraLabel(cameras[nextIndex].label || `Camera ${nextIndex + 1}`);
+    const nextCamera = cameras[nextIndex];
 
-    console.log('[SmartScanner] Switching to camera:', cameras[nextIndex].label);
+    setCurrentCameraIndex(nextIndex);
+
+    // Create informative label
+    let label = nextCamera.label || `Camera ${nextIndex + 1}`;
+
+    // Simplify label (remove technical IDs in parentheses)
+    label = label.replace(/\([^)]*\)/g, '').trim();
+
+    // Add position indicator
+    label = `${label} (${nextIndex + 1}/${cameras.length})`;
+
+    setCurrentCameraLabel(label);
+
+    console.log('[SmartScanner] Switching to camera:', nextCamera.label, nextCamera.deviceId.slice(0, 8) + '...');
   }, [cameras, currentCameraIndex]);
 
   const startNativeScanning = async () => {
     try {
       const currentCamera = cameras[currentCameraIndex];
-      const constraints: MediaStreamConstraints = {
-        video: currentCamera?.deviceId
-          ? {
-              deviceId: { exact: currentCamera.deviceId },
-              width: { ideal: 1920 },
-              height: { ideal: 1080 },
-            }
-          : {
-              facingMode: { ideal: 'environment' },
-              width: { ideal: 1920 },
-              height: { ideal: 1080 },
-            },
-        audio: false,
-      };
 
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      if (!currentCamera) {
+        console.error('[SmartScanner] No camera selected');
+        return;
+      }
+
+      console.log('[SmartScanner] Starting camera:', currentCamera.label, currentCamera.deviceId.slice(0, 8) + '...');
+
+      // Try with deviceId first, with flexible constraints
+      let stream: MediaStream | null = null;
+
+      try {
+        // Attempt 1: Use specific deviceId (preferred method)
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            deviceId: { exact: currentCamera.deviceId },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          },
+          audio: false,
+        });
+        console.log('[SmartScanner] Camera started with deviceId');
+      } catch (deviceIdError) {
+        console.warn('[SmartScanner] Failed with deviceId, trying with facingMode fallback:', deviceIdError);
+
+        // Attempt 2: Fallback to facingMode (less precise but more compatible)
+        const isFrontCamera = currentCamera.label.toLowerCase().includes('front') ||
+                              currentCamera.label.toLowerCase().includes('user') ||
+                              currentCamera.label.toLowerCase().includes('face');
+
+        const facingMode = isFrontCamera ? 'user' : 'environment';
+
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: facingMode },
+            width: { ideal: 1280 }, // Lower resolution for compatibility
+            height: { ideal: 720 },
+          },
+          audio: false,
+        });
+        console.log('[SmartScanner] Camera started with facingMode:', facingMode);
+      }
+
+      if (!stream) {
+        throw new Error('Failed to get camera stream');
+      }
 
       streamRef.current = stream;
 
@@ -335,13 +401,13 @@ export function SmartScanner({
               onClick={switchCamera}
               className="flex items-center gap-1.5 bg-gray-900/80 hover:bg-gray-800/80 px-3 py-2 rounded-full text-white text-xs font-medium transition-colors backdrop-blur-sm border border-gray-600/50"
               aria-label="Switch camera"
-              title={`Switch camera (${currentCameraIndex + 1}/${cameras.length})`}
+              title="Tap to switch camera"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-              <span className="max-w-[120px] truncate">
-                {currentCameraLabel.replace(/\(.*?\)/g, '').trim() || 'Camera'}
+              <span className="max-w-[140px] truncate">
+                {currentCameraLabel || 'Camera'}
               </span>
             </button>
           </div>
