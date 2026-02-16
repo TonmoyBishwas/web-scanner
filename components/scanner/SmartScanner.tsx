@@ -38,6 +38,7 @@ export function SmartScanner({
   className
 }: SmartScannerProps) {
   const [isSupported, setIsSupported] = useState<boolean | null>(null);
+  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -86,11 +87,16 @@ export function SmartScanner({
     }
   };
 
+  const switchCamera = useCallback(() => {
+    stopNativeScanning();
+    setFacingMode(prev => prev === 'environment' ? 'user' : 'environment');
+  }, []);
+
   const startNativeScanning = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: { ideal: 'environment' },
+          facingMode: { ideal: facingMode },
           width: { ideal: 1920 },
           height: { ideal: 1080 },
         },
@@ -210,7 +216,10 @@ export function SmartScanner({
     if (isSupported === true) {
       startNativeScanning();
     }
-  }, [isSupported]);
+    return () => {
+      stopNativeScanning();
+    };
+  }, [isSupported, facingMode]);
 
   // Loading state
   if (isSupported === null) {
@@ -270,6 +279,19 @@ export function SmartScanner({
             <div className="w-2 h-2 bg-green-300 rounded-full animate-pulse"></div>
             <ScanLine className="w-3 h-3 text-white" />
           </div>
+        </div>
+        {/* Camera switch button */}
+        <div className="absolute top-2 right-2 pointer-events-auto">
+          <button
+            onClick={switchCamera}
+            className="flex items-center gap-1.5 bg-gray-900/80 hover:bg-gray-800/80 px-3 py-2 rounded-full text-white text-xs font-medium transition-colors backdrop-blur-sm border border-gray-600/50"
+            aria-label="Switch camera"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <span>{facingMode === 'environment' ? 'Back' : 'Front'}</span>
+          </button>
         </div>
       </div>
 

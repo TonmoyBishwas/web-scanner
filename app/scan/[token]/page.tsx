@@ -60,7 +60,7 @@ export default function ScanPage({
   const { token } = use(params);
 
   // Settings
-  const { soundEnabled, vibrationEnabled } = useSettingsStore();
+  const { soundEnabled, vibrationEnabled, hydrate } = useSettingsStore();
 
   // Session state
   const [session, setSession] = useState<ScanSession | null>(null);
@@ -71,7 +71,6 @@ export default function ScanPage({
   const [scannedBarcodes, setScannedBarcodes] = useState<Map<string, ParsedBarcode>>(new Map());
   const [ocrResults, setOcrResults] = useState<Map<string, BoxStickerOCR>>(new Map());
 
-  const [showOCRDrawer, setShowOCRDrawer] = useState(false);
   const [ocrImageUrls, setOcrImageUrls] = useState<Map<string, string>>(new Map());
   const [boxesExpected, setBoxesExpected] = useState(0);
 
@@ -192,6 +191,11 @@ export default function ScanPage({
   const processedBarcodesRef = useRef<Set<string>>(new Set());
   const redFlashTriggerRef = useRef<(() => void) | null>(null);
   const resolvedBarcodesRef = useRef<Set<string>>(new Set());
+
+  // ── Hydrate Settings ──────────────────────────────────────────
+  useEffect(() => {
+    hydrate();
+  }, [hydrate]);
 
   // ── Load Session ──────────────────────────────────────────────
   useEffect(() => {
@@ -1119,6 +1123,47 @@ export default function ScanPage({
             {pendingOCR.size > 0 ? ` \u00B7 ${pendingOCR.size} OCR pending` : ''}
           </p>
         )}
+
+        {/* Tool buttons row */}
+        {(session || errorLog.length > 0 || ocrImageUrls.size > 0) && (phase === 'scanning' || phase === 'ready_confirm') && (
+          <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-gray-700/50">
+            {/* Left side: Invoice & Photos */}
+            <div className="flex items-center gap-2">
+              {session && (
+                <button
+                  onClick={() => setShowInvoiceDrawer(true)}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 rounded-lg text-blue-300 text-xs font-medium transition-colors"
+                  aria-label="View invoice"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>Invoice</span>
+                </button>
+              )}
+              {ocrImageUrls.size > 0 && (
+                <button
+                  onClick={() => setShowPhotoGallery(true)}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 rounded-lg text-purple-300 text-xs font-medium transition-colors"
+                  aria-label="View photos"
+                >
+                  <ImageIcon className="w-4 h-4" />
+                  <span>Photos ({ocrImageUrls.size})</span>
+                </button>
+              )}
+            </div>
+
+            {/* Right side: Debug */}
+            {errorLog.length > 0 && (
+              <button
+                onClick={() => setShowDebugPanel(!showDebugPanel)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 rounded-lg text-red-300 text-xs font-medium transition-colors"
+                aria-label="Debug log"
+              >
+                <Bug className="w-4 h-4" />
+                <span>Debug ({errorLog.length})</span>
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Undo Toast ────────────────────────────────────────── */}
@@ -1130,77 +1175,7 @@ export default function ScanPage({
         />
       )}
 
-      {/* ── Invoice FAB (Bottom-Left) ─────────────────────────── */}
-      {session && (phase === 'scanning' || phase === 'ready_confirm') && (
-        <button
-          onClick={() => setShowInvoiceDrawer(true)}
-          className="fixed bottom-24 left-4 z-50 w-12 h-12 rounded-full shadow-2xl flex items-center justify-center bg-blue-600 hover:bg-blue-700 transition-all active:scale-95"
-        >
-          <FileText className="w-5 h-5 text-white" />
-        </button>
-      )}
-
-      {/* ── OCR Circular FAB ──────────────────────────────────── */}
-      {ocrImageUrls.size > 0 && (
-        <button
-          onClick={() => setShowOCRDrawer(!showOCRDrawer)}
-          className="fixed bottom-24 left-20 z-50 w-14 h-14 rounded-full shadow-2xl flex items-center justify-center transition-all active:scale-95"
-          style={{
-            background: pendingOCR.size > 0
-              ? 'linear-gradient(135deg, #7c3aed, #3b82f6)'
-              : 'linear-gradient(135deg, #059669, #10b981)',
-          }}
-        >
-          <svg className="absolute inset-0 w-14 h-14 -rotate-90" viewBox="0 0 56 56">
-            <circle cx="28" cy="28" r="24" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="3" />
-            <circle
-              cx="28" cy="28" r="24" fill="none"
-              stroke={pendingOCR.size > 0 ? '#a78bfa' : '#34d399'}
-              strokeWidth="3"
-              strokeLinecap="round"
-              strokeDasharray={`${2 * Math.PI * 24}`}
-              strokeDashoffset={`${2 * Math.PI * 24 * (1 - (ocrResults.size / Math.max(ocrImageUrls.size, 1)))}`}
-              className="transition-all duration-700"
-            />
-          </svg>
-          <div className="relative z-10 text-center">
-            {pendingOCR.size > 0 ? (
-              <Cpu className="w-5 h-5 text-white mx-auto animate-pulse" />
-            ) : (
-              <Check className="w-5 h-5 text-white mx-auto" />
-            )}
-            <div className="text-white text-[9px] font-bold leading-none">
-              {ocrResults.size}/{ocrImageUrls.size}
-            </div>
-          </div>
-        </button>
-      )}
-
-      {/* ── Photo Gallery FAB ────────────────────────────────── */}
-      {ocrImageUrls.size > 0 && (
-        <button
-          onClick={() => setShowPhotoGallery(true)}
-          className="fixed bottom-24 right-16 z-50 w-10 h-10 rounded-full shadow-lg flex items-center justify-center bg-purple-600 hover:bg-purple-700 transition-all active:scale-95"
-        >
-          <ImageIcon className="w-4 h-4 text-white" />
-        </button>
-      )}
-
-      {/* ── Debug Toggle Button (Bottom-Right) ──────────────── */}
-      {errorLog.length > 0 && (
-        <button
-          onClick={() => { setShowDebugPanel(!showDebugPanel); setShowOCRDrawer(false); }}
-          className="fixed bottom-24 right-4 z-50 bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-full shadow-lg text-xs font-bold flex items-center gap-2"
-        >
-          <Bug className="w-3.5 h-3.5" />
-          {showDebugPanel ? 'Hide' : 'Debug'} ({errorLog.length})
-          {scannerType && (
-            <span className="text-[10px] opacity-80">
-              {scannerType === 'native' ? 'Native' : 'Software'}
-            </span>
-          )}
-        </button>
-      )}
+      {/* FABs moved to footer - cleaner layout */}
 
       {/* ── Invoice Drawer ────────────────────────────────────── */}
       {session && (
@@ -1214,8 +1189,8 @@ export default function ScanPage({
         />
       )}
 
-      {/* ── OCR Details Bottom Drawer ──────────────────────────── */}
-      {showOCRDrawer && (
+      {/* OCR drawer removed - redundant with scanned list */}
+      {false && (
         <div className="fixed bottom-0 left-0 right-0 z-40 bg-gray-900/95 dark:bg-gray-900/95 backdrop-blur-lg border-t-2 border-purple-500 shadow-2xl animate-slideInUp" style={{ maxHeight: '55vh' }}>
           <div className="flex justify-between items-center p-3 border-b border-gray-700 bg-gradient-to-r from-purple-900 to-blue-900">
             <div className="flex items-center gap-2">
@@ -1226,7 +1201,7 @@ export default function ScanPage({
               </span>
             </div>
             <button
-              onClick={() => setShowOCRDrawer(false)}
+              onClick={() => {}}
               className="text-gray-400 hover:text-white p-1"
             >
               <X className="w-5 h-5" />

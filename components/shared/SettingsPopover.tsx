@@ -1,13 +1,13 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Settings, Volume2, VolumeX, Vibrate, Sun, Moon, X } from 'lucide-react';
+import { Settings, Volume2, VolumeX, Vibrate, X } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settings-store';
 
 export function SettingsPopover() {
   const [open, setOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const { soundEnabled, vibrationEnabled, theme, toggleSound, toggleVibration, toggleTheme } = useSettingsStore();
+  const { soundEnabled, vibrationEnabled, toggleSound, toggleVibration } = useSettingsStore();
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -65,24 +65,6 @@ export function SettingsPopover() {
                 <span className="text-sm text-gray-200">Vibration</span>
               </div>
               <TogglePill enabled={vibrationEnabled} />
-            </button>
-
-            {/* Theme toggle */}
-            <button
-              onClick={toggleTheme}
-              className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg hover:bg-white/5 transition-colors"
-            >
-              <div className="flex items-center gap-3">
-                {theme === 'dark' ? (
-                  <Moon className="w-4 h-4 text-blue-400" />
-                ) : (
-                  <Sun className="w-4 h-4 text-yellow-400" />
-                )}
-                <span className="text-sm text-gray-200">
-                  {theme === 'dark' ? 'Dark Mode' : 'Light Mode'}
-                </span>
-              </div>
-              <span className="text-xs text-gray-500 capitalize">{theme}</span>
             </button>
           </div>
         </div>
