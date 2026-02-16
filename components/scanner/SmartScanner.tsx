@@ -327,24 +327,24 @@ export function SmartScanner({
             return;
           }
 
-          // CRITICAL: Checksum validation - reject misreads immediately
+          // Checksum validation (warning only - not blocking)
+          // Some barcodes may not follow standard GS1-128 checksum format
           if ((barcode.length === 25 || barcode.length === 31) && !validateGS1Checksum(barcode)) {
-            console.warn('[SmartScanner] Invalid GS1-128 checksum, barcode misread:', barcode);
-            animationFrameRef.current = requestAnimationFrame(detect);
-            return;
+            console.warn('[SmartScanner] Warning: Checksum validation failed for:', barcode);
+            // Continue anyway - rely on 5-read validation instead
           }
 
           // CRITICAL: Multi-read validation to ensure barcode is read correctly
           // The barcode reader can misread due to blur, motion, lighting, etc.
-          // We require 5 consecutive identical reads within 1.5 seconds for bulletproof accuracy
+          // We require 3 consecutive identical reads within 2 seconds
           const pending = pendingReadsRef.current;
 
-          if (!pending || pending.barcode !== barcode || now - pending.timestamp > 1500) {
+          if (!pending || pending.barcode !== barcode || now - pending.timestamp > 2000) {
             // First read or different barcode or timeout - start new validation
             pendingReadsRef.current = { barcode, count: 1, timestamp: now };
             setIsValidating(true);
             setValidationProgress(1);
-            console.log('[SmartScanner] Barcode read 1/5:', barcode);
+            console.log('[SmartScanner] Barcode read 1/3:', barcode);
             animationFrameRef.current = requestAnimationFrame(detect);
             return;
           }
@@ -352,16 +352,16 @@ export function SmartScanner({
           // Same barcode read again - increment count
           pending.count++;
           setValidationProgress(pending.count);
-          console.log(`[SmartScanner] Barcode read ${pending.count}/5:`, barcode);
+          console.log(`[SmartScanner] Barcode read ${pending.count}/3:`, barcode);
 
-          if (pending.count < 5) {
+          if (pending.count < 3) {
             // Need more confirmations
             animationFrameRef.current = requestAnimationFrame(detect);
             return;
           }
 
-          // SUCCESS: 5 identical reads confirmed! Process the scan
-          console.log('[SmartScanner] Barcode CONFIRMED after 5 identical reads:', barcode);
+          // SUCCESS: 3 identical reads confirmed! Process the scan
+          console.log('[SmartScanner] Barcode CONFIRMED after 3 identical reads:', barcode);
           pendingReadsRef.current = null;
           setIsValidating(false);
           setValidationProgress(0);
@@ -490,13 +490,13 @@ export function SmartScanner({
           ) : isValidating ? (
             <div className="w-72 h-72 border-4 border-blue-400 rounded-lg flex items-center justify-center bg-black/50">
               <div className="text-center">
-                <div className="text-5xl font-bold text-blue-400">{validationProgress}/5</div>
-                <div className="text-sm text-blue-300 mt-2">Validating read...</div>
-                <div className="mt-3 flex gap-1.5 justify-center">
-                  {[1, 2, 3, 4, 5].map(i => (
+                <div className="text-5xl font-bold text-blue-400">{validationProgress}/3</div>
+                <div className="text-sm text-blue-300 mt-2">Hold steady...</div>
+                <div className="mt-3 flex gap-2 justify-center">
+                  {[1, 2, 3].map(i => (
                     <div
                       key={i}
-                      className={`w-2.5 h-2.5 rounded-full ${
+                      className={`w-3 h-3 rounded-full ${
                         i <= validationProgress ? 'bg-blue-400' : 'bg-gray-600'
                       }`}
                     />
@@ -519,7 +519,7 @@ export function SmartScanner({
             {isInCooldown ? (
               <span className="text-white text-xs font-bold">{cooldownTimeLeft}s</span>
             ) : isValidating ? (
-              <span className="text-white text-xs font-bold">{validationProgress}/5</span>
+              <span className="text-white text-xs font-bold">{validationProgress}/3</span>
             ) : (
               <ScanLine className="w-3 h-3 text-white" />
             )}
