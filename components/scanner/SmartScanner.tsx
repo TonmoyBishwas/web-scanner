@@ -57,6 +57,26 @@ export function SmartScanner({
   // Multi-read validation to ensure barcode is read correctly
   const pendingReadsRef = useRef<{ barcode: string; count: number; timestamp: number } | null>(null);
 
+  // GS1-128 checksum validation
+  const validateGS1Checksum = (barcode: string): boolean => {
+    if (barcode.length !== 31 && barcode.length !== 25) return false;
+
+    // Calculate GS1-128 check digit (modulo 10)
+    let sum = 0;
+    for (let i = barcode.length - 2; i >= 0; i--) {
+      const digit = parseInt(barcode[i]);
+      if ((barcode.length - 1 - i) % 2 === 0) {
+        sum += digit * 3;
+      } else {
+        sum += digit;
+      }
+    }
+    const checkDigit = (10 - (sum % 10)) % 10;
+    const expectedCheckDigit = parseInt(barcode[barcode.length - 1]);
+
+    return checkDigit === expectedCheckDigit;
+  };
+
   // Enumerate available cameras (AFTER getting initial permission for labels)
   const enumerateCameras = useCallback(async () => {
     try {
@@ -303,22 +323,28 @@ export function SmartScanner({
           const isValidFormat = /^\d{25}$|^\d{31}$/.test(barcode);
           if (!isValidFormat && barcode.length > 10) {
             console.warn('[SmartScanner] Invalid barcode format (expected 25 or 31 digits):', barcode.length, 'digits');
-            // Continue scanning, don't process this invalid read
+            animationFrameRef.current = requestAnimationFrame(detect);
+            return;
+          }
+
+          // CRITICAL: Checksum validation - reject misreads immediately
+          if ((barcode.length === 25 || barcode.length === 31) && !validateGS1Checksum(barcode)) {
+            console.warn('[SmartScanner] Invalid GS1-128 checksum, barcode misread:', barcode);
             animationFrameRef.current = requestAnimationFrame(detect);
             return;
           }
 
           // CRITICAL: Multi-read validation to ensure barcode is read correctly
           // The barcode reader can misread due to blur, motion, lighting, etc.
-          // We require 3 consecutive identical reads within 1 second to confirm accuracy
+          // We require 5 consecutive identical reads within 1.5 seconds for bulletproof accuracy
           const pending = pendingReadsRef.current;
 
-          if (!pending || pending.barcode !== barcode || now - pending.timestamp > 1000) {
+          if (!pending || pending.barcode !== barcode || now - pending.timestamp > 1500) {
             // First read or different barcode or timeout - start new validation
             pendingReadsRef.current = { barcode, count: 1, timestamp: now };
             setIsValidating(true);
             setValidationProgress(1);
-            console.log('[SmartScanner] Barcode read 1/3:', barcode);
+            console.log('[SmartScanner] Barcode read 1/5:', barcode);
             animationFrameRef.current = requestAnimationFrame(detect);
             return;
           }
@@ -326,16 +352,16 @@ export function SmartScanner({
           // Same barcode read again - increment count
           pending.count++;
           setValidationProgress(pending.count);
-          console.log(`[SmartScanner] Barcode read ${pending.count}/3:`, barcode);
+          console.log(`[SmartScanner] Barcode read ${pending.count}/5:`, barcode);
 
-          if (pending.count < 3) {
+          if (pending.count < 5) {
             // Need more confirmations
             animationFrameRef.current = requestAnimationFrame(detect);
             return;
           }
 
-          // SUCCESS: 3 identical reads confirmed! Process the scan
-          console.log('[SmartScanner] Barcode CONFIRMED after 3 identical reads:', barcode);
+          // SUCCESS: 5 identical reads confirmed! Process the scan
+          console.log('[SmartScanner] Barcode CONFIRMED after 5 identical reads:', barcode);
           pendingReadsRef.current = null;
           setIsValidating(false);
           setValidationProgress(0);
@@ -464,13 +490,13 @@ export function SmartScanner({
           ) : isValidating ? (
             <div className="w-72 h-72 border-4 border-blue-400 rounded-lg flex items-center justify-center bg-black/50">
               <div className="text-center">
-                <div className="text-5xl font-bold text-blue-400">{validationProgress}/3</div>
+                <div className="text-5xl font-bold text-blue-400">{validationProgress}/5</div>
                 <div className="text-sm text-blue-300 mt-2">Validating read...</div>
-                <div className="mt-3 flex gap-2 justify-center">
-                  {[1, 2, 3].map(i => (
+                <div className="mt-3 flex gap-1.5 justify-center">
+                  {[1, 2, 3, 4, 5].map(i => (
                     <div
                       key={i}
-                      className={`w-3 h-3 rounded-full ${
+                      className={`w-2.5 h-2.5 rounded-full ${
                         i <= validationProgress ? 'bg-blue-400' : 'bg-gray-600'
                       }`}
                     />
@@ -493,7 +519,7 @@ export function SmartScanner({
             {isInCooldown ? (
               <span className="text-white text-xs font-bold">{cooldownTimeLeft}s</span>
             ) : isValidating ? (
-              <span className="text-white text-xs font-bold">{validationProgress}/3</span>
+              <span className="text-white text-xs font-bold">{validationProgress}/5</span>
             ) : (
               <ScanLine className="w-3 h-3 text-white" />
             )}
