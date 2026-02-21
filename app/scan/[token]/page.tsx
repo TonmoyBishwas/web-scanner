@@ -657,9 +657,6 @@ export default function ScanPage({
     setScannedBarcodes(prev => new Map(prev).set(barcode, data));
     triggerSuccessFeedback();
 
-    // Show undo toast
-    setUndoBarcode(barcode);
-
     if (!imageData) {
       addErrorLog(`Barcode ${barcode}: No image captured by scanner`);
     } else {
@@ -1180,15 +1177,6 @@ export default function ScanPage({
           </div>
         )}
       </div>
-
-      {/* ── Undo Toast ────────────────────────────────────────── */}
-      {undoBarcode && (
-        <UndoToast
-          barcode={undoBarcode}
-          onUndo={() => handleUndoScan(undoBarcode)}
-          onDismiss={() => setUndoBarcode(null)}
-        />
-      )}
 
       {/* FABs moved to footer - cleaner layout */}
 
