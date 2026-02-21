@@ -27,3 +27,9 @@ This directory contains detailed documentation for the Web Scanner component of 
 
 4.  **Simulate a Session**:
     Since sessions are created by the Bot, you can manually create a key in Redis or use the Bot to generate a link like `http://localhost:3000/scan/YOUR-UUID-TOKEN`.
+
+## Branch & Deployment
+
+- **Active branch**: `main`
+- **Vercel deploys from**: `main` (automatic on push)
+- The `scanner-ui-v2` branch was merged (force-pushed) into `main` and is no longer a separate branch.
