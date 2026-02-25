@@ -230,7 +230,6 @@ export default function PalletVerifyPage({
             onBarcodeDetected={handleBarcodeDetected}
             scannedBarcodes={new Map()}
             ocrResults={new Map()}
-            className="w-full"
           />
           {phase === 'processing' && (
             <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
