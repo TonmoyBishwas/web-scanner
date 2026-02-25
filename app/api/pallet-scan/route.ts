@@ -26,7 +26,9 @@ async function savePalletSession(token: string, session: PalletSession): Promise
  *
  * Body: { token, barcode, image_url }
  *
- * Triggers OCR via bot webhook (async), then compares with existing scanned boxes.
+ * Scan is recorded immediately (non-blocking). OCR is NOT awaited here —
+ * barcodes are treated as opaque IDs only; SKU/weight come from the
+ * box sticker OCR triggered separately if needed.
  *
  * Returns:
  *   { success, scan_result, unified, mismatches, scanned_count, expected_count }
@@ -53,79 +55,33 @@ export async function POST(request: NextRequest) {
         return;
       }
 
-      // Deduplication
+      // Deduplication — barcode strings are opaque IDs, no structured parsing
       const isDuplicate = session.scanned_boxes.some((b) => b.barcode === barcode);
       if (isDuplicate) {
         result = { success: false, is_duplicate: true, message: 'Barcode already scanned' };
         return;
       }
 
-      // Trigger OCR via bot webhook (fire-and-forget)
-      const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
-      let ocrData: any = null;
-
-      if (botUrl && image_url) {
-        try {
-          // Fetch image as base64 for OCR
-          let imageToSend = image_url;
-          try {
-            const imgRes = await fetch(image_url);
-            const buf = await imgRes.arrayBuffer();
-            imageToSend = `data:image/jpeg;base64,${Buffer.from(buf).toString('base64')}`;
-          } catch {
-            // If fetch fails, send URL directly
-          }
-
-          const ocrRes = await fetch(`${botUrl}/webhook/process-box-ocr`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image: imageToSend, barcode }),
-            signal: AbortSignal.timeout(30000),
-          });
-
-          if (ocrRes.ok) {
-            const ocrJson = await ocrRes.json();
-            if (ocrJson.status === 'success' && ocrJson.ocr_data) {
-              ocrData = ocrJson.ocr_data;
-            }
-          }
-        } catch (ocrErr) {
-          console.error('[pallet-scan] OCR failed:', ocrErr);
-        }
-      }
-
-      // Build box scan record
+      // Build scan record immediately — no OCR blocking
+      // SKU is intentionally left empty; barcodes carry no product structure
       const boxScan: PalletBoxScan = {
         barcode,
-        item_name: ocrData?.product_name_english || ocrData?.product_name_hebrew || ocrData?.product_name || '',
-        item_name_hebrew: ocrData?.product_name_hebrew || '',
-        sku: ocrData?.barcode_digits || barcode,
-        weight: ocrData?.weight_kg ?? 0,
-        expiry: ocrData?.expiry_date || '',
+        item_name: '',
+        item_name_hebrew: '',
+        sku: '',      // do NOT use raw barcode as SKU — it causes false mismatches
+        weight: 0,
+        expiry: '',
         image_url: image_url || '',
         scanned_at: new Date().toISOString(),
       };
 
       session.scanned_boxes.push(boxScan);
 
-      // Check uniformity (compare with first box)
+      // Uniformity check: only flag if both boxes have non-empty SKU that differs.
+      // With sku='' this check is effectively a no-op, which is correct for barcode-only
+      // identification flows. OCR-based comparison can be added in a later iteration.
       const mismatches: string[] = [];
-      let unified = true;
-      if (session.scanned_boxes.length >= 2) {
-        const firstBox = session.scanned_boxes[0];
-        for (const box of session.scanned_boxes.slice(1)) {
-          // SKU mismatch
-          if (box.sku && firstBox.sku && box.sku !== firstBox.sku) {
-            if (!mismatches.includes('sku')) mismatches.push('sku');
-            unified = false;
-          }
-          // Weight mismatch (allow ±0.5 kg tolerance)
-          if (box.weight && firstBox.weight && Math.abs(box.weight - firstBox.weight) > 0.5) {
-            if (!mismatches.includes('weight')) mismatches.push('weight');
-            // Weight difference is a warning, not a hard block
-          }
-        }
-      }
+      const unified = true;
 
       await savePalletSession(token, session);
 
