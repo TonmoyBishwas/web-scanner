@@ -211,7 +211,54 @@ export interface BoxLookupResult {
   message?: string;
 }
 
-// UI State Types
+// ─── Pallet types ─────────────────────────────────────────────────────────────
+
+export interface PalletBoxScan {
+  barcode: string;
+  item_name: string;
+  item_name_hebrew?: string;
+  sku: string;
+  weight: number;
+  expiry: string;
+  image_url: string;
+  scanned_at: string;
+}
+
+export interface PalletSession {
+  token: string;
+  chat_id: string;
+  pallet_number: number;
+  pallet_count: number;
+  scale_weight: number;
+  expected_box_count: number;
+  invoice_document_number: string;
+  ocr_data: Array<{
+    item_code: string;
+    item_name_english: string;
+    item_name_hebrew: string;
+    quantity_kg: number;
+  }>;
+  scanned_boxes: PalletBoxScan[];
+  status: 'active' | 'verified' | 'completed';
+  created_at: string;
+}
+
+export interface PalletVerificationResult {
+  verified: boolean;
+  lpn: string;
+  item_name: string;
+  item_code: string;
+  ocr_box_weight: number;
+  /** ocr_box_weight × expected_box_count */
+  calculated_total_weight: number;
+  scale_weight: number;
+  box_count: number;
+  verified_scan_count: number;
+  mismatches: string[];
+}
+
+// ─── UI State Types ────────────────────────────────────────────────────────────
+
 export interface ScanStoreState {
   scannedBarcodes: Map<string, ParsedBarcode>;
   scannedItems: ScannedItem[];

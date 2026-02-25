@@ -51,8 +51,9 @@ export function SmartScanner({
   const [flashColor, setFlashColor] = useState<'green' | 'red' | null>(null);
   const [isInCooldown, setIsInCooldown] = useState(false);
   const [cooldownTimeLeft, setCooldownTimeLeft] = useState(0);
-  const [isValidating, setIsValidating] = useState(false);
-  const [validationProgress, setValidationProgress] = useState(0);
+  const [captureCount, setCaptureCount] = useState(0); // 0 | 1 | 2 | 3
+  const [isDuplicate, setIsDuplicate] = useState(false);
+  const duplicateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Multi-read validation to ensure barcode is read correctly
   const pendingReadsRef = useRef<{ barcode: string; count: number; timestamp: number } | null>(null);
@@ -146,10 +147,11 @@ export function SmartScanner({
     };
   }, [onScannerTypeDetected, enumerateCameras]);
 
-  // Function to trigger red flash (called by parent on duplicate detection)
+  // Function to trigger duplicate indicator (called by parent on duplicate detection)
   const triggerRedFlash = useCallback(() => {
-    setFlashColor('red');
-    setTimeout(() => setFlashColor(null), 300);
+    setIsDuplicate(true);
+    if (duplicateTimerRef.current) clearTimeout(duplicateTimerRef.current);
+    duplicateTimerRef.current = setTimeout(() => setIsDuplicate(false), 1000);
   }, []);
 
   // Expose flash trigger to parent
@@ -342,8 +344,7 @@ export function SmartScanner({
           if (!pending || pending.barcode !== barcode || now - pending.timestamp > 2000) {
             // First read or different barcode or timeout - start new validation
             pendingReadsRef.current = { barcode, count: 1, timestamp: now };
-            setIsValidating(true);
-            setValidationProgress(1);
+            setCaptureCount(1);
             console.log('[SmartScanner] Barcode read 1/3:', barcode);
             animationFrameRef.current = requestAnimationFrame(detect);
             return;
@@ -351,7 +352,7 @@ export function SmartScanner({
 
           // Same barcode read again - increment count
           pending.count++;
-          setValidationProgress(pending.count);
+          setCaptureCount(pending.count);
           console.log(`[SmartScanner] Barcode read ${pending.count}/3:`, barcode);
 
           if (pending.count < 3) {
@@ -363,8 +364,7 @@ export function SmartScanner({
           // SUCCESS: 3 identical reads confirmed! Process the scan
           console.log('[SmartScanner] Barcode CONFIRMED after 3 identical reads:', barcode);
           pendingReadsRef.current = null;
-          setIsValidating(false);
-          setValidationProgress(0);
+          setCaptureCount(0);
 
           // Check cooldown
           const timeSinceLastScan = now - lastScanTimeRef.current;
@@ -480,46 +480,78 @@ export function SmartScanner({
       <div className="absolute inset-0 pointer-events-none">
         {/* Target box */}
         <div className="absolute inset-0 flex items-center justify-center">
-          {isInCooldown ? (
-            <div className="w-72 h-72 border-4 border-yellow-400 rounded-lg flex items-center justify-center bg-black/50">
-              <div className="text-center">
-                <div className="text-6xl font-bold text-yellow-400">{cooldownTimeLeft}</div>
-                <div className="text-sm text-yellow-300 mt-2">Cooldown...</div>
-              </div>
-            </div>
-          ) : isValidating ? (
-            <div className="w-72 h-72 border-4 border-blue-400 rounded-lg flex items-center justify-center bg-black/50">
-              <div className="text-center">
-                <div className="text-5xl font-bold text-blue-400">{validationProgress}/3</div>
-                <div className="text-sm text-blue-300 mt-2">Hold steady...</div>
-                <div className="mt-3 flex gap-2 justify-center">
-                  {[1, 2, 3].map(i => (
-                    <div
-                      key={i}
-                      className={`w-3 h-3 rounded-full ${
-                        i <= validationProgress ? 'bg-blue-400' : 'bg-gray-600'
-                      }`}
-                    />
-                  ))}
+          <div className="relative" style={{ width: 240, height: 240 }}>
+
+            {/* === COOLDOWN STATE === */}
+            {isInCooldown && (
+              <>
+                <div className="absolute inset-0 border-[3px] border-red-500 rounded" />
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-6xl font-bold text-red-400">
+                    {cooldownTimeLeft}
+                  </span>
                 </div>
-              </div>
-            </div>
-          ) : (
-            <div className="w-72 h-72 border-4 border-green-400 rounded-lg animate-pulse" />
-          )}
+              </>
+            )}
+
+            {/* === DUPLICATE STATE === */}
+            {!isInCooldown && isDuplicate && (
+              <>
+                <div className="absolute inset-0 border-[3px] border-red-500 rounded" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-base font-semibold text-red-400">Already scanned</span>
+                </div>
+              </>
+            )}
+
+            {/* === IDLE / CAPTURING STATE (green trail) === */}
+            {!isInCooldown && !isDuplicate && (
+              <>
+                {/* Dim green base border (shows unfilled portion) */}
+                <div className="absolute inset-0 border-[3px] border-green-400/25 rounded" />
+
+                {/* SVG trail overlay */}
+                <svg
+                  className="absolute inset-0 w-full h-full pointer-events-none"
+                  viewBox="0 0 240 240"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <rect
+                    x="1.5" y="1.5"
+                    width="237" height="237"
+                    rx="4"
+                    fill="none"
+                    stroke="rgb(74, 222, 128)"
+                    strokeWidth="3"
+                    pathLength="1"
+                    strokeDasharray="1"
+                    strokeDashoffset={
+                      captureCount === 0 ? 1 :
+                      captureCount === 1 ? 0.667 :
+                      captureCount === 2 ? 0.333 : 0
+                    }
+                    style={{
+                      transition: captureCount > 0 ? 'stroke-dashoffset 0.25s ease-out' : 'none',
+                    }}
+                  />
+                </svg>
+              </>
+            )}
+
+          </div>
         </div>
         {/* Active scanner indicator */}
         <div className="absolute top-2 left-2">
           <div className={`flex items-center gap-1 px-2 py-1 rounded-full ${
-            isInCooldown ? 'bg-yellow-600/80' : isValidating ? 'bg-blue-600/80' : 'bg-green-600/80'
+            (isInCooldown || isDuplicate) ? 'bg-red-600/80' : 'bg-green-600/80'
           }`}>
             <div className={`w-2 h-2 rounded-full ${
-              isInCooldown ? 'bg-yellow-300' : isValidating ? 'bg-blue-300 animate-pulse' : 'bg-green-300 animate-pulse'
+              (isInCooldown || isDuplicate) ? 'bg-red-300' : 'bg-green-300 animate-pulse'
             }`}></div>
             {isInCooldown ? (
               <span className="text-white text-xs font-bold">{cooldownTimeLeft}s</span>
-            ) : isValidating ? (
-              <span className="text-white text-xs font-bold">{validationProgress}/3</span>
+            ) : isDuplicate ? (
+              <span className="text-white text-xs font-bold">Duplicate</span>
             ) : (
               <ScanLine className="w-3 h-3 text-white" />
             )}
