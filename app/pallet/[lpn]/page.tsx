@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { PrintButton } from './PrintButton';
 
 interface PalletRecord {
   lpn: string;
@@ -84,12 +85,7 @@ export default async function PalletStickerPage({
     <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4">
       {/* Print button (hidden when printing) */}
       <div className="no-print mb-6 flex gap-3">
-        <button
-          onClick={() => typeof window !== 'undefined' && window.print()}
-          className="bg-blue-600 text-white px-6 py-2.5 rounded-lg font-semibold hover:bg-blue-700 transition text-sm"
-        >
-          🖨️ Print Sticker
-        </button>
+        <PrintButton />
         <a
           href="/"
           className="bg-gray-200 text-gray-700 px-6 py-2.5 rounded-lg font-semibold hover:bg-gray-300 transition text-sm"
@@ -182,19 +178,11 @@ export default async function PalletStickerPage({
       </div>
 
       {/* Print CSS */}
-      <style jsx global>{`
+      <style>{`
         @media print {
-          .no-print {
-            display: none !important;
-          }
-          body {
-            background: white;
-          }
-          #pallet-sticker {
-            width: 90mm;
-            margin: 0 auto;
-            page-break-inside: avoid;
-          }
+          .no-print { display: none !important; }
+          body { background: white; }
+          #pallet-sticker { width: 90mm; margin: 0 auto; page-break-inside: avoid; }
         }
       `}</style>
     </div>
