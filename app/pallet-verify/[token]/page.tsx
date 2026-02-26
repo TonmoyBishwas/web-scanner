@@ -57,12 +57,12 @@ export default function PalletVerifyPage({
   }, [token]);
 
   const handleBarcodeDetected = useCallback(
-    async (barcode: string, _parsed: ParsedBarcode, _imageData?: string) => {
+    async (barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
       if (processedRef.current.has(barcode)) return;
       processedRef.current.add(barcode);
 
       try {
-        // Submit scan to backend — barcodes are opaque IDs, no Cloudinary upload needed
+        // 1. Record scan immediately — scanner stays live for the next box
         const scanRes = await fetch('/api/pallet-scan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -73,17 +73,33 @@ export default function PalletVerifyPage({
 
         if (scanData.success) {
           setScannedBoxes((prev) => [...prev, scanData.scan_result as PalletBoxScan]);
-          setUnified(scanData.unified ?? true);
-          setMismatches(scanData.mismatches || []);
-        } else if (scanData.is_duplicate) {
-          // Already in set — just ignore
-        } else {
+        } else if (!scanData.is_duplicate) {
           console.error('[pallet-verify] scan error:', scanData.error);
         }
       } catch (err) {
         console.error('[pallet-verify] scan submit error:', err);
       }
-      // No phase change — scanner stays active for the next box
+
+      // 2. OCR runs in the background — does NOT block scanning the next box.
+      //    When it completes, it enriches the box record with item name and weight.
+      if (imageData) {
+        fetch('/api/pallet-ocr', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, barcode, image: imageData }),
+        })
+          .then((r) => r.json())
+          .then((ocrData) => {
+            if (ocrData.success && ocrData.scan_result) {
+              setScannedBoxes((prev) =>
+                prev.map((b) => (b.barcode === barcode ? (ocrData.scan_result as PalletBoxScan) : b))
+              );
+              setUnified(ocrData.unified ?? true);
+              setMismatches(ocrData.mismatches || []);
+            }
+          })
+          .catch((err) => console.warn('[pallet-verify] background OCR failed:', err));
+      }
     },
     [token]
   );

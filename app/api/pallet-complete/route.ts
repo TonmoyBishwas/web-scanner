@@ -112,20 +112,44 @@ export async function POST(request: NextRequest) {
         return;
       }
 
-      // Get item data from the invoice OCR (stored in session when created by bot).
-      // Scanned boxes are opaque barcode IDs only — no SKU/weight extracted from them.
+      // Use box sticker OCR data enriched by /api/pallet-ocr.
+      // Fall back to invoice OCR (session.ocr_data) if box OCR hasn't run yet.
+      const firstBox = session.scanned_boxes[0];
       const firstOcrItem = session.ocr_data?.[0] ?? null;
-      const itemName = firstOcrItem?.item_name_english || firstOcrItem?.item_name_hebrew || '';
-      const itemCode = firstOcrItem?.item_code || '';
 
-      // Per-box OCR weight is not available in this iteration (barcode-only flow).
-      // Use 0 so the bot doesn't display fabricated values.
-      // The scale_weight field carries the authoritative pallet weight.
-      const perBoxWeight = 0;
-      const calcWeight = 0;
+      const itemName =
+        firstBox?.item_name ||
+        firstBox?.item_name_hebrew ||
+        firstOcrItem?.item_name_english ||
+        firstOcrItem?.item_name_hebrew ||
+        '';
+      const itemCode = firstBox?.sku || firstOcrItem?.item_code || '';
 
+      // Per-box weight from box sticker OCR (the source of truth for weight calculation).
+      // calcWeight = per-box weight × total box count on pallet.
+      const perBoxWeight = firstBox?.weight ?? 0;
+      const calcWeight = perBoxWeight > 0
+        ? Math.round(perBoxWeight * session.expected_box_count * 100) / 100
+        : 0;
+
+      // Uniformity: check all boxes that have OCR data
       const mismatches: string[] = [];
-      const unified = true; // barcode-only flow — no SKU comparison
+      const boxesWithData = session.scanned_boxes.filter((b) => b.weight > 0);
+      let unified = true;
+
+      if (boxesWithData.length >= 2) {
+        const refBox = boxesWithData[0];
+        for (const box of boxesWithData.slice(1)) {
+          if (refBox.item_name && box.item_name && refBox.item_name !== box.item_name) {
+            if (!mismatches.includes('item')) mismatches.push('item');
+            unified = false;
+          }
+          if (refBox.weight > 0 && box.weight > 0 && Math.abs(refBox.weight - box.weight) > 0.5) {
+            if (!mismatches.includes('weight')) mismatches.push('weight');
+            unified = false;
+          }
+        }
+      }
 
       const lpn = generateLPN(session.invoice_document_number, session.pallet_number);
 
