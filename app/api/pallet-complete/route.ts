@@ -59,14 +59,17 @@ async function savePalletToAirtable(
   const calcWeight = Math.round(item.weight * session.expected_box_count * 100) / 100;
   const url = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${PALLETS_TABLE_ID}`;
 
-  // Build field set — we'll strip fields that cause UNKNOWN_FIELD_NAME errors on retry.
   // Collect Cloudinary image URLs from scanned boxes (uploaded by pallet-ocr).
   const boxImageUrls = session.scanned_boxes
     .filter((b) => b.image_url)
     .map((b) => ({ url: b.image_url }));
 
   type Fields = Record<string, unknown>;
-  const fullFields: Fields = {
+
+  // Start with all fields. On each UNKNOWN_FIELD_NAME error we strip the offending
+  // field and retry (up to 8 times). Core fields (LPN, weights, Chat ID) are never
+  // removed by this loop — they are only absent if Airtable itself rejects them.
+  let fields: Fields = {
     LPN: lpn,
     'Item Code': item.sku,
     'Item Name': item.item_name,
@@ -81,50 +84,39 @@ async function savePalletToAirtable(
     ...(boxImageUrls.length > 0 && { 'Box Scan Images': boxImageUrls }),
   };
 
-  let { ok, text } = await postToAirtable(url, AIRTABLE_TOKEN, fullFields);
+  for (let attempt = 1; attempt <= 8; attempt++) {
+    const { ok, text } = await postToAirtable(url, AIRTABLE_TOKEN, fields);
 
-  if (!ok) {
-    // Parse error to find and remove unknown fields, then retry (same pattern as Transactions).
-    console.error('[pallet-complete] Airtable error (attempt 1):', text.slice(0, 500));
+    if (ok) {
+      console.log(`[pallet-complete] Pallet saved to Airtable: ${lpn} (attempt ${attempt})`);
+      return;
+    }
+
+    console.error(`[pallet-complete] Airtable error (attempt ${attempt}):`, text.slice(0, 600));
+
+    // Try to extract and strip the UNKNOWN_FIELD_NAME field, then retry.
     try {
       const errJson = JSON.parse(text);
-      const unknownField: string | undefined =
-        errJson?.error?.type === 'UNKNOWN_FIELD_NAME'
-          ? errJson?.error?.message?.match(/"([^"]+)"/)?.[1]
-          : undefined;
-      if (unknownField && fullFields[unknownField] !== undefined) {
-        console.warn(`[pallet-complete] Removing unknown field "${unknownField}" and retrying`);
-        const retry = { ...fullFields };
-        delete retry[unknownField];
-        ({ ok, text } = await postToAirtable(url, AIRTABLE_TOKEN, retry));
+      if (errJson?.error?.type === 'UNKNOWN_FIELD_NAME') {
+        const unknownField: string | undefined =
+          errJson?.error?.message?.match(/"([^"]+)"/)?.[1];
+        if (unknownField && fields[unknownField] !== undefined) {
+          console.warn(`[pallet-complete] Removing unknown field "${unknownField}" and retrying`);
+          const next = { ...fields };
+          delete next[unknownField];
+          fields = next;
+          continue; // retry with field removed
+        }
       }
     } catch {
-      // JSON parse failed — fall through
+      // JSON parse failed — stop retrying
     }
+
+    // Non-UNKNOWN_FIELD_NAME error, or couldn't identify the bad field — stop.
+    break;
   }
 
-  if (!ok) {
-    // Second attempt failed — try minimal set (LPN + core fields only, no optional fields)
-    console.error('[pallet-complete] Airtable error (attempt 2):', text.slice(0, 500));
-    const minimalFields: Fields = {
-      LPN: lpn,
-      'Item Name': item.item_name,
-      'Document Number': session.invoice_document_number,
-      'Box Count': session.expected_box_count,
-      'OCR Box Weight (kg)': item.weight,
-      'Calculated Total Weight (kg)': calcWeight,
-      'Scale Weight (kg)': session.scale_weight,
-      'Verified Scan Count': verifiedScanCount,
-    };
-    ({ ok, text } = await postToAirtable(url, AIRTABLE_TOKEN, minimalFields));
-    if (!ok) {
-      console.error('[pallet-complete] Airtable error (minimal, attempt 3):', text.slice(0, 500));
-    }
-  }
-
-  if (ok) {
-    console.log('[pallet-complete] Pallet saved to Airtable:', lpn);
-  }
+  console.error('[pallet-complete] Airtable save failed after retries for LPN:', lpn);
 }
 
 /**
