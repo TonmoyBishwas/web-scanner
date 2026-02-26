@@ -27,7 +27,7 @@ async function savePalletToAirtable(
   item: { sku: string; item_name: string; weight: number },
   verifiedScanCount: number
 ): Promise<void> {
-  const PALLETS_TABLE_ID = process.env.AIRTABLE_PALLETS_TABLE_ID;
+  const PALLETS_TABLE_ID = process.env.AIRTABLE_PALLETS_TABLE_ID || process.env.AIRTABLE_PALLETS_TABLE;
   const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN;
   const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
 
