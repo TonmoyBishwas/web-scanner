@@ -3,7 +3,28 @@
 import { use, useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle, XCircle, AlertTriangle, Package, Loader2, RefreshCw } from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
+import { normalizeString } from '@/lib/string-utils';
 import type { PalletBoxScan, PalletSession, ParsedBarcode } from '@/types';
+
+/** Hebrew-first name comparison (same logic as pallet-ocr / pallet-complete). */
+function namesMatchUI(
+  nameA: string,
+  hebrewA: string,
+  nameB: string,
+  hebrewB: string
+): boolean {
+  if (hebrewA && hebrewB) {
+    const hA = normalizeString(hebrewA);
+    const hB = normalizeString(hebrewB);
+    return hA === hB || hA.includes(hB) || hB.includes(hA);
+  }
+  if (nameA && nameB) {
+    const eA = normalizeString(nameA);
+    const eB = normalizeString(nameB);
+    return eA === eB || eA.includes(eB) || eB.includes(eA);
+  }
+  return true;
+}
 
 type VerifyPhase =
   | 'loading'
@@ -305,9 +326,16 @@ export default function PalletVerifyPage({
               const isFailed = status === 'failed' || (status === 'done' && box.weight === 0);
               const canRetry = isFailed && imageDataRef.current.has(box.barcode);
 
-              // Compare item_name (not sku which may be empty) for visual mismatch
+              // Hebrew-first name comparison (same logic as server)
               const nameMatch =
-                !box.item_name || !firstBox.item_name || box.item_name === firstBox.item_name;
+                !box.item_name ||
+                !firstBox.item_name ||
+                namesMatchUI(
+                  firstBox.item_name,
+                  firstBox.item_name_hebrew || '',
+                  box.item_name,
+                  box.item_name_hebrew || ''
+                );
               const weightOk =
                 !box.weight ||
                 !firstBox.weight ||

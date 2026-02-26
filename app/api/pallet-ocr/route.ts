@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedisClient, sessionStorage } from '@/lib/redis';
+import { normalizeString } from '@/lib/string-utils';
 import type { PalletSession, PalletBoxScan } from '@/types';
 
 const PALLET_SESSION_TTL = 7200;
@@ -99,14 +100,30 @@ export async function POST(request: NextRequest) {
         expiry,
       };
 
-      // Uniformity check across all boxes that have OCR results
+      // Uniformity check across all boxes that have OCR results.
+      // Hebrew-first: if both boxes have Hebrew names and they normalise to the same
+      // string, they are considered the same item even if English OCR differs slightly.
       const mismatches: string[] = [];
       const boxesWithData = session.scanned_boxes.filter((b) => b.weight > 0);
 
       if (boxesWithData.length >= 2) {
         const refBox = boxesWithData[0];
         for (const box of boxesWithData.slice(1)) {
-          if (refBox.item_name && box.item_name && refBox.item_name !== box.item_name) {
+          // Name check: Hebrew has priority, fall back to normalised English
+          const bothHaveHebrew = refBox.item_name_hebrew && box.item_name_hebrew;
+          const hebrewMatch =
+            bothHaveHebrew &&
+            (normalizeString(refBox.item_name_hebrew) === normalizeString(box.item_name_hebrew) ||
+              normalizeString(refBox.item_name_hebrew).includes(normalizeString(box.item_name_hebrew)) ||
+              normalizeString(box.item_name_hebrew).includes(normalizeString(refBox.item_name_hebrew)));
+          const engMatch =
+            refBox.item_name &&
+            box.item_name &&
+            (normalizeString(refBox.item_name) === normalizeString(box.item_name) ||
+              normalizeString(refBox.item_name).includes(normalizeString(box.item_name)) ||
+              normalizeString(box.item_name).includes(normalizeString(refBox.item_name)));
+          const nameOk = hebrewMatch || (!bothHaveHebrew && engMatch);
+          if (refBox.item_name && box.item_name && !nameOk) {
             if (!mismatches.includes('item')) mismatches.push('item');
           }
           if (refBox.weight > 0 && box.weight > 0 && Math.abs(refBox.weight - box.weight) > 0.5) {

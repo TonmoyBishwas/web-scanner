@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedisClient, sessionStorage } from '@/lib/redis';
+import { normalizeString } from '@/lib/string-utils';
 import type { PalletSession, PalletVerificationResult } from '@/types';
 
 const PALLET_SESSION_TTL = 7200;
@@ -21,13 +22,32 @@ function generateLPN(documentNumber: string, palletNumber: number): string {
   return `LPN-${date}-${docShort}-P${palletNumber}`;
 }
 
+/** Post a single record to Airtable, returning the raw response text on failure. */
+async function postToAirtable(
+  url: string,
+  token: string,
+  fields: Record<string, unknown>
+): Promise<{ ok: boolean; text: string }> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ records: [{ fields }] }),
+  });
+  const text = await res.text();
+  return { ok: res.ok, text };
+}
+
 async function savePalletToAirtable(
   lpn: string,
   session: PalletSession,
   item: { sku: string; item_name: string; weight: number },
   verifiedScanCount: number
 ): Promise<void> {
-  const PALLETS_TABLE_ID = process.env.AIRTABLE_PALLETS_TABLE_ID || process.env.AIRTABLE_PALLETS_TABLE;
+  const PALLETS_TABLE_ID =
+    process.env.AIRTABLE_PALLETS_TABLE_ID || process.env.AIRTABLE_PALLETS_TABLE;
   const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN;
   const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
 
@@ -37,44 +57,91 @@ async function savePalletToAirtable(
   }
 
   const calcWeight = Math.round(item.weight * session.expected_box_count * 100) / 100;
-
   const url = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${PALLETS_TABLE_ID}`;
-  const body = {
-    records: [
-      {
-        fields: {
-          LPN: lpn,
-          'Item Code': item.sku,
-          'Item Name': item.item_name,
-          'Document Number': session.invoice_document_number,
-          'Box Count': session.expected_box_count,
-          'OCR Box Weight (kg)': item.weight,
-          'Calculated Total Weight (kg)': calcWeight,
-          'Scale Weight (kg)': session.scale_weight,
-          'Verified Scan Count': verifiedScanCount,
-          Status: 'Verified',
-          'Chat ID': session.chat_id,
-        },
-      },
-    ],
+
+  // Build field set — we'll strip fields that cause UNKNOWN_FIELD_NAME errors on retry.
+  type Fields = Record<string, unknown>;
+  const fullFields: Fields = {
+    LPN: lpn,
+    'Item Code': item.sku,
+    'Item Name': item.item_name,
+    'Document Number': session.invoice_document_number,
+    'Box Count': session.expected_box_count,
+    'OCR Box Weight (kg)': item.weight,
+    'Calculated Total Weight (kg)': calcWeight,
+    'Scale Weight (kg)': session.scale_weight,
+    'Verified Scan Count': verifiedScanCount,
+    Status: 'Verified',
+    'Chat ID': String(session.chat_id),
   };
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${AIRTABLE_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
+  let { ok, text } = await postToAirtable(url, AIRTABLE_TOKEN, fullFields);
 
-  if (!res.ok) {
-    const text = await res.text();
-    console.error('[pallet-complete] Airtable error:', text);
-    // Non-fatal: log but don't throw
-  } else {
+  if (!ok) {
+    // Parse error to find and remove unknown fields, then retry (same pattern as Transactions).
+    console.error('[pallet-complete] Airtable error (attempt 1):', text.slice(0, 500));
+    try {
+      const errJson = JSON.parse(text);
+      const unknownField: string | undefined =
+        errJson?.error?.type === 'UNKNOWN_FIELD_NAME'
+          ? errJson?.error?.message?.match(/"([^"]+)"/)?.[1]
+          : undefined;
+      if (unknownField && fullFields[unknownField] !== undefined) {
+        console.warn(`[pallet-complete] Removing unknown field "${unknownField}" and retrying`);
+        const retry = { ...fullFields };
+        delete retry[unknownField];
+        ({ ok, text } = await postToAirtable(url, AIRTABLE_TOKEN, retry));
+      }
+    } catch {
+      // JSON parse failed — fall through
+    }
+  }
+
+  if (!ok) {
+    // Second attempt failed — try minimal set (LPN + core fields only, no optional fields)
+    console.error('[pallet-complete] Airtable error (attempt 2):', text.slice(0, 500));
+    const minimalFields: Fields = {
+      LPN: lpn,
+      'Item Name': item.item_name,
+      'Document Number': session.invoice_document_number,
+      'Box Count': session.expected_box_count,
+      'OCR Box Weight (kg)': item.weight,
+      'Calculated Total Weight (kg)': calcWeight,
+      'Scale Weight (kg)': session.scale_weight,
+      'Verified Scan Count': verifiedScanCount,
+    };
+    ({ ok, text } = await postToAirtable(url, AIRTABLE_TOKEN, minimalFields));
+    if (!ok) {
+      console.error('[pallet-complete] Airtable error (minimal, attempt 3):', text.slice(0, 500));
+    }
+  }
+
+  if (ok) {
     console.log('[pallet-complete] Pallet saved to Airtable:', lpn);
   }
+}
+
+/**
+ * Returns true if the two names (English + Hebrew) are considered the same item.
+ * Hebrew is checked first; falls back to normalised English.
+ */
+function namesMatch(
+  nameA: string,
+  hebrewA: string,
+  nameB: string,
+  hebrewB: string
+): boolean {
+  if (hebrewA && hebrewB) {
+    const hA = normalizeString(hebrewA);
+    const hB = normalizeString(hebrewB);
+    return hA === hB || hA.includes(hB) || hB.includes(hA);
+  }
+  if (nameA && nameB) {
+    const eA = normalizeString(nameA);
+    const eB = normalizeString(nameB);
+    return eA === eB || eA.includes(eB) || eB.includes(eA);
+  }
+  return true; // not enough data to decide — don't flag as mismatch
 }
 
 /**
@@ -117,7 +184,8 @@ export async function POST(request: NextRequest) {
       if (!refBoxWithWeight) {
         errorResult = {
           success: false,
-          error: 'Box weight not determined. Please ensure boxes were scanned with camera and OCR completed successfully.',
+          error:
+            'Box weight not determined. Please ensure boxes were scanned with camera and OCR completed successfully.',
         };
         return;
       }
@@ -137,11 +205,10 @@ export async function POST(request: NextRequest) {
       const itemCode = firstBox?.sku || firstOcrItem?.item_code || '';
 
       // Per-box weight from box sticker OCR (the source of truth for weight calculation).
-      // calcWeight = per-box weight × total box count on pallet.
       const perBoxWeight = firstBox.weight;
       const calcWeight = Math.round(perBoxWeight * session.expected_box_count * 100) / 100;
 
-      // Uniformity: check all boxes that have OCR data
+      // Uniformity: Hebrew-first name comparison + weight check
       const mismatches: string[] = [];
       const boxesWithData = session.scanned_boxes.filter((b) => b.weight > 0);
       let unified = true;
@@ -149,7 +216,16 @@ export async function POST(request: NextRequest) {
       if (boxesWithData.length >= 2) {
         const refBox = boxesWithData[0];
         for (const box of boxesWithData.slice(1)) {
-          if (refBox.item_name && box.item_name && refBox.item_name !== box.item_name) {
+          if (
+            refBox.item_name &&
+            box.item_name &&
+            !namesMatch(
+              refBox.item_name,
+              refBox.item_name_hebrew || '',
+              box.item_name,
+              box.item_name_hebrew || ''
+            )
+          ) {
             if (!mismatches.includes('item')) mismatches.push('item');
             unified = false;
           }
@@ -162,7 +238,7 @@ export async function POST(request: NextRequest) {
 
       const lpn = generateLPN(session.invoice_document_number, session.pallet_number);
 
-      // Save to Airtable (non-blocking error handling)
+      // Save to Airtable (non-fatal: errors are logged but don't block LPN generation)
       try {
         await savePalletToAirtable(
           lpn,
