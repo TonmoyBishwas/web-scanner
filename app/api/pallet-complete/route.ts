@@ -118,13 +118,11 @@ export async function POST(request: NextRequest) {
       const itemName = firstOcrItem?.item_name_english || firstOcrItem?.item_name_hebrew || '';
       const itemCode = firstOcrItem?.item_code || '';
 
-      // Per-box weight: divide scale weight by expected box count.
-      // calcWeight will equal scale_weight (no artificial discrepancy).
-      const perBoxWeight =
-        session.expected_box_count > 0
-          ? Math.round((session.scale_weight / session.expected_box_count) * 100) / 100
-          : 0;
-      const calcWeight = Math.round(perBoxWeight * session.expected_box_count * 100) / 100;
+      // Per-box OCR weight is not available in this iteration (barcode-only flow).
+      // Use 0 so the bot doesn't display fabricated values.
+      // The scale_weight field carries the authoritative pallet weight.
+      const perBoxWeight = 0;
+      const calcWeight = 0;
 
       const mismatches: string[] = [];
       const unified = true; // barcode-only flow — no SKU comparison
