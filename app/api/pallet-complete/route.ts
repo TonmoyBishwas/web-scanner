@@ -112,9 +112,20 @@ export async function POST(request: NextRequest) {
         return;
       }
 
+      // Require at least one box to have a valid weight from OCR.
+      const refBoxWithWeight = session.scanned_boxes.find((b) => b.weight > 0);
+      if (!refBoxWithWeight) {
+        errorResult = {
+          success: false,
+          error: 'Box weight not determined. Please ensure boxes were scanned with camera and OCR completed successfully.',
+        };
+        return;
+      }
+
       // Use box sticker OCR data enriched by /api/pallet-ocr.
-      // Fall back to invoice OCR (session.ocr_data) if box OCR hasn't run yet.
-      const firstBox = session.scanned_boxes[0];
+      // Use the first box with a valid weight as the reference for calculations.
+      // Fall back to invoice OCR (session.ocr_data) for item name/code if missing.
+      const firstBox = refBoxWithWeight;
       const firstOcrItem = session.ocr_data?.[0] ?? null;
 
       const itemName =
@@ -127,10 +138,8 @@ export async function POST(request: NextRequest) {
 
       // Per-box weight from box sticker OCR (the source of truth for weight calculation).
       // calcWeight = per-box weight × total box count on pallet.
-      const perBoxWeight = firstBox?.weight ?? 0;
-      const calcWeight = perBoxWeight > 0
-        ? Math.round(perBoxWeight * session.expected_box_count * 100) / 100
-        : 0;
+      const perBoxWeight = firstBox.weight;
+      const calcWeight = Math.round(perBoxWeight * session.expected_box_count * 100) / 100;
 
       // Uniformity: check all boxes that have OCR data
       const mismatches: string[] = [];

@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle, XCircle, AlertTriangle, Package, Loader2 } from 'lucide-react';
+import { CheckCircle, XCircle, AlertTriangle, Package, Loader2, RefreshCw } from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
 import type { PalletBoxScan, PalletSession, ParsedBarcode } from '@/types';
 
@@ -11,6 +11,8 @@ type VerifyPhase =
   | 'generating'
   | 'done'
   | 'error';
+
+type OcrStatus = 'pending' | 'done' | 'failed';
 
 export default function PalletVerifyPage({
   params,
@@ -28,8 +30,13 @@ export default function PalletVerifyPage({
   const [lpn, setLpn] = useState<string>('');
   const [lpnUrl, setLpnUrl] = useState<string>('');
 
+  // Track OCR status per barcode: 'pending' | 'done' | 'failed'
+  const [ocrStatus, setOcrStatus] = useState<Map<string, OcrStatus>>(new Map());
+
   // Track processed barcodes locally for fast dedup
   const processedRef = useRef<Set<string>>(new Set());
+  // Store imageData per barcode so we can retry OCR without re-scanning
+  const imageDataRef = useRef<Map<string, string>>(new Map());
 
   // Load session on mount
   useEffect(() => {
@@ -56,10 +63,47 @@ export default function PalletVerifyPage({
     fetchSession();
   }, [token]);
 
+  const runOcr = useCallback(
+    async (barcode: string, imageData: string) => {
+      setOcrStatus((prev) => new Map(prev).set(barcode, 'pending'));
+      try {
+        const ocrRes = await fetch('/api/pallet-ocr', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, barcode, image: imageData }),
+        });
+        const ocrData = await ocrRes.json();
+        if (ocrData.success && ocrData.scan_result) {
+          const result = ocrData.scan_result as PalletBoxScan;
+          setScannedBoxes((prev) =>
+            prev.map((b) => (b.barcode === barcode ? result : b))
+          );
+          setUnified(ocrData.unified ?? true);
+          setMismatches(ocrData.mismatches || []);
+          // Mark as failed if weight came back as 0 (OCR couldn't extract)
+          setOcrStatus((prev) =>
+            new Map(prev).set(barcode, result.weight > 0 ? 'done' : 'failed')
+          );
+        } else {
+          setOcrStatus((prev) => new Map(prev).set(barcode, 'failed'));
+        }
+      } catch (err) {
+        console.warn('[pallet-verify] OCR failed:', err);
+        setOcrStatus((prev) => new Map(prev).set(barcode, 'failed'));
+      }
+    },
+    [token]
+  );
+
   const handleBarcodeDetected = useCallback(
     async (barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
       if (processedRef.current.has(barcode)) return;
       processedRef.current.add(barcode);
+
+      // Store imageData for potential retry
+      if (imageData) {
+        imageDataRef.current.set(barcode, imageData);
+      }
 
       try {
         // 1. Record scan immediately — scanner stays live for the next box
@@ -81,27 +125,24 @@ export default function PalletVerifyPage({
       }
 
       // 2. OCR runs in the background — does NOT block scanning the next box.
-      //    When it completes, it enriches the box record with item name and weight.
       if (imageData) {
-        fetch('/api/pallet-ocr', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token, barcode, image: imageData }),
-        })
-          .then((r) => r.json())
-          .then((ocrData) => {
-            if (ocrData.success && ocrData.scan_result) {
-              setScannedBoxes((prev) =>
-                prev.map((b) => (b.barcode === barcode ? (ocrData.scan_result as PalletBoxScan) : b))
-              );
-              setUnified(ocrData.unified ?? true);
-              setMismatches(ocrData.mismatches || []);
-            }
-          })
-          .catch((err) => console.warn('[pallet-verify] background OCR failed:', err));
+        runOcr(barcode, imageData);
+      } else {
+        // No image — mark immediately as failed so user knows
+        setOcrStatus((prev) => new Map(prev).set(barcode, 'failed'));
       }
     },
-    [token]
+    [token, runOcr]
+  );
+
+  const handleRetryOcr = useCallback(
+    (barcode: string) => {
+      const imageData = imageDataRef.current.get(barcode);
+      if (imageData) {
+        runOcr(barcode, imageData);
+      }
+    },
+    [runOcr]
   );
 
   const handleGenerateLPN = useCallback(async () => {
@@ -128,7 +169,27 @@ export default function PalletVerifyPage({
     }
   }, [token]);
 
-  const canComplete = scannedBoxes.length >= 2;
+  // All conditions for generating LPN:
+  // 1. At least 2 boxes scanned
+  // 2. No OCR still pending
+  // 3. All scanned boxes have weight > 0 (OCR succeeded)
+  const hasPendingOcr = scannedBoxes.some((b) => ocrStatus.get(b.barcode) === 'pending');
+  const hasFailedOcr = scannedBoxes.some(
+    (b) => (ocrStatus.get(b.barcode) === 'failed') || (ocrStatus.has(b.barcode) && b.weight === 0)
+  );
+  const canComplete = scannedBoxes.length >= 2 && !hasPendingOcr && !hasFailedOcr;
+
+  // Human-readable button label
+  const getButtonLabel = () => {
+    if (scannedBoxes.length < 2) {
+      return `Scan ${Math.max(0, 2 - scannedBoxes.length)} more box${
+        2 - scannedBoxes.length === 1 ? '' : 'es'
+      } to continue`;
+    }
+    if (hasPendingOcr) return '⏳ Waiting for OCR to complete...';
+    if (hasFailedOcr) return '⚠️ Fix OCR errors before continuing';
+    return '✅ Generate LPN & Print Sticker';
+  };
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -193,7 +254,7 @@ export default function PalletVerifyPage({
           <div className="flex justify-between text-xs text-gray-500 mb-1">
             <span>Scanned: {scannedBoxes.length} verification boxes</span>
             <span className={canComplete ? 'text-green-600 font-semibold' : 'text-gray-400'}>
-              {canComplete ? '✅ Ready to generate LPN' : `Need ${2 - scannedBoxes.length} more`}
+              {canComplete ? '✅ Ready to generate LPN' : `Need ${Math.max(0, 2 - scannedBoxes.length)} more`}
             </span>
           </div>
           <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
@@ -239,22 +300,31 @@ export default function PalletVerifyPage({
             {scannedBoxes.map((box, idx) => {
               const isFirst = idx === 0;
               const firstBox = scannedBoxes[0];
-              const skuMatch = !box.sku || !firstBox.sku || box.sku === firstBox.sku;
+              const status = ocrStatus.get(box.barcode);
+              const isPending = status === 'pending';
+              const isFailed = status === 'failed' || (status === 'done' && box.weight === 0);
+              const canRetry = isFailed && imageDataRef.current.has(box.barcode);
+
+              // Compare item_name (not sku which may be empty) for visual mismatch
+              const nameMatch =
+                !box.item_name || !firstBox.item_name || box.item_name === firstBox.item_name;
               const weightOk =
                 !box.weight ||
                 !firstBox.weight ||
                 Math.abs(box.weight - firstBox.weight) <= 0.5;
 
+              let cardClass = 'bg-blue-50 border-blue-200';
+              if (!isFirst) {
+                if (isPending) cardClass = 'bg-gray-50 border-gray-200';
+                else if (isFailed) cardClass = 'bg-orange-50 border-orange-300';
+                else if (!nameMatch) cardClass = 'bg-red-50 border-red-200';
+                else cardClass = 'bg-green-50 border-green-200';
+              }
+
               return (
                 <div
                   key={box.barcode}
-                  className={`rounded-xl p-3 border text-sm ${
-                    isFirst
-                      ? 'bg-blue-50 border-blue-200'
-                      : skuMatch
-                      ? 'bg-green-50 border-green-200'
-                      : 'bg-red-50 border-red-200'
-                  }`}
+                  className={`rounded-xl p-3 border text-sm ${cardClass}`}
                 >
                   <div className="flex items-center justify-between mb-1">
                     <span className="font-mono text-xs text-gray-500 truncate max-w-[60%]">
@@ -264,12 +334,27 @@ export default function PalletVerifyPage({
                       <span className="text-xs bg-blue-200 text-blue-800 rounded px-2 py-0.5 font-medium">
                         Reference
                       </span>
-                    ) : skuMatch ? (
+                    ) : isPending ? (
+                      <Loader2 className="animate-spin text-gray-400 w-4 h-4" />
+                    ) : isFailed ? (
+                      <AlertTriangle className="text-orange-500 w-4 h-4" />
+                    ) : nameMatch ? (
                       <CheckCircle className="text-green-500 w-4 h-4" />
                     ) : (
                       <XCircle className="text-red-500 w-4 h-4" />
                     )}
                   </div>
+
+                  {isPending && (
+                    <p className="text-xs text-gray-400 italic">Reading box label...</p>
+                  )}
+
+                  {isFailed && (
+                    <p className="text-xs text-orange-700 font-medium">
+                      ⚠️ Could not read weight/name from label
+                    </p>
+                  )}
+
                   {box.item_name && (
                     <p className="text-gray-700 font-medium truncate">{box.item_name}</p>
                   )}
@@ -281,6 +366,16 @@ export default function PalletVerifyPage({
                     )}
                     {box.expiry && <span>📅 {box.expiry}</span>}
                   </div>
+
+                  {canRetry && (
+                    <button
+                      onClick={() => handleRetryOcr(box.barcode)}
+                      className="mt-2 flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 hover:bg-orange-200 rounded-lg px-3 py-1 transition"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      Retry OCR
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -309,15 +404,11 @@ export default function PalletVerifyPage({
                 : 'bg-gray-200 text-gray-400 cursor-not-allowed'
             }`}
           >
-            {canComplete
-              ? '✅ Generate LPN & Print Sticker'
-              : `Scan ${Math.max(0, 2 - scannedBoxes.length)} more box${
-                  2 - scannedBoxes.length === 1 ? '' : 'es'
-                } to continue`}
+            {getButtonLabel()}
           </button>
         )}
 
-        {phase === 'scanning' && scannedBoxes.length > 0 && !canComplete && (
+        {phase === 'scanning' && scannedBoxes.length > 0 && !canComplete && !hasPendingOcr && !hasFailedOcr && (
           <p className="text-center text-xs text-gray-500">
             Point camera at another box to keep scanning
           </p>
