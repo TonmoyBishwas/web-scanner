@@ -1,15 +1,13 @@
 'use client';
 
 import { use, useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle, XCircle, AlertTriangle, Package, Camera, Loader2 } from 'lucide-react';
+import { CheckCircle, XCircle, AlertTriangle, Package, Loader2 } from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
-import type { PalletBoxScan, PalletSession, ParsedBarcode, BoxStickerOCR } from '@/types';
+import type { PalletBoxScan, PalletSession, ParsedBarcode } from '@/types';
 
 type VerifyPhase =
   | 'loading'
   | 'scanning'
-  | 'processing'
-  | 'review'
   | 'generating'
   | 'done'
   | 'error';
@@ -29,7 +27,6 @@ export default function PalletVerifyPage({
   const [error, setError] = useState<string | null>(null);
   const [lpn, setLpn] = useState<string>('');
   const [lpnUrl, setLpnUrl] = useState<string>('');
-  const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null);
 
   // Track processed barcodes locally for fast dedup
   const processedRef = useRef<Set<string>>(new Set());
@@ -60,50 +57,22 @@ export default function PalletVerifyPage({
   }, [token]);
 
   const handleBarcodeDetected = useCallback(
-    async (barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
+    async (barcode: string, _parsed: ParsedBarcode, _imageData?: string) => {
       if (processedRef.current.has(barcode)) return;
       processedRef.current.add(barcode);
-      setLastScannedBarcode(barcode);
-      setPhase('processing');
 
       try {
-        // Upload image to Cloudinary first (if available)
-        let imageUrl = '';
-        if (imageData) {
-          try {
-            const uploadRes = await fetch('/api/cloudinary/upload', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                image: imageData,
-                barcode,
-                document_number: session?.invoice_document_number || '',
-                image_type: 'box',
-              }),
-            });
-            if (uploadRes.ok) {
-              const uploadData = await uploadRes.json();
-              imageUrl = uploadData.url || '';
-            }
-          } catch {
-            console.warn('[pallet-verify] Cloudinary upload failed — continuing without image');
-          }
-        }
-
-        // Submit scan to backend
+        // Submit scan to backend — barcodes are opaque IDs, no Cloudinary upload needed
         const scanRes = await fetch('/api/pallet-scan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token, barcode, image_url: imageUrl }),
+          body: JSON.stringify({ token, barcode, image_url: '' }),
         });
 
         const scanData = await scanRes.json();
 
         if (scanData.success) {
-          setScannedBoxes((prev) => {
-            const updated = [...prev, scanData.scan_result as PalletBoxScan];
-            return updated;
-          });
+          setScannedBoxes((prev) => [...prev, scanData.scan_result as PalletBoxScan]);
           setUnified(scanData.unified ?? true);
           setMismatches(scanData.mismatches || []);
         } else if (scanData.is_duplicate) {
@@ -113,11 +82,10 @@ export default function PalletVerifyPage({
         }
       } catch (err) {
         console.error('[pallet-verify] scan submit error:', err);
-      } finally {
-        setPhase('review');
       }
+      // No phase change — scanner stays active for the next box
     },
-    [token, session]
+    [token]
   );
 
   const handleGenerateLPN = useCallback(async () => {
@@ -135,12 +103,12 @@ export default function PalletVerifyPage({
         setPhase('done');
       } else {
         setError(data.error || 'Failed to generate LPN.');
-        setPhase('review');
+        setPhase('scanning');
       }
     } catch (err) {
       console.error('[pallet-verify] complete error:', err);
       setError('Network error. Please try again.');
-      setPhase('review');
+      setPhase('scanning');
     }
   }, [token]);
 
@@ -223,22 +191,14 @@ export default function PalletVerifyPage({
         </div>
       </div>
 
-      {/* Scanner */}
-      {(phase === 'scanning' || phase === 'review' || phase === 'processing') && (
+      {/* Scanner — always active until pallet is completed */}
+      {phase === 'scanning' && (
         <div className="relative">
           <SmartScanner
             onBarcodeDetected={handleBarcodeDetected}
             scannedBarcodes={new Map()}
             ocrResults={new Map()}
           />
-          {phase === 'processing' && (
-            <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-              <div className="bg-white rounded-xl px-4 py-3 flex items-center gap-2">
-                <Loader2 className="animate-spin w-5 h-5 text-blue-500" />
-                <span className="text-sm font-medium">Processing scan...</span>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -341,14 +301,10 @@ export default function PalletVerifyPage({
           </button>
         )}
 
-        {phase === 'review' && (
-          <button
-            onClick={() => setPhase('scanning')}
-            className="w-full py-2.5 rounded-xl font-medium text-sm bg-gray-100 text-gray-700 hover:bg-gray-200 transition flex items-center justify-center gap-2"
-          >
-            <Camera className="w-4 h-4" />
-            Scan Another Box
-          </button>
+        {phase === 'scanning' && scannedBoxes.length > 0 && !canComplete && (
+          <p className="text-center text-xs text-gray-500">
+            Point camera at another box to keep scanning
+          </p>
         )}
       </div>
     </div>

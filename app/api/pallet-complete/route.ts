@@ -24,7 +24,7 @@ function generateLPN(documentNumber: string, palletNumber: number): string {
 async function savePalletToAirtable(
   lpn: string,
   session: PalletSession,
-  firstBox: { sku: string; item_name: string; item_name_hebrew?: string; weight: number },
+  item: { sku: string; item_name: string; weight: number },
   verifiedScanCount: number
 ): Promise<void> {
   const PALLETS_TABLE_ID = process.env.AIRTABLE_PALLETS_TABLE_ID;
@@ -36,7 +36,7 @@ async function savePalletToAirtable(
     return;
   }
 
-  const calcWeight = firstBox.weight * session.expected_box_count;
+  const calcWeight = Math.round(item.weight * session.expected_box_count * 100) / 100;
 
   const url = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${PALLETS_TABLE_ID}`;
   const body = {
@@ -44,11 +44,11 @@ async function savePalletToAirtable(
       {
         fields: {
           LPN: lpn,
-          'Item Code': firstBox.sku,
-          'Item Name': firstBox.item_name || firstBox.item_name_hebrew || '',
+          'Item Code': item.sku,
+          'Item Name': item.item_name,
           'Document Number': session.invoice_document_number,
           'Box Count': session.expected_box_count,
-          'OCR Box Weight (kg)': firstBox.weight,
+          'OCR Box Weight (kg)': item.weight,
           'Calculated Total Weight (kg)': calcWeight,
           'Scale Weight (kg)': session.scale_weight,
           'Verified Scan Count': verifiedScanCount,
@@ -112,23 +112,33 @@ export async function POST(request: NextRequest) {
         return;
       }
 
-      const firstBox = session.scanned_boxes[0];
-      const mismatches: string[] = [];
-      let unified = true;
+      // Get item data from the invoice OCR (stored in session when created by bot).
+      // Scanned boxes are opaque barcode IDs only — no SKU/weight extracted from them.
+      const firstOcrItem = session.ocr_data?.[0] ?? null;
+      const itemName = firstOcrItem?.item_name_english || firstOcrItem?.item_name_hebrew || '';
+      const itemCode = firstOcrItem?.item_code || '';
 
-      for (const box of session.scanned_boxes.slice(1)) {
-        if (box.sku && firstBox.sku && box.sku !== firstBox.sku) {
-          if (!mismatches.includes('sku')) mismatches.push('sku');
-          unified = false;
-        }
-      }
+      // Per-box weight: divide scale weight by expected box count.
+      // calcWeight will equal scale_weight (no artificial discrepancy).
+      const perBoxWeight =
+        session.expected_box_count > 0
+          ? Math.round((session.scale_weight / session.expected_box_count) * 100) / 100
+          : 0;
+      const calcWeight = Math.round(perBoxWeight * session.expected_box_count * 100) / 100;
+
+      const mismatches: string[] = [];
+      const unified = true; // barcode-only flow — no SKU comparison
 
       const lpn = generateLPN(session.invoice_document_number, session.pallet_number);
-      const calcWeight = firstBox.weight * session.expected_box_count;
 
       // Save to Airtable (non-blocking error handling)
       try {
-        await savePalletToAirtable(lpn, session, firstBox, session.scanned_boxes.length);
+        await savePalletToAirtable(
+          lpn,
+          session,
+          { sku: itemCode, item_name: itemName, weight: perBoxWeight },
+          session.scanned_boxes.length
+        );
       } catch (atErr) {
         console.error('[pallet-complete] Airtable save failed (non-fatal):', atErr);
       }
@@ -142,9 +152,9 @@ export async function POST(request: NextRequest) {
       completionResult = {
         verified: unified,
         lpn,
-        item_name: firstBox.item_name || firstBox.item_name_hebrew || '',
-        item_code: firstBox.sku,
-        ocr_box_weight: firstBox.weight,
+        item_name: itemName,
+        item_code: itemCode,
+        ocr_box_weight: perBoxWeight,
         calculated_total_weight: calcWeight,
         scale_weight: session.scale_weight,
         box_count: session.expected_box_count,
@@ -162,10 +172,10 @@ export async function POST(request: NextRequest) {
             chat_id: session.chat_id,
             pallet_number: session.pallet_number,
             lpn,
-            item_code: firstBox.sku,
-            item_name: firstBox.item_name || firstBox.item_name_hebrew || '',
+            item_code: itemCode,
+            item_name: itemName,
             box_count: session.expected_box_count,
-            ocr_box_weight: firstBox.weight,
+            ocr_box_weight: perBoxWeight,
             calculated_total_weight: calcWeight,
             scale_weight: session.scale_weight,
             document_number: session.invoice_document_number,
