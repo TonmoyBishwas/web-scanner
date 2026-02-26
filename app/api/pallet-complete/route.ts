@@ -60,6 +60,11 @@ async function savePalletToAirtable(
   const url = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${PALLETS_TABLE_ID}`;
 
   // Build field set — we'll strip fields that cause UNKNOWN_FIELD_NAME errors on retry.
+  // Collect Cloudinary image URLs from scanned boxes (uploaded by pallet-ocr).
+  const boxImageUrls = session.scanned_boxes
+    .filter((b) => b.image_url)
+    .map((b) => ({ url: b.image_url }));
+
   type Fields = Record<string, unknown>;
   const fullFields: Fields = {
     LPN: lpn,
@@ -73,6 +78,7 @@ async function savePalletToAirtable(
     'Verified Scan Count': verifiedScanCount,
     Status: 'Verified',
     'Chat ID': String(session.chat_id),
+    ...(boxImageUrls.length > 0 && { 'Box Scan Images': boxImageUrls }),
   };
 
   let { ok, text } = await postToAirtable(url, AIRTABLE_TOKEN, fullFields);

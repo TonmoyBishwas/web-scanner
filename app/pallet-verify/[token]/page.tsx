@@ -101,9 +101,11 @@ export default function PalletVerifyPage({
           );
           setUnified(ocrData.unified ?? true);
           setMismatches(ocrData.mismatches || []);
-          // Mark as failed if weight came back as 0 (OCR couldn't extract)
+          // Mark as done only when BOTH weight extracted AND image uploaded to Cloudinary
+          const weightOk = result.weight > 0;
+          const imageOk = !!result.image_url;
           setOcrStatus((prev) =>
-            new Map(prev).set(barcode, result.weight > 0 ? 'done' : 'failed')
+            new Map(prev).set(barcode, weightOk && imageOk ? 'done' : 'failed')
           );
         } else {
           setOcrStatus((prev) => new Map(prev).set(barcode, 'failed'));
@@ -379,7 +381,9 @@ export default function PalletVerifyPage({
 
                   {isFailed && (
                     <p className="text-xs text-orange-700 font-medium">
-                      ⚠️ Could not read weight/name from label
+                      {box.weight > 0
+                        ? '⚠️ Image upload failed — tap Retry to upload'
+                        : '⚠️ Could not read weight/name from label'}
                     </p>
                   )}
 

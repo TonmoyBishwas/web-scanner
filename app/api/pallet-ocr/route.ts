@@ -1,9 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { v2 as cloudinary } from 'cloudinary';
 import { getRedisClient, sessionStorage } from '@/lib/redis';
 import { normalizeString } from '@/lib/string-utils';
 import type { PalletSession, PalletBoxScan } from '@/types';
 
 const PALLET_SESSION_TTL = 7200;
+
+// Configure Cloudinary (same pattern as /api/cloudinary/upload)
+if (process.env.CLOUDINARY_CLOUD_NAME) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+    secure: true,
+  });
+}
 
 function palletKey(token: string) {
   return `pallet:${token}`;
@@ -22,11 +33,43 @@ async function savePalletSession(token: string, session: PalletSession): Promise
 }
 
 /**
+ * Upload a pallet box image to Cloudinary.
+ * Returns the secure URL, or '' if Cloudinary is not configured or upload fails.
+ */
+async function uploadBoxImage(
+  base64Image: string,
+  barcode: string,
+  documentNumber: string
+): Promise<string> {
+  if (!process.env.CLOUDINARY_CLOUD_NAME) return '';
+
+  const imageData = base64Image.startsWith('data:')
+    ? base64Image
+    : `data:image/jpeg;base64,${base64Image}`;
+
+  const folder = documentNumber ? `Invoice ${documentNumber}` : 'pallet-boxes';
+  // Use last 12 chars of barcode to keep public_id short
+  const publicId = `pallet-box-${barcode.slice(-12)}-${Date.now()}`;
+
+  try {
+    const result = await cloudinary.uploader.upload(imageData, {
+      folder,
+      public_id: publicId,
+      resource_type: 'image',
+      overwrite: false,
+    });
+    console.log('[pallet-ocr] Image uploaded to Cloudinary:', result.secure_url);
+    return result.secure_url;
+  } catch (err) {
+    console.error('[pallet-ocr] Cloudinary upload failed:', err);
+    return '';
+  }
+}
+
+/**
  * POST /api/pallet-ocr
  * Fire box sticker OCR for a previously scanned barcode and update session.
- *
- * Call this non-blocking (fire-and-forget from the frontend) AFTER /api/pallet-scan
- * has already recorded the barcode. This enriches the box record with item name and weight.
+ * Also uploads the box image to Cloudinary and stores the URL in the session.
  *
  * Body: { token, barcode, image }   ← image is base64 string from SmartScanner
  *
@@ -43,19 +86,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 1. Call bot's box sticker OCR webhook (synchronous — this is the "slow" part,
-    //    but the frontend fires this non-blocking so the scanner stays live)
     const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
     if (!botUrl) {
       return NextResponse.json({ success: false, error: 'Bot webhook URL not configured' }, { status: 500 });
     }
 
-    const ocrRes = await fetch(`${botUrl}/webhook/process-box-ocr`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image, barcode }),
-      signal: AbortSignal.timeout(30_000),
-    });
+    // Run OCR and session read (for document number) in parallel.
+    const [ocrRes, sessionForUpload] = await Promise.all([
+      fetch(`${botUrl}/webhook/process-box-ocr`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image, barcode }),
+        signal: AbortSignal.timeout(30_000),
+      }),
+      getPalletSession(token),
+    ]);
 
     if (!ocrRes.ok) {
       const errText = await ocrRes.text();
@@ -68,12 +113,15 @@ export async function POST(request: NextRequest) {
 
     const itemName = ocrData.product_name_english || ocrData.product_name || '';
     const itemNameHebrew = ocrData.product_name_hebrew || '';
-    // Use the barcode SKU from OCR if available (structured GS1 barcodes only)
     const sku = ocrData.barcode_digits || '';
     const weight = typeof ocrData.weight_kg === 'number' ? ocrData.weight_kg : 0;
     const expiry = ocrData.expiry_date || '';
 
-    // 2. Update the box record in the pallet session (within lock)
+    // Upload image to Cloudinary alongside OCR (non-blocking failure = empty URL).
+    const documentNumber = sessionForUpload?.invoice_document_number || '';
+    const imageUrl = await uploadBoxImage(image, barcode, documentNumber);
+
+    // Update the box record in the pallet session (within lock).
     let result: any = null;
     let errorResult: any = null;
 
@@ -90,7 +138,7 @@ export async function POST(request: NextRequest) {
         return;
       }
 
-      // Enrich the box record with OCR data
+      // Enrich the box record with OCR data + Cloudinary image URL
       session.scanned_boxes[boxIndex] = {
         ...session.scanned_boxes[boxIndex],
         item_name: itemName,
@@ -98,18 +146,16 @@ export async function POST(request: NextRequest) {
         sku,
         weight,
         expiry,
+        image_url: imageUrl,
       };
 
-      // Uniformity check across all boxes that have OCR results.
-      // Hebrew-first: if both boxes have Hebrew names and they normalise to the same
-      // string, they are considered the same item even if English OCR differs slightly.
+      // Uniformity check: Hebrew-first, normalised English fallback
       const mismatches: string[] = [];
       const boxesWithData = session.scanned_boxes.filter((b) => b.weight > 0);
 
       if (boxesWithData.length >= 2) {
         const refBox = boxesWithData[0];
         for (const box of boxesWithData.slice(1)) {
-          // Name check: Hebrew has priority, fall back to normalised English
           const bothHaveHebrew = refBox.item_name_hebrew && box.item_name_hebrew;
           const hebrewMatch =
             bothHaveHebrew &&
