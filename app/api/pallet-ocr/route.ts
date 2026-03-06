@@ -173,6 +173,15 @@ export async function POST(request: NextRequest) {
     const weight = typeof ocrData.weight_kg === 'number' ? ocrData.weight_kg : 0;
     const expiry = ocrData.expiry_date || '';
 
+    console.log('[pallet-ocr] OCR result:', JSON.stringify({
+      barcode,
+      itemName,
+      itemNameHebrew,
+      sku,
+      weight,
+      raw_ocr: ocrJson,
+    }));
+
     // Upload image to Cloudinary alongside OCR (non-blocking failure = empty URL).
     const documentNumber = sessionForUpload?.invoice_document_number || '';
     const imageUrl = await uploadBoxImage(image, barcode, documentNumber);
@@ -210,6 +219,11 @@ export async function POST(request: NextRequest) {
       let unified = true;
 
       if (session.pallet_type === 'mix' && session.mix_items?.length) {
+        // Log mix_items Hebrew names for debugging
+        console.log('[pallet-ocr] mix_items hebrew names:', JSON.stringify(
+          session.mix_items.map(mi => ({ en: mi.item_name_english, he: mi.item_name_hebrew }))
+        ));
+        console.log('[pallet-ocr] box hebrew:', itemNameHebrew, '| assign result:', assignBoxToMixItem(session.scanned_boxes[boxIndex], session.mix_items));
         // Only compare boxes within the same item group
         unified = computeMixUnified(session.scanned_boxes, session.mix_items, mismatches);
       } else {
