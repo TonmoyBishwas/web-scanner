@@ -12,13 +12,19 @@ function stripNiqqud(s: string): string {
   return s.replace(/[\u05B0-\u05C7]/g, '');
 }
 
-/** Check if any significant word (≥4 Hebrew chars) from a appears in b's word set. */
+/** Extract significant Hebrew words (≥4 base letters), splitting on any
+ *  non-Hebrew character (hyphens, dots, spaces, punctuation, etc.). */
+function hebrewWords(s: string): Set<string> {
+  // Split on anything that is not a Hebrew base letter (U+05D0-U+05EA)
+  return new Set(stripNiqqud(s).split(/[^\u05D0-\u05EA]+/).filter((w) => w.length >= 4));
+}
+
+/** True if any significant Hebrew word from a appears in b, or vice versa. */
 function hebrewWordsOverlap(a: string, b: string): boolean {
   if (!a || !b) return false;
-  const norm = (s: string) => normalizeString(stripNiqqud(s));
-  const wordsA = a.split(/\s+/).map(norm).filter((w) => w.length >= 4);
-  const wordsB = new Set(b.split(/\s+/).map(norm).filter((w) => w.length >= 4));
-  return wordsA.some((wA) => wordsB.has(wA));
+  const wA = hebrewWords(a);
+  const wB = hebrewWords(b);
+  return [...wA].some((w) => wB.has(w)) || [...wB].some((w) => wA.has(w));
 }
 
 /** Assign a scanned box to a mix item index.
