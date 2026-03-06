@@ -6,19 +6,27 @@ import type { PalletSession, PalletBoxScan, MixItem } from '@/types';
 
 const PALLET_SESSION_TTL = 7200;
 
-/** Assign a scanned box to a mix item index using Hebrew-first name matching. */
+/** Assign a scanned box to a mix item index.
+ *  Hebrew names checked across all items first, English as fallback. */
 function assignBoxToMixItem(box: PalletBoxScan, mixItems: MixItem[]): number {
-  for (let i = 0; i < mixItems.length; i++) {
-    const mi = mixItems[i];
-    if (box.item_name_hebrew && mi.item_name_hebrew) {
-      const hA = normalizeString(box.item_name_hebrew);
-      const hB = normalizeString(mi.item_name_hebrew);
-      if (hA && hB && (hA === hB || hA.includes(hB) || hB.includes(hA))) return i;
+  // Pass 1: Hebrew name (most reliable — consistent across invoice and box sticker OCR)
+  if (box.item_name_hebrew) {
+    const hA = normalizeString(box.item_name_hebrew);
+    for (let i = 0; i < mixItems.length; i++) {
+      if (mixItems[i].item_name_hebrew) {
+        const hB = normalizeString(mixItems[i].item_name_hebrew);
+        if (hA && hB && (hA === hB || hA.includes(hB) || hB.includes(hA))) return i;
+      }
     }
-    if (box.item_name && mi.item_name_english) {
-      const eA = normalizeString(box.item_name);
-      const eB = normalizeString(mi.item_name_english);
-      if (eA && eB && (eA === eB || eA.includes(eB) || eB.includes(eA))) return i;
+  }
+  // Pass 2: English name fallback
+  if (box.item_name) {
+    const eA = normalizeString(box.item_name);
+    for (let i = 0; i < mixItems.length; i++) {
+      if (mixItems[i].item_name_english) {
+        const eB = normalizeString(mixItems[i].item_name_english);
+        if (eA && eB && (eA === eB || eA.includes(eB) || eB.includes(eA))) return i;
+      }
     }
   }
   return -1;
