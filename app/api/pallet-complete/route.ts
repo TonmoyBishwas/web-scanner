@@ -119,20 +119,43 @@ async function savePalletToAirtable(
   console.error('[pallet-complete] Airtable save failed after retries for LPN:', lpn);
 }
 
+/** Strip Hebrew niqqud (vowel points U+05B0–U+05C7). */
+function stripNiqqud(s: string): string {
+  return s.replace(/[\u05B0-\u05C7]/g, '');
+}
+
+/** True if any significant word (≥4 Hebrew chars) from a appears in b's word set. */
+function hebrewWordsOverlap(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  const norm = (s: string) => normalizeString(stripNiqqud(s));
+  const wordsA = a.split(/\s+/).map(norm).filter((w) => w.length >= 4);
+  const wordsB = new Set(b.split(/\s+/).map(norm).filter((w) => w.length >= 4));
+  return wordsA.some((wA) => wordsB.has(wA));
+}
+
 /** Assign a scanned box to a mix item index.
  *  Hebrew names checked across all items first, English as fallback. */
 function assignBoxToMixItem(box: PalletBoxScan, mixItems: MixItem[]): number {
-  // Pass 1: Hebrew name (most reliable — consistent across invoice and box sticker OCR)
+  const normHeb = (s: string) => normalizeString(stripNiqqud(s));
+
+  // Pass 1: Hebrew full-string match (niqqud-stripped)
   if (box.item_name_hebrew) {
-    const hA = normalizeString(box.item_name_hebrew);
+    const hA = normHeb(box.item_name_hebrew);
     for (let i = 0; i < mixItems.length; i++) {
       if (mixItems[i].item_name_hebrew) {
-        const hB = normalizeString(mixItems[i].item_name_hebrew);
+        const hB = normHeb(mixItems[i].item_name_hebrew);
         if (hA && hB && (hA === hB || hA.includes(hB) || hB.includes(hA))) return i;
       }
     }
   }
-  // Pass 2: English name fallback
+  // Pass 2: Hebrew word-level match
+  if (box.item_name_hebrew) {
+    for (let i = 0; i < mixItems.length; i++) {
+      if (mixItems[i].item_name_hebrew &&
+          hebrewWordsOverlap(box.item_name_hebrew, mixItems[i].item_name_hebrew)) return i;
+    }
+  }
+  // Pass 3: English name fallback
   if (box.item_name) {
     const eA = normalizeString(box.item_name);
     for (let i = 0; i < mixItems.length; i++) {

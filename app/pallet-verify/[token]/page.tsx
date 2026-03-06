@@ -26,20 +26,43 @@ function namesMatchUI(
   return true;
 }
 
+/** Strip Hebrew niqqud (vowel points U+05B0–U+05C7). */
+function stripNiqqud(s: string): string {
+  return s.replace(/[\u05B0-\u05C7]/g, '');
+}
+
+/** True if any significant word (≥4 Hebrew chars) from a appears in b's word set. */
+function hebrewWordsOverlap(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  const norm = (s: string) => normalizeString(stripNiqqud(s));
+  const wordsA = a.split(/\s+/).map(norm).filter((w) => w.length >= 4);
+  const wordsB = new Set(b.split(/\s+/).map(norm).filter((w) => w.length >= 4));
+  return wordsA.some((wA) => wordsB.has(wA));
+}
+
 /** Assign a scanned box to a mix item index.
  *  Hebrew names checked across all items first, English as fallback. */
 function assignBoxToMixItem(box: PalletBoxScan, mixItems: MixItem[]): number {
-  // Pass 1: Hebrew name (most reliable — consistent across invoice and box sticker OCR)
+  const normHeb = (s: string) => normalizeString(stripNiqqud(s));
+
+  // Pass 1: Hebrew full-string match (niqqud-stripped)
   if (box.item_name_hebrew) {
-    const hA = normalizeString(box.item_name_hebrew);
+    const hA = normHeb(box.item_name_hebrew);
     for (let i = 0; i < mixItems.length; i++) {
       if (mixItems[i].item_name_hebrew) {
-        const hB = normalizeString(mixItems[i].item_name_hebrew);
+        const hB = normHeb(mixItems[i].item_name_hebrew);
         if (hA && hB && (hA === hB || hA.includes(hB) || hB.includes(hA))) return i;
       }
     }
   }
-  // Pass 2: English name fallback
+  // Pass 2: Hebrew word-level match
+  if (box.item_name_hebrew) {
+    for (let i = 0; i < mixItems.length; i++) {
+      if (mixItems[i].item_name_hebrew &&
+          hebrewWordsOverlap(box.item_name_hebrew, mixItems[i].item_name_hebrew)) return i;
+    }
+  }
+  // Pass 3: English name fallback
   if (box.item_name) {
     const eA = normalizeString(box.item_name);
     for (let i = 0; i < mixItems.length; i++) {
@@ -463,7 +486,7 @@ export default function PalletVerifyPage({
                 );
               })}
 
-              {/* Unassigned boxes (OCR not done yet or unknown item) */}
+              {/* Unassigned boxes (OCR not done yet or item name didn't match) */}
               {(() => {
                 const unassigned = scannedBoxes.filter(
                   (b) => assignBoxToMixItem(b, session.mix_items!) === -1
@@ -478,6 +501,7 @@ export default function PalletVerifyPage({
                         const status = ocrStatus.get(box.barcode);
                         const isPending = status === 'pending' || !status;
                         const isFailed = status === 'failed' || (status === 'done' && box.weight === 0);
+                        const ocrDoneButUnmatched = status === 'done' && box.weight > 0 && box.item_name_hebrew;
                         const canRetry = isFailed && imageDataRef.current.has(box.barcode);
                         return (
                           <div key={box.barcode} className="rounded-xl p-3 border bg-orange-50 border-orange-300 text-sm">
@@ -487,6 +511,11 @@ export default function PalletVerifyPage({
                             </div>
                             {isPending && <p className="text-xs text-gray-400 italic">Reading box label...</p>}
                             {isFailed && <p className="text-xs text-orange-700 font-medium">⚠️ Could not identify item</p>}
+                            {ocrDoneButUnmatched && (
+                              <p className="text-xs text-orange-700 font-medium">
+                                ⚠️ Name doesn&apos;t match any item — OCR read: &quot;{box.item_name_hebrew}&quot;
+                              </p>
+                            )}
                             {box.item_name && <p className="text-gray-700 font-medium truncate">{box.item_name}</p>}
                             <div className="flex gap-4 text-gray-500 text-xs mt-1">
                               {box.weight > 0 && <span>⚖️ {box.weight} kg</span>}

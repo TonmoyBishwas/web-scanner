@@ -6,20 +6,44 @@ import type { PalletSession, PalletBoxScan, MixItem } from '@/types';
 
 const PALLET_SESSION_TTL = 7200;
 
+/** Strip Hebrew niqqud (vowel points U+05B0–U+05C7) so OCR sources that
+ *  differ only in diacritics still match. */
+function stripNiqqud(s: string): string {
+  return s.replace(/[\u05B0-\u05C7]/g, '');
+}
+
+/** Check if any significant word (≥4 Hebrew chars) from a appears in b's word set. */
+function hebrewWordsOverlap(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  const norm = (s: string) => normalizeString(stripNiqqud(s));
+  const wordsA = a.split(/\s+/).map(norm).filter((w) => w.length >= 4);
+  const wordsB = new Set(b.split(/\s+/).map(norm).filter((w) => w.length >= 4));
+  return wordsA.some((wA) => wordsB.has(wA));
+}
+
 /** Assign a scanned box to a mix item index.
  *  Hebrew names checked across all items first, English as fallback. */
 function assignBoxToMixItem(box: PalletBoxScan, mixItems: MixItem[]): number {
-  // Pass 1: Hebrew name (most reliable — consistent across invoice and box sticker OCR)
+  const normHeb = (s: string) => normalizeString(stripNiqqud(s));
+
+  // Pass 1: Hebrew full-string match (niqqud-stripped)
   if (box.item_name_hebrew) {
-    const hA = normalizeString(box.item_name_hebrew);
+    const hA = normHeb(box.item_name_hebrew);
     for (let i = 0; i < mixItems.length; i++) {
       if (mixItems[i].item_name_hebrew) {
-        const hB = normalizeString(mixItems[i].item_name_hebrew);
+        const hB = normHeb(mixItems[i].item_name_hebrew);
         if (hA && hB && (hA === hB || hA.includes(hB) || hB.includes(hA))) return i;
       }
     }
   }
-  // Pass 2: English name fallback
+  // Pass 2: Hebrew word-level match (any significant word in common)
+  if (box.item_name_hebrew) {
+    for (let i = 0; i < mixItems.length; i++) {
+      if (mixItems[i].item_name_hebrew &&
+          hebrewWordsOverlap(box.item_name_hebrew, mixItems[i].item_name_hebrew)) return i;
+    }
+  }
+  // Pass 3: English name fallback
   if (box.item_name) {
     const eA = normalizeString(box.item_name);
     for (let i = 0; i < mixItems.length; i++) {
@@ -174,12 +198,7 @@ export async function POST(request: NextRequest) {
     const expiry = ocrData.expiry_date || '';
 
     console.log('[pallet-ocr] OCR result:', JSON.stringify({
-      barcode,
-      itemName,
-      itemNameHebrew,
-      sku,
-      weight,
-      raw_ocr: ocrJson,
+      barcode, itemName, itemNameHebrew, sku, weight,
     }));
 
     // Upload image to Cloudinary alongside OCR (non-blocking failure = empty URL).
@@ -219,11 +238,6 @@ export async function POST(request: NextRequest) {
       let unified = true;
 
       if (session.pallet_type === 'mix' && session.mix_items?.length) {
-        // Log mix_items Hebrew names for debugging
-        console.log('[pallet-ocr] mix_items hebrew names:', JSON.stringify(
-          session.mix_items.map(mi => ({ en: mi.item_name_english, he: mi.item_name_hebrew }))
-        ));
-        console.log('[pallet-ocr] box hebrew:', itemNameHebrew, '| assign result:', assignBoxToMixItem(session.scanned_boxes[boxIndex], session.mix_items));
         // Only compare boxes within the same item group
         unified = computeMixUnified(session.scanned_boxes, session.mix_items, mismatches);
       } else {
