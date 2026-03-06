@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedisClient, sessionStorage } from '@/lib/redis';
 import { normalizeString } from '@/lib/string-utils';
-import type { PalletSession, PalletVerificationResult } from '@/types';
+import type { PalletSession, PalletVerificationResult, PalletBoxScan, MixItem } from '@/types';
 
 const PALLET_SESSION_TTL = 7200;
 
@@ -119,6 +119,24 @@ async function savePalletToAirtable(
   console.error('[pallet-complete] Airtable save failed after retries for LPN:', lpn);
 }
 
+/** Assign a scanned box to a mix item index using Hebrew-first name matching. */
+function assignBoxToMixItem(box: PalletBoxScan, mixItems: MixItem[]): number {
+  for (let i = 0; i < mixItems.length; i++) {
+    const mi = mixItems[i];
+    if (box.item_name_hebrew && mi.item_name_hebrew) {
+      const hA = normalizeString(box.item_name_hebrew);
+      const hB = normalizeString(mi.item_name_hebrew);
+      if (hA && hB && (hA === hB || hA.includes(hB) || hB.includes(hA))) return i;
+    }
+    if (box.item_name && mi.item_name_english) {
+      const eA = normalizeString(box.item_name);
+      const eB = normalizeString(mi.item_name_english);
+      if (eA && eB && (eA === eB || eA.includes(eB) || eB.includes(eA))) return i;
+    }
+  }
+  return -1;
+}
+
 /**
  * Returns true if the two names (English + Hebrew) are considered the same item.
  * Hebrew is checked first; falls back to normalised English.
@@ -169,125 +187,219 @@ export async function POST(request: NextRequest) {
         errorResult = { success: false, error: 'Session already completed' };
         return;
       }
-      if (session.scanned_boxes.length < 2) {
-        errorResult = {
-          success: false,
-          error: 'At least 2 boxes must be scanned to verify',
-        };
-        return;
-      }
+      const isMix = session.pallet_type === 'mix' && (session.mix_items?.length ?? 0) > 0;
 
-      // Require at least one box to have a valid weight from OCR.
-      const refBoxWithWeight = session.scanned_boxes.find((b) => b.weight > 0);
-      if (!refBoxWithWeight) {
-        errorResult = {
-          success: false,
-          error:
-            'Box weight not determined. Please ensure boxes were scanned with camera and OCR completed successfully.',
-        };
-        return;
-      }
-
-      // Use box sticker OCR data enriched by /api/pallet-ocr.
-      // Use the first box with a valid weight as the reference for calculations.
-      // Fall back to invoice OCR (session.ocr_data) for item name/code if missing.
-      const firstBox = refBoxWithWeight;
-      const firstOcrItem = session.ocr_data?.[0] ?? null;
-
-      const itemName =
-        firstBox?.item_name ||
-        firstBox?.item_name_hebrew ||
-        firstOcrItem?.item_name_english ||
-        firstOcrItem?.item_name_hebrew ||
-        '';
-      const itemCode = firstBox?.sku || firstOcrItem?.item_code || '';
-
-      // Per-box weight from box sticker OCR (the source of truth for weight calculation).
-      const perBoxWeight = firstBox.weight;
-      const calcWeight = Math.round(perBoxWeight * session.expected_box_count * 100) / 100;
-
-      // Uniformity: Hebrew-first name comparison + weight check
-      const mismatches: string[] = [];
-      const boxesWithData = session.scanned_boxes.filter((b) => b.weight > 0);
-      let unified = true;
-
-      if (boxesWithData.length >= 2) {
-        const refBox = boxesWithData[0];
-        for (const box of boxesWithData.slice(1)) {
-          if (
-            refBox.item_name &&
-            box.item_name &&
-            !namesMatch(
-              refBox.item_name,
-              refBox.item_name_hebrew || '',
-              box.item_name,
-              box.item_name_hebrew || ''
-            )
-          ) {
-            if (!mismatches.includes('item')) mismatches.push('item');
-            unified = false;
+      if (isMix) {
+        // Mix pallet: validate that each item group has enough scans
+        const mixItems = session.mix_items!;
+        for (const mi of mixItems) {
+          const groupBoxes = session.scanned_boxes.filter(
+            (b) => assignBoxToMixItem(b, mixItems) === mixItems.indexOf(mi) && b.weight > 0
+          );
+          const required = mi.uniform_weight ? 2 : mi.expected_box_count;
+          if (groupBoxes.length < required) {
+            const name = mi.item_name_english || mi.item_name_hebrew || 'item';
+            errorResult = {
+              success: false,
+              error: `Not enough boxes scanned for "${name}". Need ${required}, have ${groupBoxes.length}.`,
+            };
+            return;
           }
-          if (refBox.weight > 0 && box.weight > 0 && Math.abs(refBox.weight - box.weight) > 0.5) {
-            if (!mismatches.includes('weight')) mismatches.push('weight');
-            unified = false;
-          }
+        }
+      } else {
+        if (session.scanned_boxes.length < 2) {
+          errorResult = {
+            success: false,
+            error: 'At least 2 boxes must be scanned to verify',
+          };
+          return;
+        }
+        const refBoxWithWeight = session.scanned_boxes.find((b) => b.weight > 0);
+        if (!refBoxWithWeight) {
+          errorResult = {
+            success: false,
+            error:
+              'Box weight not determined. Please ensure boxes were scanned with camera and OCR completed successfully.',
+          };
+          return;
         }
       }
 
       const lpn = generateLPN(session.invoice_document_number, session.pallet_number);
+      const mismatches: string[] = [];
+      let unified = true;
 
-      // Save to Airtable (non-fatal: errors are logged but don't block LPN generation)
-      try {
-        await savePalletToAirtable(
+      if (isMix) {
+        const mixItems = session.mix_items!;
+
+        // Per-item: compute avg weight and calculated total
+        const itemStats = mixItems.map((mi, i) => {
+          const groupBoxes = session.scanned_boxes.filter(
+            (b) => assignBoxToMixItem(b, mixItems) === i && b.weight > 0
+          );
+          const avgWeight =
+            groupBoxes.length > 0
+              ? groupBoxes.reduce((s, b) => s + b.weight, 0) / groupBoxes.length
+              : 0;
+          const calcTotal = mi.uniform_weight
+            ? Math.round(avgWeight * mi.expected_box_count * 100) / 100
+            : Math.round(groupBoxes.reduce((s, b) => s + b.weight, 0) * 100) / 100;
+          return { mi, groupBoxes, avgWeight: Math.round(avgWeight * 100) / 100, calcTotal };
+        });
+
+        // Save one Airtable row per item
+        for (const { mi, groupBoxes, avgWeight } of itemStats) {
+          try {
+            await savePalletToAirtable(
+              lpn,
+              session,
+              { sku: mi.item_code, item_name: mi.item_name_english, weight: avgWeight },
+              groupBoxes.length
+            );
+          } catch (atErr) {
+            console.error('[pallet-complete] Airtable save failed for mix item (non-fatal):', atErr);
+          }
+        }
+
+        session.status = 'completed';
+        const redis = getRedisClient();
+        await redis.set(palletKey(token), JSON.stringify(session), { ex: PALLET_SESSION_TTL });
+
+        // Use first item as primary for PalletVerificationResult (backward compat)
+        const firstStat = itemStats[0];
+        const totalCalc = Math.round(itemStats.reduce((s, x) => s + x.calcTotal, 0) * 100) / 100;
+
+        completionResult = {
+          verified: unified,
           lpn,
-          session,
-          { sku: itemCode, item_name: itemName, weight: perBoxWeight },
-          session.scanned_boxes.length
-        );
-      } catch (atErr) {
-        console.error('[pallet-complete] Airtable save failed (non-fatal):', atErr);
-      }
+          item_name: firstStat.mi.item_name_english,
+          item_code: firstStat.mi.item_code,
+          ocr_box_weight: firstStat.avgWeight,
+          calculated_total_weight: totalCalc,
+          scale_weight: session.scale_weight,
+          box_count: session.expected_box_count,
+          verified_scan_count: session.scanned_boxes.length,
+          mismatches,
+        };
 
-      // Mark session as completed
-      session.status = 'completed';
-      const redis = getRedisClient();
-      await redis.set(palletKey(token), JSON.stringify(session), { ex: PALLET_SESSION_TTL });
+        // Fire webhook with mix payload
+        const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
+        if (botUrl) {
+          fetch(`${botUrl}/webhook/pallet-complete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: session.chat_id,
+              pallet_number: session.pallet_number,
+              lpn,
+              pallet_type: 'mix',
+              items: itemStats.map(({ mi, groupBoxes, avgWeight, calcTotal }) => ({
+                item_code: mi.item_code,
+                item_name: mi.item_name_english,
+                box_count: mi.expected_box_count,
+                ocr_box_weight: avgWeight,
+                calculated_total_weight: calcTotal,
+                scanned_count: groupBoxes.length,
+                uniform_weight: mi.uniform_weight,
+              })),
+              scale_weight: session.scale_weight,
+              document_number: session.invoice_document_number,
+              verified_scan_count: session.scanned_boxes.length,
+              mismatches,
+            }),
+          }).catch((err) => console.error('[pallet-complete] Bot webhook failed:', err));
+        }
+      } else {
+        // Single-item pallet
+        const refBoxWithWeight = session.scanned_boxes.find((b) => b.weight > 0)!;
+        const firstBox = refBoxWithWeight;
+        const firstOcrItem = session.ocr_data?.[0] ?? null;
 
-      // Build result
-      completionResult = {
-        verified: unified,
-        lpn,
-        item_name: itemName,
-        item_code: itemCode,
-        ocr_box_weight: perBoxWeight,
-        calculated_total_weight: calcWeight,
-        scale_weight: session.scale_weight,
-        box_count: session.expected_box_count,
-        verified_scan_count: session.scanned_boxes.length,
-        mismatches,
-      };
+        const itemName =
+          firstBox?.item_name ||
+          firstBox?.item_name_hebrew ||
+          firstOcrItem?.item_name_english ||
+          firstOcrItem?.item_name_hebrew ||
+          '';
+        const itemCode = firstBox?.sku || firstOcrItem?.item_code || '';
 
-      // Fire webhook to bot
-      const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
-      if (botUrl) {
-        fetch(`${botUrl}/webhook/pallet-complete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: session.chat_id,
-            pallet_number: session.pallet_number,
+        const perBoxWeight = firstBox.weight;
+        const calcWeight = Math.round(perBoxWeight * session.expected_box_count * 100) / 100;
+
+        const boxesWithData = session.scanned_boxes.filter((b) => b.weight > 0);
+        if (boxesWithData.length >= 2) {
+          const refBox = boxesWithData[0];
+          for (const box of boxesWithData.slice(1)) {
+            if (
+              refBox.item_name &&
+              box.item_name &&
+              !namesMatch(
+                refBox.item_name,
+                refBox.item_name_hebrew || '',
+                box.item_name,
+                box.item_name_hebrew || ''
+              )
+            ) {
+              if (!mismatches.includes('item')) mismatches.push('item');
+              unified = false;
+            }
+            if (refBox.weight > 0 && box.weight > 0 && Math.abs(refBox.weight - box.weight) > 0.5) {
+              if (!mismatches.includes('weight')) mismatches.push('weight');
+              unified = false;
+            }
+          }
+        }
+
+        try {
+          await savePalletToAirtable(
             lpn,
-            item_code: itemCode,
-            item_name: itemName,
-            box_count: session.expected_box_count,
-            ocr_box_weight: perBoxWeight,
-            calculated_total_weight: calcWeight,
-            scale_weight: session.scale_weight,
-            document_number: session.invoice_document_number,
-            verified_scan_count: session.scanned_boxes.length,
-            mismatches,
-          }),
-        }).catch((err) => console.error('[pallet-complete] Bot webhook failed:', err));
+            session,
+            { sku: itemCode, item_name: itemName, weight: perBoxWeight },
+            session.scanned_boxes.length
+          );
+        } catch (atErr) {
+          console.error('[pallet-complete] Airtable save failed (non-fatal):', atErr);
+        }
+
+        session.status = 'completed';
+        const redis = getRedisClient();
+        await redis.set(palletKey(token), JSON.stringify(session), { ex: PALLET_SESSION_TTL });
+
+        completionResult = {
+          verified: unified,
+          lpn,
+          item_name: itemName,
+          item_code: itemCode,
+          ocr_box_weight: perBoxWeight,
+          calculated_total_weight: calcWeight,
+          scale_weight: session.scale_weight,
+          box_count: session.expected_box_count,
+          verified_scan_count: session.scanned_boxes.length,
+          mismatches,
+        };
+
+        const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
+        if (botUrl) {
+          fetch(`${botUrl}/webhook/pallet-complete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: session.chat_id,
+              pallet_number: session.pallet_number,
+              lpn,
+              pallet_type: 'single',
+              item_code: itemCode,
+              item_name: itemName,
+              box_count: session.expected_box_count,
+              ocr_box_weight: perBoxWeight,
+              calculated_total_weight: calcWeight,
+              scale_weight: session.scale_weight,
+              document_number: session.invoice_document_number,
+              verified_scan_count: session.scanned_boxes.length,
+              mismatches,
+            }),
+          }).catch((err) => console.error('[pallet-complete] Bot webhook failed:', err));
+        }
       }
     });
 

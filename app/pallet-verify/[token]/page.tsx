@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle, XCircle, AlertTriangle, Package, Loader2, RefreshCw } from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
 import { normalizeString } from '@/lib/string-utils';
-import type { PalletBoxScan, PalletSession, ParsedBarcode } from '@/types';
+import type { MixItem, PalletBoxScan, PalletSession, ParsedBarcode } from '@/types';
 
 /** Hebrew-first name comparison (same logic as pallet-ocr / pallet-complete). */
 function namesMatchUI(
@@ -24,6 +24,24 @@ function namesMatchUI(
     return eA === eB || eA.includes(eB) || eB.includes(eA);
   }
   return true;
+}
+
+/** Assign a scanned box to a mix item index using Hebrew-first name matching. */
+function assignBoxToMixItem(box: PalletBoxScan, mixItems: MixItem[]): number {
+  for (let i = 0; i < mixItems.length; i++) {
+    const mi = mixItems[i];
+    if (box.item_name_hebrew && mi.item_name_hebrew) {
+      const hA = normalizeString(box.item_name_hebrew);
+      const hB = normalizeString(mi.item_name_hebrew);
+      if (hA && hB && (hA === hB || hA.includes(hB) || hB.includes(hA))) return i;
+    }
+    if (box.item_name && mi.item_name_english) {
+      const eA = normalizeString(box.item_name);
+      const eB = normalizeString(mi.item_name_english);
+      if (eA && eB && (eA === eB || eA.includes(eB) || eB.includes(eA))) return i;
+    }
+  }
+  return -1;
 }
 
 type VerifyPhase =
@@ -192,18 +210,50 @@ export default function PalletVerifyPage({
     }
   }, [token]);
 
-  // All conditions for generating LPN:
-  // 1. At least 2 boxes scanned
-  // 2. No OCR still pending
-  // 3. All scanned boxes have weight > 0 (OCR succeeded)
   const hasPendingOcr = scannedBoxes.some((b) => ocrStatus.get(b.barcode) === 'pending');
   const hasFailedOcr = scannedBoxes.some(
     (b) => (ocrStatus.get(b.barcode) === 'failed') || (ocrStatus.has(b.barcode) && b.weight === 0)
   );
-  const canComplete = scannedBoxes.length >= 2 && !hasPendingOcr && !hasFailedOcr;
 
-  // Human-readable button label
+  const isMix = session?.pallet_type === 'mix' && (session?.mix_items?.length ?? 0) > 0;
+
+  let canComplete = false;
+  let mixReadinessLabel = '';
+
+  if (isMix && session?.mix_items) {
+    const mixItems = session.mix_items;
+    const groups = mixItems.map((mi, i) => ({
+      mi,
+      boxes: scannedBoxes.filter((b) => assignBoxToMixItem(b, mixItems) === i && b.weight > 0),
+    }));
+    const allGroupsReady = groups.every((g) =>
+      g.mi.uniform_weight ? g.boxes.length >= 2 : g.boxes.length >= g.mi.expected_box_count
+    );
+    canComplete = allGroupsReady && !hasPendingOcr && !hasFailedOcr;
+
+    if (!allGroupsReady) {
+      const pending = groups.filter((g) =>
+        g.mi.uniform_weight ? g.boxes.length < 2 : g.boxes.length < g.mi.expected_box_count
+      );
+      mixReadinessLabel = pending
+        .map((g) => {
+          const name = g.mi.item_name_english || g.mi.item_name_hebrew || 'item';
+          const need = g.mi.uniform_weight ? 2 : g.mi.expected_box_count;
+          return `${name}: ${g.boxes.length}/${need}`;
+        })
+        .join(', ');
+    }
+  } else {
+    canComplete = scannedBoxes.length >= 2 && !hasPendingOcr && !hasFailedOcr;
+  }
+
   const getButtonLabel = () => {
+    if (isMix) {
+      if (mixReadinessLabel) return `Scan more boxes — ${mixReadinessLabel}`;
+      if (hasPendingOcr) return '⏳ Waiting for OCR to complete...';
+      if (hasFailedOcr) return '⚠️ Fix OCR errors before continuing';
+      return '✅ Generate LPN & Print Sticker';
+    }
     if (scannedBoxes.length < 2) {
       return `Scan ${Math.max(0, 2 - scannedBoxes.length)} more box${
         2 - scannedBoxes.length === 1 ? '' : 'es'
@@ -275,9 +325,9 @@ export default function PalletVerifyPage({
         {/* Progress */}
         <div className="mt-2">
           <div className="flex justify-between text-xs text-gray-500 mb-1">
-            <span>Scanned: {scannedBoxes.length} verification boxes</span>
+            <span>Scanned: {scannedBoxes.length} boxes</span>
             <span className={canComplete ? 'text-green-600 font-semibold' : 'text-gray-400'}>
-              {canComplete ? '✅ Ready to generate LPN' : `Need ${Math.max(0, 2 - scannedBoxes.length)} more`}
+              {canComplete ? '✅ Ready to generate LPN' : isMix ? 'Scan per item below' : `Need ${Math.max(0, 2 - scannedBoxes.length)} more`}
             </span>
           </div>
           <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
@@ -285,7 +335,7 @@ export default function PalletVerifyPage({
               className={`h-full transition-all rounded-full ${
                 canComplete ? 'bg-green-500' : 'bg-blue-400'
               }`}
-              style={{ width: `${Math.min((scannedBoxes.length / 2) * 100, 100)}%` }}
+              style={{ width: isMix ? (canComplete ? '100%' : '50%') : `${Math.min((scannedBoxes.length / 2) * 100, 100)}%` }}
             />
           </div>
         </div>
@@ -312,106 +362,233 @@ export default function PalletVerifyPage({
               <div>
                 <p className="text-sm font-semibold text-yellow-800">Boxes don't fully match</p>
                 <p className="text-xs text-yellow-700 mt-1">
-                  Mismatches: {mismatches.join(', ')}. This may not be a single-item pallet.
+                  Mismatches: {mismatches.join(', ')}.{' '}
+                  {isMix ? 'Check boxes are in the right group.' : 'This may not be a single-item pallet.'}
                 </p>
               </div>
             </div>
           )}
 
-          <h2 className="text-sm font-semibold text-gray-600 mb-2">Scanned Boxes</h2>
-          <div className="space-y-2">
-            {scannedBoxes.map((box, idx) => {
-              const isFirst = idx === 0;
-              const firstBox = scannedBoxes[0];
-              const status = ocrStatus.get(box.barcode);
-              const isPending = status === 'pending';
-              const isFailed = status === 'failed' || (status === 'done' && box.weight === 0);
-              const canRetry = isFailed && imageDataRef.current.has(box.barcode);
-
-              // Hebrew-first name comparison (same logic as server)
-              const nameMatch =
-                !box.item_name ||
-                !firstBox.item_name ||
-                namesMatchUI(
-                  firstBox.item_name,
-                  firstBox.item_name_hebrew || '',
-                  box.item_name,
-                  box.item_name_hebrew || ''
+          {isMix && session?.mix_items ? (
+            // ── Mix pallet: grouped by item ──────────────────────────────
+            <div className="space-y-4">
+              {session.mix_items.map((mi, groupIdx) => {
+                const groupBoxes = scannedBoxes.filter(
+                  (b) => assignBoxToMixItem(b, session.mix_items!) === groupIdx
                 );
-              const weightOk =
-                !box.weight ||
-                !firstBox.weight ||
-                Math.abs(box.weight - firstBox.weight) <= 0.5;
+                const readyBoxes = groupBoxes.filter((b) => b.weight > 0);
+                const required = mi.uniform_weight ? 2 : mi.expected_box_count;
+                const groupDone = readyBoxes.length >= required;
+                const itemLabel = mi.item_name_english || mi.item_name_hebrew || `Item ${groupIdx + 1}`;
 
-              let cardClass = 'bg-blue-50 border-blue-200';
-              if (!isFirst) {
-                if (isPending) cardClass = 'bg-gray-50 border-gray-200';
-                else if (isFailed) cardClass = 'bg-orange-50 border-orange-300';
-                else if (!nameMatch) cardClass = 'bg-red-50 border-red-200';
-                else cardClass = 'bg-green-50 border-green-200';
-              }
-
-              return (
-                <div
-                  key={box.barcode}
-                  className={`rounded-xl p-3 border text-sm ${cardClass}`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-mono text-xs text-gray-500 truncate max-w-[60%]">
-                      {box.barcode}
-                    </span>
-                    {isFirst ? (
-                      <span className="text-xs bg-blue-200 text-blue-800 rounded px-2 py-0.5 font-medium">
-                        Reference
+                return (
+                  <div key={groupIdx}>
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-sm font-semibold text-gray-700 truncate max-w-[70%]">
+                        {itemLabel}
+                      </p>
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+                        groupDone ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                      }`}>
+                        {readyBoxes.length}/{required} {groupDone ? '✓' : 'needed'}
                       </span>
-                    ) : isPending ? (
-                      <Loader2 className="animate-spin text-gray-400 w-4 h-4" />
-                    ) : isFailed ? (
-                      <AlertTriangle className="text-orange-500 w-4 h-4" />
-                    ) : nameMatch ? (
-                      <CheckCircle className="text-green-500 w-4 h-4" />
-                    ) : (
-                      <XCircle className="text-red-500 w-4 h-4" />
-                    )}
-                  </div>
-
-                  {isPending && (
-                    <p className="text-xs text-gray-400 italic">Reading box label...</p>
-                  )}
-
-                  {isFailed && (
-                    <p className="text-xs text-orange-700 font-medium">
-                      {box.weight > 0
-                        ? '⚠️ Image upload failed — tap Retry to upload'
-                        : '⚠️ Could not read weight/name from label'}
+                    </div>
+                    <p className="text-xs text-gray-400 mb-2">
+                      {mi.uniform_weight ? 'Same weight – 2 samples required' : 'Individual weights – scan all boxes'}
                     </p>
-                  )}
 
-                  {box.item_name && (
-                    <p className="text-gray-700 font-medium truncate">{box.item_name}</p>
-                  )}
-                  <div className="flex gap-4 text-gray-500 text-xs mt-1">
-                    {box.weight > 0 && (
-                      <span className={!weightOk && !isFirst ? 'text-orange-600 font-semibold' : ''}>
-                        ⚖️ {box.weight} kg
-                      </span>
+                    <div className="space-y-2">
+                      {groupBoxes.map((box, idx) => {
+                        const status = ocrStatus.get(box.barcode);
+                        const isPending = status === 'pending';
+                        const isFailed = status === 'failed' || (status === 'done' && box.weight === 0);
+                        const canRetry = isFailed && imageDataRef.current.has(box.barcode);
+                        let cardClass = 'bg-green-50 border-green-200';
+                        if (isPending) cardClass = 'bg-gray-50 border-gray-200';
+                        else if (isFailed) cardClass = 'bg-orange-50 border-orange-300';
+                        return (
+                          <div key={box.barcode} className={`rounded-xl p-3 border text-sm ${cardClass}`}>
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="font-mono text-xs text-gray-500 truncate max-w-[60%]">{box.barcode}</span>
+                              {isPending ? (
+                                <Loader2 className="animate-spin text-gray-400 w-4 h-4" />
+                              ) : isFailed ? (
+                                <AlertTriangle className="text-orange-500 w-4 h-4" />
+                              ) : (
+                                <CheckCircle className="text-green-500 w-4 h-4" />
+                              )}
+                            </div>
+                            {isPending && <p className="text-xs text-gray-400 italic">Reading box label...</p>}
+                            {isFailed && (
+                              <p className="text-xs text-orange-700 font-medium">
+                                {box.weight > 0 ? '⚠️ Image upload failed — tap Retry' : '⚠️ Could not read weight/name'}
+                              </p>
+                            )}
+                            {box.item_name && <p className="text-gray-700 font-medium truncate">{box.item_name}</p>}
+                            <div className="flex gap-4 text-gray-500 text-xs mt-1">
+                              {box.weight > 0 && <span>⚖️ {box.weight} kg</span>}
+                              {box.expiry && <span>📅 {box.expiry}</span>}
+                            </div>
+                            {canRetry && (
+                              <button
+                                onClick={() => handleRetryOcr(box.barcode)}
+                                className="mt-2 flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 hover:bg-orange-200 rounded-lg px-3 py-1 transition"
+                              >
+                                <RefreshCw className="w-3 h-3" />
+                                Retry OCR
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {groupBoxes.length === 0 && (
+                        <p className="text-xs text-gray-400 italic pl-1">No boxes scanned yet</p>
+                      )}
+                    </div>
+
+                    {mi.uniform_weight && readyBoxes.length >= 2 && (
+                      <p className="text-xs text-blue-600 mt-1 pl-1">
+                        ℹ️ {mi.expected_box_count - readyBoxes.length} more box{mi.expected_box_count - readyBoxes.length === 1 ? '' : 'es'} will be calculated from avg weight
+                      </p>
                     )}
-                    {box.expiry && <span>📅 {box.expiry}</span>}
                   </div>
+                );
+              })}
 
-                  {canRetry && (
-                    <button
-                      onClick={() => handleRetryOcr(box.barcode)}
-                      className="mt-2 flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 hover:bg-orange-200 rounded-lg px-3 py-1 transition"
-                    >
-                      <RefreshCw className="w-3 h-3" />
-                      Retry OCR
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+              {/* Unassigned boxes (OCR not done yet or unknown item) */}
+              {(() => {
+                const unassigned = scannedBoxes.filter(
+                  (b) => assignBoxToMixItem(b, session.mix_items!) === -1
+                );
+                if (unassigned.length === 0) return null;
+                return (
+                  <div>
+                    <p className="text-sm font-semibold text-gray-500 mb-1">Unassigned</p>
+                    <p className="text-xs text-gray-400 mb-2">Waiting for OCR to identify item</p>
+                    <div className="space-y-2">
+                      {unassigned.map((box) => {
+                        const status = ocrStatus.get(box.barcode);
+                        const isPending = status === 'pending' || !status;
+                        const isFailed = status === 'failed' || (status === 'done' && box.weight === 0);
+                        const canRetry = isFailed && imageDataRef.current.has(box.barcode);
+                        return (
+                          <div key={box.barcode} className="rounded-xl p-3 border bg-orange-50 border-orange-300 text-sm">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="font-mono text-xs text-gray-500 truncate max-w-[60%]">{box.barcode}</span>
+                              {isPending ? <Loader2 className="animate-spin text-gray-400 w-4 h-4" /> : <AlertTriangle className="text-orange-500 w-4 h-4" />}
+                            </div>
+                            {isPending && <p className="text-xs text-gray-400 italic">Reading box label...</p>}
+                            {isFailed && <p className="text-xs text-orange-700 font-medium">⚠️ Could not identify item</p>}
+                            {box.item_name && <p className="text-gray-700 font-medium truncate">{box.item_name}</p>}
+                            <div className="flex gap-4 text-gray-500 text-xs mt-1">
+                              {box.weight > 0 && <span>⚖️ {box.weight} kg</span>}
+                            </div>
+                            {canRetry && (
+                              <button onClick={() => handleRetryOcr(box.barcode)} className="mt-2 flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 hover:bg-orange-200 rounded-lg px-3 py-1 transition">
+                                <RefreshCw className="w-3 h-3" />
+                                Retry OCR
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          ) : (
+            // ── Single-item pallet: flat list ─────────────────────────────
+            <>
+              <h2 className="text-sm font-semibold text-gray-600 mb-2">Scanned Boxes</h2>
+              <div className="space-y-2">
+                {scannedBoxes.map((box, idx) => {
+                  const isFirst = idx === 0;
+                  const firstBox = scannedBoxes[0];
+                  const status = ocrStatus.get(box.barcode);
+                  const isPending = status === 'pending';
+                  const isFailed = status === 'failed' || (status === 'done' && box.weight === 0);
+                  const canRetry = isFailed && imageDataRef.current.has(box.barcode);
+
+                  const nameMatch =
+                    !box.item_name ||
+                    !firstBox.item_name ||
+                    namesMatchUI(
+                      firstBox.item_name,
+                      firstBox.item_name_hebrew || '',
+                      box.item_name,
+                      box.item_name_hebrew || ''
+                    );
+                  const weightOk =
+                    !box.weight ||
+                    !firstBox.weight ||
+                    Math.abs(box.weight - firstBox.weight) <= 0.5;
+
+                  let cardClass = 'bg-blue-50 border-blue-200';
+                  if (!isFirst) {
+                    if (isPending) cardClass = 'bg-gray-50 border-gray-200';
+                    else if (isFailed) cardClass = 'bg-orange-50 border-orange-300';
+                    else if (!nameMatch) cardClass = 'bg-red-50 border-red-200';
+                    else cardClass = 'bg-green-50 border-green-200';
+                  }
+
+                  return (
+                    <div key={box.barcode} className={`rounded-xl p-3 border text-sm ${cardClass}`}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-mono text-xs text-gray-500 truncate max-w-[60%]">
+                          {box.barcode}
+                        </span>
+                        {isFirst ? (
+                          <span className="text-xs bg-blue-200 text-blue-800 rounded px-2 py-0.5 font-medium">
+                            Reference
+                          </span>
+                        ) : isPending ? (
+                          <Loader2 className="animate-spin text-gray-400 w-4 h-4" />
+                        ) : isFailed ? (
+                          <AlertTriangle className="text-orange-500 w-4 h-4" />
+                        ) : nameMatch ? (
+                          <CheckCircle className="text-green-500 w-4 h-4" />
+                        ) : (
+                          <XCircle className="text-red-500 w-4 h-4" />
+                        )}
+                      </div>
+
+                      {isPending && (
+                        <p className="text-xs text-gray-400 italic">Reading box label...</p>
+                      )}
+                      {isFailed && (
+                        <p className="text-xs text-orange-700 font-medium">
+                          {box.weight > 0
+                            ? '⚠️ Image upload failed — tap Retry to upload'
+                            : '⚠️ Could not read weight/name from label'}
+                        </p>
+                      )}
+                      {box.item_name && (
+                        <p className="text-gray-700 font-medium truncate">{box.item_name}</p>
+                      )}
+                      <div className="flex gap-4 text-gray-500 text-xs mt-1">
+                        {box.weight > 0 && (
+                          <span className={!weightOk && !isFirst ? 'text-orange-600 font-semibold' : ''}>
+                            ⚖️ {box.weight} kg
+                          </span>
+                        )}
+                        {box.expiry && <span>📅 {box.expiry}</span>}
+                      </div>
+                      {canRetry && (
+                        <button
+                          onClick={() => handleRetryOcr(box.barcode)}
+                          className="mt-2 flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 hover:bg-orange-200 rounded-lg px-3 py-1 transition"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          Retry OCR
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
       )}
 

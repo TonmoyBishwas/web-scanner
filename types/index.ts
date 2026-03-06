@@ -224,6 +224,15 @@ export interface PalletBoxScan {
   scanned_at: string;
 }
 
+export interface MixItem {
+  item_code: string;
+  item_name_english: string;
+  item_name_hebrew: string;
+  quantity_kg: number;
+  expected_box_count: number;
+  uniform_weight: boolean; // true → need ≥2 sample scans; false → need all expected scans
+}
+
 export interface PalletSession {
   token: string;
   chat_id: string;
@@ -241,6 +250,8 @@ export interface PalletSession {
   scanned_boxes: PalletBoxScan[];
   status: 'active' | 'verified' | 'completed';
   created_at: string;
+  pallet_type?: 'single' | 'mix';
+  mix_items?: MixItem[];
 }
 
 export interface PalletVerificationResult {

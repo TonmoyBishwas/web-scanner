@@ -2,9 +2,57 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v2 as cloudinary } from 'cloudinary';
 import { getRedisClient, sessionStorage } from '@/lib/redis';
 import { normalizeString } from '@/lib/string-utils';
-import type { PalletSession, PalletBoxScan } from '@/types';
+import type { PalletSession, PalletBoxScan, MixItem } from '@/types';
 
 const PALLET_SESSION_TTL = 7200;
+
+/** Assign a scanned box to a mix item index using Hebrew-first name matching. */
+function assignBoxToMixItem(box: PalletBoxScan, mixItems: MixItem[]): number {
+  for (let i = 0; i < mixItems.length; i++) {
+    const mi = mixItems[i];
+    if (box.item_name_hebrew && mi.item_name_hebrew) {
+      const hA = normalizeString(box.item_name_hebrew);
+      const hB = normalizeString(mi.item_name_hebrew);
+      if (hA && hB && (hA === hB || hA.includes(hB) || hB.includes(hA))) return i;
+    }
+    if (box.item_name && mi.item_name_english) {
+      const eA = normalizeString(box.item_name);
+      const eB = normalizeString(mi.item_name_english);
+      if (eA && eB && (eA === eB || eA.includes(eB) || eB.includes(eA))) return i;
+    }
+  }
+  return -1;
+}
+
+/** Per-group uniformity check for mix pallets. Mutates mismatches array. */
+function computeMixUnified(boxes: PalletBoxScan[], mixItems: MixItem[], mismatches: string[]): boolean {
+  let allUnified = true;
+  for (let i = 0; i < mixItems.length; i++) {
+    const groupBoxes = boxes.filter((b) => assignBoxToMixItem(b, mixItems) === i && b.weight > 0);
+    if (groupBoxes.length < 2) continue;
+    const ref = groupBoxes[0];
+    for (const box of groupBoxes.slice(1)) {
+      if (Math.abs(box.weight - ref.weight) > 0.5) {
+        if (!mismatches.includes('weight')) mismatches.push('weight');
+        allUnified = false;
+      }
+      const bothHebrew = ref.item_name_hebrew && box.item_name_hebrew;
+      const hebrewOk = bothHebrew &&
+        (normalizeString(ref.item_name_hebrew!) === normalizeString(box.item_name_hebrew!) ||
+         normalizeString(ref.item_name_hebrew!).includes(normalizeString(box.item_name_hebrew!)) ||
+         normalizeString(box.item_name_hebrew!).includes(normalizeString(ref.item_name_hebrew!)));
+      const engOk = ref.item_name && box.item_name &&
+        (normalizeString(ref.item_name) === normalizeString(box.item_name) ||
+         normalizeString(ref.item_name).includes(normalizeString(box.item_name)) ||
+         normalizeString(box.item_name).includes(normalizeString(ref.item_name)));
+      if (ref.item_name && box.item_name && !hebrewOk && !engOk) {
+        if (!mismatches.includes('item')) mismatches.push('item');
+        allUnified = false;
+      }
+    }
+  }
+  return allUnified;
+}
 
 // Configure Cloudinary (same pattern as /api/cloudinary/upload)
 if (process.env.CLOUDINARY_CLOUD_NAME) {
@@ -149,36 +197,41 @@ export async function POST(request: NextRequest) {
         image_url: imageUrl,
       };
 
-      // Uniformity check: Hebrew-first, normalised English fallback
+      // Uniformity check — per-group for mix pallets, global for single
       const mismatches: string[] = [];
-      const boxesWithData = session.scanned_boxes.filter((b) => b.weight > 0);
+      let unified = true;
 
-      if (boxesWithData.length >= 2) {
-        const refBox = boxesWithData[0];
-        for (const box of boxesWithData.slice(1)) {
-          const bothHaveHebrew = refBox.item_name_hebrew && box.item_name_hebrew;
-          const hebrewMatch =
-            bothHaveHebrew &&
-            (normalizeString(refBox.item_name_hebrew) === normalizeString(box.item_name_hebrew) ||
-              normalizeString(refBox.item_name_hebrew).includes(normalizeString(box.item_name_hebrew)) ||
-              normalizeString(box.item_name_hebrew).includes(normalizeString(refBox.item_name_hebrew)));
-          const engMatch =
-            refBox.item_name &&
-            box.item_name &&
-            (normalizeString(refBox.item_name) === normalizeString(box.item_name) ||
-              normalizeString(refBox.item_name).includes(normalizeString(box.item_name)) ||
-              normalizeString(box.item_name).includes(normalizeString(refBox.item_name)));
-          const nameOk = hebrewMatch || (!bothHaveHebrew && engMatch);
-          if (refBox.item_name && box.item_name && !nameOk) {
-            if (!mismatches.includes('item')) mismatches.push('item');
+      if (session.pallet_type === 'mix' && session.mix_items?.length) {
+        // Only compare boxes within the same item group
+        unified = computeMixUnified(session.scanned_boxes, session.mix_items, mismatches);
+      } else {
+        const boxesWithData = session.scanned_boxes.filter((b) => b.weight > 0);
+        if (boxesWithData.length >= 2) {
+          const refBox = boxesWithData[0];
+          for (const box of boxesWithData.slice(1)) {
+            const bothHaveHebrew = refBox.item_name_hebrew && box.item_name_hebrew;
+            const hebrewMatch =
+              bothHaveHebrew &&
+              (normalizeString(refBox.item_name_hebrew!) === normalizeString(box.item_name_hebrew!) ||
+                normalizeString(refBox.item_name_hebrew!).includes(normalizeString(box.item_name_hebrew!)) ||
+                normalizeString(box.item_name_hebrew!).includes(normalizeString(refBox.item_name_hebrew!)));
+            const engMatch =
+              refBox.item_name &&
+              box.item_name &&
+              (normalizeString(refBox.item_name) === normalizeString(box.item_name) ||
+                normalizeString(refBox.item_name).includes(normalizeString(box.item_name)) ||
+                normalizeString(box.item_name).includes(normalizeString(refBox.item_name)));
+            const nameOk = hebrewMatch || (!bothHaveHebrew && engMatch);
+            if (refBox.item_name && box.item_name && !nameOk) {
+              if (!mismatches.includes('item')) mismatches.push('item');
+            }
+            if (refBox.weight > 0 && box.weight > 0 && Math.abs(refBox.weight - box.weight) > 0.5) {
+              if (!mismatches.includes('weight')) mismatches.push('weight');
+            }
           }
-          if (refBox.weight > 0 && box.weight > 0 && Math.abs(refBox.weight - box.weight) > 0.5) {
-            if (!mismatches.includes('weight')) mismatches.push('weight');
-          }
+          unified = mismatches.length === 0;
         }
       }
-
-      const unified = mismatches.length === 0;
 
       await savePalletSession(token, session);
 
