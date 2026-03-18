@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle, XCircle, AlertTriangle, Package, Loader2, RefreshCw } from 'lucide-react';
+import { CheckCircle, XCircle, AlertTriangle, Package, Loader2, RefreshCw, Camera } from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
 import { normalizeString } from '@/lib/string-utils';
 import type { MixItem, PalletBoxScan, PalletSession, ParsedBarcode } from '@/types';
@@ -112,6 +112,9 @@ export default function PalletVerifyPage({
   const processedRef = useRef<Set<string>>(new Set());
   // Store imageData per barcode so we can retry OCR without re-scanning
   const imageDataRef = useRef<Map<string, string>>(new Map());
+  // Retake photo: hidden file input + which barcode is being retaken
+  const retakeInputRef = useRef<HTMLInputElement>(null);
+  const retakeBarcodeRef = useRef<string>('');
 
   // Load session on mount
   useEffect(() => {
@@ -219,6 +222,29 @@ export default function PalletVerifyPage({
       if (imageData) {
         runOcr(barcode, imageData);
       }
+    },
+    [runOcr]
+  );
+
+  const handleRetakePhoto = useCallback((barcode: string) => {
+    retakeBarcodeRef.current = barcode;
+    retakeInputRef.current?.click();
+  }, []);
+
+  const handleRetakeFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const barcode = retakeBarcodeRef.current;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const imageData = reader.result as string;
+        imageDataRef.current.set(barcode, imageData);
+        runOcr(barcode, imageData);
+      };
+      reader.readAsDataURL(file);
+      // Reset so the same file can be selected again if needed
+      e.target.value = '';
     },
     [runOcr]
   );
@@ -467,14 +493,25 @@ export default function PalletVerifyPage({
                               {box.weight > 0 && <span>⚖️ {box.weight} kg</span>}
                               {box.expiry && <span>📅 {box.expiry}</span>}
                             </div>
-                            {canRetry && (
-                              <button
-                                onClick={() => handleRetryOcr(box.barcode)}
-                                className="mt-2 flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 hover:bg-orange-200 rounded-lg px-3 py-1 transition"
-                              >
-                                <RefreshCw className="w-3 h-3" />
-                                Retry OCR
-                              </button>
+                            {isFailed && (
+                              <div className="mt-2 flex gap-2 flex-wrap">
+                                <button
+                                  onClick={() => handleRetakePhoto(box.barcode)}
+                                  className="flex items-center gap-1 text-xs text-blue-700 font-semibold bg-blue-100 hover:bg-blue-200 rounded-lg px-3 py-1 transition"
+                                >
+                                  <Camera className="w-3 h-3" />
+                                  Retake Photo
+                                </button>
+                                {canRetry && (
+                                  <button
+                                    onClick={() => handleRetryOcr(box.barcode)}
+                                    className="flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 hover:bg-orange-200 rounded-lg px-3 py-1 transition"
+                                  >
+                                    <RefreshCw className="w-3 h-3" />
+                                    Retry OCR
+                                  </button>
+                                )}
+                              </div>
                             )}
                           </div>
                         );
@@ -527,11 +564,22 @@ export default function PalletVerifyPage({
                             <div className="flex gap-4 text-gray-500 text-xs mt-1">
                               {box.weight > 0 && <span>⚖️ {box.weight} kg</span>}
                             </div>
-                            {canRetry && (
-                              <button onClick={() => handleRetryOcr(box.barcode)} className="mt-2 flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 hover:bg-orange-200 rounded-lg px-3 py-1 transition">
-                                <RefreshCw className="w-3 h-3" />
-                                Retry OCR
-                              </button>
+                            {isFailed && (
+                              <div className="mt-2 flex gap-2 flex-wrap">
+                                <button
+                                  onClick={() => handleRetakePhoto(box.barcode)}
+                                  className="flex items-center gap-1 text-xs text-blue-700 font-semibold bg-blue-100 hover:bg-blue-200 rounded-lg px-3 py-1 transition"
+                                >
+                                  <Camera className="w-3 h-3" />
+                                  Retake Photo
+                                </button>
+                                {canRetry && (
+                                  <button onClick={() => handleRetryOcr(box.barcode)} className="flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 hover:bg-orange-200 rounded-lg px-3 py-1 transition">
+                                    <RefreshCw className="w-3 h-3" />
+                                    Retry OCR
+                                  </button>
+                                )}
+                              </div>
                             )}
                           </div>
                         );
@@ -618,14 +666,25 @@ export default function PalletVerifyPage({
                         )}
                         {box.expiry && <span>📅 {box.expiry}</span>}
                       </div>
-                      {canRetry && (
-                        <button
-                          onClick={() => handleRetryOcr(box.barcode)}
-                          className="mt-2 flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 hover:bg-orange-200 rounded-lg px-3 py-1 transition"
-                        >
-                          <RefreshCw className="w-3 h-3" />
-                          Retry OCR
-                        </button>
+                      {isFailed && (
+                        <div className="mt-2 flex gap-2 flex-wrap">
+                          <button
+                            onClick={() => handleRetakePhoto(box.barcode)}
+                            className="flex items-center gap-1 text-xs text-blue-700 font-semibold bg-blue-100 hover:bg-blue-200 rounded-lg px-3 py-1 transition"
+                          >
+                            <Camera className="w-3 h-3" />
+                            Retake Photo
+                          </button>
+                          {canRetry && (
+                            <button
+                              onClick={() => handleRetryOcr(box.barcode)}
+                              className="flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 hover:bg-orange-200 rounded-lg px-3 py-1 transition"
+                            >
+                              <RefreshCw className="w-3 h-3" />
+                              Retry OCR
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
                   );
@@ -635,6 +694,16 @@ export default function PalletVerifyPage({
           )}
         </div>
       )}
+
+      {/* Hidden file input for retaking photos — opens camera on mobile */}
+      <input
+        ref={retakeInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={handleRetakeFileChange}
+      />
 
       {/* Footer Actions */}
       <div className="p-4 bg-white border-t space-y-2 sticky bottom-0">
