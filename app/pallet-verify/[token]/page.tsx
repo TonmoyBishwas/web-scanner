@@ -155,11 +155,11 @@ export default function PalletVerifyPage({
           );
           setUnified(ocrData.unified ?? true);
           setMismatches(ocrData.mismatches || []);
-          // Mark as done only when BOTH weight extracted AND image uploaded to Cloudinary
+          // OCR is done if weight was extracted. Image upload is audit-only and
+          // should not block the user if Cloudinary fails.
           const weightOk = result.weight > 0;
-          const imageOk = !!result.image_url;
           setOcrStatus((prev) =>
-            new Map(prev).set(barcode, weightOk && imageOk ? 'done' : 'failed')
+            new Map(prev).set(barcode, weightOk ? 'done' : 'failed')
           );
         } else {
           setOcrStatus((prev) => new Map(prev).set(barcode, 'failed'));
@@ -247,8 +247,9 @@ export default function PalletVerifyPage({
   }, [token]);
 
   const hasPendingOcr = scannedBoxes.some((b) => ocrStatus.get(b.barcode) === 'pending');
+  // Only block completion if weight could not be extracted (image upload failure is non-blocking)
   const hasFailedOcr = scannedBoxes.some(
-    (b) => (ocrStatus.get(b.barcode) === 'failed') || (ocrStatus.has(b.barcode) && b.weight === 0)
+    (b) => ocrStatus.get(b.barcode) === 'failed'
   );
 
   const isMix = session?.pallet_type === 'mix' && (session?.mix_items?.length ?? 0) > 0;
