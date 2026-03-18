@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle, XCircle, AlertTriangle, Package, Loader2, RefreshCw, Camera } from 'lucide-react';
+import { CheckCircle, XCircle, AlertTriangle, Package, Loader2, RefreshCw, ScanLine } from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
 import { normalizeString } from '@/lib/string-utils';
 import type { MixItem, PalletBoxScan, PalletSession, ParsedBarcode } from '@/types';
@@ -107,14 +107,16 @@ export default function PalletVerifyPage({
 
   // Track OCR status per barcode: 'pending' | 'done' | 'failed'
   const [ocrStatus, setOcrStatus] = useState<Map<string, OcrStatus>>(new Map());
+  // Local image data for thumbnail display (base64 from scanner)
+  const [imageDataMap, setImageDataMap] = useState<Map<string, string>>(new Map());
+  // Manual entry form values for failed-OCR boxes { item_name, weight, expiry }
+  const [manualEdits, setManualEdits] = useState<Map<string, { item_name: string; weight: string; expiry: string }>>(new Map());
+  const [savingBarcode, setSavingBarcode] = useState<string | null>(null);
 
   // Track processed barcodes locally for fast dedup
   const processedRef = useRef<Set<string>>(new Set());
   // Store imageData per barcode so we can retry OCR without re-scanning
   const imageDataRef = useRef<Map<string, string>>(new Map());
-  // Retake photo: hidden file input + which barcode is being retaken
-  const retakeInputRef = useRef<HTMLInputElement>(null);
-  const retakeBarcodeRef = useRef<string>('');
 
   // Load session on mount
   useEffect(() => {
@@ -141,6 +143,17 @@ export default function PalletVerifyPage({
     fetchSession();
   }, [token]);
 
+  const initManualEdit = useCallback((barcode: string, partial: Partial<PalletBoxScan>) => {
+    setManualEdits((prev) => {
+      if (prev.has(barcode)) return prev; // don't overwrite if already editing
+      return new Map(prev).set(barcode, {
+        item_name: partial.item_name || '',
+        weight: partial.weight && partial.weight > 0 ? String(partial.weight) : '',
+        expiry: partial.expiry || '',
+      });
+    });
+  }, []);
+
   const runOcr = useCallback(
     async (barcode: string, imageData: string) => {
       setOcrStatus((prev) => new Map(prev).set(barcode, 'pending'));
@@ -158,21 +171,27 @@ export default function PalletVerifyPage({
           );
           setUnified(ocrData.unified ?? true);
           setMismatches(ocrData.mismatches || []);
-          // OCR is done if weight was extracted. Image upload is audit-only and
-          // should not block the user if Cloudinary fails.
           const weightOk = result.weight > 0;
           setOcrStatus((prev) =>
             new Map(prev).set(barcode, weightOk ? 'done' : 'failed')
           );
+          if (!weightOk) {
+            initManualEdit(barcode, result);
+          } else {
+            // Clear manual edit form if OCR succeeded on retry
+            setManualEdits((prev) => { const n = new Map(prev); n.delete(barcode); return n; });
+          }
         } else {
           setOcrStatus((prev) => new Map(prev).set(barcode, 'failed'));
+          initManualEdit(barcode, {});
         }
       } catch (err) {
         console.warn('[pallet-verify] OCR failed:', err);
         setOcrStatus((prev) => new Map(prev).set(barcode, 'failed'));
+        initManualEdit(barcode, {});
       }
     },
-    [token]
+    [token, initManualEdit]
   );
 
   const handleBarcodeDetected = useCallback(
@@ -181,9 +200,10 @@ export default function PalletVerifyPage({
       if (processedRef.current.has(barcode)) return;
       processedRef.current.add(barcode);
 
-      // Store imageData for potential retry
+      // Store imageData for retry and thumbnail display
       if (imageData) {
         imageDataRef.current.set(barcode, imageData);
+        setImageDataMap((prev) => new Map(prev).set(barcode, imageData));
       }
 
       try {
@@ -226,28 +246,43 @@ export default function PalletVerifyPage({
     [runOcr]
   );
 
-  const handleRetakePhoto = useCallback((barcode: string) => {
-    retakeBarcodeRef.current = barcode;
-    retakeInputRef.current?.click();
+  // Re-scan: remove from dedup set so the always-on scanner accepts it again
+  const handleRescan = useCallback((barcode: string) => {
+    processedRef.current.delete(barcode);
+    setOcrStatus((prev) => { const n = new Map(prev); n.delete(barcode); return n; });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
-  const handleRetakeFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      const barcode = retakeBarcodeRef.current;
-      const reader = new FileReader();
-      reader.onload = () => {
-        const imageData = reader.result as string;
-        imageDataRef.current.set(barcode, imageData);
-        runOcr(barcode, imageData);
-      };
-      reader.readAsDataURL(file);
-      // Reset so the same file can be selected again if needed
-      e.target.value = '';
-    },
-    [runOcr]
-  );
+  const handleManualSave = useCallback(async (barcode: string) => {
+    const edits = manualEdits.get(barcode);
+    if (!edits) return;
+    setSavingBarcode(barcode);
+    try {
+      const res = await fetch('/api/pallet-manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token,
+          barcode,
+          item_name: edits.item_name,
+          weight: parseFloat(edits.weight),
+          expiry: edits.expiry,
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.scan_result) {
+        setScannedBoxes((prev) => prev.map((b) => b.barcode === barcode ? data.scan_result as PalletBoxScan : b));
+        setOcrStatus((prev) => new Map(prev).set(barcode, 'done'));
+        setManualEdits((prev) => { const n = new Map(prev); n.delete(barcode); return n; });
+      } else {
+        setError(data.error || 'Failed to save manual entry.');
+      }
+    } catch {
+      setError('Network error. Please try again.');
+    } finally {
+      setSavingBarcode(null);
+    }
+  }, [token, manualEdits]);
 
   const handleGenerateLPN = useCallback(async () => {
     setPhase('generating');
@@ -424,7 +459,7 @@ export default function PalletVerifyPage({
             <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-3 mb-3 flex gap-2 items-start">
               <AlertTriangle className="text-yellow-500 w-5 h-5 mt-0.5 flex-shrink-0" />
               <div>
-                <p className="text-sm font-semibold text-yellow-800">Boxes don't fully match</p>
+                <p className="text-sm font-semibold text-yellow-800">Boxes don&apos;t fully match</p>
                 <p className="text-xs text-yellow-700 mt-1">
                   Mismatches: {mismatches.join(', ')}.{' '}
                   {isMix ? 'Check boxes are in the right group.' : 'This may not be a single-item pallet.'}
@@ -433,277 +468,217 @@ export default function PalletVerifyPage({
             </div>
           )}
 
-          {isMix && session?.mix_items ? (
-            // ── Mix pallet: grouped by item ──────────────────────────────
-            <div className="space-y-4">
-              {session.mix_items.map((mi, groupIdx) => {
-                const groupBoxes = scannedBoxes.filter(
-                  (b) => assignBoxToMixItem(b, session.mix_items!) === groupIdx
-                );
-                const readyBoxes = groupBoxes.filter((b) => b.weight > 0);
-                const required = mi.uniform_weight ? 2 : mi.expected_box_count;
-                const groupDone = readyBoxes.length >= required;
-                const itemLabel = mi.item_name_english || mi.item_name_hebrew || `Item ${groupIdx + 1}`;
+          {/* ── Shared box card renderer ───────────────────────────────── */}
+          {(() => {
+            const renderBoxCard = (
+              box: PalletBoxScan,
+              badge?: React.ReactNode,
+              extraWeightClass?: string,
+            ) => {
+              const status = ocrStatus.get(box.barcode);
+              const isPending = status === 'pending';
+              const isFailed = status === 'failed';
+              const canRetry = isFailed && imageDataRef.current.has(box.barcode);
+              const thumbSrc = imageDataMap.get(box.barcode) || box.image_url || null;
+              const edits = manualEdits.get(box.barcode);
+              const isSaving = savingBarcode === box.barcode;
 
-                return (
-                  <div key={groupIdx}>
-                    <div className="flex items-center justify-between mb-1">
-                      <p className="text-sm font-semibold text-gray-700 truncate max-w-[70%]">
-                        {itemLabel}
-                      </p>
-                      <span className={`text-xs font-medium px-2 py-0.5 rounded ${
-                        groupDone ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                      }`}>
-                        {readyBoxes.length}/{required} {groupDone ? '✓' : 'needed'}
-                      </span>
-                    </div>
-                    <p className="text-xs text-gray-400 mb-2">
-                      {mi.uniform_weight ? 'Same weight – 2 samples required' : 'Individual weights – scan all boxes'}
-                    </p>
+              let cardClass = 'bg-green-50 border-green-200';
+              if (isPending) cardClass = 'bg-gray-50 border-gray-200';
+              else if (isFailed) cardClass = 'bg-orange-50 border-orange-300';
+              else if (badge === 'reference') cardClass = 'bg-blue-50 border-blue-200';
 
-                    <div className="space-y-2">
-                      {groupBoxes.map((box, idx) => {
-                        const status = ocrStatus.get(box.barcode);
-                        const isPending = status === 'pending';
-                        const isFailed = status === 'failed' || (status === 'done' && box.weight === 0);
-                        const canRetry = isFailed && imageDataRef.current.has(box.barcode);
-                        let cardClass = 'bg-green-50 border-green-200';
-                        if (isPending) cardClass = 'bg-gray-50 border-gray-200';
-                        else if (isFailed) cardClass = 'bg-orange-50 border-orange-300';
-                        return (
-                          <div key={box.barcode} className={`rounded-xl p-3 border text-sm ${cardClass}`}>
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="font-mono text-xs text-gray-500 truncate max-w-[60%]">{box.barcode}</span>
-                              {isPending ? (
-                                <Loader2 className="animate-spin text-gray-400 w-4 h-4" />
-                              ) : isFailed ? (
-                                <AlertTriangle className="text-orange-500 w-4 h-4" />
-                              ) : (
-                                <CheckCircle className="text-green-500 w-4 h-4" />
-                              )}
-                            </div>
-                            {isPending && <p className="text-xs text-gray-400 italic">Reading box label...</p>}
-                            {isFailed && (
-                              <p className="text-xs text-orange-700 font-medium">
-                                {box.weight > 0 ? '⚠️ Image upload failed — tap Retry' : '⚠️ Could not read weight/name'}
-                              </p>
-                            )}
-                            {box.item_name && <p className="text-gray-700 font-medium truncate">{box.item_name}</p>}
-                            <div className="flex gap-4 text-gray-500 text-xs mt-1">
-                              {box.weight > 0 && <span>⚖️ {box.weight} kg</span>}
-                              {box.expiry && <span>📅 {box.expiry}</span>}
-                            </div>
-                            {isFailed && (
-                              <div className="mt-2 flex gap-2 flex-wrap">
-                                <button
-                                  onClick={() => handleRetakePhoto(box.barcode)}
-                                  className="flex items-center gap-1 text-xs text-blue-700 font-semibold bg-blue-100 hover:bg-blue-200 rounded-lg px-3 py-1 transition"
-                                >
-                                  <Camera className="w-3 h-3" />
-                                  Retake Photo
-                                </button>
-                                {canRetry && (
-                                  <button
-                                    onClick={() => handleRetryOcr(box.barcode)}
-                                    className="flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 hover:bg-orange-200 rounded-lg px-3 py-1 transition"
-                                  >
-                                    <RefreshCw className="w-3 h-3" />
-                                    Retry OCR
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                      {groupBoxes.length === 0 && (
-                        <p className="text-xs text-gray-400 italic pl-1">No boxes scanned yet</p>
+              return (
+                <div key={box.barcode} className={`rounded-xl p-3 border text-sm ${cardClass}`}>
+                  {/* Top row: barcode + status icon */}
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-mono text-xs text-gray-500 truncate max-w-[55%]">{box.barcode}</span>
+                    <div className="flex items-center gap-1.5">
+                      {badge === 'reference' && (
+                        <span className="text-xs bg-blue-200 text-blue-800 rounded px-2 py-0.5 font-medium">Reference</span>
+                      )}
+                      {isPending && <Loader2 className="animate-spin text-gray-400 w-4 h-4" />}
+                      {!isPending && isFailed && <AlertTriangle className="text-orange-500 w-4 h-4" />}
+                      {!isPending && !isFailed && badge !== 'reference' && (
+                        extraWeightClass
+                          ? <XCircle className="text-red-500 w-4 h-4" />
+                          : <CheckCircle className="text-green-500 w-4 h-4" />
                       )}
                     </div>
+                  </div>
 
-                    {mi.uniform_weight && readyBoxes.length >= 2 && (
-                      <p className="text-xs text-blue-600 mt-1 pl-1">
-                        ℹ️ {mi.expected_box_count - readyBoxes.length} more box{mi.expected_box_count - readyBoxes.length === 1 ? '' : 'es'} will be calculated from avg weight
-                      </p>
+                  {/* Image thumbnail + OCR data side by side */}
+                  <div className="flex gap-2 mt-1">
+                    {thumbSrc && (
+                      <img
+                        src={thumbSrc}
+                        alt="box label"
+                        className="w-20 h-20 object-cover rounded-lg border border-gray-200 flex-shrink-0"
+                      />
                     )}
-                  </div>
-                );
-              })}
-
-              {/* Unassigned boxes (OCR not done yet or item name didn't match) */}
-              {(() => {
-                const unassigned = scannedBoxes.filter(
-                  (b) => assignBoxToMixItem(b, session.mix_items!) === -1
-                );
-                if (unassigned.length === 0) return null;
-                return (
-                  <div>
-                    <p className="text-sm font-semibold text-gray-500 mb-1">Unassigned</p>
-                    <p className="text-xs text-gray-400 mb-2">Waiting for OCR to identify item</p>
-                    <div className="space-y-2">
-                      {unassigned.map((box) => {
-                        const status = ocrStatus.get(box.barcode);
-                        const isPending = status === 'pending' || !status;
-                        const isFailed = status === 'failed' || (status === 'done' && box.weight === 0);
-                        const ocrDoneButUnmatched = status === 'done' && box.weight > 0 && box.item_name_hebrew;
-                        const canRetry = isFailed && imageDataRef.current.has(box.barcode);
-                        return (
-                          <div key={box.barcode} className="rounded-xl p-3 border bg-orange-50 border-orange-300 text-sm">
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="font-mono text-xs text-gray-500 truncate max-w-[60%]">{box.barcode}</span>
-                              {isPending ? <Loader2 className="animate-spin text-gray-400 w-4 h-4" /> : <AlertTriangle className="text-orange-500 w-4 h-4" />}
-                            </div>
-                            {isPending && <p className="text-xs text-gray-400 italic">Reading box label...</p>}
-                            {isFailed && <p className="text-xs text-orange-700 font-medium">⚠️ Could not identify item</p>}
-                            {ocrDoneButUnmatched && (
-                              <p className="text-xs text-orange-700 font-medium">
-                                ⚠️ Name doesn&apos;t match any item — OCR read: &quot;{box.item_name_hebrew}&quot;
-                              </p>
+                    <div className="flex-1 min-w-0">
+                      {isPending && <p className="text-xs text-gray-400 italic mt-1">Reading box label...</p>}
+                      {!isPending && !isFailed && (
+                        <>
+                          {box.item_name && <p className="text-gray-800 font-semibold truncate">{box.item_name}</p>}
+                          <div className="flex gap-3 text-gray-500 text-xs mt-1 flex-wrap">
+                            {box.weight > 0 && (
+                              <span className={extraWeightClass || ''}>⚖️ {box.weight} kg</span>
                             )}
-                            {box.item_name && <p className="text-gray-700 font-medium truncate">{box.item_name}</p>}
-                            <div className="flex gap-4 text-gray-500 text-xs mt-1">
-                              {box.weight > 0 && <span>⚖️ {box.weight} kg</span>}
-                            </div>
-                            {isFailed && (
-                              <div className="mt-2 flex gap-2 flex-wrap">
-                                <button
-                                  onClick={() => handleRetakePhoto(box.barcode)}
-                                  className="flex items-center gap-1 text-xs text-blue-700 font-semibold bg-blue-100 hover:bg-blue-200 rounded-lg px-3 py-1 transition"
-                                >
-                                  <Camera className="w-3 h-3" />
-                                  Retake Photo
-                                </button>
-                                {canRetry && (
-                                  <button onClick={() => handleRetryOcr(box.barcode)} className="flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 hover:bg-orange-200 rounded-lg px-3 py-1 transition">
-                                    <RefreshCw className="w-3 h-3" />
-                                    Retry OCR
-                                  </button>
-                                )}
-                              </div>
-                            )}
+                            {box.expiry && <span>📅 {box.expiry}</span>}
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-          ) : (
-            // ── Single-item pallet: flat list ─────────────────────────────
-            <>
-              <h2 className="text-sm font-semibold text-gray-600 mb-2">Scanned Boxes</h2>
-              <div className="space-y-2">
-                {scannedBoxes.map((box, idx) => {
-                  const isFirst = idx === 0;
-                  const firstBox = scannedBoxes[0];
-                  const status = ocrStatus.get(box.barcode);
-                  const isPending = status === 'pending';
-                  const isFailed = status === 'failed' || (status === 'done' && box.weight === 0);
-                  const canRetry = isFailed && imageDataRef.current.has(box.barcode);
-
-                  const nameMatch =
-                    !box.item_name ||
-                    !firstBox.item_name ||
-                    namesMatchUI(
-                      firstBox.item_name,
-                      firstBox.item_name_hebrew || '',
-                      box.item_name,
-                      box.item_name_hebrew || ''
-                    );
-                  const weightOk =
-                    !box.weight ||
-                    !firstBox.weight ||
-                    Math.abs(box.weight - firstBox.weight) <= 0.5;
-
-                  let cardClass = 'bg-blue-50 border-blue-200';
-                  if (!isFirst) {
-                    if (isPending) cardClass = 'bg-gray-50 border-gray-200';
-                    else if (isFailed) cardClass = 'bg-orange-50 border-orange-300';
-                    else if (!nameMatch) cardClass = 'bg-red-50 border-red-200';
-                    else cardClass = 'bg-green-50 border-green-200';
-                  }
-
-                  return (
-                    <div key={box.barcode} className={`rounded-xl p-3 border text-sm ${cardClass}`}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-mono text-xs text-gray-500 truncate max-w-[60%]">
-                          {box.barcode}
-                        </span>
-                        {isFirst ? (
-                          <span className="text-xs bg-blue-200 text-blue-800 rounded px-2 py-0.5 font-medium">
-                            Reference
-                          </span>
-                        ) : isPending ? (
-                          <Loader2 className="animate-spin text-gray-400 w-4 h-4" />
-                        ) : isFailed ? (
-                          <AlertTriangle className="text-orange-500 w-4 h-4" />
-                        ) : nameMatch ? (
-                          <CheckCircle className="text-green-500 w-4 h-4" />
-                        ) : (
-                          <XCircle className="text-red-500 w-4 h-4" />
-                        )}
-                      </div>
-
-                      {isPending && (
-                        <p className="text-xs text-gray-400 italic">Reading box label...</p>
+                        </>
                       )}
                       {isFailed && (
-                        <p className="text-xs text-orange-700 font-medium">
-                          {box.weight > 0
-                            ? '⚠️ Image upload failed — tap Retry to upload'
-                            : '⚠️ Could not read weight/name from label'}
+                        <p className="text-xs text-orange-700 font-medium mt-1">
+                          ⚠️ OCR failed — enter details below or re-scan
                         </p>
                       )}
-                      {box.item_name && (
-                        <p className="text-gray-700 font-medium truncate">{box.item_name}</p>
-                      )}
-                      <div className="flex gap-4 text-gray-500 text-xs mt-1">
-                        {box.weight > 0 && (
-                          <span className={!weightOk && !isFirst ? 'text-orange-600 font-semibold' : ''}>
-                            ⚖️ {box.weight} kg
-                          </span>
-                        )}
-                        {box.expiry && <span>📅 {box.expiry}</span>}
+                    </div>
+                  </div>
+
+                  {/* Manual entry form — only for failed OCR */}
+                  {isFailed && edits !== undefined && (
+                    <div className="mt-3 space-y-2 border-t border-orange-200 pt-3">
+                      <p className="text-xs font-semibold text-gray-600">Enter details manually:</p>
+                      <input
+                        type="text"
+                        placeholder="Item name"
+                        value={edits.item_name}
+                        onChange={(e) => setManualEdits((prev) => new Map(prev).set(box.barcode, { ...edits, item_name: e.target.value }))}
+                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                      <div className="flex gap-2">
+                        <input
+                          type="number"
+                          placeholder="Weight (kg)"
+                          value={edits.weight}
+                          onChange={(e) => setManualEdits((prev) => new Map(prev).set(box.barcode, { ...edits, weight: e.target.value }))}
+                          className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          step="0.1"
+                          min="0"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Expiry (YYYY-MM-DD)"
+                          value={edits.expiry}
+                          onChange={(e) => setManualEdits((prev) => new Map(prev).set(box.barcode, { ...edits, expiry: e.target.value }))}
+                          className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
                       </div>
-                      {isFailed && (
-                        <div className="mt-2 flex gap-2 flex-wrap">
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleManualSave(box.barcode)}
+                          disabled={isSaving || !edits.weight || parseFloat(edits.weight) <= 0}
+                          className="flex-1 flex items-center justify-center gap-1 text-xs font-semibold bg-green-600 hover:bg-green-700 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-lg px-3 py-1.5 transition"
+                        >
+                          {isSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : '✓ Save'}
+                        </button>
+                        <button
+                          onClick={() => handleRescan(box.barcode)}
+                          className="flex items-center gap-1 text-xs text-blue-700 font-semibold bg-blue-100 hover:bg-blue-200 rounded-lg px-3 py-1.5 transition"
+                        >
+                          <ScanLine className="w-3 h-3" />
+                          Re-scan
+                        </button>
+                        {canRetry && (
                           <button
-                            onClick={() => handleRetakePhoto(box.barcode)}
-                            className="flex items-center gap-1 text-xs text-blue-700 font-semibold bg-blue-100 hover:bg-blue-200 rounded-lg px-3 py-1 transition"
+                            onClick={() => handleRetryOcr(box.barcode)}
+                            className="flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 hover:bg-orange-200 rounded-lg px-3 py-1.5 transition"
                           >
-                            <Camera className="w-3 h-3" />
-                            Retake Photo
+                            <RefreshCw className="w-3 h-3" />
+                            Retry
                           </button>
-                          {canRetry && (
-                            <button
-                              onClick={() => handleRetryOcr(box.barcode)}
-                              className="flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 hover:bg-orange-200 rounded-lg px-3 py-1 transition"
-                            >
-                              <RefreshCw className="w-3 h-3" />
-                              Retry OCR
-                            </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            };
+
+            if (isMix && session?.mix_items) {
+              // ── Mix pallet: grouped by item ──────────────────────────────
+              return (
+                <div className="space-y-4">
+                  {session.mix_items.map((mi, groupIdx) => {
+                    const groupBoxes = scannedBoxes.filter(
+                      (b) => assignBoxToMixItem(b, session.mix_items!) === groupIdx
+                    );
+                    const readyBoxes = groupBoxes.filter((b) => b.weight > 0);
+                    const required = mi.uniform_weight ? 2 : mi.expected_box_count;
+                    const groupDone = readyBoxes.length >= required;
+                    const itemLabel = mi.item_name_english || mi.item_name_hebrew || `Item ${groupIdx + 1}`;
+                    return (
+                      <div key={groupIdx}>
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-sm font-semibold text-gray-700 truncate max-w-[70%]">{itemLabel}</p>
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded ${groupDone ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                            {readyBoxes.length}/{required} {groupDone ? '✓' : 'needed'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-400 mb-2">
+                          {mi.uniform_weight ? 'Same weight – 2 samples required' : 'Individual weights – scan all boxes'}
+                        </p>
+                        <div className="space-y-2">
+                          {groupBoxes.map((box) => renderBoxCard(box))}
+                          {groupBoxes.length === 0 && (
+                            <p className="text-xs text-gray-400 italic pl-1">No boxes scanned yet</p>
                           )}
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
+                        {mi.uniform_weight && readyBoxes.length >= 2 && (
+                          <p className="text-xs text-blue-600 mt-1 pl-1">
+                            ℹ️ {mi.expected_box_count - readyBoxes.length} more box{mi.expected_box_count - readyBoxes.length === 1 ? '' : 'es'} will be calculated from avg weight
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Unassigned boxes */}
+                  {(() => {
+                    const unassigned = scannedBoxes.filter(
+                      (b) => assignBoxToMixItem(b, session.mix_items!) === -1
+                    );
+                    if (unassigned.length === 0) return null;
+                    return (
+                      <div>
+                        <p className="text-sm font-semibold text-gray-500 mb-1">Unassigned</p>
+                        <p className="text-xs text-gray-400 mb-2">Waiting for OCR to identify item</p>
+                        <div className="space-y-2">
+                          {unassigned.map((box) => renderBoxCard(box))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              );
+            }
+
+            // ── Single-item pallet: flat list ─────────────────────────────
+            const firstBox = scannedBoxes[0];
+            return (
+              <>
+                <h2 className="text-sm font-semibold text-gray-600 mb-2">Scanned Boxes</h2>
+                <div className="space-y-2">
+                  {scannedBoxes.map((box, idx) => {
+                    const isFirst = idx === 0;
+                    const weightOk = !box.weight || !firstBox.weight || Math.abs(box.weight - firstBox.weight) <= 0.5;
+                    const nameMatch = !box.item_name || !firstBox.item_name ||
+                      namesMatchUI(firstBox.item_name, firstBox.item_name_hebrew || '', box.item_name, box.item_name_hebrew || '');
+                    return renderBoxCard(
+                      box,
+                      isFirst ? 'reference' : undefined,
+                      !isFirst && (!nameMatch || !weightOk) ? 'text-orange-600 font-semibold' : undefined,
+                    );
+                  })}
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
 
-      {/* Hidden file input for retaking photos — opens camera on mobile */}
-      <input
-        ref={retakeInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="hidden"
-        onChange={handleRetakeFileChange}
-      />
 
       {/* Footer Actions */}
       <div className="p-4 bg-white border-t space-y-2 sticky bottom-0">
