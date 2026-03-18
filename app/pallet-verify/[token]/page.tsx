@@ -173,7 +173,8 @@ export default function PalletVerifyPage({
   );
 
   const handleBarcodeDetected = useCallback(
-    async (barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
+    async (rawBarcode: string, _parsed: ParsedBarcode, imageData?: string) => {
+      const barcode = rawBarcode.trim();
       if (processedRef.current.has(barcode)) return;
       processedRef.current.add(barcode);
 

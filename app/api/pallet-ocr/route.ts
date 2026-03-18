@@ -134,8 +134,9 @@ async function uploadBoxImage(
     : `data:image/jpeg;base64,${base64Image}`;
 
   const folder = documentNumber ? `Invoice ${documentNumber}` : 'pallet-boxes';
-  // Use last 12 chars of barcode to keep public_id short
-  const publicId = `pallet-box-${barcode.slice(-12)}-${Date.now()}`;
+  // Strip whitespace/newlines before using barcode in public_id (scanner can add trailing \n)
+  const safeBarcode = barcode.replace(/\s+/g, '').slice(-12);
+  const publicId = `pallet-box-${safeBarcode}-${Date.now()}`;
 
   try {
     const result = await cloudinary.uploader.upload(imageData, {
