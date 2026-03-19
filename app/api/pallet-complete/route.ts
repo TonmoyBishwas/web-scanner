@@ -22,103 +22,6 @@ function generateLPN(documentNumber: string, palletNumber: number): string {
   return `LPN-${date}-${docShort}-P${palletNumber}`;
 }
 
-/** Post a single record to Airtable, returning the raw response text on failure. */
-async function postToAirtable(
-  url: string,
-  token: string,
-  fields: Record<string, unknown>
-): Promise<{ ok: boolean; text: string }> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ records: [{ fields }] }),
-  });
-  const text = await res.text();
-  return { ok: res.ok, text };
-}
-
-async function savePalletToAirtable(
-  lpn: string,
-  session: PalletSession,
-  item: { sku: string; item_name: string; weight: number },
-  verifiedScanCount: number
-): Promise<void> {
-  const PALLETS_TABLE_ID =
-    process.env.AIRTABLE_PALLETS_TABLE_ID || process.env.AIRTABLE_PALLETS_TABLE;
-  const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN;
-  const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
-
-  if (!PALLETS_TABLE_ID || !AIRTABLE_TOKEN || !AIRTABLE_BASE_ID) {
-    console.warn('[pallet-complete] Airtable Pallets table not configured — skipping');
-    return;
-  }
-
-  const calcWeight = Math.round(item.weight * session.expected_box_count * 100) / 100;
-  const url = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${PALLETS_TABLE_ID}`;
-
-  // Collect Cloudinary image URLs from scanned boxes (uploaded by pallet-ocr).
-  const boxImageUrls = session.scanned_boxes
-    .filter((b) => b.image_url)
-    .map((b) => ({ url: b.image_url }));
-
-  type Fields = Record<string, unknown>;
-
-  // Start with all fields. On each UNKNOWN_FIELD_NAME error we strip the offending
-  // field and retry (up to 8 times). Core fields (LPN, weights, Chat ID) are never
-  // removed by this loop — they are only absent if Airtable itself rejects them.
-  let fields: Fields = {
-    LPN: lpn,
-    'Item Code': item.sku,
-    'Item Name': item.item_name,
-    'Document Number': session.invoice_document_number,
-    'Box Count': session.expected_box_count,
-    'OCR Box Weight (kg)': item.weight,
-    'Calculated Total Weight (kg)': calcWeight,
-    'Scale Weight (kg)': session.scale_weight,
-    'Verified Scan Count': verifiedScanCount,
-    Status: 'Verified',
-    'Chat ID': String(session.chat_id),
-    ...(boxImageUrls.length > 0 && { 'Box Scan Images': boxImageUrls }),
-  };
-
-  for (let attempt = 1; attempt <= 8; attempt++) {
-    const { ok, text } = await postToAirtable(url, AIRTABLE_TOKEN, fields);
-
-    if (ok) {
-      console.log(`[pallet-complete] Pallet saved to Airtable: ${lpn} (attempt ${attempt})`);
-      return;
-    }
-
-    console.error(`[pallet-complete] Airtable error (attempt ${attempt}):`, text.slice(0, 600));
-
-    // Try to extract and strip the UNKNOWN_FIELD_NAME field, then retry.
-    try {
-      const errJson = JSON.parse(text);
-      if (errJson?.error?.type === 'UNKNOWN_FIELD_NAME') {
-        const unknownField: string | undefined =
-          errJson?.error?.message?.match(/"([^"]+)"/)?.[1];
-        if (unknownField && fields[unknownField] !== undefined) {
-          console.warn(`[pallet-complete] Removing unknown field "${unknownField}" and retrying`);
-          const next = { ...fields };
-          delete next[unknownField];
-          fields = next;
-          continue; // retry with field removed
-        }
-      }
-    } catch {
-      // JSON parse failed — stop retrying
-    }
-
-    // Non-UNKNOWN_FIELD_NAME error, or couldn't identify the bad field — stop.
-    break;
-  }
-
-  console.error('[pallet-complete] Airtable save failed after retries for LPN:', lpn);
-}
-
 /** Strip Hebrew niqqud (vowel points U+05B0–U+05C7). */
 function stripNiqqud(s: string): string {
   return s.replace(/[\u05B0-\u05C7]/g, '');
@@ -198,7 +101,8 @@ function namesMatch(
 
 /**
  * POST /api/pallet-complete
- * Finalize pallet verification: generate LPN, save to Airtable, webhook to bot.
+ * Finalize pallet verification: generate LPN, webhook to bot.
+ * The bot is the sole Airtable writer — no Airtable calls here.
  *
  * Body: { token }
  */
@@ -283,20 +187,7 @@ export async function POST(request: NextRequest) {
           return { mi, groupBoxes, avgWeight: Math.round(avgWeight * 100) / 100, calcTotal };
         });
 
-        // Save one Airtable row per item
-        for (const { mi, groupBoxes, avgWeight } of itemStats) {
-          try {
-            await savePalletToAirtable(
-              lpn,
-              session,
-              { sku: mi.item_code, item_name: mi.item_name_english, weight: avgWeight },
-              groupBoxes.length
-            );
-          } catch (atErr) {
-            console.error('[pallet-complete] Airtable save failed for mix item (non-fatal):', atErr);
-          }
-        }
-
+        // Mark session completed
         session.status = 'completed';
         const redis = getRedisClient();
         await redis.set(palletKey(token), JSON.stringify(session), { ex: PALLET_SESSION_TTL });
@@ -318,7 +209,7 @@ export async function POST(request: NextRequest) {
           mismatches,
         };
 
-        // Fire webhook with mix payload
+        // Fire webhook — bot writes all Airtable data
         const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
         if (botUrl) {
           fetch(`${botUrl}/webhook/pallet-complete`, {
@@ -332,12 +223,14 @@ export async function POST(request: NextRequest) {
               items: itemStats.map(({ mi, groupBoxes, avgWeight, calcTotal }) => ({
                 item_code: mi.item_code,
                 item_name: mi.item_name_english,
+                item_name_hebrew: mi.item_name_hebrew,
                 box_count: mi.expected_box_count,
                 ocr_box_weight: avgWeight,
                 calculated_total_weight: calcTotal,
                 scanned_count: groupBoxes.length,
                 uniform_weight: mi.uniform_weight,
               })),
+              scanned_boxes: session.scanned_boxes,
               scale_weight: session.scale_weight,
               document_number: session.invoice_document_number,
               verified_scan_count: session.scanned_boxes.length,
@@ -386,17 +279,7 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        try {
-          await savePalletToAirtable(
-            lpn,
-            session,
-            { sku: itemCode, item_name: itemName, weight: perBoxWeight },
-            session.scanned_boxes.length
-          );
-        } catch (atErr) {
-          console.error('[pallet-complete] Airtable save failed (non-fatal):', atErr);
-        }
-
+        // Mark session completed
         session.status = 'completed';
         const redis = getRedisClient();
         await redis.set(palletKey(token), JSON.stringify(session), { ex: PALLET_SESSION_TTL });
@@ -414,6 +297,7 @@ export async function POST(request: NextRequest) {
           mismatches,
         };
 
+        // Fire webhook — bot writes all Airtable data
         const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
         if (botUrl) {
           fetch(`${botUrl}/webhook/pallet-complete`, {
@@ -432,6 +316,7 @@ export async function POST(request: NextRequest) {
               scale_weight: session.scale_weight,
               document_number: session.invoice_document_number,
               verified_scan_count: session.scanned_boxes.length,
+              scanned_boxes: session.scanned_boxes,
               mismatches,
             }),
           }).catch((err) => console.error('[pallet-complete] Bot webhook failed:', err));

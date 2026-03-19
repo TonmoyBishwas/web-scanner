@@ -31,6 +31,7 @@ export async function POST(request: NextRequest) {
       ocr_data,
       pallet_type,
       mix_items,
+      receipt_id,
     } = body;
 
     if (!chat_id || !pallet_number || !pallet_count || scale_weight == null || !expected_box_count) {
@@ -56,6 +57,7 @@ export async function POST(request: NextRequest) {
       created_at: new Date().toISOString(),
       pallet_type: pallet_type || 'single',
       mix_items: mix_items || [],
+      receipt_id: receipt_id || undefined,
     };
 
     const redis = getRedisClient();

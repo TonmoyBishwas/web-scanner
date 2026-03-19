@@ -252,6 +252,7 @@ export interface PalletSession {
   created_at: string;
   pallet_type?: 'single' | 'mix';
   mix_items?: MixItem[];
+  receipt_id?: string;
 }
 
 export interface PalletVerificationResult {
