@@ -73,12 +73,6 @@ function assignBoxToMixItem(box: PalletBoxScan, mixItems: MixItem[]): number {
       }
     }
   }
-  // Pass 4: barcode contains item_code (fallback when OCR returns a different brand name)
-  if (box.sku) {
-    for (let i = 0; i < mixItems.length; i++) {
-      if (mixItems[i].item_code && box.sku.includes(mixItems[i].item_code)) return i;
-    }
-  }
   return -1;
 }
 
