@@ -230,7 +230,10 @@ export async function POST(request: NextRequest) {
                 scanned_count: groupBoxes.length,
                 uniform_weight: mi.uniform_weight,
               })),
-              scanned_boxes: session.scanned_boxes,
+              scanned_boxes: session.scanned_boxes.map((box) => {
+                const idx = assignBoxToMixItem(box, session.mix_items!);
+                return { ...box, item_code: idx >= 0 ? session.mix_items![idx].item_code : '' };
+              }),
               scale_weight: session.scale_weight,
               document_number: session.invoice_document_number,
               verified_scan_count: session.scanned_boxes.length,
@@ -250,7 +253,16 @@ export async function POST(request: NextRequest) {
           firstOcrItem?.item_name_english ||
           firstOcrItem?.item_name_hebrew ||
           '';
-        const itemCode = firstBox?.sku || firstOcrItem?.item_code || '';
+        // Find the OCR item that matches this box by name (not sku which is a raw barcode)
+        const matchingOcrItem = session.ocr_data?.find((oi) =>
+          namesMatch(
+            firstBox?.item_name || '',
+            firstBox?.item_name_hebrew || '',
+            oi.item_name_english,
+            oi.item_name_hebrew,
+          )
+        ) ?? firstOcrItem;
+        const itemCode = matchingOcrItem?.item_code || firstOcrItem?.item_code || firstBox?.sku || '';
 
         const perBoxWeight = firstBox.weight;
         const calcWeight = Math.round(perBoxWeight * session.expected_box_count * 100) / 100;
@@ -316,7 +328,7 @@ export async function POST(request: NextRequest) {
               scale_weight: session.scale_weight,
               document_number: session.invoice_document_number,
               verified_scan_count: session.scanned_boxes.length,
-              scanned_boxes: session.scanned_boxes,
+              scanned_boxes: session.scanned_boxes.map((box) => ({ ...box, item_code: itemCode })),
               mismatches,
             }),
           }).catch((err) => console.error('[pallet-complete] Bot webhook failed:', err));
