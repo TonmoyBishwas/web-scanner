@@ -28,8 +28,17 @@ function hebrewWordsOverlap(a: string, b: string): boolean {
 }
 
 /** Assign a scanned box to a mix item index.
- *  Hebrew names checked across all items first, English as fallback. */
-function assignBoxToMixItem(box: PalletBoxScan, mixItems: MixItem[]): number {
+ *  Manual assignments (worker tap) are checked first; name matching is the fallback. */
+function assignBoxToMixItem(
+  box: PalletBoxScan,
+  mixItems: MixItem[],
+  manualAssignments?: Record<string, number>,
+): number {
+  // Pass 0: explicit manual assignment by worker
+  if (manualAssignments && box.barcode in manualAssignments) {
+    return manualAssignments[box.barcode];
+  }
+
   const normHeb = (s: string) => normalizeString(stripNiqqud(s));
 
   // Pass 1: Hebrew full-string match (niqqud-stripped)
@@ -63,10 +72,10 @@ function assignBoxToMixItem(box: PalletBoxScan, mixItems: MixItem[]): number {
 }
 
 /** Per-group uniformity check for mix pallets. Mutates mismatches array. */
-function computeMixUnified(boxes: PalletBoxScan[], mixItems: MixItem[], mismatches: string[]): boolean {
+function computeMixUnified(boxes: PalletBoxScan[], mixItems: MixItem[], mismatches: string[], manualAssignments?: Record<string, number>): boolean {
   let allUnified = true;
   for (let i = 0; i < mixItems.length; i++) {
-    const groupBoxes = boxes.filter((b) => assignBoxToMixItem(b, mixItems) === i && b.weight > 0);
+    const groupBoxes = boxes.filter((b) => assignBoxToMixItem(b, mixItems, manualAssignments) === i && b.weight > 0);
     if (groupBoxes.length < 2) continue;
     const ref = groupBoxes[0];
     for (const box of groupBoxes.slice(1)) {
@@ -246,7 +255,7 @@ export async function POST(request: NextRequest) {
 
       if (session.pallet_type === 'mix' && session.mix_items?.length) {
         // Only compare boxes within the same item group
-        unified = computeMixUnified(session.scanned_boxes, session.mix_items, mismatches);
+        unified = computeMixUnified(session.scanned_boxes, session.mix_items, mismatches, session.manual_assignments);
       } else {
         const boxesWithData = session.scanned_boxes.filter((b) => b.weight > 0);
         if (boxesWithData.length >= 2) {

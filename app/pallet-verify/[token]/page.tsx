@@ -46,8 +46,11 @@ function hebrewWordsOverlap(a: string, b: string): boolean {
 }
 
 /** Assign a scanned box to a mix item index.
- *  Hebrew names checked across all items first, English as fallback. */
-function assignBoxToMixItem(box: PalletBoxScan, mixItems: MixItem[]): number {
+ *  Manual assignments (worker tap) are checked first; name matching is the fallback. */
+function assignBoxToMixItem(box: PalletBoxScan, mixItems: MixItem[], manualAssignments?: Map<string, number>): number {
+  // Pass 0: explicit manual assignment by worker
+  if (manualAssignments?.has(box.barcode)) return manualAssignments.get(box.barcode)!;
+
   const normHeb = (s: string) => normalizeString(stripNiqqud(s));
 
   // Pass 1: Hebrew full-string match (niqqud-stripped)
@@ -112,6 +115,10 @@ export default function PalletVerifyPage({
   // Manual entry form values for failed-OCR boxes { item_name, weight, expiry }
   const [manualEdits, setManualEdits] = useState<Map<string, { item_name: string; weight: string; expiry: string }>>(new Map());
   const [savingBarcode, setSavingBarcode] = useState<string | null>(null);
+  // Manual box→item assignments made by worker tapping "Assign to item →"
+  const [manualAssignments, setManualAssignments] = useState<Map<string, number>>(new Map());
+  // Which unassigned box is currently showing the item picker
+  const [assigningBarcode, setAssigningBarcode] = useState<string | null>(null);
 
   // Track processed barcodes locally for fast dedup
   const processedRef = useRef<Set<string>>(new Set());
@@ -131,6 +138,9 @@ export default function PalletVerifyPage({
         const data: PalletSession = await res.json();
         setSession(data);
         setScannedBoxes(data.scanned_boxes || []);
+        if (data.manual_assignments) {
+          setManualAssignments(new Map(Object.entries(data.manual_assignments).map(([k, v]) => [k, v as number])));
+        }
         // Populate local dedup set
         (data.scanned_boxes || []).forEach((b) => processedRef.current.add(b.barcode));
         setPhase('scanning');
@@ -193,6 +203,21 @@ export default function PalletVerifyPage({
     },
     [token, initManualEdit]
   );
+
+  const handleAssign = useCallback(async (barcode: string, mixItemIndex: number) => {
+    // Optimistic update — move box out of Unassigned immediately
+    setManualAssignments((prev) => new Map(prev).set(barcode, mixItemIndex));
+    setAssigningBarcode(null);
+    try {
+      await fetch('/api/pallet-assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, barcode, mix_item_index: mixItemIndex }),
+      });
+    } catch (err) {
+      console.warn('[pallet-verify] Failed to persist manual assignment:', err);
+    }
+  }, [token]);
 
   const handleBarcodeDetected = useCallback(
     async (rawBarcode: string, _parsed: ParsedBarcode, imageData?: string) => {
@@ -323,7 +348,7 @@ export default function PalletVerifyPage({
     const mixItems = session.mix_items;
     const groups = mixItems.map((mi, i) => ({
       mi,
-      boxes: scannedBoxes.filter((b) => assignBoxToMixItem(b, mixItems) === i && b.weight > 0),
+      boxes: scannedBoxes.filter((b) => assignBoxToMixItem(b, mixItems, manualAssignments) === i && b.weight > 0),
     }));
     const allGroupsReady = groups.every((g) =>
       g.mi.uniform_weight ? g.boxes.length >= 2 : g.boxes.length >= g.mi.expected_box_count
@@ -603,7 +628,7 @@ export default function PalletVerifyPage({
                 <div className="space-y-4">
                   {session.mix_items.map((mi, groupIdx) => {
                     const groupBoxes = scannedBoxes.filter(
-                      (b) => assignBoxToMixItem(b, session.mix_items!) === groupIdx
+                      (b) => assignBoxToMixItem(b, session.mix_items!, manualAssignments) === groupIdx
                     );
                     const readyBoxes = groupBoxes.filter((b) => b.weight > 0);
                     const required = mi.uniform_weight ? 2 : mi.expected_box_count;
@@ -638,15 +663,46 @@ export default function PalletVerifyPage({
                   {/* Unassigned boxes */}
                   {(() => {
                     const unassigned = scannedBoxes.filter(
-                      (b) => assignBoxToMixItem(b, session.mix_items!) === -1
+                      (b) => assignBoxToMixItem(b, session.mix_items!, manualAssignments) === -1
                     );
                     if (unassigned.length === 0) return null;
                     return (
                       <div>
-                        <p className="text-sm font-semibold text-gray-500 mb-1">Unassigned</p>
-                        <p className="text-xs text-gray-400 mb-2">Waiting for OCR to identify item</p>
+                        <p className="text-sm font-semibold text-orange-500 mb-1">Unassigned</p>
+                        <p className="text-xs text-gray-400 mb-2">OCR could not identify item — tap to assign manually</p>
                         <div className="space-y-2">
-                          {unassigned.map((box) => renderBoxCard(box))}
+                          {unassigned.map((box) => (
+                            <div key={box.barcode}>
+                              {renderBoxCard(box)}
+                              {assigningBarcode === box.barcode ? (
+                                <div className="mt-2 border border-blue-200 rounded-xl p-3 bg-blue-50 space-y-2">
+                                  <p className="text-xs font-semibold text-gray-600">Assign to:</p>
+                                  {session.mix_items!.map((mi, i) => (
+                                    <button
+                                      key={i}
+                                      onClick={() => handleAssign(box.barcode, i)}
+                                      className="w-full text-left text-sm bg-white border border-blue-200 rounded-lg px-3 py-2 text-blue-800 active:bg-blue-100"
+                                    >
+                                      {mi.item_name_english || mi.item_name_hebrew}
+                                    </button>
+                                  ))}
+                                  <button
+                                    onClick={() => setAssigningBarcode(null)}
+                                    className="w-full text-xs text-gray-400 py-1"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => setAssigningBarcode(box.barcode)}
+                                  className="w-full mt-1 text-xs text-blue-600 border border-blue-200 rounded-xl py-2 bg-blue-50 active:bg-blue-100"
+                                >
+                                  Assign to item →
+                                </button>
+                              )}
+                            </div>
+                          ))}
                         </div>
                       </div>
                     );

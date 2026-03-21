@@ -253,6 +253,7 @@ export interface PalletSession {
   pallet_type?: 'single' | 'mix';
   mix_items?: MixItem[];
   receipt_id?: string;
+  manual_assignments?: Record<string, number>; // barcode → mix_items index
 }
 
 export interface PalletVerificationResult {

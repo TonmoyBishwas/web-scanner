@@ -42,8 +42,17 @@ function hebrewWordsOverlap(a: string, b: string): boolean {
 }
 
 /** Assign a scanned box to a mix item index.
- *  Hebrew names checked across all items first, English as fallback. */
-function assignBoxToMixItem(box: PalletBoxScan, mixItems: MixItem[]): number {
+ *  Manual assignments (worker tap) are checked first; name matching is the fallback. */
+function assignBoxToMixItem(
+  box: PalletBoxScan,
+  mixItems: MixItem[],
+  manualAssignments?: Record<string, number>,
+): number {
+  // Pass 0: explicit manual assignment by worker
+  if (manualAssignments && box.barcode in manualAssignments) {
+    return manualAssignments[box.barcode];
+  }
+
   const normHeb = (s: string) => normalizeString(stripNiqqud(s));
 
   // Pass 1: Hebrew full-string match (niqqud-stripped)
@@ -134,7 +143,7 @@ export async function POST(request: NextRequest) {
         const mixItems = session.mix_items!;
         for (const mi of mixItems) {
           const groupBoxes = session.scanned_boxes.filter(
-            (b) => assignBoxToMixItem(b, mixItems) === mixItems.indexOf(mi) && b.weight > 0
+            (b) => assignBoxToMixItem(b, mixItems, session.manual_assignments) === mixItems.indexOf(mi) && b.weight > 0
           );
           const required = mi.uniform_weight ? 2 : mi.expected_box_count;
           if (groupBoxes.length < required) {
@@ -175,7 +184,7 @@ export async function POST(request: NextRequest) {
         // Per-item: compute avg weight and calculated total
         const itemStats = mixItems.map((mi, i) => {
           const groupBoxes = session.scanned_boxes.filter(
-            (b) => assignBoxToMixItem(b, mixItems) === i && b.weight > 0
+            (b) => assignBoxToMixItem(b, mixItems, session.manual_assignments) === i && b.weight > 0
           );
           const avgWeight =
             groupBoxes.length > 0
@@ -231,7 +240,7 @@ export async function POST(request: NextRequest) {
                 uniform_weight: mi.uniform_weight,
               })),
               scanned_boxes: session.scanned_boxes.map((box) => {
-                const idx = assignBoxToMixItem(box, session.mix_items!);
+                const idx = assignBoxToMixItem(box, session.mix_items!, session.manual_assignments);
                 return { ...box, item_code: idx >= 0 ? session.mix_items![idx].item_code : '' };
               }),
               scale_weight: session.scale_weight,
