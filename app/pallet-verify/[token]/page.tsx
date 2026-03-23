@@ -113,7 +113,7 @@ export default function PalletVerifyPage({
   // Local image data for thumbnail display (base64 from scanner)
   const [imageDataMap, setImageDataMap] = useState<Map<string, string>>(new Map());
   // Manual entry form values for failed-OCR boxes { item_name, weight, expiry }
-  const [manualEdits, setManualEdits] = useState<Map<string, { item_name: string; weight: string; expiry: string }>>(new Map());
+  const [manualEdits, setManualEdits] = useState<Map<string, { item_name: string; item_name_hebrew?: string; weight: string; expiry: string; selected_item_index?: number }>>(new Map());
   const [savingBarcode, setSavingBarcode] = useState<string | null>(null);
   // Manual box→item assignments made by worker tapping "Assign to item →"
   const [manualAssignments, setManualAssignments] = useState<Map<string, number>>(new Map());
@@ -219,6 +219,24 @@ export default function PalletVerifyPage({
     }
   }, [token]);
 
+  const selectMixItemForEdit = useCallback((barcode: string, itemIndex: number, mi: MixItem) => {
+    setManualEdits((prev) => new Map(prev).set(barcode, {
+      ...(prev.get(barcode) ?? { weight: '', expiry: '' }),
+      item_name: mi.item_name_english || mi.item_name_hebrew || '',
+      item_name_hebrew: mi.item_name_hebrew || '',
+      selected_item_index: itemIndex,
+    }));
+  }, []);
+
+  const clearMixItemSelection = useCallback((barcode: string) => {
+    setManualEdits((prev) => {
+      const existing = prev.get(barcode);
+      if (!existing) return prev;
+      const { selected_item_index: _idx, item_name: _n, item_name_hebrew: _nh, ...rest } = existing;
+      return new Map(prev).set(barcode, { ...rest, item_name: '', item_name_hebrew: '' });
+    });
+  }, []);
+
   const handleBarcodeDetected = useCallback(
     async (rawBarcode: string, _parsed: ParsedBarcode, imageData?: string) => {
       const barcode = rawBarcode.trim();
@@ -298,6 +316,10 @@ export default function PalletVerifyPage({
       if (data.success && data.scan_result) {
         setScannedBoxes((prev) => prev.map((b) => b.barcode === barcode ? data.scan_result as PalletBoxScan : b));
         setOcrStatus((prev) => new Map(prev).set(barcode, 'done'));
+        // If worker selected a mix item, persist the assignment so routing is definitive
+        if (edits.selected_item_index !== undefined) {
+          handleAssign(barcode, edits.selected_item_index);
+        }
         setManualEdits((prev) => { const n = new Map(prev); n.delete(barcode); return n; });
       } else {
         setError(data.error || 'Failed to save manual entry.');
@@ -307,7 +329,7 @@ export default function PalletVerifyPage({
     } finally {
       setSavingBarcode(null);
     }
-  }, [token, manualEdits]);
+  }, [token, manualEdits, handleAssign]);
 
   const handleGenerateLPN = useCallback(async () => {
     setPhase('generating');
@@ -564,58 +586,99 @@ export default function PalletVerifyPage({
 
                   {/* Manual entry form — only for failed OCR */}
                   {isFailed && edits !== undefined && (
-                    <div className="mt-3 space-y-2 border-t border-orange-200 pt-3">
-                      <p className="text-xs font-semibold text-gray-600">Enter details manually:</p>
-                      <input
-                        type="text"
-                        placeholder="Item name"
-                        value={edits.item_name}
-                        onChange={(e) => setManualEdits((prev) => new Map(prev).set(box.barcode, { ...edits, item_name: e.target.value }))}
-                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                      />
-                      <div className="flex gap-2">
-                        <input
-                          type="number"
-                          placeholder="Weight (kg)"
-                          value={edits.weight}
-                          onChange={(e) => setManualEdits((prev) => new Map(prev).set(box.barcode, { ...edits, weight: e.target.value }))}
-                          className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                          step="0.1"
-                          min="0"
-                        />
-                        <input
-                          type="text"
-                          placeholder="Expiry (YYYY-MM-DD)"
-                          value={edits.expiry}
-                          onChange={(e) => setManualEdits((prev) => new Map(prev).set(box.barcode, { ...edits, expiry: e.target.value }))}
-                          className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                        />
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => handleManualSave(box.barcode)}
-                          disabled={isSaving || !edits.weight || parseFloat(edits.weight) <= 0}
-                          className="flex-1 flex items-center justify-center gap-1 text-xs font-semibold bg-green-600 hover:bg-green-700 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-lg px-3 py-1.5 transition"
-                        >
-                          {isSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : '✓ Save'}
-                        </button>
-                        <button
-                          onClick={() => handleRescan(box.barcode)}
-                          className="flex items-center gap-1 text-xs text-blue-700 font-semibold bg-blue-100 hover:bg-blue-200 rounded-lg px-3 py-1.5 transition"
-                        >
-                          <ScanLine className="w-3 h-3" />
-                          Re-scan
-                        </button>
-                        {canRetry && (
-                          <button
-                            onClick={() => handleRetryOcr(box.barcode)}
-                            className="flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 hover:bg-orange-200 rounded-lg px-3 py-1.5 transition"
-                          >
-                            <RefreshCw className="w-3 h-3" />
-                            Retry
-                          </button>
-                        )}
-                      </div>
+                    <div className="mt-3 border-t border-orange-200 pt-3">
+                      {/* Mix pallet: Step 1 — pick which item this box belongs to */}
+                      {isMix && edits.selected_item_index === undefined ? (
+                        <div className="space-y-2">
+                          <p className="text-xs font-semibold text-gray-700 mb-1">Which item is this box?</p>
+                          {session!.mix_items!.map((mi, i) => (
+                            <button
+                              key={i}
+                              onClick={() => selectMixItemForEdit(box.barcode, i, mi)}
+                              className="w-full text-left text-sm bg-white border border-orange-200 rounded-lg px-3 py-2 text-gray-800 font-medium active:bg-orange-50"
+                            >
+                              {mi.item_name_english || mi.item_name_hebrew}
+                            </button>
+                          ))}
+                          <div className="flex gap-2 pt-1">
+                            <button
+                              onClick={() => handleRescan(box.barcode)}
+                              className="flex items-center gap-1 text-xs text-blue-700 font-semibold bg-blue-100 rounded-lg px-3 py-1.5"
+                            >
+                              <ScanLine className="w-3 h-3" /> Re-scan
+                            </button>
+                            {canRetry && (
+                              <button
+                                onClick={() => handleRetryOcr(box.barcode)}
+                                className="flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 rounded-lg px-3 py-1.5"
+                              >
+                                <RefreshCw className="w-3 h-3" /> Retry OCR
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        /* Step 2 (mix) or direct form (single): weight + expiry */
+                        <div className="space-y-2">
+                          {/* Show resolved item name as a label */}
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs font-semibold text-gray-700 truncate">
+                              📦 {isMix
+                                ? edits.item_name
+                                : (session?.ocr_data?.[0]?.item_name_english || box.item_name || 'Unknown item')}
+                            </p>
+                            {isMix && (
+                              <button
+                                onClick={() => clearMixItemSelection(box.barcode)}
+                                className="text-xs text-blue-500 flex-shrink-0 ml-2"
+                              >
+                                Change
+                              </button>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            <input
+                              type="number"
+                              placeholder="Weight (kg)"
+                              value={edits.weight}
+                              onChange={(e) => setManualEdits((prev) => new Map(prev).set(box.barcode, { ...edits, weight: e.target.value }))}
+                              className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                              step="0.1"
+                              min="0"
+                            />
+                            <input
+                              type="text"
+                              placeholder="Expiry (YYYY-MM-DD)"
+                              value={edits.expiry}
+                              onChange={(e) => setManualEdits((prev) => new Map(prev).set(box.barcode, { ...edits, expiry: e.target.value }))}
+                              className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                            />
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleManualSave(box.barcode)}
+                              disabled={isSaving || !edits.weight || parseFloat(edits.weight) <= 0}
+                              className="flex-1 flex items-center justify-center gap-1 text-xs font-semibold bg-green-600 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-lg px-3 py-1.5 transition"
+                            >
+                              {isSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : '✓ Save'}
+                            </button>
+                            <button
+                              onClick={() => handleRescan(box.barcode)}
+                              className="flex items-center gap-1 text-xs text-blue-700 font-semibold bg-blue-100 rounded-lg px-3 py-1.5"
+                            >
+                              <ScanLine className="w-3 h-3" /> Re-scan
+                            </button>
+                            {canRetry && (
+                              <button
+                                onClick={() => handleRetryOcr(box.barcode)}
+                                className="flex items-center gap-1 text-xs text-orange-700 font-semibold bg-orange-100 rounded-lg px-3 py-1.5"
+                              >
+                                <RefreshCw className="w-3 h-3" /> Retry
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
