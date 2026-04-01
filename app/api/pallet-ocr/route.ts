@@ -79,7 +79,8 @@ function computeMixUnified(boxes: PalletBoxScan[], mixItems: MixItem[], mismatch
     if (groupBoxes.length < 2) continue;
     const ref = groupBoxes[0];
     for (const box of groupBoxes.slice(1)) {
-      if (Math.abs(box.weight - ref.weight) > 0.5) {
+      const weightPct = ref.weight > 0 ? Math.abs(box.weight - ref.weight) / ref.weight : 0;
+      if (weightPct > 0.05) {
         if (!mismatches.includes('weight')) mismatches.push('weight');
         allUnified = false;
       }

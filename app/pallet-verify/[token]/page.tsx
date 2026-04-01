@@ -642,7 +642,7 @@ export default function PalletVerifyPage({
                               placeholder="Weight (kg)"
                               value={edits.weight}
                               onChange={(e) => setManualEdits((prev) => new Map(prev).set(box.barcode, { ...edits, weight: e.target.value }))}
-                              className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                              className="flex-1 text-sm text-gray-900 bg-white border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
                               step="0.1"
                               min="0"
                             />
@@ -651,7 +651,7 @@ export default function PalletVerifyPage({
                               placeholder="Expiry (YYYY-MM-DD)"
                               value={edits.expiry}
                               onChange={(e) => setManualEdits((prev) => new Map(prev).set(box.barcode, { ...edits, expiry: e.target.value }))}
-                              className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                              className="flex-1 text-sm text-gray-900 bg-white border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
                             />
                           </div>
                           <div className="flex gap-2">
@@ -782,7 +782,8 @@ export default function PalletVerifyPage({
                 <div className="space-y-2">
                   {scannedBoxes.map((box, idx) => {
                     const isFirst = idx === 0;
-                    const weightOk = !box.weight || !firstBox.weight || Math.abs(box.weight - firstBox.weight) <= 0.5;
+                    const weightOk = !box.weight || !firstBox.weight ||
+                      (firstBox.weight > 0 && Math.abs(box.weight - firstBox.weight) / firstBox.weight <= 0.05);
                     const nameMatch = !box.item_name || !firstBox.item_name ||
                       namesMatchUI(firstBox.item_name, firstBox.item_name_hebrew || '', box.item_name, box.item_name_hebrew || '');
                     return renderBoxCard(
