@@ -73,6 +73,19 @@ export async function POST(request: NextRequest) {
       } satisfies BoxLookupResult);
     }
 
+    // If session is LPN-restricted, verify box belongs to that pallet
+    if (session.pallet_record_id) {
+      const boxPalletIds: string[] = Array.isArray(fields['Pallet']) ? fields['Pallet'] : [];
+      if (!boxPalletIds.includes(session.pallet_record_id)) {
+        const lpn = session.document_number || 'the requested pallet';
+        return NextResponse.json({
+          found: false,
+          error: 'wrong_pallet',
+          message: `Box is not on pallet ${lpn}`,
+        } satisfies BoxLookupResult);
+      }
+    }
+
     // Get linked inventory batch for item name, supplier, etc.
     let itemName = '';
     let supplier = '';

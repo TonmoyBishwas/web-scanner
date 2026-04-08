@@ -95,6 +95,7 @@ export interface ScanSession {
     role: string;
     phone?: string;
   };
+  pallet_record_id?: string;
 }
 
 export interface SessionResponse {
@@ -207,7 +208,7 @@ export interface BoxLookupResult {
     received_date: string;
     production_date?: string;
   };
-  error?: 'not_found' | 'already_issued' | 'error';
+  error?: 'not_found' | 'already_issued' | 'error' | 'wrong_pallet';
   message?: string;
 }
 
@@ -253,6 +254,7 @@ export interface PalletSession {
   pallet_type?: 'single' | 'mix';
   mix_items?: MixItem[];
   receipt_id?: string;
+  pallet_record_id?: string;
   manual_assignments?: Record<string, number>; // barcode → mix_items index
 }
 
