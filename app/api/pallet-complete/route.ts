@@ -152,7 +152,7 @@ export async function POST(request: NextRequest) {
           const isUniform = (() => {
             if (groupBoxes.length < 2) return false;
             const ref = groupBoxes[0].weight;
-            return groupBoxes.every((b) => ref > 0 && Math.abs(b.weight - ref) / ref <= 0.05);
+            return groupBoxes.every((b) => Math.abs(b.weight - ref) <= 0.1);
           })();
           const groupValid = isUniform || groupBoxes.length >= mi.expected_box_count;
           if (!groupValid) {
@@ -204,7 +204,7 @@ export async function POST(request: NextRequest) {
           const isUniform = (() => {
             if (groupBoxes.length < 2) return false;
             const ref = groupBoxes[0].weight;
-            return groupBoxes.every((b) => ref > 0 && Math.abs(b.weight - ref) / ref <= 0.05);
+            return groupBoxes.every((b) => Math.abs(b.weight - ref) <= 0.1);
           })();
           const effectiveBoxCount = confirmedCount ?? mi.expected_box_count;
           const calcTotal = isUniform

@@ -45,12 +45,12 @@ function hebrewWordsOverlap(a: string, b: string): boolean {
   return [...wA].some((w) => wB.has(w)) || [...wB].some((w) => wA.has(w));
 }
 
-/** True if ≥2 boxes all have weights within 5% of each other (uniform pallet). */
+/** True if ≥2 boxes all have weights within 0.1 kg of each other (uniform pallet). */
 function groupHasUniformWeight(boxes: PalletBoxScan[]): boolean {
   const withWeight = boxes.filter((b) => b.weight > 0);
   if (withWeight.length < 2) return false;
   const ref = withWeight[0].weight;
-  return withWeight.every((b) => Math.abs(b.weight - ref) / ref <= 0.05);
+  return withWeight.every((b) => Math.abs(b.weight - ref) <= 0.1);
 }
 
 /** Assign a scanned box to a mix item index.
