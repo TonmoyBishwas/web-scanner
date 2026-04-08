@@ -45,6 +45,14 @@ function hebrewWordsOverlap(a: string, b: string): boolean {
   return [...wA].some((w) => wB.has(w)) || [...wB].some((w) => wA.has(w));
 }
 
+/** True if ≥2 boxes all have weights within 5% of each other (uniform pallet). */
+function groupHasUniformWeight(boxes: PalletBoxScan[]): boolean {
+  const withWeight = boxes.filter((b) => b.weight > 0);
+  if (withWeight.length < 2) return false;
+  const ref = withWeight[0].weight;
+  return withWeight.every((b) => Math.abs(b.weight - ref) / ref <= 0.05);
+}
+
 /** Assign a scanned box to a mix item index.
  *  Manual assignments (worker tap) are checked first; name matching is the fallback. */
 function assignBoxToMixItem(box: PalletBoxScan, mixItems: MixItem[], manualAssignments?: Map<string, number>): number {
@@ -119,6 +127,10 @@ export default function PalletVerifyPage({
   const [manualAssignments, setManualAssignments] = useState<Map<string, number>>(new Map());
   // Which unassigned box is currently showing the item picker
   const [assigningBarcode, setAssigningBarcode] = useState<string | null>(null);
+  // Worker-confirmed total box counts for uniform mix item groups (groupIdx → confirmed count)
+  const [confirmedBoxCounts, setConfirmedBoxCounts] = useState<Map<number, number>>(new Map());
+  // Staging input values for the box count prompt (groupIdx → input string)
+  const [boxCountInputs, setBoxCountInputs] = useState<Map<number, string>>(new Map());
 
   // Track processed barcodes locally for fast dedup
   const processedRef = useRef<Set<string>>(new Set());
@@ -337,7 +349,12 @@ export default function PalletVerifyPage({
       const res = await fetch('/api/pallet-complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token }),
+        body: JSON.stringify({
+          token,
+          ...(confirmedBoxCounts.size > 0 && {
+            confirmed_box_counts: Object.fromEntries(confirmedBoxCounts),
+          }),
+        }),
       });
       const data = await res.json();
       if (data.success) {
@@ -368,23 +385,21 @@ export default function PalletVerifyPage({
 
   if (isMix && session?.mix_items) {
     const mixItems = session.mix_items;
-    const groups = mixItems.map((mi, i) => ({
-      mi,
-      boxes: scannedBoxes.filter((b) => assignBoxToMixItem(b, mixItems, manualAssignments) === i && b.weight > 0),
-    }));
-    const allGroupsReady = groups.every((g) =>
-      g.mi.uniform_weight ? g.boxes.length >= 2 : g.boxes.length >= g.mi.expected_box_count
-    );
+    const groups = mixItems.map((mi, i) => {
+      const boxes = scannedBoxes.filter((b) => assignBoxToMixItem(b, mixItems, manualAssignments) === i && b.weight > 0);
+      const isUniform = groupHasUniformWeight(boxes);
+      const groupDone = isUniform || boxes.length >= mi.expected_box_count;
+      return { mi, idx: i, boxes, isUniform, groupDone };
+    });
+    const allGroupsReady = groups.every((g) => g.groupDone);
     canComplete = allGroupsReady && !hasPendingOcr && !hasFailedOcr;
 
     if (!allGroupsReady) {
-      const pending = groups.filter((g) =>
-        g.mi.uniform_weight ? g.boxes.length < 2 : g.boxes.length < g.mi.expected_box_count
-      );
+      const pending = groups.filter((g) => !g.groupDone);
       mixReadinessLabel = pending
         .map((g) => {
           const name = g.mi.item_name_english || g.mi.item_name_hebrew || 'item';
-          const need = g.mi.uniform_weight ? 2 : g.mi.expected_box_count;
+          const need = g.mi.expected_box_count;
           return `${name}: ${g.boxes.length}/${need}`;
         })
         .join(', ');
@@ -694,19 +709,42 @@ export default function PalletVerifyPage({
                       (b) => assignBoxToMixItem(b, session.mix_items!, manualAssignments) === groupIdx
                     );
                     const readyBoxes = groupBoxes.filter((b) => b.weight > 0);
-                    const required = mi.uniform_weight ? 2 : mi.expected_box_count;
-                    const groupDone = readyBoxes.length >= required;
+                    const isUniform = groupHasUniformWeight(readyBoxes);
+                    const groupDone = isUniform || readyBoxes.length >= mi.expected_box_count;
+                    const confirmedCount = confirmedBoxCounts.get(groupIdx);
                     const itemLabel = mi.item_name_english || mi.item_name_hebrew || `Item ${groupIdx + 1}`;
+                    const avgWeight = readyBoxes.length > 0
+                      ? Math.round(readyBoxes.reduce((s, b) => s + b.weight, 0) / readyBoxes.length * 100) / 100
+                      : 0;
+
+                    // Progress badge
+                    let badgeText: string;
+                    let badgeClass: string;
+                    if (confirmedCount) {
+                      badgeText = `${confirmedCount} boxes ✓`;
+                      badgeClass = 'bg-green-100 text-green-700';
+                    } else if (groupDone) {
+                      badgeText = isUniform ? `${readyBoxes.length} scanned ✓` : `${readyBoxes.length}/${mi.expected_box_count} ✓`;
+                      badgeClass = 'bg-green-100 text-green-700';
+                    } else {
+                      badgeText = `${readyBoxes.length}/${mi.expected_box_count} needed`;
+                      badgeClass = 'bg-gray-100 text-gray-500';
+                    }
+
                     return (
                       <div key={groupIdx}>
                         <div className="flex items-center justify-between mb-1">
                           <p className="text-sm font-semibold text-gray-700 truncate max-w-[70%]">{itemLabel}</p>
-                          <span className={`text-xs font-medium px-2 py-0.5 rounded ${groupDone ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                            {readyBoxes.length}/{required} {groupDone ? '✓' : 'needed'}
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded ${badgeClass}`}>
+                            {badgeText}
                           </span>
                         </div>
                         <p className="text-xs text-gray-400 mb-2">
-                          {mi.uniform_weight ? 'Same weight – 2 samples required' : 'Individual weights – scan all boxes'}
+                          {isUniform
+                            ? 'Uniform weight detected — scan 2+ to confirm'
+                            : readyBoxes.length >= 2
+                              ? 'Weights vary — scan all boxes individually'
+                              : 'Scan boxes to detect weight pattern'}
                         </p>
                         <div className="space-y-2">
                           {groupBoxes.map((box) => renderBoxCard(box))}
@@ -714,10 +752,59 @@ export default function PalletVerifyPage({
                             <p className="text-xs text-gray-400 italic pl-1">No boxes scanned yet</p>
                           )}
                         </div>
-                        {mi.uniform_weight && readyBoxes.length >= 2 && (
-                          <p className="text-xs text-blue-600 mt-1 pl-1">
-                            ℹ️ {mi.expected_box_count - readyBoxes.length} more box{mi.expected_box_count - readyBoxes.length === 1 ? '' : 'es'} will be calculated from avg weight
-                          </p>
+
+                        {/* Smart uniform detection: prompt for total box count */}
+                        {isUniform && !confirmedCount && (
+                          <div className="mt-2 bg-blue-50 border border-blue-200 rounded-xl p-3">
+                            <p className="text-xs font-semibold text-blue-800 mb-2">
+                              ✓ All {itemLabel} boxes weigh {avgWeight} kg — how many boxes total?
+                            </p>
+                            <div className="flex gap-2">
+                              <input
+                                type="number"
+                                placeholder="Total boxes"
+                                value={boxCountInputs.get(groupIdx) ?? ''}
+                                onChange={(e) =>
+                                  setBoxCountInputs((prev) => new Map(prev).set(groupIdx, e.target.value))
+                                }
+                                className="flex-1 text-sm text-gray-900 bg-white border border-blue-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                min="1"
+                              />
+                              <button
+                                onClick={() => {
+                                  const val = parseInt(boxCountInputs.get(groupIdx) ?? '');
+                                  if (val > 0) {
+                                    setConfirmedBoxCounts((prev) => new Map(prev).set(groupIdx, val));
+                                  }
+                                }}
+                                disabled={
+                                  !boxCountInputs.get(groupIdx) ||
+                                  parseInt(boxCountInputs.get(groupIdx) ?? '') < 1
+                                }
+                                className="text-sm font-semibold bg-blue-600 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-lg px-4 py-1.5 transition"
+                              >
+                                Confirm
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Confirmed count summary with edit */}
+                        {confirmedCount && (
+                          <div className="mt-2 flex items-center justify-between bg-green-50 border border-green-200 rounded-xl px-3 py-2">
+                            <p className="text-xs text-green-700 font-medium">
+                              ✓ {confirmedCount} boxes × {avgWeight} kg = {Math.round(confirmedCount * avgWeight * 100) / 100} kg
+                            </p>
+                            <button
+                              onClick={() => {
+                                setConfirmedBoxCounts((prev) => { const n = new Map(prev); n.delete(groupIdx); return n; });
+                                setBoxCountInputs((prev) => new Map(prev).set(groupIdx, String(confirmedCount)));
+                              }}
+                              className="text-xs text-gray-400 ml-2"
+                            >
+                              Edit
+                            </button>
+                          </div>
                         )}
                       </div>
                     );

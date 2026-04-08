@@ -117,7 +117,8 @@ function namesMatch(
  */
 export async function POST(request: NextRequest) {
   try {
-    const { token } = await request.json();
+    const { token, confirmed_box_counts } = await request.json();
+    const confirmedBoxCounts: Record<string, number> = confirmed_box_counts ?? {};
 
     if (!token) {
       return NextResponse.json({ success: false, error: 'Missing token' }, { status: 400 });
@@ -140,17 +141,25 @@ export async function POST(request: NextRequest) {
 
       if (isMix) {
         // Mix pallet: validate that each item group has enough scans
+        // A group is valid if: weights are uniform (≥2 matching) OR all expected boxes scanned
         const mixItems = session.mix_items!;
-        for (const mi of mixItems) {
+        for (let i = 0; i < mixItems.length; i++) {
+          const mi = mixItems[i];
           const groupBoxes = session.scanned_boxes.filter(
-            (b) => assignBoxToMixItem(b, mixItems, session.manual_assignments) === mixItems.indexOf(mi) && b.weight > 0
+            (b) => assignBoxToMixItem(b, mixItems, session.manual_assignments) === i && b.weight > 0
           );
-          const required = mi.uniform_weight ? 2 : mi.expected_box_count;
-          if (groupBoxes.length < required) {
+          // Check server-side if uniform (same logic as client)
+          const isUniform = (() => {
+            if (groupBoxes.length < 2) return false;
+            const ref = groupBoxes[0].weight;
+            return groupBoxes.every((b) => ref > 0 && Math.abs(b.weight - ref) / ref <= 0.05);
+          })();
+          const groupValid = isUniform || groupBoxes.length >= mi.expected_box_count;
+          if (!groupValid) {
             const name = mi.item_name_english || mi.item_name_hebrew || 'item';
             errorResult = {
               success: false,
-              error: `Not enough boxes scanned for "${name}". Need ${required}, have ${groupBoxes.length}.`,
+              error: `Not enough boxes scanned for "${name}". Need ${mi.expected_box_count} (or 2 with matching weights), have ${groupBoxes.length}.`,
             };
             return;
           }
@@ -190,10 +199,18 @@ export async function POST(request: NextRequest) {
             groupBoxes.length > 0
               ? groupBoxes.reduce((s, b) => s + b.weight, 0) / groupBoxes.length
               : 0;
-          const calcTotal = mi.uniform_weight
-            ? Math.round(avgWeight * mi.expected_box_count * 100) / 100
+          // Use worker-confirmed count if provided (overrides invoice expected count for accuracy)
+          const confirmedCount = confirmedBoxCounts[String(i)] ? Number(confirmedBoxCounts[String(i)]) : null;
+          const isUniform = (() => {
+            if (groupBoxes.length < 2) return false;
+            const ref = groupBoxes[0].weight;
+            return groupBoxes.every((b) => ref > 0 && Math.abs(b.weight - ref) / ref <= 0.05);
+          })();
+          const effectiveBoxCount = confirmedCount ?? mi.expected_box_count;
+          const calcTotal = isUniform
+            ? Math.round(avgWeight * effectiveBoxCount * 100) / 100
             : Math.round(groupBoxes.reduce((s, b) => s + b.weight, 0) * 100) / 100;
-          return { mi, groupBoxes, avgWeight: Math.round(avgWeight * 100) / 100, calcTotal };
+          return { mi, groupBoxes, avgWeight: Math.round(avgWeight * 100) / 100, calcTotal, effectiveBoxCount };
         });
 
         // Mark session completed
@@ -205,6 +222,7 @@ export async function POST(request: NextRequest) {
         const firstStat = itemStats[0];
         const totalCalc = Math.round(itemStats.reduce((s, x) => s + x.calcTotal, 0) * 100) / 100;
 
+        const totalEffectiveBoxCount = itemStats.reduce((s, x) => s + x.effectiveBoxCount, 0);
         completionResult = {
           verified: unified,
           lpn,
@@ -213,7 +231,7 @@ export async function POST(request: NextRequest) {
           ocr_box_weight: firstStat.avgWeight,
           calculated_total_weight: totalCalc,
           scale_weight: session.scale_weight,
-          box_count: session.expected_box_count,
+          box_count: totalEffectiveBoxCount,
           verified_scan_count: session.scanned_boxes.length,
           mismatches,
         };
@@ -229,11 +247,11 @@ export async function POST(request: NextRequest) {
               pallet_number: session.pallet_number,
               lpn,
               pallet_type: 'mix',
-              items: itemStats.map(({ mi, groupBoxes, avgWeight, calcTotal }) => ({
+              items: itemStats.map(({ mi, groupBoxes, avgWeight, calcTotal, effectiveBoxCount }) => ({
                 item_code: mi.item_code,
                 item_name: mi.item_name_english,
                 item_name_hebrew: mi.item_name_hebrew,
-                box_count: mi.expected_box_count,
+                box_count: effectiveBoxCount,
                 ocr_box_weight: avgWeight,
                 calculated_total_weight: calcTotal,
                 scanned_count: groupBoxes.length,
