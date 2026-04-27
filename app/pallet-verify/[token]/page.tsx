@@ -7,34 +7,28 @@ import {
   Loader2,
   Package,
   ChevronRight,
-  Camera,
   AlertCircle,
 } from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
 import type { MultiPalletSession, MultiPalletBoxScan, ParsedBarcode } from '@/types';
 
-// ── Type detection using OCR-derived weights ──
+// ── Type detection using OCR-derived weights only ──
 
 type DetectedType = 'unknown' | 'single-uniform' | 'single-nonuniform' | 'mix';
 
 function detectType(boxes: BoxScan[]): DetectedType {
   if (boxes.length < 2) return 'unknown';
-
-  // SKU uniqueness (first 13 raw barcode digits used as dedup key)
   const skus = new Set(boxes.map((b) => b.sku).filter(Boolean));
   if (skus.size > 1) return 'mix';
-
-  // Weight variance from OCR data only
   const weights = boxes.map((b) => b.weight).filter((w) => w > 0);
-  if (weights.length < 2) return 'unknown'; // not enough OCR weight data yet
-
+  if (weights.length < 2) return 'unknown';
   const range = Math.max(...weights) - Math.min(...weights);
   return range < 0.5 ? 'single-uniform' : 'single-nonuniform';
 }
 
 // ── Local box type with OCR state ──
 
-type OcrStatus = 'awaiting_photo' | 'processing' | 'done' | 'failed' | 'skipped';
+type OcrStatus = 'processing' | 'done' | 'failed';
 
 interface BoxScan extends MultiPalletBoxScan {
   ocr_status: OcrStatus;
@@ -42,7 +36,7 @@ interface BoxScan extends MultiPalletBoxScan {
 
 // ── Page state machine ──
 
-type Phase = 'loading' | 'box_count' | 'scanning' | 'sticker_photo' | 'confirming' | 'pallet_done' | 'all_done' | 'error';
+type Phase = 'loading' | 'box_count' | 'scanning' | 'confirming' | 'pallet_done' | 'all_done' | 'error';
 
 export default function PalletVerifyPage({
   params,
@@ -58,7 +52,6 @@ export default function PalletVerifyPage({
   const [confirmedBoxCount, setConfirmedBoxCount] = useState(0);
   const [scannedBoxes, setScannedBoxes] = useState<BoxScan[]>([]);
   const [detectedType, setDetectedType] = useState<DetectedType>('unknown');
-  const [pendingOcrIndex, setPendingOcrIndex] = useState<number | null>(null);
   const [lpn, setLpn] = useState('');
   const [lpnUrl, setLpnUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -99,15 +92,16 @@ export default function PalletVerifyPage({
     load();
   }, [token]);
 
-  // ── Barcode detected → add box and request sticker photo ──
+  // ── Barcode detected — SmartScanner passes the captured frame as imageData ──
+  // The barcode IS on the sticker, so that frame is the sticker. Auto-OCR it.
 
   const handleBarcodeDetected = useCallback(
-    (_barcode: string, _parsed: ParsedBarcode) => {
+    (_barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
       const barcode = _barcode.trim();
       if (processedRef.current.has(barcode)) return;
       processedRef.current.add(barcode);
 
-      // Barcode is an identifier only — no data parsed from it
+      // Barcode is an identifier only — extract first 13 digits as dedup key
       const digits = barcode.replace(/\D/g, '');
       const sku = digits.length >= 13 ? digits.slice(0, 13) : digits || barcode;
 
@@ -119,44 +113,37 @@ export default function PalletVerifyPage({
         weight: 0,
         expiry: '',
         scanned_at: new Date().toISOString(),
-        ocr_status: 'awaiting_photo',
+        ocr_status: 'processing',
       };
 
-      setScannedBoxes((prev) => {
-        const updated = [...prev, box];
-        const idx = updated.length - 1;
-        setPendingOcrIndex(idx);
-        setPhase('sticker_photo');
-        return updated;
-      });
+      setScannedBoxes((prev) => [...prev, box]);
+
+      // Fire OCR with the frame captured at detection time
+      if (imageData) {
+        const capturedIndex = processedRef.current.size - 1; // index of this box
+        runOcr(barcode, imageData, capturedIndex);
+      }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
 
-  // ── Sticker photo → OCR ──
+  // ── OCR helper ──
 
-  function handleStickerFile(capturedIndex: number, file: File) {
-    setScannedBoxes((prev) =>
-      prev.map((b, i) => (i === capturedIndex ? { ...b, ocr_status: 'processing' } : b))
-    );
-    setPendingOcrIndex(null);
-    setPhase('scanning');
-
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      const base64 = ev.target?.result as string;
-      const barcode = scannedBoxes[capturedIndex]?.barcode;
-      try {
-        const res = await fetch('/api/multi-pallet-ocr', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: base64, barcode }),
-        });
-        const data = await res.json();
-
+  function runOcr(barcode: string, imageData: string, capturedIndex: number) {
+    fetch('/api/multi-pallet-ocr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: imageData, barcode }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
         setScannedBoxes((prev) => {
+          // find the box by barcode (index may shift if state batched)
+          const idx = prev.findIndex((b) => b.barcode === barcode);
+          if (idx === -1) return prev;
           const updated = prev.map((b, i) => {
-            if (i !== capturedIndex) return b;
+            if (i !== idx) return b;
             if (data.success && data.ocr_data) {
               return {
                 ...b,
@@ -172,25 +159,14 @@ export default function PalletVerifyPage({
           setDetectedType(detectType(updated));
           return updated;
         });
-      } catch {
-        setScannedBoxes((prev) =>
-          prev.map((b, i) => (i === capturedIndex ? { ...b, ocr_status: 'failed' } : b))
-        );
-      }
-    };
-    reader.readAsDataURL(file);
-  }
-
-  function skipStickerPhoto(capturedIndex: number) {
-    setScannedBoxes((prev) => {
-      const updated = prev.map((b, i) =>
-        i === capturedIndex ? { ...b, ocr_status: 'skipped' as OcrStatus } : b
-      );
-      setDetectedType(detectType(updated));
-      return updated;
-    });
-    setPendingOcrIndex(null);
-    setPhase('scanning');
+      })
+      .catch(() => {
+        setScannedBoxes((prev) => {
+          const idx = prev.findIndex((b) => b.barcode === barcode);
+          if (idx === -1) return prev;
+          return prev.map((b, i) => (i === idx ? { ...b, ocr_status: 'failed' } : b));
+        });
+      });
   }
 
   // ── Box count submitted ──
@@ -321,7 +297,17 @@ export default function PalletVerifyPage({
       <div className={`rounded-xl p-3 border text-sm ${cardBg}`}>
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
-            {box.ocr_status === 'done' ? (
+            {box.ocr_status === 'processing' ? (
+              <div className="flex items-center gap-1.5 text-blue-600">
+                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                <span className="text-xs">Reading label…</span>
+              </div>
+            ) : box.ocr_status === 'failed' ? (
+              <div className="flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                <span className="text-xs text-red-500">OCR failed — will use barcode ID only</span>
+              </div>
+            ) : (
               <>
                 {displayName && (
                   <p className="font-semibold text-gray-900 truncate">{displayName}</p>
@@ -335,54 +321,9 @@ export default function PalletVerifyPage({
                   )}
                 </div>
               </>
-            ) : box.ocr_status === 'processing' ? (
-              <div className="flex items-center gap-1.5 text-blue-600">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span className="text-xs">Reading label…</span>
-              </div>
-            ) : box.ocr_status === 'failed' ? (
-              <div className="flex items-center gap-1.5">
-                <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                <span className="text-xs text-red-500">OCR failed</span>
-                <label className="ml-1 flex items-center gap-0.5 text-xs text-blue-600 cursor-pointer underline">
-                  <Camera className="w-3 h-3" /> Retry
-                  <input
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    className="sr-only"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) handleStickerFile(idx, file);
-                      e.target.value = '';
-                    }}
-                  />
-                </label>
-              </div>
-            ) : box.ocr_status === 'skipped' ? (
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-gray-400">No label</span>
-                <label className="ml-1 flex items-center gap-0.5 text-xs text-blue-600 cursor-pointer underline">
-                  <Camera className="w-3 h-3" /> Scan
-                  <input
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    className="sr-only"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) handleStickerFile(idx, file);
-                      e.target.value = '';
-                    }}
-                  />
-                </label>
-              </div>
-            ) : (
-              <span className="text-xs text-gray-400">Awaiting label…</span>
             )}
           </div>
 
-          {/* Match indicator */}
           <div className="shrink-0">
             {idx === 0 ? (
               <span className="text-xs bg-blue-200 text-blue-800 rounded px-1.5 py-0.5">#1</span>
@@ -517,43 +458,6 @@ export default function PalletVerifyPage({
     );
   }
 
-  // ── Sticker photo prompt (full-screen overlay, scanner hidden to avoid confusion) ──
-
-  if (phase === 'sticker_photo' && pendingOcrIndex !== null) {
-    const boxNum = pendingOcrIndex + 1;
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-900 p-6 text-center">
-        <Camera className="text-white w-14 h-14 mb-4 opacity-80" />
-        <h2 className="text-white text-2xl font-bold mb-2">Box #{boxNum} scanned ✅</h2>
-        <p className="text-gray-300 text-base mb-1">Now take a photo of</p>
-        <p className="text-white text-lg font-semibold mb-8">the sticker label on this box</p>
-
-        <label className="bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white font-bold px-10 py-4 rounded-2xl text-lg cursor-pointer flex items-center gap-3 transition">
-          <Camera className="w-6 h-6" />
-          Take Photo
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="sr-only"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) handleStickerFile(pendingOcrIndex, file);
-              e.target.value = '';
-            }}
-          />
-        </label>
-
-        <button
-          onClick={() => skipStickerPhoto(pendingOcrIndex)}
-          className="text-gray-400 mt-5 text-sm underline"
-        >
-          Skip — label not visible
-        </button>
-      </div>
-    );
-  }
-
   // ── Scanning / confirming ──
 
   return (
@@ -573,7 +477,6 @@ export default function PalletVerifyPage({
           <TypeBadge />
         </div>
 
-        {/* Scan progress bar */}
         <div className="mt-2">
           <div className="flex justify-between text-xs text-gray-500 mb-1">
             <span>{scannedBoxes.length} scanned</span>
@@ -620,9 +523,10 @@ export default function PalletVerifyPage({
           {detectedType === 'mix' ? (
             <div className="space-y-2">
               {Object.entries(groupedBySku).map(([sku, boxes]) => {
-                const displayName = boxes.find((b) => b.item_name_hebrew)?.item_name_hebrew
-                  || boxes.find((b) => b.item_name)?.item_name
-                  || sku;
+                const displayName =
+                  boxes.find((b) => b.item_name_hebrew)?.item_name_hebrew ||
+                  boxes.find((b) => b.item_name)?.item_name ||
+                  sku;
                 const doneWeights = boxes.filter((b) => b.weight > 0).map((b) => b.weight);
                 const avgWeight =
                   doneWeights.length > 0
@@ -645,21 +549,21 @@ export default function PalletVerifyPage({
                     <div className="space-y-1">
                       {boxes.map((box, bi) => (
                         <div key={box.barcode + bi} className="text-xs text-gray-600 flex items-center gap-1.5">
-                          {box.ocr_status === 'done' ? (
+                          {box.ocr_status === 'processing' ? (
+                            <>
+                              <Loader2 className="w-3 h-3 animate-spin text-blue-400 shrink-0" />
+                              <span className="text-blue-500">Reading…</span>
+                            </>
+                          ) : box.ocr_status === 'done' ? (
                             <>
                               <CheckCircle className="w-3 h-3 text-green-500 shrink-0" />
                               <span>{box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}</span>
                               {box.expiry && <span className="text-gray-400">· {box.expiry}</span>}
                             </>
-                          ) : box.ocr_status === 'processing' ? (
-                            <>
-                              <Loader2 className="w-3 h-3 animate-spin text-blue-400 shrink-0" />
-                              <span className="text-blue-500">Reading…</span>
-                            </>
                           ) : (
                             <>
-                              <AlertCircle className="w-3 h-3 text-gray-300 shrink-0" />
-                              <span className="text-gray-400">No label</span>
+                              <AlertCircle className="w-3 h-3 text-red-300 shrink-0" />
+                              <span className="text-gray-400">OCR failed</span>
                             </>
                           )}
                         </div>
