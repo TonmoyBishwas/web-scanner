@@ -150,21 +150,31 @@ export default function PalletVerifyPage({
 
   const handleBarcodeDetected = useCallback(
     (_barcode: string, parsed: ParsedBarcode) => {
-      const barcode = _barcode;
+      const barcode = _barcode.trim();
       if (processedRef.current.has(barcode)) return;
       processedRef.current.add(barcode);
       setPhase('processing');
 
-      const sku = parsed.sku || parseGS1Sku(barcode);
-      const weight = parsed.weight || parseGS1Weight(barcode);
-      const expiry = parseGS1Expiry(barcode);
-      const { en, he } = resolveItemName(sku);
+      // Use first 13 digits as SKU for dedup/type-detection; weight via GS1 best-effort
+      const digits = barcode.replace(/\D/g, '');
+      const sku = digits.length >= 13 ? digits.slice(0, 13) : (parsed.sku || barcode);
+      // Only attempt GS1 weight parsing for confirmed 25/31-digit barcodes
+      const weight =
+        digits.length === 31 ? parseInt(digits.slice(19, 25), 10) / 1000 :
+        digits.length === 25 ? (() => {
+          const w1 = parseInt(digits.slice(13, 19), 10) / 1000;
+          const w2 = parseInt(digits.slice(12, 18), 10) / 1000;
+          return (w1 >= 5 && w1 <= 40) ? w1 : (w2 >= 5 && w2 <= 40 ? w2 : 0);
+        })() : 0;
+      const expiry =
+        digits.length === 31 ? digits.slice(25, 31) :
+        digits.length === 25 ? digits.slice(19, 25) : '';
 
       const box: MultiPalletBoxScan = {
         barcode,
         sku,
-        item_name: en,
-        item_name_hebrew: he,
+        item_name: '',       // not derived from barcode — shown by bot via Airtable
+        item_name_hebrew: '',
         weight,
         expiry,
         scanned_at: new Date().toISOString(),
@@ -179,7 +189,7 @@ export default function PalletVerifyPage({
       setPhase('scanning');
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [session]
+    []
   );
 
   // ── Confirm pallet ──
@@ -460,90 +470,63 @@ export default function PalletVerifyPage({
       {/* Scanned boxes */}
       {scannedBoxes.length > 0 && (
         <div className="px-4 py-3 flex-1 overflow-y-auto">
+          {/* Mix: grouped by item (SKU) */}
           {detectedType === 'mix' ? (
-            // Mix: grouped by SKU
-            <div className="space-y-3">
-              {Object.entries(groupedBySku).map(([sku, boxes]) => {
-                const firstName = boxes[0].item_name || boxes[0].item_name_hebrew || sku;
-                const weights = boxes.map((b) => b.weight).filter((w) => w > 0);
-                const totalW = weights.reduce((a, b) => a + b, 0);
-                return (
-                  <div key={sku} className="bg-blue-50 border border-blue-200 rounded-xl p-3">
-                    <p className="text-sm font-semibold text-blue-800 truncate">{firstName}</p>
-                    <p className="text-xs text-blue-600">
-                      {boxes.length} boxes · {totalW > 0 ? `${Math.round(totalW * 100) / 100} kg total` : 'weight from sticker'}
-                    </p>
+            <div className="space-y-2">
+              {Object.entries(groupedBySku).map(([sku, boxes]) => (
+                <div key={sku} className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-mono text-blue-700 truncate max-w-[70%]">{sku}</span>
+                    <span className="text-xs bg-blue-200 text-blue-800 rounded-full px-2 py-0.5 font-semibold">
+                      {boxes.length} box{boxes.length !== 1 ? 'es' : ''}
+                    </span>
                   </div>
-                );
-              })}
+                </div>
+              ))}
+              <p className="text-xs text-gray-400 text-center mt-1">
+                {Object.keys(groupedBySku).length} item type{Object.keys(groupedBySku).length !== 1 ? 's' : ''} detected
+              </p>
             </div>
           ) : (
-            // Single: list of boxes
+            /* Single item: simple list */
             <div className="space-y-2">
               {scannedBoxes.map((box, idx) => {
-                const first = scannedBoxes[0];
-                const skuMatch = !box.sku || !first.sku || box.sku === first.sku;
-                const weightOk =
-                  !box.weight ||
-                  !first.weight ||
-                  Math.abs(box.weight - first.weight) <= 0.5;
-
+                const skuMatch = box.sku === scannedBoxes[0].sku;
                 return (
                   <div
                     key={box.barcode + idx}
-                    className={`rounded-xl p-3 border text-sm ${
+                    className={`rounded-xl p-3 border text-sm flex items-center justify-between ${
                       idx === 0
                         ? 'bg-blue-50 border-blue-200'
-                        : skuMatch && weightOk
+                        : skuMatch
                         ? 'bg-green-50 border-green-200'
                         : 'bg-yellow-50 border-yellow-200'
                     }`}
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-xs text-gray-500 truncate max-w-[55%]">
-                        {box.barcode}
+                    <span className="font-mono text-xs text-gray-600 truncate max-w-[75%]">
+                      {box.barcode}
+                    </span>
+                    {idx === 0 ? (
+                      <span className="text-xs bg-blue-200 text-blue-800 rounded px-2 py-0.5 shrink-0">
+                        #1
                       </span>
-                      {idx === 0 ? (
-                        <span className="text-xs bg-blue-200 text-blue-800 rounded px-2 py-0.5">
-                          Reference
-                        </span>
-                      ) : skuMatch ? (
-                        <CheckCircle className="text-green-500 w-4 h-4" />
-                      ) : (
-                        <XCircle className="text-red-500 w-4 h-4" />
-                      )}
-                    </div>
-                    {box.item_name && (
-                      <p className="text-gray-700 font-medium truncate mt-0.5">{box.item_name}</p>
+                    ) : skuMatch ? (
+                      <CheckCircle className="text-green-500 w-4 h-4 shrink-0" />
+                    ) : (
+                      <XCircle className="text-yellow-500 w-4 h-4 shrink-0" />
                     )}
-                    <div className="flex gap-3 text-gray-500 text-xs mt-1">
-                      {box.weight > 0 && (
-                        <span className={!weightOk && idx > 0 ? 'text-orange-600 font-semibold' : ''}>
-                          ⚖️ {box.weight} kg
-                        </span>
-                      )}
-                      {box.expiry && <span>📅 {box.expiry}</span>}
-                    </div>
                   </div>
                 );
               })}
             </div>
           )}
-        </div>
-      )}
 
-      {/* Uniform single: show box count confirmation */}
-      {detectedType === 'single-uniform' && canConfirm && (
-        <div className="px-4 py-2">
-          <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-sm text-green-800">
-            <p className="font-semibold">
-              {scannedBoxes[0].item_name || scannedBoxes[0].sku} — uniform weight ~{scannedBoxes[0].weight} kg
+          {/* Hint when ≥2 boxes scanned */}
+          {canConfirm && (
+            <p className="text-xs text-gray-400 text-center mt-3">
+              Confirm now or keep scanning to add more boxes
             </p>
-            <p className="text-xs mt-0.5">
-              You declared {confirmedBoxCount} boxes total. Total ≈{' '}
-              {Math.round(scannedBoxes[0].weight * confirmedBoxCount * 100) / 100} kg
-            </p>
-          </div>
+          )}
         </div>
       )}
 
