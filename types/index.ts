@@ -257,6 +257,41 @@ export interface PalletVerificationResult {
   mismatches: string[];
 }
 
+// ─── Multi-Pallet Session ─────────────────────────────────────────────────────
+
+export interface MultiPalletBoxScan {
+  barcode: string;
+  sku: string;
+  item_name: string;
+  item_name_hebrew?: string;
+  weight: number;
+  expiry: string;
+  scanned_at: string;
+}
+
+export interface MultiPalletSession {
+  token: string;
+  chat_id: string;
+  pallet_count: number;
+  current_pallet: number;
+  document_number: string;
+  ocr_data: Array<{
+    item_code: string;
+    item_name_english: string;
+    item_name_hebrew: string;
+    quantity_kg: number;
+  }>;
+  receipt_id?: string;
+  completed_pallets: Array<{
+    pallet_number: number;
+    lpn: string;
+    pallet_type: string;
+    box_count: number;
+  }>;
+  status: 'active' | 'completed';
+  created_at: string;
+}
+
 // ─── UI State Types ────────────────────────────────────────────────────────────
 
 export interface ScanStoreState {

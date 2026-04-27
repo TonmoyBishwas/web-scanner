@@ -1,13 +1,13 @@
 # Web Scanner Architecture
 
 ## Overview
-The Web Scanner is a Next.js 15 application designed to provide a high-performance, mobile-first barcode scanning interface for the warehouse management system. It replaces the previous Telegram-based scanning flow to offer faster scanning, better OCR feedback, and a more robust user experience.
+The Web Scanner is a Next.js 15 application designed to provide a high-performance, mobile-first barcode scanning interface for the warehouse management system. It serves three flows: carton inbound (RECEIVE), carton outbound (ISSUE), and pallet inbound (PALLET VERIFY).
 
 ## Branch & Deployment
 
-- **Active branch**: `main`
-- **Vercel deploys from**: `main` (automatic on push)
-- The `scanner-ui-v2` branch was merged (force-pushed) into `main` and is no longer a separate branch.
+- **Active branch**: `pallet-flow` (off `main`)
+- **Vercel deploys from**: `pallet-flow`
+- Production URL served from Vercel (automatic on push to `pallet-flow`)
 
 ## Tech Stack
 - **Framework**: Next.js 15 (App Router)
@@ -111,41 +111,118 @@ The UI for resolving OCR ambiguities (missing weight, missing product name).
 - Provides a dropdown of products from the current invoice.
 - Allows manual weight entry (with smart defaulting).
 
+## Pages / Routes
+
+| URL | Page | Purpose |
+|-----|------|---------|
+| `/scan/[token]` | `app/scan/[token]/page.tsx` | Carton scanning UI (RECEIVE or ISSUE) |
+| `/complete/[token]` | `app/complete/[token]/page.tsx` | Post-scan summary |
+| `/issue/[token]` | `app/issue/[token]/page.tsx` | Web scanner issue UI (outbound) |
+| `/pallet-verify/[token]` | `app/pallet-verify/[token]/page.tsx` | Pallet verification UI (inbound) |
+| `/pallet/[lpn]` | `app/pallet/[lpn]/page.tsx` | LPN sticker page (QR code printout) |
+
 ## API Routes (`app/api/`)
 
-### 1. `/api/scan` (POST)
-- **Purpose**: fast-path for recording a barcode scan.
-- **Logic**:
-    - Validates session token.
-    - Locks session (Redis) to prevent race conditions.
-    - Adds barcode to `scanned_barcodes` set.
-    - Triggers implicit "Scanning..." status.
-    - Returns updated count.
+**16 routes total.** See [API_REFERENCE.md](API_REFERENCE.md) for full request/response docs.
 
-### 2. `/api/ocr` (POST)
-- **Purpose**: Triggers the heavy AI processing.
-- **Logic**:
-    - Accepts image (base64 or URL).
-    - Calls the **Telegram Bot Webhook** (`/webhook/process-box-ocr`) to reuse the Python-based Gemini OCR logic.
-    - Updates session status to `pending`.
-    - **CRITICAL**: Uses Redis locks to ensure it doesn't overwrite concurrent scans.
+### Carton Scan (RECEIVE/ISSUE)
+| Route | Purpose |
+|-------|---------|
+| `POST /api/session` | Create carton session |
+| `GET /api/session` | Get carton session |
+| `POST /api/scan` | Record barcode scan (uses `withLock`) |
+| `POST /api/ocr` | Trigger box sticker OCR via bot webhook |
+| `POST /api/resolve` | Save manual OCR corrections |
+| `POST /api/manual-entry` | Manual box entry fallback |
+| `POST /api/complete` | Finalize session → webhook to bot |
+| `POST /api/cloudinary/upload` | Image upload proxy |
 
-### 3. `/api/resolve` (POST)
-- **Purpose**: Saves manual corrections.
-- **Logic**:
-    - Updates specific fields (weight, product_name) for a barcode.
-    - Marks status as `manual` or `verified`.
-    - Recalculates invoice totals.
+### Issue (Outbound)
+| Route | Purpose |
+|-------|---------|
+| `POST /api/issue-lookup` | Find box by barcode; validate pallet restriction |
+| `POST /api/issue-confirm` | Mark box Issued + create OUT transaction in Airtable |
+| `POST /api/issue-complete` | Finalize issue session → webhook to bot |
 
-### 4. `/api/session` (GET/PUT)
-- **Purpose**: Syncs state between Client and Server.
-- **GET**: Returns full session object (scanned items, issues, counts).
-- **PUT**: Used for "keep-alive" or forcing status updates.
+### Pallet Verify (Inbound)
+| Route | Purpose |
+|-------|---------|
+| `POST /api/pallet-session` | Create pallet session (`pallet:{token}`, 2h TTL) |
+| `GET /api/pallet-session` | Get pallet session |
+| `POST /api/pallet-scan` | Record box scan + auto-trigger OCR |
+| `POST /api/pallet-ocr` | Update scan with OCR result |
+| `POST /api/pallet-manual` | Manual box entry for pallet |
+| `POST /api/pallet-assign` | Manually assign box to mix pallet item |
+| `POST /api/pallet-complete` | Generate LPN, save Airtable, webhook to bot |
 
-## Data Flow
-1. **User Scans Barcode** -> Client checks local cache -> POST `/api/scan`.
-2. **User Captures Image** -> Upload to Cloudinary -> POST `/api/ocr`.
-3. **Server (Bot)** -> Processes Image (Gemini) -> Updates Redis Session.
-4. **Client** -> Polls `/api/session` -> Sees result -> Updates UI (Green tick or Issue Red).
-5. **User Resolves Issue** -> POST `/api/resolve` -> UI Updates.
-6. **User Confirms** -> POST `/api/complete` -> Triggers webhook to save to Airtable.
+## Redis Key Patterns
+
+| Key | TTL | Purpose |
+|-----|-----|---------|
+| `session:{token}` | 1h | Carton scan session |
+| `pallet:{token}` | 2h | Pallet verification session |
+| `lock:{token}` | 10s | Distributed lock for all mutations |
+
+All mutation routes use `withLock(token, callback)` from `lib/redis.ts`. Lock TTL is 10s; max 20 retries × 250ms = 5s timeout.
+
+## Workflow Data Flows
+
+### Carton Inbound (RECEIVE)
+```
+1. Bot → POST /api/session (operation_type: RECEIVE) → returns {token, url}
+2. Worker opens /scan/[token]
+3. Scan → POST /api/scan + POST /api/ocr (async, bot OCR webhook)
+4. Polls /api/session for OCR results
+5. Resolves issues → POST /api/resolve
+6. Worker taps Complete → POST /api/complete → POST /webhook/scan-complete (bot)
+7. Bot saves Stock Batches + Box Inventory + Transactions
+```
+
+### Issue Outbound (via web scanner)
+```
+1. Bot → POST /api/session (operation_type: ISSUE) → returns {token, url}
+   Optional: pallet_record_id for LPN-restricted sessions
+2. Worker opens /issue/[token]
+3. Scan box → POST /api/issue-lookup → shows box details
+4. Worker confirms → POST /api/issue-confirm → Airtable write (immediate)
+5. Repeat for more boxes
+6. Worker taps Done → POST /api/issue-complete → POST /webhook/scan-complete (bot, ISSUE type)
+7. Bot sends summary message + undo button
+```
+
+### Pallet Inbound (PALLET VERIFY)
+```
+1. Bot → POST /api/pallet-session (pallet_type, mix_items, receipt_id, ...) → {token, url}
+2. Worker opens /pallet-verify/[token]
+3. Scan box → POST /api/pallet-scan → POST /api/pallet-ocr (async, bot OCR webhook)
+4. Mix pallet: boxes auto-assigned by Hebrew name matching; manual via /api/pallet-assign
+5. canComplete = true when:
+   - Single: all expected boxes scanned (or uniform: ≥2 samples)
+   - Mix: each item group has enough scans per its uniform_weight flag
+6. Worker taps "Generate LPN" → POST /api/pallet-complete
+   → generates LPN, saves to Airtable (Pallets table), POST /webhook/pallet-complete (bot)
+7. Bot creates: Pallet, Pallet Items, Box Inventory rows, Stock Batches, IN Transaction
+8. Bot sends LPN sticker link → worker prints and attaches to pallet
+```
+
+## Key TypeScript Types (`types/index.ts`)
+
+```typescript
+ScanSession        // Carton scan session (RECEIVE or ISSUE)
+PalletSession      // Pallet verification session
+MixItem            // One item on a mix pallet (has uniform_weight flag)
+PalletBoxScan      // One scanned box in pallet flow
+BoxLookupResult    // Response from /api/issue-lookup
+IssuedBox          // Box that has been issued (in ScanSession.issued_boxes[])
+ParsedBarcode      // Parsed barcode (sku only; weight/expiry come from OCR)
+BoxStickerOCR      // OCR result (Hebrew + English name, weight, expiry)
+```
+
+## Important Implementation Notes
+
+- **`Box SKU` ≠ `item_code`**: `Box SKU` in Airtable stores the full barcode string. Never use it as a product identifier. Use the `Pallet Item` record link for filtering in pallet context.
+- **Pallet OCR item matching**: Hebrew-first matching using first significant Hebrew word (≥3 chars). Never use barcode string for item matching.
+- **Uniform weight override**: If Airtable has `Uniform Weight = true` but actual Box Inventory rows show weight variance >0.5kg, the bot overrides to non-uniform at outbound time.
+- **Synthetic Box Inventory rows**: For uniform pallets, inbound stores only 2 sample rows. Outbound creates synthetic rows for the shortfall before marking as Issued.
+
+**Last Updated**: 2026-04-12 | Branch: `pallet-flow`
