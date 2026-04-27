@@ -98,7 +98,14 @@ export default function PalletVerifyPage({
         }
         setSession(data);
         setCurrentPallet(data.current_pallet);
-        setPhase('box_count');
+        // Restore scanning phase if box count was already committed before refresh
+        if (data.current_box_count && data.current_box_count > 0) {
+          setConfirmedBoxCount(data.current_box_count);
+          setBoxCountInput(String(data.current_box_count));
+          setPhase('scanning');
+        } else {
+          setPhase('box_count');
+        }
       } catch {
         setError('Failed to load session.');
         setPhase('error');
@@ -131,6 +138,12 @@ export default function PalletVerifyPage({
     processedRef.current.clear();
     setDetectedType('unknown');
     setPhase('scanning');
+    // Persist so refresh returns to scanning phase, not box_count
+    fetch('/api/multi-pallet-session', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, current_box_count: count }),
+    }).catch(() => {/* non-critical */});
   }
 
   // ── Barcode detected ──
@@ -202,10 +215,17 @@ export default function PalletVerifyPage({
         setPhase('all_done');
       } else {
         setPhase('pallet_done');
+        // Clear persisted box count so next pallet starts fresh
+        fetch('/api/multi-pallet-session', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, current_box_count: 0 }),
+        }).catch(() => {});
         // Auto-advance to next pallet after 4 seconds
         setTimeout(() => {
           setCurrentPallet(data.next_pallet);
           setBoxCountInput('');
+          setConfirmedBoxCount(0);
           setScannedBoxes([]);
           processedRef.current.clear();
           setDetectedType('unknown');
@@ -425,7 +445,6 @@ export default function PalletVerifyPage({
             onBarcodeDetected={handleBarcodeDetected}
             scannedBarcodes={new Map()}
             ocrResults={new Map()}
-            className="w-full"
           />
           {phase === 'processing' && (
             <div className="absolute inset-0 bg-black/40 flex items-center justify-center">

@@ -56,6 +56,36 @@ export async function POST(request: NextRequest) {
 }
 
 /**
+ * PATCH /api/multi-pallet-session
+ * Persist current_box_count so refresh restores scanning phase.
+ * Body: { token, current_box_count }
+ */
+export async function PATCH(request: NextRequest) {
+  try {
+    const { token, current_box_count } = await request.json();
+    if (!token) {
+      return NextResponse.json({ error: 'Missing token' }, { status: 400 });
+    }
+
+    const redis = getRedisClient();
+    const raw = await redis.get(sessionKey(token));
+    if (!raw) {
+      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
+    }
+
+    const session: MultiPalletSession =
+      typeof raw === 'string' ? JSON.parse(raw) : (raw as MultiPalletSession);
+    session.current_box_count = Number(current_box_count) || 0;
+    await redis.set(sessionKey(token), JSON.stringify(session), { ex: SESSION_TTL });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('[multi-pallet-session] PATCH error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
+/**
  * GET /api/multi-pallet-session?token=xxx
  * Fetch current session state (polled by pallet-verify page).
  */

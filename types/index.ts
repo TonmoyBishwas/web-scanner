@@ -274,6 +274,7 @@ export interface MultiPalletSession {
   chat_id: string;
   pallet_count: number;
   current_pallet: number;
+  current_box_count?: number;  // persisted so refresh doesn't lose the entered count
   document_number: string;
   ocr_data: Array<{
     item_code: string;
