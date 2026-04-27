@@ -321,48 +321,26 @@ export function SmartScanner({
           const barcode = barcodes[0].rawValue;
           const now = Date.now();
 
-          // Validate barcode format (GS1-128 should be 25 or 31 digits)
-          const isValidFormat = /^\d{25}$|^\d{31}$/.test(barcode);
-          if (!isValidFormat && barcode.length > 10) {
-            console.warn('[SmartScanner] Invalid barcode format (expected 25 or 31 digits):', barcode.length, 'digits');
-            animationFrameRef.current = requestAnimationFrame(detect);
-            return;
-          }
-
-          // Checksum validation (warning only - not blocking)
-          // Some barcodes may not follow standard GS1-128 checksum format
-          if ((barcode.length === 25 || barcode.length === 31) && !validateGS1Checksum(barcode)) {
-            console.warn('[SmartScanner] Warning: Checksum validation failed for:', barcode);
-            // Continue anyway - rely on 5-read validation instead
-          }
-
-          // CRITICAL: Multi-read validation to ensure barcode is read correctly
-          // The barcode reader can misread due to blur, motion, lighting, etc.
-          // We require 3 consecutive identical reads within 2 seconds
+          // Multi-read validation: require 2 consecutive identical reads within 3 seconds
           const pending = pendingReadsRef.current;
 
-          if (!pending || pending.barcode !== barcode || now - pending.timestamp > 2000) {
-            // First read or different barcode or timeout - start new validation
+          if (!pending || pending.barcode !== barcode || now - pending.timestamp > 3000) {
             pendingReadsRef.current = { barcode, count: 1, timestamp: now };
             setCaptureCount(1);
-            console.log('[SmartScanner] Barcode read 1/3:', barcode);
             animationFrameRef.current = requestAnimationFrame(detect);
             return;
           }
 
-          // Same barcode read again - increment count
           pending.count++;
           setCaptureCount(pending.count);
-          console.log(`[SmartScanner] Barcode read ${pending.count}/3:`, barcode);
 
-          if (pending.count < 3) {
-            // Need more confirmations
+          if (pending.count < 2) {
             animationFrameRef.current = requestAnimationFrame(detect);
             return;
           }
 
-          // SUCCESS: 3 identical reads confirmed! Process the scan
-          console.log('[SmartScanner] Barcode CONFIRMED after 3 identical reads:', barcode);
+          // SUCCESS: 2 identical reads confirmed
+          console.log('[SmartScanner] Barcode confirmed:', barcode);
           pendingReadsRef.current = null;
           setCaptureCount(0);
 
@@ -527,8 +505,7 @@ export function SmartScanner({
                     strokeDasharray="1"
                     strokeDashoffset={
                       captureCount === 0 ? 1 :
-                      captureCount === 1 ? 0.667 :
-                      captureCount === 2 ? 0.333 : 0
+                      captureCount === 1 ? 0.5 : 0
                     }
                     style={{
                       transition: captureCount > 0 ? 'stroke-dashoffset 0.25s ease-out' : 'none',
