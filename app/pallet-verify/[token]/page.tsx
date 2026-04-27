@@ -1,62 +1,40 @@
 'use client';
 
 import { use, useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle, XCircle, Loader2, Package, ChevronRight, Camera } from 'lucide-react';
+import {
+  CheckCircle,
+  XCircle,
+  Loader2,
+  Package,
+  ChevronRight,
+  Camera,
+  AlertCircle,
+} from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
 import type { MultiPalletSession, MultiPalletBoxScan, ParsedBarcode } from '@/types';
 
-// ── GS1-128 barcode field extraction (mirrors bot/services/barcode_service.py) ──
-
-function parseGS1Weight(barcode: string): number {
-  const d = barcode.replace(/\D/g, '');
-  if (d.length >= 31) return parseInt(d.slice(19, 25), 10) / 1000;
-  if (d.length >= 25) {
-    const w1 = parseInt(d.slice(13, 19), 10) / 1000;
-    const w2 = parseInt(d.slice(12, 18), 10) / 1000;
-    return w1 >= 5 && w1 <= 40 ? w1 : w2 >= 5 && w2 <= 40 ? w2 : 0;
-  }
-  return 0;
-}
-
-function parseGS1Sku(barcode: string): string {
-  const d = barcode.replace(/\D/g, '');
-  return d.length >= 13 ? d.slice(0, 13) : d || barcode;
-}
-
-function parseGS1Expiry(barcode: string): string {
-  const d = barcode.replace(/\D/g, '');
-  if (d.length >= 31) return d.slice(25, 31);
-  if (d.length >= 25) return d.slice(19, 25);
-  return '';
-}
-
-function formatExpiry(raw: string): string {
-  if (!raw) return '';
-  if (/^\d{6}$/.test(raw)) return `${raw.slice(0, 2)}/${raw.slice(2, 4)}/20${raw.slice(4, 6)}`;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    const [y, m, d] = raw.split('-');
-    return `${d}/${m}/${y}`;
-  }
-  return raw;
-}
-
-// ── Type detection ──
+// ── Type detection using OCR-derived weights ──
 
 type DetectedType = 'unknown' | 'single-uniform' | 'single-nonuniform' | 'mix';
 
 function detectType(boxes: BoxScan[]): DetectedType {
   if (boxes.length < 2) return 'unknown';
+
+  // SKU uniqueness (first 13 raw barcode digits used as dedup key)
   const skus = new Set(boxes.map((b) => b.sku).filter(Boolean));
   if (skus.size > 1) return 'mix';
+
+  // Weight variance from OCR data only
   const weights = boxes.map((b) => b.weight).filter((w) => w > 0);
-  if (weights.length < 2) return 'single-uniform';
+  if (weights.length < 2) return 'unknown'; // not enough OCR weight data yet
+
   const range = Math.max(...weights) - Math.min(...weights);
   return range < 0.5 ? 'single-uniform' : 'single-nonuniform';
 }
 
-// ── Local box type extended with OCR state ──
+// ── Local box type with OCR state ──
 
-type OcrStatus = 'idle' | 'processing' | 'done' | 'failed' | 'skipped';
+type OcrStatus = 'awaiting_photo' | 'processing' | 'done' | 'failed' | 'skipped';
 
 interface BoxScan extends MultiPalletBoxScan {
   ocr_status: OcrStatus;
@@ -64,7 +42,7 @@ interface BoxScan extends MultiPalletBoxScan {
 
 // ── Page state machine ──
 
-type Phase = 'loading' | 'box_count' | 'scanning' | 'confirming' | 'pallet_done' | 'all_done' | 'error';
+type Phase = 'loading' | 'box_count' | 'scanning' | 'sticker_photo' | 'confirming' | 'pallet_done' | 'all_done' | 'error';
 
 export default function PalletVerifyPage({
   params,
@@ -80,13 +58,12 @@ export default function PalletVerifyPage({
   const [confirmedBoxCount, setConfirmedBoxCount] = useState(0);
   const [scannedBoxes, setScannedBoxes] = useState<BoxScan[]>([]);
   const [detectedType, setDetectedType] = useState<DetectedType>('unknown');
+  const [pendingOcrIndex, setPendingOcrIndex] = useState<number | null>(null);
   const [lpn, setLpn] = useState('');
   const [lpnUrl, setLpnUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const processedRef = useRef<Set<string>>(new Set());
-  // Track per-card OCR file input refs
-  const ocrInputRefs = useRef<Map<number, HTMLInputElement>>(new Map());
 
   // ── Load session ──
 
@@ -101,8 +78,8 @@ export default function PalletVerifyPage({
         }
         const data: MultiPalletSession = await res.json();
         if (data.status === 'completed') {
-          setPhase('all_done');
           setSession(data);
+          setPhase('all_done');
           return;
         }
         setSession(data);
@@ -122,7 +99,7 @@ export default function PalletVerifyPage({
     load();
   }, [token]);
 
-  // ── Barcode detected ──
+  // ── Barcode detected → add box and request sticker photo ──
 
   const handleBarcodeDetected = useCallback(
     (_barcode: string, _parsed: ParsedBarcode) => {
@@ -130,36 +107,40 @@ export default function PalletVerifyPage({
       if (processedRef.current.has(barcode)) return;
       processedRef.current.add(barcode);
 
-      const weight = parseGS1Weight(barcode);
-      const expiry = parseGS1Expiry(barcode);
-      const sku = parseGS1Sku(barcode);
+      // Barcode is an identifier only — no data parsed from it
+      const digits = barcode.replace(/\D/g, '');
+      const sku = digits.length >= 13 ? digits.slice(0, 13) : digits || barcode;
 
       const box: BoxScan = {
         barcode,
         sku,
         item_name: '',
         item_name_hebrew: '',
-        weight,
-        expiry,
+        weight: 0,
+        expiry: '',
         scanned_at: new Date().toISOString(),
-        ocr_status: 'idle',
+        ocr_status: 'awaiting_photo',
       };
 
       setScannedBoxes((prev) => {
         const updated = [...prev, box];
-        setDetectedType(detectType(updated));
+        const idx = updated.length - 1;
+        setPendingOcrIndex(idx);
+        setPhase('sticker_photo');
         return updated;
       });
     },
     []
   );
 
-  // ── Sticker OCR per card ──
+  // ── Sticker photo → OCR ──
 
   function handleStickerFile(capturedIndex: number, file: File) {
     setScannedBoxes((prev) =>
       prev.map((b, i) => (i === capturedIndex ? { ...b, ocr_status: 'processing' } : b))
     );
+    setPendingOcrIndex(null);
+    setPhase('scanning');
 
     const reader = new FileReader();
     reader.onload = async (ev) => {
@@ -173,25 +154,24 @@ export default function PalletVerifyPage({
         });
         const data = await res.json();
 
-        setScannedBoxes((prev) =>
-          prev.map((b, i) => {
+        setScannedBoxes((prev) => {
+          const updated = prev.map((b, i) => {
             if (i !== capturedIndex) return b;
             if (data.success && data.ocr_data) {
               return {
                 ...b,
                 ocr_status: 'done' as OcrStatus,
-                item_name: data.ocr_data.product_name_english || b.item_name,
-                item_name_hebrew: data.ocr_data.product_name_hebrew || b.item_name_hebrew,
-                weight:
-                  data.ocr_data.weight_kg != null && data.ocr_data.weight_kg > 0
-                    ? data.ocr_data.weight_kg
-                    : b.weight,
-                expiry: data.ocr_data.expiry_date || b.expiry,
+                item_name: data.ocr_data.product_name_english || '',
+                item_name_hebrew: data.ocr_data.product_name_hebrew || '',
+                weight: data.ocr_data.weight_kg ?? 0,
+                expiry: data.ocr_data.expiry_date || '',
               };
             }
             return { ...b, ocr_status: 'failed' as OcrStatus };
-          })
-        );
+          });
+          setDetectedType(detectType(updated));
+          return updated;
+        });
       } catch {
         setScannedBoxes((prev) =>
           prev.map((b, i) => (i === capturedIndex ? { ...b, ocr_status: 'failed' } : b))
@@ -199,6 +179,18 @@ export default function PalletVerifyPage({
       }
     };
     reader.readAsDataURL(file);
+  }
+
+  function skipStickerPhoto(capturedIndex: number) {
+    setScannedBoxes((prev) => {
+      const updated = prev.map((b, i) =>
+        i === capturedIndex ? { ...b, ocr_status: 'skipped' as OcrStatus } : b
+      );
+      setDetectedType(detectType(updated));
+      return updated;
+    });
+    setPendingOcrIndex(null);
+    setPhase('scanning');
   }
 
   // ── Box count submitted ──
@@ -235,7 +227,6 @@ export default function PalletVerifyPage({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           token,
-          // Strip ocr_status before sending — not part of the API contract
           scanned_boxes: scannedBoxes.map(({ ocr_status: _, ...box }) => box),
           box_count: confirmedBoxCount,
         }),
@@ -266,7 +257,6 @@ export default function PalletVerifyPage({
           setConfirmedBoxCount(0);
           setScannedBoxes([]);
           processedRef.current.clear();
-          ocrInputRefs.current.clear();
           setDetectedType('unknown');
           setPhase('box_count');
         }, 4000);
@@ -320,7 +310,7 @@ export default function PalletVerifyPage({
     const skuMatch = box.sku === firstSku;
     const displayName = box.item_name_hebrew || box.item_name;
 
-    const cardColor =
+    const cardBg =
       idx === 0
         ? 'bg-blue-50 border-blue-200'
         : detectedType === 'mix' || skuMatch
@@ -328,61 +318,78 @@ export default function PalletVerifyPage({
         : 'bg-yellow-50 border-yellow-200';
 
     return (
-      <div className={`rounded-xl p-3 border text-sm ${cardColor}`}>
+      <div className={`rounded-xl p-3 border text-sm ${cardBg}`}>
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
-            {/* Weight — primary datum */}
-            <div className="flex items-baseline gap-1.5">
-              <span className="font-bold text-gray-900 text-base">
-                {box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '— kg'}
-              </span>
-              {box.expiry && (
-                <span className="text-xs text-gray-400">exp {formatExpiry(box.expiry)}</span>
-              )}
-            </div>
-
-            {/* Item name from OCR */}
-            {displayName ? (
-              <p className="text-xs text-gray-700 mt-0.5 truncate">{displayName}</p>
+            {box.ocr_status === 'done' ? (
+              <>
+                {displayName && (
+                  <p className="font-semibold text-gray-900 truncate">{displayName}</p>
+                )}
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="font-bold text-gray-800">
+                    {box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}
+                  </span>
+                  {box.expiry && (
+                    <span className="text-xs text-gray-400">exp {box.expiry}</span>
+                  )}
+                </div>
+              </>
             ) : box.ocr_status === 'processing' ? (
-              <p className="text-xs text-blue-500 mt-0.5 flex items-center gap-1">
-                <Loader2 className="w-3 h-3 animate-spin" /> reading label…
-              </p>
+              <div className="flex items-center gap-1.5 text-blue-600">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span className="text-xs">Reading label…</span>
+              </div>
             ) : box.ocr_status === 'failed' ? (
-              <p className="text-xs text-red-400 mt-0.5">OCR failed</p>
-            ) : null}
+              <div className="flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                <span className="text-xs text-red-500">OCR failed</span>
+                <label className="ml-1 flex items-center gap-0.5 text-xs text-blue-600 cursor-pointer underline">
+                  <Camera className="w-3 h-3" /> Retry
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="sr-only"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleStickerFile(idx, file);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              </div>
+            ) : box.ocr_status === 'skipped' ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-gray-400">No label</span>
+                <label className="ml-1 flex items-center gap-0.5 text-xs text-blue-600 cursor-pointer underline">
+                  <Camera className="w-3 h-3" /> Scan
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="sr-only"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleStickerFile(idx, file);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              </div>
+            ) : (
+              <span className="text-xs text-gray-400">Awaiting label…</span>
+            )}
           </div>
 
-          {/* Right: match indicator + OCR camera button */}
-          <div className="flex flex-col items-end gap-1 shrink-0">
+          {/* Match indicator */}
+          <div className="shrink-0">
             {idx === 0 ? (
               <span className="text-xs bg-blue-200 text-blue-800 rounded px-1.5 py-0.5">#1</span>
             ) : detectedType !== 'mix' && !skuMatch ? (
               <XCircle className="text-yellow-500 w-4 h-4" />
             ) : (
               <CheckCircle className="text-green-500 w-4 h-4" />
-            )}
-
-            {/* OCR trigger — only if no name yet and not currently processing */}
-            {!displayName && box.ocr_status !== 'processing' && (
-              <label className="flex items-center gap-0.5 text-xs text-blue-600 cursor-pointer hover:text-blue-700">
-                <Camera className="w-3.5 h-3.5" />
-                <span>label</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="sr-only"
-                  ref={(el) => {
-                    if (el) ocrInputRefs.current.set(idx, el);
-                  }}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) handleStickerFile(idx, file);
-                    e.target.value = '';
-                  }}
-                />
-              </label>
             )}
           </div>
         </div>
@@ -510,7 +517,45 @@ export default function PalletVerifyPage({
     );
   }
 
-  // scanning / confirming
+  // ── Sticker photo prompt (full-screen overlay, scanner hidden to avoid confusion) ──
+
+  if (phase === 'sticker_photo' && pendingOcrIndex !== null) {
+    const boxNum = pendingOcrIndex + 1;
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-900 p-6 text-center">
+        <Camera className="text-white w-14 h-14 mb-4 opacity-80" />
+        <h2 className="text-white text-2xl font-bold mb-2">Box #{boxNum} scanned ✅</h2>
+        <p className="text-gray-300 text-base mb-1">Now take a photo of</p>
+        <p className="text-white text-lg font-semibold mb-8">the sticker label on this box</p>
+
+        <label className="bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white font-bold px-10 py-4 rounded-2xl text-lg cursor-pointer flex items-center gap-3 transition">
+          <Camera className="w-6 h-6" />
+          Take Photo
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="sr-only"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleStickerFile(pendingOcrIndex, file);
+              e.target.value = '';
+            }}
+          />
+        </label>
+
+        <button
+          onClick={() => skipStickerPhoto(pendingOcrIndex)}
+          className="text-gray-400 mt-5 text-sm underline"
+        >
+          Skip — label not visible
+        </button>
+      </div>
+    );
+  }
+
+  // ── Scanning / confirming ──
+
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
       {/* Header */}
@@ -559,60 +604,63 @@ export default function PalletVerifyPage({
           scannedBarcodes={new Map()}
           ocrResults={new Map()}
         />
+        {phase === 'confirming' && (
+          <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+            <div className="bg-white rounded-xl px-4 py-3 flex items-center gap-2">
+              <Loader2 className="animate-spin w-5 h-5 text-blue-500" />
+              <span className="text-sm font-medium">Saving pallet…</span>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Scanned boxes list */}
+      {/* Scanned boxes */}
       {scannedBoxes.length > 0 && (
         <div className="px-4 py-3 flex-1 overflow-y-auto">
           {detectedType === 'mix' ? (
-            /* Mix: grouped by SKU */
             <div className="space-y-2">
               {Object.entries(groupedBySku).map(([sku, boxes]) => {
-                const displayName =
-                  boxes[0].item_name_hebrew || boxes[0].item_name || sku;
+                const displayName = boxes.find((b) => b.item_name_hebrew)?.item_name_hebrew
+                  || boxes.find((b) => b.item_name)?.item_name
+                  || sku;
+                const doneWeights = boxes.filter((b) => b.weight > 0).map((b) => b.weight);
                 const avgWeight =
-                  boxes.filter((b) => b.weight > 0).length > 0
-                    ? boxes.filter((b) => b.weight > 0).reduce((s, b) => s + b.weight, 0) /
-                      boxes.filter((b) => b.weight > 0).length
+                  doneWeights.length > 0
+                    ? doneWeights.reduce((s, w) => s + w, 0) / doneWeights.length
                     : 0;
+
                 return (
-                  <div key={sku} className="bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-blue-800 truncate max-w-[70%]">
+                  <div key={sku} className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-semibold text-blue-900 truncate max-w-[70%]">
                         {displayName}
                       </span>
-                      <span className="text-xs bg-blue-200 text-blue-800 rounded-full px-2 py-0.5 font-semibold shrink-0">
+                      <span className="text-xs bg-blue-200 text-blue-800 rounded-full px-2 py-0.5 font-semibold">
                         {boxes.length} box{boxes.length !== 1 ? 'es' : ''}
                       </span>
                     </div>
                     {avgWeight > 0 && (
-                      <p className="text-xs text-gray-600">avg {avgWeight.toFixed(3)} kg/box</p>
+                      <p className="text-xs text-gray-500 mb-1">avg {avgWeight.toFixed(3)} kg/box</p>
                     )}
-                    {/* Individual box sub-rows */}
-                    <div className="space-y-1 pl-1">
+                    <div className="space-y-1">
                       {boxes.map((box, bi) => (
-                        <div key={box.barcode + bi} className="flex items-center gap-1 text-xs text-gray-500">
-                          <span>{box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}</span>
-                          {box.expiry && <span className="text-gray-400">· {formatExpiry(box.expiry)}</span>}
-                          {!box.item_name_hebrew && box.ocr_status !== 'processing' && (
-                            <label className="ml-auto flex items-center gap-0.5 text-blue-500 cursor-pointer">
-                              <Camera className="w-3 h-3" />
-                              <input
-                                type="file"
-                                accept="image/*"
-                                capture="environment"
-                                className="sr-only"
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  const globalIdx = scannedBoxes.indexOf(box);
-                                  if (file && globalIdx !== -1) handleStickerFile(globalIdx, file);
-                                  e.target.value = '';
-                                }}
-                              />
-                            </label>
-                          )}
-                          {box.ocr_status === 'processing' && (
-                            <Loader2 className="ml-auto w-3 h-3 animate-spin text-blue-400" />
+                        <div key={box.barcode + bi} className="text-xs text-gray-600 flex items-center gap-1.5">
+                          {box.ocr_status === 'done' ? (
+                            <>
+                              <CheckCircle className="w-3 h-3 text-green-500 shrink-0" />
+                              <span>{box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}</span>
+                              {box.expiry && <span className="text-gray-400">· {box.expiry}</span>}
+                            </>
+                          ) : box.ocr_status === 'processing' ? (
+                            <>
+                              <Loader2 className="w-3 h-3 animate-spin text-blue-400 shrink-0" />
+                              <span className="text-blue-500">Reading…</span>
+                            </>
+                          ) : (
+                            <>
+                              <AlertCircle className="w-3 h-3 text-gray-300 shrink-0" />
+                              <span className="text-gray-400">No label</span>
+                            </>
                           )}
                         </div>
                       ))}
@@ -626,7 +674,6 @@ export default function PalletVerifyPage({
               </p>
             </div>
           ) : (
-            /* Single item */
             <div className="space-y-2">
               {scannedBoxes.map((box, idx) => (
                 <BoxCard key={box.barcode + idx} box={box} idx={idx} />
@@ -643,31 +690,23 @@ export default function PalletVerifyPage({
       )}
 
       {/* Footer */}
-      <div className="p-4 bg-white border-t space-y-2 sticky bottom-0">
-        {error && <p className="text-red-600 text-sm text-center">{error}</p>}
-
-        {phase === 'confirming' ? (
-          <div className="flex items-center justify-center gap-2 py-3">
-            <Loader2 className="animate-spin w-5 h-5 text-blue-500" />
-            <span className="text-sm text-gray-600">Saving pallet…</span>
-          </div>
-        ) : (
-          <button
-            onClick={handleConfirmPallet}
-            disabled={!canConfirm}
-            className={`w-full py-3 rounded-xl font-semibold text-base transition ${
-              canConfirm
-                ? 'bg-green-600 text-white hover:bg-green-700 active:bg-green-800'
-                : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-            }`}
-          >
-            {canConfirm
-              ? `✅ Confirm Pallet ${currentPallet}`
-              : `Scan ${Math.max(0, 2 - scannedBoxes.length)} more box${
-                  2 - scannedBoxes.length === 1 ? '' : 'es'
-                } to continue`}
-          </button>
-        )}
+      <div className="p-4 bg-white border-t sticky bottom-0">
+        {error && <p className="text-red-600 text-sm text-center mb-2">{error}</p>}
+        <button
+          onClick={handleConfirmPallet}
+          disabled={!canConfirm || phase === 'confirming'}
+          className={`w-full py-3 rounded-xl font-semibold text-base transition ${
+            canConfirm && phase !== 'confirming'
+              ? 'bg-green-600 text-white hover:bg-green-700 active:bg-green-800'
+              : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+          }`}
+        >
+          {canConfirm
+            ? `✅ Confirm Pallet ${currentPallet}`
+            : `Scan ${Math.max(0, 2 - scannedBoxes.length)} more box${
+                2 - scannedBoxes.length === 1 ? '' : 'es'
+              } to continue`}
+        </button>
       </div>
     </div>
   );
