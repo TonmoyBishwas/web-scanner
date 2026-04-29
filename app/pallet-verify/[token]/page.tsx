@@ -590,6 +590,29 @@ export default function PalletVerifyPage({
       setLpn(data.lpn || '');
       setLpnUrl(data.lpn_url || '');
 
+      // Mirror what the API just persisted into React's session state so the
+      // all_done view (which reads session.completed_pallets) sees every
+      // confirmed pallet — without needing a refetch after each confirm.
+      const palletTypeLabel: 'single' | 'mix' =
+        detectedType === 'mix' ? 'mix' : 'single';
+      setSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              current_pallet: data.next_pallet ?? prev.current_pallet,
+              completed_pallets: [
+                ...prev.completed_pallets,
+                {
+                  pallet_number: data.pallet_number,
+                  lpn: data.lpn,
+                  pallet_type: palletTypeLabel,
+                  box_count: confirmedBoxCount,
+                },
+              ],
+            }
+          : prev,
+      );
+
       if (data.all_done) {
         if (session && session.loose_box_count > 0) {
           setPhase('loose_scanning');
