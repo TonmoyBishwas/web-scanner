@@ -67,15 +67,21 @@ export async function generateMetadata({
 
 export default async function PalletStickerPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ lpn: string }>;
+  searchParams: Promise<{ token?: string }>;
 }) {
   const { lpn } = await params;
+  const { token } = await searchParams;
   const pallet = await fetchPalletRecord(lpn);
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://scanner.vercel.app';
   const palletUrl = `${appUrl}/pallet/${encodeURIComponent(lpn)}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(palletUrl)}`;
+  // If reached from an active scanner session, "Back" returns there instead of the home page.
+  const backHref = token ? `/pallet-verify/${encodeURIComponent(token)}` : '/';
+  const backLabel = token ? '← Back to scanner' : '← Back';
 
   const displayDate = pallet
     ? new Date(pallet.created_at).toLocaleDateString('en-GB')
@@ -87,10 +93,10 @@ export default async function PalletStickerPage({
       <div className="no-print mb-6 flex gap-3">
         <PrintButton />
         <a
-          href="/"
+          href={backHref}
           className="bg-gray-200 text-gray-700 px-6 py-2.5 rounded-lg font-semibold hover:bg-gray-300 transition text-sm"
         >
-          ← Back
+          {backLabel}
         </a>
       </div>
 

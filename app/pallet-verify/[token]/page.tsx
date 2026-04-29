@@ -458,15 +458,62 @@ export default function PalletVerifyPage({
 
   if (phase === 'all_done') {
     const looseCount = session?.loose_box_count || 0;
+    const completed = session?.completed_pallets || [];
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-green-50 text-center">
-        <CheckCircle className="text-green-500 w-16 h-16 mb-4" />
-        <h1 className="text-2xl font-bold text-green-700 mb-2">
-          All {pallet_count} pallet{pallet_count !== 1 ? 's' : ''}
-          {looseCount > 0 ? ` + ${looseCount} loose box${looseCount !== 1 ? 'es' : ''}` : ''} complete!
-        </h1>
-        <p className="text-gray-600 mb-1">LPN sticker links have been sent via WhatsApp.</p>
-        <p className="text-sm text-gray-500 mt-4">You can close this page.</p>
+      <div className="min-h-screen p-6 bg-green-50">
+        <div className="max-w-md mx-auto">
+          <div className="text-center">
+            <CheckCircle className="text-green-500 w-16 h-16 mx-auto mb-4" />
+            <h1 className="text-2xl font-bold text-green-700 mb-2">
+              All {pallet_count} pallet{pallet_count !== 1 ? 's' : ''}
+              {looseCount > 0 ? ` + ${looseCount} loose box${looseCount !== 1 ? 'es' : ''}` : ''} complete!
+            </h1>
+            <p className="text-sm text-gray-500 mb-6">
+              Tap a sticker below to view or print. Links also sent via WhatsApp.
+            </p>
+          </div>
+
+          {completed.length > 0 && (
+            <div className="space-y-2 mb-6">
+              <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 px-1">
+                Pallet stickers
+              </h2>
+              {completed.map((p) => (
+                <a
+                  key={p.lpn}
+                  href={`/pallet/${encodeURIComponent(p.lpn)}?token=${encodeURIComponent(token)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block bg-white border border-gray-200 rounded-xl p-3 hover:border-green-400 hover:shadow-sm transition"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-mono text-sm font-semibold text-gray-900 truncate">
+                        {p.lpn}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        Pallet {p.pallet_number} · {p.box_count} box{p.box_count !== 1 ? 'es' : ''} · {p.pallet_type}
+                      </div>
+                    </div>
+                    <span className="text-green-600 text-sm font-semibold shrink-0">
+                      Print →
+                    </span>
+                  </div>
+                </a>
+              ))}
+            </div>
+          )}
+
+          {looseCount > 0 && (
+            <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-sm text-orange-800 mb-6">
+              📦 {looseCount} loose box{looseCount !== 1 ? 'es' : ''} recorded — no physical sticker (system-tracked only).
+            </div>
+          )}
+
+          <p className="text-xs text-gray-400 text-center">
+            This page stays available for ~2 hours. Individual sticker pages stay available indefinitely.
+          </p>
+        </div>
       </div>
     );
   }
@@ -609,7 +656,9 @@ export default function PalletVerifyPage({
         </p>
         {lpnUrl && (
           <a
-            href={lpnUrl}
+            href={`${lpnUrl}?token=${encodeURIComponent(token)}`}
+            target="_blank"
+            rel="noopener noreferrer"
             className="mt-2 inline-block bg-green-600 text-white px-5 py-2 rounded-xl text-sm font-semibold hover:bg-green-700 transition"
           >
             View & Print Sticker →
