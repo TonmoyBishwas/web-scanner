@@ -167,12 +167,16 @@ export async function POST(request: NextRequest) {
 
     // Advance session
     const newCurrentPallet = palletNumber + 1;
-    const allDone = newCurrentPallet > session.pallet_count;
+    const allPalletsDone = newCurrentPallet > session.pallet_count;
+    const looseBoxesPending = allPalletsDone && (session.loose_box_count || 0) > 0;
+    // Only mark the session 'completed' when there are no loose boxes to scan after.
+    // Otherwise a refresh during the loose phase would short-circuit to "all done".
+    const sessionFullyDone = allPalletsDone && !looseBoxesPending;
 
     const updatedSession: MultiPalletSession = {
       ...session,
       current_pallet: newCurrentPallet,
-      status: allDone ? 'completed' : 'active',
+      status: sessionFullyDone ? 'completed' : 'active',
       completed_pallets: [
         ...session.completed_pallets,
         { pallet_number: palletNumber, lpn, pallet_type, box_count: scanned_boxes.length },
@@ -189,8 +193,8 @@ export async function POST(request: NextRequest) {
       lpn,
       lpn_url: `${appUrl}/pallet/${lpn}`,
       pallet_number: palletNumber,
-      next_pallet: allDone ? null : newCurrentPallet,
-      all_done: allDone,
+      next_pallet: allPalletsDone ? null : newCurrentPallet,
+      all_done: allPalletsDone,
     });
   } catch (error) {
     console.error('[multi-pallet-complete] POST error:', error);

@@ -78,6 +78,14 @@ export default function PalletVerifyPage({
           return;
         }
         setSession(data);
+
+        // All pallets confirmed but loose boxes still pending → restore loose phase
+        // (e.g. user refreshed the tab between pallet 2/2 confirm and scanning loose boxes)
+        if (data.current_pallet > data.pallet_count && (data.loose_box_count || 0) > 0) {
+          setPhase('loose_scanning');
+          return;
+        }
+
         setCurrentPallet(data.current_pallet);
         if (data.current_box_count && data.current_box_count > 0) {
           setConfirmedBoxCount(data.current_box_count);
