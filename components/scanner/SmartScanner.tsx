@@ -54,6 +54,13 @@ export function SmartScanner({
   const [captureCount, setCaptureCount] = useState(0); // 0 | 1 | 2 | 3
   const [isDuplicate, setIsDuplicate] = useState(false);
   const duplicateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Visible diagnostic state — surfaces silent camera failures to the user.
+  const [diag, setDiag] = useState<
+    | { state: 'init' }
+    | { state: 'ready' }
+    | { state: 'no_cameras' }
+    | { state: 'error'; message: string }
+  >({ state: 'init' });
 
   // Multi-read validation to ensure barcode is read correctly
   const pendingReadsRef = useRef<{ barcode: string; count: number; timestamp: number } | null>(null);
@@ -98,6 +105,7 @@ export function SmartScanner({
 
       if (videoDevices.length === 0) {
         console.error('[SmartScanner] No cameras found');
+        setDiag({ state: 'no_cameras' });
         return;
       }
 
@@ -125,12 +133,19 @@ export function SmartScanner({
         setCurrentCameraLabel(videoDevices[0].label || 'Camera');
       }
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error('[SmartScanner] Failed to enumerate cameras:', err);
-      onError?.(err instanceof Error ? err.message : String(err));
+      setDiag({ state: 'error', message });
+      onError?.(message);
     }
   }, [onError]);
 
   useEffect(() => {
+    // Re-arm the mounted flag every time this effect runs so a key-driven
+    // remount doesn't leave us stuck with isMountedRef.current === false
+    // from a previous instance's cleanup.
+    isMountedRef.current = true;
+
     if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
       console.log('[SmartScanner] Native BarcodeDetector API available');
       setIsSupported(true);
@@ -251,11 +266,14 @@ export function SmartScanner({
       if (videoRef.current && isMountedRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
+        setDiag({ state: 'ready' });
         scanContinuously();
       }
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error('[SmartScanner] Camera error:', err);
-      onError?.(err instanceof Error ? err.message : String(err));
+      setDiag({ state: 'error', message });
+      onError?.(message);
     }
   };
 
@@ -452,6 +470,58 @@ export function SmartScanner({
             zIndex: 10
           }}
         />
+      )}
+
+      {/* Diagnostic overlay — visible camera state for debugging silent failures */}
+      {diag.state !== 'ready' && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 text-white p-6 text-center">
+          {diag.state === 'init' && (
+            <>
+              <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-white mb-4" />
+              <p className="text-base font-medium">Requesting camera permission…</p>
+              <p className="text-xs text-gray-400 mt-2">Tap “Allow” if your browser asks for camera access.</p>
+            </>
+          )}
+          {diag.state === 'no_cameras' && (
+            <>
+              <AlertTriangle className="w-10 h-10 text-amber-400 mb-3" />
+              <p className="text-base font-semibold">No cameras detected</p>
+              <p className="text-xs text-gray-300 mt-2 max-w-xs">
+                Your device reported no video input. If you opened this link inside WhatsApp, tap “Open in browser” (Chrome on Android, Safari on iOS) and try again.
+              </p>
+              <button
+                onClick={() => {
+                  setDiag({ state: 'init' });
+                  enumerateCameras();
+                }}
+                className="mt-4 bg-white text-gray-900 px-5 py-2 rounded-lg text-sm font-semibold"
+              >
+                Retry
+              </button>
+            </>
+          )}
+          {diag.state === 'error' && (
+            <>
+              <AlertTriangle className="w-10 h-10 text-red-400 mb-3" />
+              <p className="text-base font-semibold">Camera error</p>
+              <p className="text-xs text-red-200 mt-2 break-words max-w-xs font-mono">
+                {diag.message}
+              </p>
+              <p className="text-xs text-gray-400 mt-3 max-w-xs">
+                Common fixes: open the link in Chrome/Safari (not WhatsApp&apos;s in-app browser), check Settings → Site permissions → Camera, then tap Retry.
+              </p>
+              <button
+                onClick={() => {
+                  setDiag({ state: 'init' });
+                  enumerateCameras();
+                }}
+                className="mt-4 bg-white text-gray-900 px-5 py-2 rounded-lg text-sm font-semibold"
+              >
+                Retry
+              </button>
+            </>
+          )}
+        </div>
       )}
 
       {/* Minimal scanning indicator */}
