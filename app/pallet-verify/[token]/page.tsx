@@ -32,6 +32,9 @@ type OcrStatus = 'processing' | 'done' | 'failed';
 
 interface BoxScan extends MultiPalletBoxScan {
   ocr_status: OcrStatus;
+  // Captured frame from the moment the barcode was detected. Kept around so
+  // the user can retry OCR or view the image when OCR fails (e.g. blurry).
+  image_data?: string;
 }
 
 // ── Page state machine ──
@@ -59,6 +62,9 @@ export default function PalletVerifyPage({
   const processedRef = useRef<Set<string>>(new Set());
   const [looseBoxes, setLooseBoxes] = useState<BoxScan[]>([]);
   const looseProcessedRef = useRef<Set<string>>(new Set());
+  // Modal: full-size view of a captured frame (used after OCR failures so the
+  // worker can confirm whether the photo is bad or worth retrying).
+  const [viewingImage, setViewingImage] = useState<string | null>(null);
 
   // ── Load session ──
 
@@ -124,6 +130,7 @@ export default function PalletVerifyPage({
         expiry: '',
         scanned_at: new Date().toISOString(),
         ocr_status: 'processing',
+        image_data: imageData,
       };
 
       setScannedBoxes((prev) => [...prev, box]);
@@ -137,6 +144,30 @@ export default function PalletVerifyPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
+
+  // ── Retry / Rescan helpers (pallet phase) ──
+
+  function retryPalletOcr(barcode: string) {
+    setScannedBoxes((prev) => {
+      const target = prev.find((b) => b.barcode === barcode);
+      if (!target?.image_data) return prev;
+      // Schedule the OCR call after this state update commits.
+      const img = target.image_data;
+      setTimeout(() => runOcr(barcode, img, 0), 0);
+      return prev.map((b) =>
+        b.barcode === barcode ? { ...b, ocr_status: 'processing' as OcrStatus } : b
+      );
+    });
+  }
+
+  function rescanPalletBox(barcode: string) {
+    setScannedBoxes((prev) => {
+      const filtered = prev.filter((b) => b.barcode !== barcode);
+      setDetectedType(detectType(filtered));
+      return filtered;
+    });
+    processedRef.current.delete(barcode);
+  }
 
   // ── OCR helper ──
 
@@ -192,6 +223,7 @@ export default function PalletVerifyPage({
         barcode, sku, item_name: '', item_name_hebrew: '',
         weight: 0, expiry: '', scanned_at: new Date().toISOString(),
         ocr_status: 'processing',
+        image_data: imageData,
       };
       setLooseBoxes((prev) => [...prev, box]);
       if (imageData) runLooseOcr(barcode, imageData);
@@ -199,6 +231,51 @@ export default function PalletVerifyPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
+
+  // ── Retry / Rescan helpers (loose phase) ──
+
+  function retryLooseOcr(barcode: string) {
+    setLooseBoxes((prev) => {
+      const target = prev.find((b) => b.barcode === barcode);
+      if (!target?.image_data) return prev;
+      const img = target.image_data;
+      setTimeout(() => runLooseOcr(barcode, img), 0);
+      return prev.map((b) =>
+        b.barcode === barcode ? { ...b, ocr_status: 'processing' as OcrStatus } : b
+      );
+    });
+  }
+
+  function rescanLooseBox(barcode: string) {
+    setLooseBoxes((prev) => prev.filter((b) => b.barcode !== barcode));
+    looseProcessedRef.current.delete(barcode);
+  }
+
+  // Full-screen captured-image viewer (used for OCR-failed Diagnostics).
+  // fixed/inset-0 means it overlays whatever phase is currently rendering.
+  const imageModal = viewingImage ? (
+    <div
+      onClick={() => setViewingImage(null)}
+      className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={viewingImage}
+        alt="Captured frame from barcode detection"
+        className="max-w-full max-h-full rounded-lg shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      />
+      <button
+        onClick={() => setViewingImage(null)}
+        className="absolute top-4 right-4 bg-white text-gray-900 px-4 py-2 rounded-lg font-semibold text-sm shadow-lg"
+      >
+        ✕ Close
+      </button>
+      <p className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white text-xs opacity-70 whitespace-nowrap">
+        Tap outside to close
+      </p>
+    </div>
+  ) : null;
 
   function runLooseOcr(barcode: string, imageData: string) {
     fetch('/api/multi-pallet-ocr', {
@@ -401,9 +478,33 @@ export default function PalletVerifyPage({
                 <span className="text-xs">Reading label…</span>
               </div>
             ) : box.ocr_status === 'failed' ? (
-              <div className="flex items-center gap-1.5">
-                <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                <span className="text-xs text-red-500">OCR failed — will use barcode ID only</span>
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                  <span className="text-xs text-red-500">OCR failed</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  {box.image_data && (
+                    <button
+                      onClick={() => setViewingImage(box.image_data!)}
+                      className="text-[11px] px-2 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded font-medium"
+                    >
+                      🖼 View
+                    </button>
+                  )}
+                  <button
+                    onClick={() => retryPalletOcr(box.barcode)}
+                    className="text-[11px] px-2 py-0.5 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded font-medium"
+                  >
+                    ↻ Retry
+                  </button>
+                  <button
+                    onClick={() => rescanPalletBox(box.barcode)}
+                    className="text-[11px] px-2 py-0.5 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded font-medium"
+                  >
+                    🔄 Rescan
+                  </button>
+                </div>
               </div>
             ) : (
               <>
@@ -597,7 +698,7 @@ export default function PalletVerifyPage({
                   )}
                   <div className="space-y-1">
                     {boxes.map((box, bi) => (
-                      <div key={box.barcode + bi} className="text-xs text-gray-600 flex items-center gap-1.5">
+                      <div key={box.barcode + bi} className="text-xs text-gray-600 flex items-center gap-1.5 flex-wrap">
                         {box.ocr_status === 'processing' ? (
                           <>
                             <Loader2 className="w-3 h-3 animate-spin text-orange-400 shrink-0" />
@@ -613,6 +714,28 @@ export default function PalletVerifyPage({
                           <>
                             <AlertCircle className="w-3 h-3 text-red-300 shrink-0" />
                             <span className="text-gray-400">OCR failed</span>
+                            <div className="flex gap-1 ml-auto">
+                              {box.image_data && (
+                                <button
+                                  onClick={() => setViewingImage(box.image_data!)}
+                                  className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] font-medium"
+                                >
+                                  View
+                                </button>
+                              )}
+                              <button
+                                onClick={() => retryLooseOcr(box.barcode)}
+                                className="px-1.5 py-0.5 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-[10px] font-medium"
+                              >
+                                Retry
+                              </button>
+                              <button
+                                onClick={() => rescanLooseBox(box.barcode)}
+                                className="px-1.5 py-0.5 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded text-[10px] font-medium"
+                              >
+                                Rescan
+                              </button>
+                            </div>
                           </>
                         )}
                       </div>
@@ -643,6 +766,7 @@ export default function PalletVerifyPage({
               : `Scan at least 2 boxes`}
           </button>
         </div>
+        {imageModal}
       </div>
     );
   }
@@ -828,7 +952,7 @@ export default function PalletVerifyPage({
                     )}
                     <div className="space-y-1">
                       {boxes.map((box, bi) => (
-                        <div key={box.barcode + bi} className="text-xs text-gray-600 flex items-center gap-1.5">
+                        <div key={box.barcode + bi} className="text-xs text-gray-600 flex items-center gap-1.5 flex-wrap">
                           {box.ocr_status === 'processing' ? (
                             <>
                               <Loader2 className="w-3 h-3 animate-spin text-blue-400 shrink-0" />
@@ -844,6 +968,28 @@ export default function PalletVerifyPage({
                             <>
                               <AlertCircle className="w-3 h-3 text-red-300 shrink-0" />
                               <span className="text-gray-400">OCR failed</span>
+                              <div className="flex gap-1 ml-auto">
+                                {box.image_data && (
+                                  <button
+                                    onClick={() => setViewingImage(box.image_data!)}
+                                    className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] font-medium"
+                                  >
+                                    View
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => retryPalletOcr(box.barcode)}
+                                  className="px-1.5 py-0.5 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-[10px] font-medium"
+                                >
+                                  Retry
+                                </button>
+                                <button
+                                  onClick={() => rescanPalletBox(box.barcode)}
+                                  className="px-1.5 py-0.5 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded text-[10px] font-medium"
+                                >
+                                  Rescan
+                                </button>
+                              </div>
                             </>
                           )}
                         </div>
@@ -892,6 +1038,7 @@ export default function PalletVerifyPage({
               } to continue`}
         </button>
       </div>
+      {imageModal}
     </div>
   );
 }
