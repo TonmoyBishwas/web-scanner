@@ -36,7 +36,7 @@ interface BoxScan extends MultiPalletBoxScan {
 
 // ── Page state machine ──
 
-type Phase = 'loading' | 'box_count' | 'scanning' | 'confirming' | 'pallet_done' | 'all_done' | 'error';
+type Phase = 'loading' | 'box_count' | 'scanning' | 'confirming' | 'pallet_done' | 'loose_scanning' | 'loose_confirming' | 'all_done' | 'error';
 
 export default function PalletVerifyPage({
   params,
@@ -57,6 +57,8 @@ export default function PalletVerifyPage({
   const [error, setError] = useState<string | null>(null);
 
   const processedRef = useRef<Set<string>>(new Set());
+  const [looseBoxes, setLooseBoxes] = useState<BoxScan[]>([]);
+  const looseProcessedRef = useRef<Set<string>>(new Set());
 
   // ── Load session ──
 
@@ -169,6 +171,90 @@ export default function PalletVerifyPage({
       });
   }
 
+  // ── Loose box barcode detected ──
+
+  const handleLooseBarcodeDetected = useCallback(
+    (_barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
+      const barcode = _barcode.trim();
+      if (looseProcessedRef.current.has(barcode)) return;
+      looseProcessedRef.current.add(barcode);
+      const digits = barcode.replace(/\D/g, '');
+      const sku = digits.length >= 13 ? digits.slice(0, 13) : digits || barcode;
+      const box: BoxScan = {
+        barcode, sku, item_name: '', item_name_hebrew: '',
+        weight: 0, expiry: '', scanned_at: new Date().toISOString(),
+        ocr_status: 'processing',
+      };
+      setLooseBoxes((prev) => [...prev, box]);
+      if (imageData) runLooseOcr(barcode, imageData);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
+
+  function runLooseOcr(barcode: string, imageData: string) {
+    fetch('/api/multi-pallet-ocr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: imageData, barcode }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        setLooseBoxes((prev) => {
+          const idx = prev.findIndex((b) => b.barcode === barcode);
+          if (idx === -1) return prev;
+          return prev.map((b, i) => {
+            if (i !== idx) return b;
+            if (data.success && data.ocr_data) {
+              return {
+                ...b,
+                ocr_status: 'done' as OcrStatus,
+                item_name: data.ocr_data.product_name_english || '',
+                item_name_hebrew: data.ocr_data.product_name_hebrew || '',
+                weight: data.ocr_data.weight_kg ?? 0,
+                expiry: data.ocr_data.expiry_date || '',
+              };
+            }
+            return { ...b, ocr_status: 'failed' as OcrStatus };
+          });
+        });
+      })
+      .catch(() => {
+        setLooseBoxes((prev) => {
+          const idx = prev.findIndex((b) => b.barcode === barcode);
+          if (idx === -1) return prev;
+          return prev.map((b, i) => (i === idx ? { ...b, ocr_status: 'failed' } : b));
+        });
+      });
+  }
+
+  // ── Confirm loose boxes ──
+
+  async function handleConfirmLooseBoxes() {
+    setPhase('loose_confirming');
+    setError(null);
+    try {
+      const res = await fetch('/api/multi-pallet-loose-complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token,
+          scanned_boxes: looseBoxes.map(({ ocr_status: _, ...box }) => box),
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setError(data.error || 'Failed to complete loose boxes.');
+        setPhase('loose_scanning');
+        return;
+      }
+      setPhase('all_done');
+    } catch {
+      setError('Network error. Please try again.');
+      setPhase('loose_scanning');
+    }
+  }
+
   // ── Box count submitted ──
 
   function handleBoxCountSubmit() {
@@ -219,7 +305,11 @@ export default function PalletVerifyPage({
       setLpnUrl(data.lpn_url || '');
 
       if (data.all_done) {
-        setPhase('all_done');
+        if (session && session.loose_box_count > 0) {
+          setPhase('loose_scanning');
+        } else {
+          setPhase('all_done');
+        }
       } else {
         setPhase('pallet_done');
         fetch('/api/multi-pallet-session', {
@@ -359,14 +449,142 @@ export default function PalletVerifyPage({
   }
 
   if (phase === 'all_done') {
+    const looseCount = session?.loose_box_count || 0;
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-green-50 text-center">
         <CheckCircle className="text-green-500 w-16 h-16 mb-4" />
         <h1 className="text-2xl font-bold text-green-700 mb-2">
-          All {pallet_count} pallets complete!
+          All {pallet_count} pallet{pallet_count !== 1 ? 's' : ''}
+          {looseCount > 0 ? ` + ${looseCount} loose box${looseCount !== 1 ? 'es' : ''}` : ''} complete!
         </h1>
         <p className="text-gray-600 mb-1">LPN sticker links have been sent via WhatsApp.</p>
         <p className="text-sm text-gray-500 mt-4">You can close this page.</p>
+      </div>
+    );
+  }
+
+  if (phase === 'loose_scanning' || phase === 'loose_confirming') {
+    const declared = session?.loose_box_count || 0;
+    const scanned = looseBoxes.length;
+    const canConfirmLoose = scanned >= Math.min(2, declared) && (declared === 0 || scanned >= declared);
+    const looseGroupedBySku = looseBoxes.reduce<Record<string, BoxScan[]>>((acc, box) => {
+      const key = box.sku || 'unknown';
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(box);
+      return acc;
+    }, {});
+
+    return (
+      <div className="min-h-screen flex flex-col bg-gray-50">
+        {/* Header */}
+        <div className="bg-white border-b px-4 py-3 shadow-sm">
+          <div className="flex items-center gap-2">
+            <Package className="text-orange-500 w-5 h-5" />
+            <div>
+              <p className="text-sm font-bold text-gray-800">
+                Loose Boxes · {scanned} / {declared} scanned
+              </p>
+              <p className="text-xs text-gray-500">Doc: {session?.document_number || '—'}</p>
+            </div>
+          </div>
+          <div className="mt-2">
+            <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+              <div
+                className={`h-full transition-all rounded-full ${declared > 0 && scanned >= declared ? 'bg-green-500' : 'bg-orange-400'}`}
+                style={{ width: `${declared > 0 ? Math.min((scanned / declared) * 100, 100) : 0}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Scanner */}
+        <div className="relative">
+          <SmartScanner
+            onBarcodeDetected={handleLooseBarcodeDetected}
+            scannedBarcodes={new Map()}
+            ocrResults={new Map()}
+          />
+          {phase === 'loose_confirming' && (
+            <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+              <div className="bg-white rounded-xl px-4 py-3 flex items-center gap-2">
+                <Loader2 className="animate-spin w-5 h-5 text-orange-500" />
+                <span className="text-sm font-medium">Saving loose boxes…</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Scanned loose boxes */}
+        {looseBoxes.length > 0 && (
+          <div className="px-4 py-3 flex-1 overflow-y-auto space-y-2">
+            {Object.entries(looseGroupedBySku).map(([sku, boxes]) => {
+              const displayName =
+                boxes.find((b) => b.item_name_hebrew)?.item_name_hebrew ||
+                boxes.find((b) => b.item_name)?.item_name ||
+                sku;
+              const doneWeights = boxes.filter((b) => b.weight > 0).map((b) => b.weight);
+              const totalWeight = doneWeights.reduce((s, w) => s + w, 0);
+              return (
+                <div key={sku} className="bg-orange-50 border border-orange-200 rounded-xl p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm font-semibold text-orange-900 truncate max-w-[70%]">
+                      {displayName}
+                    </span>
+                    <span className="text-xs bg-orange-200 text-orange-800 rounded-full px-2 py-0.5 font-semibold">
+                      {boxes.length} box{boxes.length !== 1 ? 'es' : ''}
+                    </span>
+                  </div>
+                  {totalWeight > 0 && (
+                    <p className="text-xs text-gray-500 mb-1">{totalWeight.toFixed(3)} kg total</p>
+                  )}
+                  <div className="space-y-1">
+                    {boxes.map((box, bi) => (
+                      <div key={box.barcode + bi} className="text-xs text-gray-600 flex items-center gap-1.5">
+                        {box.ocr_status === 'processing' ? (
+                          <>
+                            <Loader2 className="w-3 h-3 animate-spin text-orange-400 shrink-0" />
+                            <span className="text-orange-500">Reading…</span>
+                          </>
+                        ) : box.ocr_status === 'done' ? (
+                          <>
+                            <CheckCircle className="w-3 h-3 text-green-500 shrink-0" />
+                            <span>{box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}</span>
+                            {box.expiry && <span className="text-gray-400">· {box.expiry}</span>}
+                          </>
+                        ) : (
+                          <>
+                            <AlertCircle className="w-3 h-3 text-red-300 shrink-0" />
+                            <span className="text-gray-400">OCR failed</span>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="p-4 bg-white border-t sticky bottom-0">
+          {error && <p className="text-red-600 text-sm text-center mb-2">{error}</p>}
+          <button
+            onClick={handleConfirmLooseBoxes}
+            disabled={!canConfirmLoose || phase === 'loose_confirming'}
+            className={`w-full py-3 rounded-xl font-semibold text-base transition ${
+              canConfirmLoose && phase !== 'loose_confirming'
+                ? 'bg-orange-500 text-white hover:bg-orange-600 active:bg-orange-700'
+                : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+            }`}
+          >
+            {canConfirmLoose
+              ? `✅ Confirm ${scanned} Loose Box${scanned !== 1 ? 'es' : ''}`
+              : declared > 0
+              ? `Scan ${Math.max(0, declared - scanned)} more box${declared - scanned === 1 ? '' : 'es'}`
+              : `Scan at least 2 boxes`}
+          </button>
+        </div>
       </div>
     );
   }

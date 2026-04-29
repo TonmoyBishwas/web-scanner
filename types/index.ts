@@ -273,6 +273,7 @@ export interface MultiPalletSession {
   token: string;
   chat_id: string;
   pallet_count: number;
+  loose_box_count: number;
   current_pallet: number;
   current_box_count?: number;  // persisted so refresh doesn't lose the entered count
   document_number: string;
