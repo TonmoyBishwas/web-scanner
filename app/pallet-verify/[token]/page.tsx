@@ -552,9 +552,12 @@ export default function PalletVerifyPage({
           </div>
         </div>
 
-        {/* Scanner */}
+        {/* Scanner — explicit key forces a fresh mount so the internal
+            scanContinuously() closure picks up handleLooseBarcodeDetected
+            instead of the stale pallet-phase handler. */}
         <div className="relative">
           <SmartScanner
+            key="loose-scanner"
             onBarcodeDetected={handleLooseBarcodeDetected}
             scannedBarcodes={new Map()}
             ocrResults={new Map()}
@@ -775,9 +778,11 @@ export default function PalletVerifyPage({
         </div>
       </div>
 
-      {/* Scanner */}
+      {/* Scanner — keyed per pallet so each new pallet gets a fresh
+          scanner instance (clears the internal cooldown/dedup refs). */}
       <div className="relative">
         <SmartScanner
+          key={`pallet-scanner-${currentPallet}`}
           onBarcodeDetected={handleBarcodeDetected}
           scannedBarcodes={new Map()}
           ocrResults={new Map()}
