@@ -42,19 +42,29 @@ function detectPalletType(
  * Finalise one pallet within a multi-pallet session.
  *
  * Body:
- *   token         - session token
- *   scanned_boxes - array of MultiPalletBoxScan
- *   box_count     - total box count declared by worker (for uniform single)
+ *   token          - session token
+ *   scanned_boxes  - array of MultiPalletBoxScan
+ *   box_count      - total box count declared by worker (used for uniform single)
+ *   uniform_groups - optional per-SKU overrides for mix pallets where one or
+ *                    more items are uniform-weight. The worker scans 2 sample
+ *                    boxes and reports the real total_count; we trust that.
  *
  * Returns: { success, lpn, lpn_url, next_pallet | null, all_done }
  */
+type UniformGroupOverride = {
+  sku: string;
+  total_count: number;
+  avg_weight?: number;
+};
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { token, scanned_boxes, box_count } = body as {
+    const { token, scanned_boxes, box_count, uniform_groups } = body as {
       token: string;
       scanned_boxes: MultiPalletBoxScan[];
       box_count: number;
+      uniform_groups?: UniformGroupOverride[];
     };
 
     if (!token) {
@@ -89,18 +99,24 @@ export async function POST(request: NextRequest) {
       }
 
       const items = Array.from(itemMap.entries()).map(([sku, { item_name, boxes: itemBoxes }]) => {
+        const override = uniform_groups?.find((g) => g.sku === sku);
         const weights = itemBoxes.map((b) => b.weight).filter((w) => w > 0);
         const weightRange = weights.length > 1 ? Math.max(...weights) - Math.min(...weights) : 0;
-        const isUniform = weightRange < 0.5;
-        const avgWeight = weights.length > 0 ? weights.reduce((a, b) => a + b, 0) / weights.length : 0;
+        // Uniform when overridden by the worker, OR detected from scan weights.
+        const isUniform = override !== undefined || weightRange < 0.5;
+        const scannedAvg = weights.length > 0 ? weights.reduce((a, b) => a + b, 0) / weights.length : 0;
+        const avgWeight = override?.avg_weight ?? scannedAvg;
+        // For uniform sub-groups in a mix pallet the worker only physically scans
+        // 2 sample boxes but reports the true total via uniform_groups.
+        const totalBoxCount = override?.total_count ?? itemBoxes.length;
         const calcWeight = isUniform
-          ? Math.round(avgWeight * itemBoxes.length * 1000) / 1000
+          ? Math.round(avgWeight * totalBoxCount * 1000) / 1000
           : Math.round(weights.reduce((a, b) => a + b, 0) * 1000) / 1000;
 
         return {
           item_code: sku,
           item_name,
-          box_count: itemBoxes.length,
+          box_count: totalBoxCount,
           calculated_total_weight: calcWeight,
           uniform_weight: isUniform,
         };
