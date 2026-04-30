@@ -23,6 +23,12 @@ declare global {
   }
 }
 
+// localStorage key for the worker's preferred-camera deviceId. Survives
+// the per-pallet SmartScanner remounts triggered by the `key` prop on
+// pallet-verify, and across page reloads. Picked up at mount time;
+// updated whenever the worker taps the camera-switch button.
+const CAMERA_PREFERENCE_KEY = 'pallet-scanner:preferred-camera-device-id';
+
 /**
  * SmartScanner - uses native BarcodeDetector API (hardware accelerated).
  * Shows unsupported browser message if BarcodeDetector is not available.
@@ -85,23 +91,52 @@ export function SmartScanner({
     return checkDigit === expectedCheckDigit;
   };
 
-  // Enumerate available cameras (AFTER getting initial permission for labels)
+  // Enumerate available cameras and pick a sensible default.
+  //
+  // The selection priority is, in order:
+  //   1. Worker's saved preference from localStorage (their explicit
+  //      camera-switch choice from a previous session/pallet).
+  //   2. The OS-picked rear camera — captured by reading deviceId off the
+  //      track returned from `getUserMedia({ facingMode: 'environment' })`.
+  //      This is what the OS considers "the back camera" — on Samsung
+  //      phones (S21 FE, S25 Ultra, …) it's the main lens, NOT the
+  //      ultrawide that the previous label-based logic happened to pick.
+  //   3. Label heuristic that prefers main/wide and avoids ultrawide /
+  //      telephoto / macro lenses.
+  //   4. Any back-labelled camera.
+  //   5. First device.
   const enumerateCameras = useCallback(async () => {
     try {
-      // First request permission to get proper camera labels
-      const tempStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' }
-      });
-      tempStream.getTracks().forEach(track => track.stop());
+      // Step 1: probe with facingMode='environment' to (a) trigger the
+      // permission prompt so labels become available, and (b) read off
+      // the deviceId the OS selected for "the rear camera" — which is
+      // the system-default main lens on every modern Android phone.
+      let osDefaultDeviceId: string | undefined;
+      try {
+        const tempStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+        });
+        const track = tempStream.getVideoTracks()[0];
+        osDefaultDeviceId = track?.getSettings().deviceId;
+        tempStream.getTracks().forEach((t) => t.stop());
+      } catch (probeErr) {
+        // Permission prompt rejected, no camera, etc. We can still try
+        // enumerateDevices below — it'll just have empty labels.
+        console.warn('[SmartScanner] facingMode probe failed:', probeErr);
+      }
 
-      // Now enumerate - labels will be available
+      // Step 2: full enumeration (labels are now populated thanks to step 1).
       const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter(device => device.kind === 'videoinput');
+      const videoDevices = devices.filter((d) => d.kind === 'videoinput');
 
-      console.log('[SmartScanner] Found cameras:', videoDevices.map(d => ({
-        id: d.deviceId.slice(0, 8) + '...',
-        label: d.label
-      })));
+      console.log(
+        '[SmartScanner] Found cameras:',
+        videoDevices.map((d) => ({
+          id: d.deviceId.slice(0, 8) + '...',
+          label: d.label,
+          isOsDefault: d.deviceId === osDefaultDeviceId,
+        })),
+      );
 
       if (videoDevices.length === 0) {
         console.error('[SmartScanner] No cameras found');
@@ -111,27 +146,70 @@ export function SmartScanner({
 
       setCameras(videoDevices);
 
-      // Find back camera as default (check for back/rear/environment keywords)
-      let backCameraIndex = videoDevices.findIndex(device =>
-        device.label.toLowerCase().includes('back') ||
-        device.label.toLowerCase().includes('rear') ||
-        device.label.toLowerCase().includes('environment') ||
-        device.label.toLowerCase().includes('traseira') // Portuguese
+      let chosenIndex = -1;
+      let pickedBy = '';
+
+      // (1) Saved preference — user previously hit camera-switch.
+      try {
+        const saved = window.localStorage?.getItem(CAMERA_PREFERENCE_KEY);
+        if (saved) {
+          const i = videoDevices.findIndex((d) => d.deviceId === saved);
+          if (i !== -1) {
+            chosenIndex = i;
+            pickedBy = 'saved-preference';
+          }
+        }
+      } catch {
+        // localStorage may throw (privacy mode); ignore.
+      }
+
+      // (2) OS-picked rear camera — the right answer on Samsung phones.
+      if (chosenIndex === -1 && osDefaultDeviceId) {
+        const i = videoDevices.findIndex((d) => d.deviceId === osDefaultDeviceId);
+        if (i !== -1) {
+          chosenIndex = i;
+          pickedBy = 'os-default';
+        }
+      }
+
+      // (3) Label heuristic — pick main/wide, skip ultra/tele/macro.
+      if (chosenIndex === -1) {
+        const isBack = (s: string) =>
+          /back|rear|environment|traseira/i.test(s);
+        const isAuxLens = (s: string) =>
+          /ultra|tele|macro|wide-?angle|2\s*x|3\s*x|5\s*x/i.test(s);
+        const i = videoDevices.findIndex(
+          (d) => isBack(d.label) && !isAuxLens(d.label),
+        );
+        if (i !== -1) {
+          chosenIndex = i;
+          pickedBy = 'label-heuristic';
+        }
+      }
+
+      // (4) Any back-labelled camera.
+      if (chosenIndex === -1) {
+        const i = videoDevices.findIndex((d) =>
+          /back|rear|environment|traseira/i.test(d.label),
+        );
+        if (i !== -1) {
+          chosenIndex = i;
+          pickedBy = 'any-back';
+        }
+      }
+
+      // (5) Fallback to first device.
+      if (chosenIndex === -1) {
+        chosenIndex = 0;
+        pickedBy = 'first-device';
+      }
+
+      const chosen = videoDevices[chosenIndex];
+      console.log(
+        `[SmartScanner] Default camera (${pickedBy}): ${chosen.label || 'unlabelled'}`,
       );
-
-      // If no back camera found by label, assume first camera is back (mobile convention)
-      if (backCameraIndex === -1 && videoDevices.length > 1) {
-        backCameraIndex = 0;
-        console.log('[SmartScanner] No back camera label found, using first camera');
-      }
-
-      if (backCameraIndex !== -1) {
-        setCurrentCameraIndex(backCameraIndex);
-        setCurrentCameraLabel(videoDevices[backCameraIndex].label || 'Back Camera');
-      } else {
-        setCurrentCameraIndex(0);
-        setCurrentCameraLabel(videoDevices[0].label || 'Camera');
-      }
+      setCurrentCameraIndex(chosenIndex);
+      setCurrentCameraLabel(chosen.label || 'Camera');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[SmartScanner] Failed to enumerate cameras:', err);
@@ -196,6 +274,16 @@ export function SmartScanner({
     const nextCamera = cameras[nextIndex];
 
     setCurrentCameraIndex(nextIndex);
+
+    // Persist this explicit choice — survives the per-pallet
+    // SmartScanner remount (driven by the `key` prop on pallet-verify)
+    // and across page reloads. Without this the worker had to switch
+    // away from ultrawide on every single pallet.
+    try {
+      window.localStorage?.setItem(CAMERA_PREFERENCE_KEY, nextCamera.deviceId);
+    } catch {
+      // localStorage may throw (privacy mode); preference just won't persist.
+    }
 
     // Create informative label
     let label = nextCamera.label || `Camera ${nextIndex + 1}`;
