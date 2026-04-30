@@ -1078,7 +1078,7 @@ export default function PalletVerifyPage({
               onChange={(e) => setBoxCountInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleBoxCountSubmit()}
               placeholder="e.g. 10"
-              className="w-full text-center text-3xl font-bold border-2 border-gray-300 rounded-xl py-4 px-4 focus:border-blue-500 focus:outline-none"
+              className="w-full text-center text-4xl font-bold text-gray-900 bg-white border-2 border-gray-400 rounded-xl py-5 px-4 shadow-sm transition outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-200 placeholder:text-gray-400 placeholder:text-2xl placeholder:font-medium"
               autoFocus
             />
             {error && <p className="text-red-500 text-sm text-center mt-2">{error}</p>}
@@ -1337,7 +1337,7 @@ export default function PalletVerifyPage({
                 }}
                 onKeyDown={(e) => e.key === 'Enter' && handleSetUniformCount()}
                 placeholder="Enter count"
-                className="flex-1 text-center text-lg font-bold border-2 border-gray-300 rounded-xl py-2 px-3 focus:border-blue-500 focus:outline-none"
+                className="flex-1 text-center text-xl font-bold text-gray-900 bg-white border-2 border-gray-400 rounded-xl py-2 px-3 shadow-sm transition outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-200 placeholder:text-gray-400 placeholder:font-medium placeholder:text-base"
                 autoFocus
               />
               <button
