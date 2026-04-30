@@ -10,7 +10,15 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
+import { DebugLogPanel } from '@/components/shared/DebugLogPanel';
+import { installDebugLogCapture } from '@/lib/debug-log';
 import type { MultiPalletSession, MultiPalletBoxScan, ParsedBarcode } from '@/types';
+
+// Set up the in-page console-log capture once at module load. Idempotent —
+// safe even with React Strict Mode mounting twice.
+if (typeof window !== 'undefined') {
+  installDebugLogCapture();
+}
 
 // ── Type detection using OCR-derived weights only ──
 
@@ -443,6 +451,10 @@ export default function PalletVerifyPage({
     return nonUniformIndividuals + lockedTotal;
   }
 
+  // Always-visible bug-report widget. Tap the floating 🐛 button to see
+  // captured console logs and copy them out — no Chrome DevTools needed.
+  const debugPanel = <DebugLogPanel />;
+
   // Full-screen captured-image viewer (used for OCR-failed Diagnostics).
   // fixed/inset-0 means it overlays whatever phase is currently rendering.
   const imageModal = viewingImage ? (
@@ -778,6 +790,7 @@ export default function PalletVerifyPage({
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-gray-50">
         <XCircle className="text-red-500 w-12 h-12 mb-4" />
         <p className="text-lg font-semibold text-red-700 text-center">{error}</p>
+        {debugPanel}
       </div>
     );
   }
@@ -787,6 +800,7 @@ export default function PalletVerifyPage({
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-gray-50">
         <Loader2 className="animate-spin text-blue-500 w-10 h-10 mb-4" />
         <p className="text-gray-600">Loading session…</p>
+        {debugPanel}
       </div>
     );
   }
@@ -849,6 +863,7 @@ export default function PalletVerifyPage({
             This page stays available for ~2 hours. Individual sticker pages stay available indefinitely.
           </p>
         </div>
+        {debugPanel}
       </div>
     );
   }
@@ -1001,6 +1016,7 @@ export default function PalletVerifyPage({
           </button>
         </div>
         {imageModal}
+        {debugPanel}
       </div>
     );
   }
@@ -1029,6 +1045,7 @@ export default function PalletVerifyPage({
           <Loader2 className="animate-spin w-4 h-4" />
           <span>Moving to pallet {currentPallet + 1}…</span>
         </div>
+        {debugPanel}
       </div>
     );
   }
@@ -1090,6 +1107,7 @@ export default function PalletVerifyPage({
             </button>
           </div>
         </div>
+        {debugPanel}
       </div>
     );
   }
@@ -1372,6 +1390,7 @@ export default function PalletVerifyPage({
         )}
       </div>
       {imageModal}
+      {debugPanel}
     </div>
   );
 }
