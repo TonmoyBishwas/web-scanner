@@ -235,18 +235,17 @@ export function SmartScanner({
 
       let stream: MediaStream | null = null;
 
-      // High-resolution constraints + autofocus hint. focusMode is honoured by
-      // Chrome on Android when the camera supports it; cast through `any`
-      // because TS lib.dom.d.ts doesn't yet ship MediaTrackConstraints
-      // advanced properties.
+      // 1080p constraints — same as the build that's confirmed working on
+      // a Samsung S21 FE. Bumping higher (e.g. 2560x1440) regressed on
+      // S25 Ultra; advanced constraints like `focusMode: 'continuous'`
+      // also caused trouble on some Android Chrome / Samsung Camera2
+      // implementations, so we keep this minimal.
       const HD: MediaTrackConstraints = {
-        width: { ideal: 2560 },
-        height: { ideal: 1440 },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        advanced: [{ focusMode: 'continuous' } as any],
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
       };
 
-      // Strategy 1 — facingMode 'environment' (default first start).
+      // Strategy 1 — facingMode 'environment' (initial start).
       // OS picks the system-default rear camera. Critical on multi-camera
       // Android phones (S25 Ultra has 4 back lenses; deviceId picks one
       // arbitrarily, often a telephoto that can't focus close on a box).
@@ -278,8 +277,8 @@ export function SmartScanner({
         }
       }
 
-      // Strategy 3 — lowest-friction fallback (lower-res facingMode, no
-      // advanced constraints) for unusual devices that reject anything else.
+      // Strategy 3 — lowest-friction fallback (720p facingMode) for unusual
+      // devices that reject 1080p.
       if (!stream) {
         const facingMode = isFrontByLabel ? 'user' : 'environment';
         stream = await navigator.mediaDevices.getUserMedia({
@@ -298,6 +297,34 @@ export function SmartScanner({
       }
 
       streamRef.current = stream;
+
+      // On phones with very high-resolution main sensors (e.g. S25 Ultra's
+      // 200 MP), the 1x preview is pixel-binned aggressively, producing a
+      // softer image than ML Kit needs to lock onto fine Code-128 bars.
+      // Apply a moderate zoom only when the camera supports it — that
+      // crops the sensor to a smaller, sharper region. This is a no-op on
+      // phones that don't expose `zoom` (most S21-class devices), so it
+      // can't regress on cameras that already work fine at 1x.
+      try {
+        const [track] = stream.getVideoTracks();
+        // getCapabilities's `zoom` field isn't in lib.dom.d.ts yet.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const caps = (track.getCapabilities?.() as any) || {};
+        if (caps.zoom && typeof caps.zoom.max === 'number' && caps.zoom.max >= 1.5) {
+          const target = Math.min(2, caps.zoom.max);
+          await track.applyConstraints({
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            advanced: [{ zoom: target } as any],
+          });
+          console.log(
+            `[SmartScanner] Applied ${target}x zoom (camera supports up to ${caps.zoom.max}x)`,
+          );
+        } else {
+          console.log('[SmartScanner] Camera does not expose zoom; running at 1x');
+        }
+      } catch (err) {
+        console.warn('[SmartScanner] Zoom application failed (non-fatal):', err);
+      }
 
       if (videoRef.current && isMountedRef.current) {
         videoRef.current.srcObject = stream;
