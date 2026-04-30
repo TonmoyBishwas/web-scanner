@@ -93,35 +93,65 @@ export function SmartScanner({
 
   // Enumerate available cameras and pick a sensible default.
   //
-  // The selection priority is, in order:
-  //   1. Worker's saved preference from localStorage (their explicit
-  //      camera-switch choice from a previous session/pallet).
-  //   2. The OS-picked rear camera — captured by reading deviceId off the
-  //      track returned from `getUserMedia({ facingMode: 'environment' })`.
-  //      This is what the OS considers "the back camera" — on Samsung
-  //      phones (S21 FE, S25 Ultra, …) it's the main lens, NOT the
-  //      ultrawide that the previous label-based logic happened to pick.
-  //   3. Label heuristic that prefers main/wide and avoids ultrawide /
-  //      telephoto / macro lenses.
-  //   4. Any back-labelled camera.
-  //   5. First device.
+  // On Samsung phones (S21 FE, S25 Ultra) the OS often returns the
+  // ULTRAWIDE camera for `facingMode: 'environment'`, even though the
+  // worker wants the MAIN lens. Labels alone don't disambiguate either
+  // (some labels are just "camera2 0", with no descriptive text). The
+  // signal that DOES discriminate reliably is `track.getCapabilities()`:
+  // main back cameras virtually always advertise `zoom.max >= 2`;
+  // ultrawide / fixed-FoV lenses report no zoom or zoom.max == 1.
+  //
+  // Selection priority (first hit wins):
+  //   1. Worker's saved preference from localStorage.
+  //   2. OS-picked rear camera, IF its capabilities advertise zoom — i.e.
+  //      it's the main lens on most phones. Free check: we already have
+  //      the stream open from the permission probe.
+  //   3. Probe the other back cameras one at a time (briefly) and pick
+  //      the first one with `zoom.max >= 2`. ~500ms per probe; only
+  //      runs on first mount when nothing's saved AND the OS default
+  //      is the wrong lens (Samsung).
+  //   4. OS-picked rear camera (even without zoom).
+  //   5. Label heuristic that prefers main/wide and avoids
+  //      ultrawide / telephoto / macro tags.
+  //   6. Any back-labelled camera.
+  //   7. First device.
   const enumerateCameras = useCallback(async () => {
     try {
+      // Helper: open a track briefly, return whether it has zoom >= 2.
+      const probeHasZoom = async (deviceId: string): Promise<boolean> => {
+        let stream: MediaStream | null = null;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { deviceId: { exact: deviceId } },
+            audio: false,
+          });
+          const track = stream.getVideoTracks()[0];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const caps = (track?.getCapabilities?.() as any) || {};
+          return !!(caps.zoom && typeof caps.zoom.max === 'number' && caps.zoom.max >= 2);
+        } catch {
+          return false;
+        } finally {
+          stream?.getTracks().forEach((t) => t.stop());
+        }
+      };
+
       // Step 1: probe with facingMode='environment' to (a) trigger the
-      // permission prompt so labels become available, and (b) read off
-      // the deviceId the OS selected for "the rear camera" — which is
-      // the system-default main lens on every modern Android phone.
+      // permission prompt so labels populate, (b) read the deviceId the
+      // OS picked, and (c) check whether that camera supports zoom.
       let osDefaultDeviceId: string | undefined;
+      let osDefaultHasZoom = false;
       try {
         const tempStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: { ideal: 'environment' } },
         });
         const track = tempStream.getVideoTracks()[0];
         osDefaultDeviceId = track?.getSettings().deviceId;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const caps = (track?.getCapabilities?.() as any) || {};
+        osDefaultHasZoom = !!(caps.zoom && typeof caps.zoom.max === 'number' && caps.zoom.max >= 2);
         tempStream.getTracks().forEach((t) => t.stop());
       } catch (probeErr) {
-        // Permission prompt rejected, no camera, etc. We can still try
-        // enumerateDevices below — it'll just have empty labels.
         console.warn('[SmartScanner] facingMode probe failed:', probeErr);
       }
 
@@ -135,6 +165,7 @@ export function SmartScanner({
           id: d.deviceId.slice(0, 8) + '...',
           label: d.label,
           isOsDefault: d.deviceId === osDefaultDeviceId,
+          osDefaultHasZoom: d.deviceId === osDefaultDeviceId ? osDefaultHasZoom : undefined,
         })),
       );
 
@@ -163,16 +194,46 @@ export function SmartScanner({
         // localStorage may throw (privacy mode); ignore.
       }
 
-      // (2) OS-picked rear camera — the right answer on Samsung phones.
+      // (2) OS default + has zoom — that's the main lens on most phones.
+      if (chosenIndex === -1 && osDefaultDeviceId && osDefaultHasZoom) {
+        const i = videoDevices.findIndex((d) => d.deviceId === osDefaultDeviceId);
+        if (i !== -1) {
+          chosenIndex = i;
+          pickedBy = 'os-default-with-zoom';
+        }
+      }
+
+      // (3) Probe other back cameras for zoom support — finds the main
+      // lens on Samsung where the OS default is the ultrawide.
+      if (chosenIndex === -1) {
+        const isFront = (s: string) => /front|user|face/i.test(s);
+        const candidates = videoDevices
+          .map((d, i) => ({ device: d, index: i }))
+          .filter(
+            ({ device }) =>
+              !isFront(device.label) && device.deviceId !== osDefaultDeviceId,
+          );
+        for (const { device, index } of candidates) {
+          // eslint-disable-next-line no-await-in-loop
+          const hasZoom = await probeHasZoom(device.deviceId);
+          if (hasZoom) {
+            chosenIndex = index;
+            pickedBy = 'probe-zoom-capable';
+            break;
+          }
+        }
+      }
+
+      // (4) OS default (fallback even if it had no zoom — better than nothing).
       if (chosenIndex === -1 && osDefaultDeviceId) {
         const i = videoDevices.findIndex((d) => d.deviceId === osDefaultDeviceId);
         if (i !== -1) {
           chosenIndex = i;
-          pickedBy = 'os-default';
+          pickedBy = 'os-default-fallback';
         }
       }
 
-      // (3) Label heuristic — pick main/wide, skip ultra/tele/macro.
+      // (5) Label heuristic — prefer main/wide, skip ultra/tele/macro.
       if (chosenIndex === -1) {
         const isBack = (s: string) =>
           /back|rear|environment|traseira/i.test(s);
@@ -187,7 +248,7 @@ export function SmartScanner({
         }
       }
 
-      // (4) Any back-labelled camera.
+      // (6) Any back-labelled camera.
       if (chosenIndex === -1) {
         const i = videoDevices.findIndex((d) =>
           /back|rear|environment|traseira/i.test(d.label),
@@ -198,7 +259,7 @@ export function SmartScanner({
         }
       }
 
-      // (5) Fallback to first device.
+      // (7) Fallback to first device.
       if (chosenIndex === -1) {
         chosenIndex = 0;
         pickedBy = 'first-device';
