@@ -48,13 +48,6 @@ export function SmartScanner({
   const lastScannedRef = useRef<string>('');
   const lastScanTimeRef = useRef<number>(0);
   const isMountedRef = useRef(true);
-  // True once the worker has tapped the camera-switch button. Until then we
-  // prefer `facingMode: 'environment'` so the OS picks its default rear
-  // camera — that's much more reliable than picking a deviceId on phones
-  // with multiple back cameras (e.g. S25 Ultra has main + ultrawide + 2
-  // telephoto, all labelled "back" — picking the wrong one means the
-  // BarcodeDetector can't focus on a sticker held 20 cm away).
-  const userSwitchedRef = useRef(false);
   const [flashColor, setFlashColor] = useState<'green' | 'red' | null>(null);
   const [isInCooldown, setIsInCooldown] = useState(false);
   const [cooldownTimeLeft, setCooldownTimeLeft] = useState(0);
@@ -196,10 +189,6 @@ export function SmartScanner({
   const switchCamera = useCallback(() => {
     if (cameras.length === 0) return;
 
-    // From here on, the worker has explicitly chosen a specific camera —
-    // honour their pick via deviceId instead of falling back to facingMode.
-    userSwitchedRef.current = true;
-
     stopNativeScanning();
 
     // Cycle to next camera
@@ -233,63 +222,39 @@ export function SmartScanner({
 
       console.log('[SmartScanner] Starting camera:', currentCamera.label, currentCamera.deviceId.slice(0, 8) + '...');
 
+      // Try with deviceId first, with flexible constraints
       let stream: MediaStream | null = null;
 
-      // 1080p constraints — same as the build that's confirmed working on
-      // a Samsung S21 FE. Bumping higher (e.g. 2560x1440) regressed on
-      // S25 Ultra; advanced constraints like `focusMode: 'continuous'`
-      // also caused trouble on some Android Chrome / Samsung Camera2
-      // implementations, so we keep this minimal.
-      const HD: MediaTrackConstraints = {
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-      };
+      try {
+        // Attempt 1: Use specific deviceId (preferred method)
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            deviceId: { exact: currentCamera.deviceId },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          },
+          audio: false,
+        });
+        console.log('[SmartScanner] Camera started with deviceId');
+      } catch (deviceIdError) {
+        console.warn('[SmartScanner] Failed with deviceId, trying with facingMode fallback:', deviceIdError);
 
-      // Strategy 1 — facingMode 'environment' (initial start).
-      // OS picks the system-default rear camera. Critical on multi-camera
-      // Android phones (S25 Ultra has 4 back lenses; deviceId picks one
-      // arbitrarily, often a telephoto that can't focus close on a box).
-      // Skipped after the worker has tapped the switch button.
-      const isFrontByLabel = /front|user|face/i.test(currentCamera.label || '');
-      if (!userSwitchedRef.current && !isFrontByLabel) {
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: 'environment' }, ...HD },
-            audio: false,
-          });
-          console.log('[SmartScanner] Camera started with facingMode=environment (initial)');
-        } catch (err) {
-          console.warn('[SmartScanner] facingMode start failed, trying deviceId:', err);
-        }
-      }
+        // Attempt 2: Fallback to facingMode (less precise but more compatible)
+        const isFrontCamera = currentCamera.label.toLowerCase().includes('front') ||
+                              currentCamera.label.toLowerCase().includes('user') ||
+                              currentCamera.label.toLowerCase().includes('face');
 
-      // Strategy 2 — explicit deviceId (used when the worker switched, or
-      // when facingMode failed for whatever reason).
-      if (!stream) {
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: { deviceId: { exact: currentCamera.deviceId }, ...HD },
-            audio: false,
-          });
-          console.log('[SmartScanner] Camera started with deviceId');
-        } catch (err) {
-          console.warn('[SmartScanner] deviceId start failed, trying low-res facingMode:', err);
-        }
-      }
+        const facingMode = isFrontCamera ? 'user' : 'environment';
 
-      // Strategy 3 — lowest-friction fallback (720p facingMode) for unusual
-      // devices that reject 1080p.
-      if (!stream) {
-        const facingMode = isFrontByLabel ? 'user' : 'environment';
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: { ideal: facingMode },
-            width: { ideal: 1280 },
+            width: { ideal: 1280 }, // Lower resolution for compatibility
             height: { ideal: 720 },
           },
           audio: false,
         });
-        console.log('[SmartScanner] Camera started with low-res fallback (facingMode):', facingMode);
+        console.log('[SmartScanner] Camera started with facingMode:', facingMode);
       }
 
       if (!stream) {
@@ -297,34 +262,6 @@ export function SmartScanner({
       }
 
       streamRef.current = stream;
-
-      // On phones with very high-resolution main sensors (e.g. S25 Ultra's
-      // 200 MP), the 1x preview is pixel-binned aggressively, producing a
-      // softer image than ML Kit needs to lock onto fine Code-128 bars.
-      // Apply a moderate zoom only when the camera supports it — that
-      // crops the sensor to a smaller, sharper region. This is a no-op on
-      // phones that don't expose `zoom` (most S21-class devices), so it
-      // can't regress on cameras that already work fine at 1x.
-      try {
-        const [track] = stream.getVideoTracks();
-        // getCapabilities's `zoom` field isn't in lib.dom.d.ts yet.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const caps = (track.getCapabilities?.() as any) || {};
-        if (caps.zoom && typeof caps.zoom.max === 'number' && caps.zoom.max >= 1.5) {
-          const target = Math.min(2, caps.zoom.max);
-          await track.applyConstraints({
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            advanced: [{ zoom: target } as any],
-          });
-          console.log(
-            `[SmartScanner] Applied ${target}x zoom (camera supports up to ${caps.zoom.max}x)`,
-          );
-        } else {
-          console.log('[SmartScanner] Camera does not expose zoom; running at 1x');
-        }
-      } catch (err) {
-        console.warn('[SmartScanner] Zoom application failed (non-fatal):', err);
-      }
 
       if (videoRef.current && isMountedRef.current) {
         videoRef.current.srcObject = stream;
@@ -683,17 +620,6 @@ export function SmartScanner({
                 {currentCameraLabel || 'Camera'}
               </span>
             </button>
-          </div>
-        )}
-
-        {/* Build-version stamp — confirms which deploy the worker is running.
-            Use it to rule out stale cache when a worker reports a problem:
-            ask them what version they see, compare to the latest commit on
-            pallet-flow. Vercel injects NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA
-            automatically; locally it's empty so we hide the stamp. */}
-        {process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA && (
-          <div className="absolute bottom-1 right-1 text-[9px] text-white/40 font-mono pointer-events-none select-none">
-            v{process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA.slice(0, 7)}
           </div>
         )}
 
