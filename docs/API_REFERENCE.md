@@ -243,12 +243,12 @@ Bot receives summary with `issued_items[]` and sends the worker a confirmation m
 
 ---
 
-## Pallet Verification Routes (Inbound — Pallet Flow)
+## Pallet Verification Routes (Inbound — Pallet Flow + Loose Boxes)
 
-### 11. Create / Get Pallet Session
-**Endpoint**: `POST /api/pallet-session` (create) | `GET /api/pallet-session?token=` (get)
+### 11. Create / Get Multi-Pallet Session
+**Endpoint**: `POST /api/multi-pallet-session` (create) | `GET /api/multi-pallet-session?token=` (get)
 
-Creates or fetches a pallet scanning session (Redis key: `pallet:{token}`, TTL 2h).
+Creates or fetches a multi-pallet scanning session (Redis key: `pallet:multi:{token}`, TTL 2h).
 
 **POST Request Body:**
 ```json
@@ -256,6 +256,7 @@ Creates or fetches a pallet scanning session (Redis key: `pallet:{token}`, TTL 2
   "chat_id": "123456789",
   "pallet_number": 1,
   "pallet_count": 3,
+  "loose_box_count": 8,
   "scale_weight": 210.5,
   "expected_box_count": 8,
   "invoice_document_number": "INV-001",
@@ -273,7 +274,8 @@ Creates or fetches a pallet scanning session (Redis key: `pallet:{token}`, TTL 2
 }
 ```
 
-For mix pallets, `pallet_type: "mix"` and `mix_items` contains per-item data including `uniform_weight` flag.
+- `loose_box_count`: number of loose individual boxes declared by worker (0 if none)
+- For mix pallets, `pallet_type: "mix"` and `mix_items` contains per-item data including `uniform_weight` flag.
 
 **POST Response:** `{ "token": "uuid", "url": "https://scanner.vercel.app/pallet-verify/uuid" }`
 
@@ -282,7 +284,7 @@ For mix pallets, `pallet_type: "mix"` and `mix_items` contains per-item data inc
 ### 12. Record Pallet Box Scan
 **Endpoint**: `POST /api/pallet-scan`
 
-Records one box scan for pallet verification. Triggers OCR automatically.
+Records one box scan for pallet verification. Triggers OCR automatically via `/api/multi-pallet-ocr`.
 
 **Request Body:**
 ```json
@@ -300,12 +302,35 @@ Records one box scan for pallet verification. Triggers OCR automatically.
 
 ---
 
-### 13. Pallet Box OCR
-**Endpoint**: `POST /api/pallet-ocr`
+### 13. Synchronous Box OCR (Multi-Pallet)
+**Endpoint**: `POST /api/multi-pallet-ocr`
 
-Processes a box sticker OCR result for a pallet session. Updates the corresponding scan entry in Redis with weight, item name, etc.
+Calls bot's `/webhook/process-box-ocr` synchronously (30s timeout) and returns the OCR result. Used by both pallet boxes and loose boxes (the image captured at scan time is the sticker).
 
-**Request Body:** `{ "token": "uuid", "barcode": "...", "ocr_data": { ... } }`
+**Request Body:**
+```json
+{
+  "image": "base64-encoded-jpeg",
+  "barcode": "optional-barcode-string"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "ocr_data": {
+    "product_name_hebrew": "חזה עוף",
+    "product_name_english": "Chicken Breast",
+    "weight_kg": 12.5,
+    "expiry_date": "2026-12-31"
+  }
+}
+```
+
+**Notes:**
+- The scanner captures a frame at the moment the barcode is detected. That frame IS the box sticker.
+- Barcodes themselves carry no parseable data (weight/name/expiry come entirely from OCR).
 
 ---
 
@@ -328,11 +353,51 @@ Manually assigns an OCR-unresolved box to a specific item on a mix pallet.
 ---
 
 ### 16. Complete Pallet Verification
-**Endpoint**: `POST /api/pallet-complete`
+**Endpoint**: `POST /api/multi-pallet-complete`
 
-Generates LPN, saves all data to Airtable, and triggers `POST /webhook/pallet-complete` on the bot.
+Finalises one pallet within a multi-pallet session: generates LPN, advances `session.current_pallet`, fires `POST /webhook/pallet-complete` to the bot.
 
-**Request Body:** `{ "token": "uuid" }`
+**Request Body:**
+```json
+{
+  "token": "uuid",
+  "scanned_boxes": [
+    {
+      "barcode": "7290000000550010000041220260001",
+      "sku": "7290000000550",
+      "item_name": "Ground Beef",
+      "item_name_hebrew": "בשר טחון",
+      "weight": 27.5,
+      "expiry": "2026-12-22",
+      "scanned_at": "ISO-timestamp"
+    }
+  ],
+  "box_count": 8,
+  "uniform_groups": [
+    {
+      "sku": "7290000000550",
+      "total_count": 21,
+      "avg_weight": 27.5
+    }
+  ]
+}
+```
+
+- `scanned_boxes[].barcode` is **required** for the bot to persist Box Inventory rows. (It was being silently stripped in earlier versions, see COMMON_ISSUES.md.)
+- `box_count` is the worker's declared total for this pallet (used as `Expected Box Count` for single-uniform pallets).
+- `uniform_groups[]` is **optional** — present only for mix pallets where one or more sub-items are uniform-weight. Each entry overrides that SKU's per-item `box_count` with `total_count` and forces `uniform_weight: true`. The worker physically scans only 2 sample boxes per uniform sub-item but reports the real count via the prompt UI; the API trusts that count and computes `calculated_total_weight = avg_weight × total_count`.
+
+**Response:**
+```json
+{
+  "success": true,
+  "lpn": "LPN-20260319-INV001-P1",
+  "lpn_url": "https://scanner.vercel.app/pallet/LPN-...",
+  "pallet_number": 1,
+  "next_pallet": 2,
+  "all_done": false
+}
+```
 
 **Webhook payload sent to bot:**
 ```json
@@ -344,23 +409,75 @@ Generates LPN, saves all data to Airtable, and triggers `POST /webhook/pallet-co
   "pallet_type": "single",
   "items": [
     {
-      "item_code": "7290...",
+      "item_code": "7290000000550",
       "item_name": "Ground Beef",
       "item_name_hebrew": "בשר טחון",
-      "box_count": 8,
-      "ocr_box_weight": 27.5,
-      "calculated_total_weight": 220.0,
-      "scanned_count": 2,
+      "box_count": 21,
+      "calculated_total_weight": 577.5,
       "uniform_weight": true
     }
   ],
-  "scale_weight": 210.5,
+  "scanned_boxes": [
+    {
+      "barcode": "7290000000550010000041220260001",
+      "sku": "7290000000550",
+      "item_code": "7290000000550",
+      "weight": 27.5,
+      "expiry": "2026-12-22",
+      "item_name": "Ground Beef",
+      "item_name_hebrew": "בשר טחון"
+    }
+  ],
+  "scale_weight": 0,
   "document_number": "INV-001",
-  "mismatches": []
+  "verified_scan_count": 2
 }
 ```
 
-Bot creates: Pallet row, Pallet Items rows, Box Inventory rows, Stock Batches record, IN_PALLET Transaction, updates Delivery Items received qty.
+- `all_done: true` (top-level response field) when this was the last pallet. The Redis session `status` only flips to `'completed'` once all pallets **and** loose boxes are done; while loose boxes are pending it stays `'active'` so a tab refresh can restore the loose-scanning phase.
+- Bot creates: Pallet row, Pallet Items rows (Expected Box Count from `items[].box_count`), Box Inventory rows (one per `scanned_boxes` entry), Stock Batches records, IN_PALLET Transaction, updates Delivery Items received qty.
+
+---
+
+### 17. Complete Loose Box Phase
+**Endpoint**: `POST /api/multi-pallet-loose-complete`
+
+Submits all scanned loose boxes to the bot after the loose scanning phase is done.
+
+**Request Body:**
+```json
+{
+  "token": "uuid",
+  "scanned_boxes": [
+    {
+      "barcode": "barcode-string",
+      "sku": "7290...",
+      "item_name": "Chicken Breast",
+      "weight": 12.5,
+      "expiry": "2026-12-31",
+      "image_data": "base64-jpeg-optional"
+    }
+  ]
+}
+```
+
+**Steps performed:**
+1. Load session from Redis, validate `status === 'active'`
+2. Fire-and-forget `POST {BOT_URL}/webhook/loose-boxes-complete` with `{chat_id, document_number, receipt_id, scanned_boxes}`
+3. Mark session `status = 'completed'` in Redis
+
+**Response:** `{ "success": true }`
+
+**Bot actions on `/webhook/loose-boxes-complete`:**
+- Creates `Pallets` row with `pallet_type="Loose"`, `lpn="LOOSE-{YYYYMMDD}-{docShort}"` (no physical sticker)
+- Creates `Box Inventory` rows for each scanned box
+- Finalizes the Delivery record
+
+---
+
+### 18. Legacy Pallet Routes (kept for compatibility)
+
+Some older single-pallet routes may still exist (`/api/pallet-session`, `/api/pallet-ocr`). The active path uses `/api/multi-pallet-session` and `/api/multi-pallet-ocr`.
 
 ---
 
@@ -369,9 +486,10 @@ Bot creates: Pallet row, Pallet Items rows, Box Inventory rows, Stock Batches re
 | Key | TTL | Purpose |
 |-----|-----|---------|
 | `session:{token}` | 1h | Carton scan session (RECEIVE or ISSUE) |
-| `pallet:{token}` | 2h | Pallet verification session |
+| `pallet:{token}` | 2h | Legacy single pallet verification session |
+| `pallet:multi:{token}` | 2h | Multi-pallet session (current, includes `loose_box_count`) |
 | `lock:{token}` | 10s | Distributed lock for mutations |
 
 ---
 
-**Last Updated**: 2026-04-12 | Branch: `pallet-flow`
+**Last Updated**: 2026-04-30 | Branch: `pallet-flow`

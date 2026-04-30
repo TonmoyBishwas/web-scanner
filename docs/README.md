@@ -30,6 +30,10 @@ This directory contains detailed documentation for the Web Scanner component of 
 
 ## Branch & Deployment
 
-- **Active branch**: `main`
-- **Vercel deploys from**: `main` (automatic on push)
-- The `scanner-ui-v2` branch was merged (force-pushed) into `main` and is no longer a separate branch.
+- **Active branch**: `pallet-flow` (carries the multi-pallet inbound + outbound work).
+- **Vercel deploys from**: `pallet-flow` (automatic on push).
+- Don't push to `main` directly — it tracks an older snapshot.
+
+---
+
+**Last Updated**: 2026-04-30
