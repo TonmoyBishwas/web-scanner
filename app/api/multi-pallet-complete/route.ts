@@ -132,10 +132,13 @@ export async function POST(request: NextRequest) {
         verified_scan_count: scanned_boxes.length,
         items,
         scanned_boxes: scanned_boxes.map((b) => ({
+          barcode: b.barcode,
           sku: b.sku,
           item_code: b.sku,
           weight: b.weight,
           expiry: b.expiry,
+          item_name: b.item_name,
+          item_name_hebrew: b.item_name_hebrew,
         })),
       };
     } else {
@@ -163,10 +166,13 @@ export async function POST(request: NextRequest) {
         ocr_box_weight: avgWeight,
         calculated_total_weight: calcWeight,
         scanned_boxes: scanned_boxes.map((b) => ({
+          barcode: b.barcode,
           sku: b.sku,
           item_code: b.sku,
           weight: b.weight,
           expiry: b.expiry,
+          item_name: b.item_name,
+          item_name_hebrew: b.item_name_hebrew,
         })),
       };
     }
