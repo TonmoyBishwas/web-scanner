@@ -19,7 +19,7 @@ function sessionKey(token: string) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { chat_id, pallet_count, loose_box_count = 0, document_number, ocr_data, receipt_id } = body;
+    const { chat_id, pallet_count, loose_box_count = 0, document_number, ocr_data, receipt_id, language } = body;
 
     if (!chat_id || !pallet_count || pallet_count < 1) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -39,6 +39,7 @@ export async function POST(request: NextRequest) {
       completed_pallets: [],
       status: 'active',
       created_at: new Date().toISOString(),
+      language: language === 'Hebrew' ? 'Hebrew' : 'English',
     };
 
     const redis = getRedisClient();

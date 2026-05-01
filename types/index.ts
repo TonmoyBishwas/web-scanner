@@ -74,6 +74,8 @@ export interface ScannedItem {
   expected_boxes: number;
 }
 
+export type Language = 'English' | 'Hebrew';
+
 export interface ScanSession {
   token: string;
   chat_id: string;
@@ -95,6 +97,10 @@ export interface ScanSession {
     role: string;
     phone?: string;
   };
+  /** User's preferred language ("English" / "Hebrew"). Set by the bot
+   *  when creating the session; the page reads it on mount and renders
+   *  its UI in this language. Defaults to "English" if missing. */
+  language?: Language;
 }
 
 export interface SessionResponse {
@@ -292,6 +298,8 @@ export interface MultiPalletSession {
   }>;
   status: 'active' | 'completed';
   created_at: string;
+  /** User's preferred language. Set by the bot when creating the session. */
+  language?: Language;
 }
 
 // ─── UI State Types ────────────────────────────────────────────────────────────

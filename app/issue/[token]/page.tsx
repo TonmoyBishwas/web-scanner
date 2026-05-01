@@ -6,12 +6,14 @@ import { BoxDetailModal } from '@/components/issue/BoxDetailModal';
 import { IssuedBoxList } from '@/components/issue/IssuedBoxList';
 import { AlertTriangle, CheckCircle } from 'lucide-react';
 import type {
+  Language,
   ParsedBarcode,
   BoxStickerOCR,
   ScanSession,
   BoxLookupResult,
   IssuedBox,
 } from '@/types';
+import { useLangDir } from '@/lib/i18n';
 
 type IssuePhase =
   | 'loading'
@@ -30,6 +32,7 @@ export default function IssuePage({
 
   const [session, setSession] = useState<ScanSession | null>(null);
   const [phase, setPhase] = useState<IssuePhase>('loading');
+  useLangDir((session?.language as Language) || 'English');
   const [error, setError] = useState<string | null>(null);
 
   // Scan tracking (needed for SmartScanner dedup)

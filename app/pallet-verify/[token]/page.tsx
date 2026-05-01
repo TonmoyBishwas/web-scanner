@@ -12,7 +12,8 @@ import {
 import { SmartScanner } from '@/components/scanner/SmartScanner';
 import { DebugLogPanel } from '@/components/shared/DebugLogPanel';
 import { installDebugLogCapture } from '@/lib/debug-log';
-import type { MultiPalletSession, MultiPalletBoxScan, ParsedBarcode } from '@/types';
+import { LanguageContext, useLangDir } from '@/lib/i18n';
+import type { Language, MultiPalletSession, MultiPalletBoxScan, ParsedBarcode } from '@/types';
 
 // Set up the in-page console-log capture once at module load. Idempotent —
 // safe even with React Strict Mode mounting twice.
@@ -96,6 +97,14 @@ export default function PalletVerifyPage({
 
   const processedRef = useRef<Set<string>>(new Set());
   const [looseBoxes, setLooseBoxes] = useState<BoxScan[]>([]);
+
+  // Language flows from the bot via the session payload. Set the
+  // <html dir="rtl"> + lang attribute so Tailwind logical utilities
+  // (ms-*, me-*, text-start, text-end) flip automatically for Hebrew
+  // workers. The LanguageContext.Provider further down powers useT()
+  // for any future translated strings.
+  const language: Language = (session?.language as Language) || 'English';
+  useLangDir(language);
   const looseProcessedRef = useRef<Set<string>>(new Set());
   // Modal: full-size view of a captured frame (used after OCR failures so the
   // worker can confirm whether the photo is bad or worth retrying).

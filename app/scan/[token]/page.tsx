@@ -32,6 +32,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react';
 import type {
+  Language,
   ParsedBarcode,
   BoxStickerOCR,
   ScanSession,
@@ -40,6 +41,7 @@ import type {
   OCRIssue,
   ManualEntryData,
 } from '@/types';
+import { useLangDir } from '@/lib/i18n';
 
 // Phase enum for flow control
 type ScanPhase =
@@ -64,6 +66,7 @@ export default function ScanPage({
 
   // Session state
   const [session, setSession] = useState<ScanSession | null>(null);
+  useLangDir((session?.language as Language) || 'English');
   const [phase, setPhase] = useState<ScanPhase>('loading');
   const [error, setError] = useState<string | null>(null);
 

@@ -16,7 +16,8 @@ export async function POST(request: NextRequest) {
       invoice_items,
       document_number,
       invoice_image_url,
-      user_info
+      user_info,
+      language,
     } = body;
 
     // Validate required fields
@@ -53,6 +54,7 @@ export async function POST(request: NextRequest) {
       invoice_image_url,  // Store invoice image URL if provided
       ...(operation_type === 'ISSUE' ? { issued_boxes: [] } : {}),
       ...(user_info ? { user_info } : {}),
+      language: language === 'Hebrew' ? 'Hebrew' : 'English',
     };
 
     // Store in Redis

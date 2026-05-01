@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { scannerAPI } from '@/lib/api';
 import { CheckCircle, AlertTriangle, Check } from 'lucide-react';
-import type { ScanSession } from '@/types';
+import { useLangDir } from '@/lib/i18n';
+import type { Language, ScanSession } from '@/types';
 
 export default function CompletePage() {
   const params = useParams();
@@ -12,6 +13,9 @@ export default function CompletePage() {
 
   const [session, setSession] = useState<ScanSession | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // RTL flips automatically when the session language is Hebrew.
+  useLangDir((session?.language as Language) || 'English');
 
   useEffect(() => {
     async function loadSession() {
