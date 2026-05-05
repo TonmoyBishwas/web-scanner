@@ -12,7 +12,7 @@ import {
 import { SmartScanner } from '@/components/scanner/SmartScanner';
 import { DebugLogPanel } from '@/components/shared/DebugLogPanel';
 import { installDebugLogCapture } from '@/lib/debug-log';
-import { LanguageContext, useLangDir } from '@/lib/i18n';
+import { LanguageContext, useLangDir, t } from '@/lib/i18n';
 import type { Language, MultiPalletSession, MultiPalletBoxScan, ParsedBarcode } from '@/types';
 
 // Set up the in-page console-log capture once at module load. Idempotent —
@@ -105,6 +105,10 @@ export default function PalletVerifyPage({
   // for any future translated strings.
   const language: Language = (session?.language as Language) || 'English';
   useLangDir(language);
+  const tr = useCallback(
+    (key: Parameters<typeof t>[1], vars?: Parameters<typeof t>[2]) => t(language, key, vars),
+    [language],
+  );
   const looseProcessedRef = useRef<Set<string>>(new Set());
   // Modal: full-size view of a captured frame (used after OCR failures so the
   // worker can confirm whether the photo is bad or worth retrying).
@@ -129,7 +133,7 @@ export default function PalletVerifyPage({
       try {
         const res = await fetch(`/api/multi-pallet-session?token=${token}`);
         if (!res.ok) {
-          setError('Session not found or expired. Ask the manager to resend the link.');
+          setError(t(undefined, 'palletVerify.sessionExpired'));
           setPhase('error');
           return;
         }
@@ -157,7 +161,7 @@ export default function PalletVerifyPage({
           setPhase('box_count');
         }
       } catch {
-        setError('Failed to load session.');
+        setError(t(undefined, 'palletVerify.failedLoad'));
         setPhase('error');
       }
     }
@@ -421,13 +425,16 @@ export default function PalletVerifyPage({
     if (!p || p.mode !== 'mandatory_count') return;
     const n = parseInt(countInput, 10);
     if (!Number.isFinite(n) || n < 1) {
-      setCountError('Enter a valid number ≥ 1.');
+      setCountError(tr('palletVerify.uniformInvalidCount'));
       return;
     }
     const remaining = confirmedBoxCount - committedExcludingPending();
     if (n > remaining) {
       setCountError(
-        `Total would exceed declared ${confirmedBoxCount} boxes — max is ${Math.max(0, remaining)} for this item.`
+        tr('palletVerify.uniformExceedsCount', {
+          declared: confirmedBoxCount,
+          max: Math.max(0, remaining),
+        }),
       );
       return;
     }
@@ -482,10 +489,10 @@ export default function PalletVerifyPage({
         onClick={() => setViewingImage(null)}
         className="absolute top-4 right-4 bg-white text-gray-900 px-4 py-2 rounded-lg font-semibold text-sm shadow-lg"
       >
-        ✕ Close
+        {tr('palletVerify.closeButton')}
       </button>
       <p className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white text-xs opacity-70 whitespace-nowrap">
-        Tap outside to close
+        {tr('pallet.tapOutsideToClose')}
       </p>
     </div>
   ) : null;
@@ -542,13 +549,13 @@ export default function PalletVerifyPage({
       });
       const data = await res.json();
       if (!data.success) {
-        setError(data.error || 'Failed to complete loose boxes.');
+        setError(data.error || tr('palletVerify.failedLooseComplete'));
         setPhase('loose_scanning');
         return;
       }
       setPhase('all_done');
     } catch {
-      setError('Network error. Please try again.');
+      setError(tr('palletVerify.networkError'));
       setPhase('loose_scanning');
     }
   }
@@ -558,7 +565,7 @@ export default function PalletVerifyPage({
   function handleBoxCountSubmit() {
     const count = parseInt(boxCountInput, 10);
     if (isNaN(count) || count < 1) {
-      setError('Please enter a valid number of boxes (minimum 1).');
+      setError(tr('palletVerify.invalidBoxNumber'));
       return;
     }
     setError(null);
@@ -603,7 +610,7 @@ export default function PalletVerifyPage({
       const data = await res.json();
 
       if (!data.success) {
-        setError(data.error || 'Failed to complete pallet.');
+        setError(data.error || tr('palletVerify.failedComplete'));
         setPhase('scanning');
         return;
       }
@@ -663,7 +670,7 @@ export default function PalletVerifyPage({
         }, 4000);
       }
     } catch {
-      setError('Network error. Please try again.');
+      setError(tr('palletVerify.networkError'));
       setPhase('scanning');
     }
   }
@@ -689,22 +696,22 @@ export default function PalletVerifyPage({
 
   function TypeBadge() {
     if (detectedType === 'unknown')
-      return <span className="text-xs text-gray-400">Scan 2+ boxes to detect type</span>;
+      return <span className="text-xs text-gray-400">{tr('palletVerify.scan2Detect')}</span>;
     if (detectedType === 'single-uniform')
       return (
         <span className="text-xs bg-green-100 text-green-700 rounded-full px-2 py-0.5 font-medium">
-          ✅ Single · uniform weight
+          {tr('palletVerify.singleUniformBadge')}
         </span>
       );
     if (detectedType === 'single-nonuniform')
       return (
         <span className="text-xs bg-yellow-100 text-yellow-700 rounded-full px-2 py-0.5 font-medium">
-          ⚖️ Single · scan all boxes
+          {tr('palletVerify.singleNonuniformBadge')}
         </span>
       );
     return (
       <span className="text-xs bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 font-medium">
-        📦 Mix · scan all boxes
+        {tr('palletVerify.mixBadge')}
       </span>
     );
   }
@@ -730,13 +737,13 @@ export default function PalletVerifyPage({
             {box.ocr_status === 'processing' ? (
               <div className="flex items-center gap-1.5 text-blue-600">
                 <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                <span className="text-xs">Reading label…</span>
+                <span className="text-xs">{tr('palletVerify.readingLabel')}</span>
               </div>
             ) : box.ocr_status === 'failed' ? (
               <div>
                 <div className="flex items-center gap-1.5">
                   <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                  <span className="text-xs text-red-500">OCR failed</span>
+                  <span className="text-xs text-red-500">{tr('ocr.failed')}</span>
                 </div>
                 <div className="flex flex-wrap gap-1.5 mt-1.5">
                   {box.image_data && (
@@ -744,20 +751,20 @@ export default function PalletVerifyPage({
                       onClick={() => setViewingImage(box.image_data!)}
                       className="text-[11px] px-2 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded font-medium"
                     >
-                      🖼 View
+                      {tr('palletVerify.viewWithIcon')}
                     </button>
                   )}
                   <button
                     onClick={() => retryPalletOcr(box.barcode)}
                     className="text-[11px] px-2 py-0.5 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded font-medium"
                   >
-                    ↻ Retry
+                    {tr('palletVerify.retryWithIcon')}
                   </button>
                   <button
                     onClick={() => rescanPalletBox(box.barcode)}
                     className="text-[11px] px-2 py-0.5 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded font-medium"
                   >
-                    🔄 Rescan
+                    {tr('palletVerify.rescanWithIcon')}
                   </button>
                 </div>
               </div>
@@ -771,7 +778,7 @@ export default function PalletVerifyPage({
                     {box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}
                   </span>
                   {box.expiry && (
-                    <span className="text-xs text-gray-400">exp {box.expiry}</span>
+                    <span className="text-xs text-gray-400" dir="ltr">exp {box.expiry}</span>
                   )}
                 </div>
               </>
@@ -808,7 +815,7 @@ export default function PalletVerifyPage({
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-gray-50">
         <Loader2 className="animate-spin text-blue-500 w-10 h-10 mb-4" />
-        <p className="text-gray-600">Loading session…</p>
+        <p className="text-gray-600">{tr('palletVerify.loadingSession')}</p>
         {debugPanel}
       </div>
     );
@@ -823,53 +830,65 @@ export default function PalletVerifyPage({
           <div className="text-center">
             <CheckCircle className="text-green-500 w-16 h-16 mx-auto mb-4" />
             <h1 className="text-2xl font-bold text-green-700 mb-2">
-              All {pallet_count} pallet{pallet_count !== 1 ? 's' : ''}
-              {looseCount > 0 ? ` + ${looseCount} loose box${looseCount !== 1 ? 'es' : ''}` : ''} complete!
+              {looseCount > 0
+                ? tr('palletVerify.allDoneTitleWithLoose', { count: pallet_count, looseCount })
+                : tr('palletVerify.allDoneTitleSimple', { count: pallet_count })}
             </h1>
             <p className="text-sm text-gray-500 mb-6">
-              Tap a sticker below to view or print. Links also sent via WhatsApp.
+              {tr('pallet.stickers.tapHint')}
             </p>
           </div>
 
           {completed.length > 0 && (
             <div className="space-y-2 mb-6">
               <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 px-1">
-                Pallet stickers
+                {tr('pallet.stickers.title')}
               </h2>
-              {completed.map((p) => (
-                <a
-                  key={p.lpn}
-                  href={`/pallet/${encodeURIComponent(p.lpn)}?token=${encodeURIComponent(token)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block bg-white border border-gray-200 rounded-xl p-3 hover:border-green-400 hover:shadow-sm transition"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="font-mono text-sm font-semibold text-gray-900 truncate">
-                        {p.lpn}
+              {completed.map((p) => {
+                const typeLabel =
+                  p.pallet_type === 'mix'
+                    ? tr('palletVerify.palletTypeMix')
+                    : tr('palletVerify.palletTypeSingle');
+                const langSuffix = language === 'Hebrew' ? '&lang=Hebrew' : '';
+                return (
+                  <a
+                    key={p.lpn}
+                    href={`/pallet/${encodeURIComponent(p.lpn)}?token=${encodeURIComponent(token)}${langSuffix}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block bg-white border border-gray-200 rounded-xl p-3 hover:border-green-400 hover:shadow-sm transition"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-mono text-sm font-semibold text-gray-900 truncate" dir="ltr">
+                          {p.lpn}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          {tr('palletVerify.palletEntry', {
+                            n: p.pallet_number,
+                            count: p.box_count,
+                            type: typeLabel,
+                          })}
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-500 mt-0.5">
-                        Pallet {p.pallet_number} · {p.box_count} box{p.box_count !== 1 ? 'es' : ''} · {p.pallet_type}
-                      </div>
+                      <span className="text-green-600 text-sm font-semibold shrink-0">
+                        {tr('palletVerify.printSticker')}
+                      </span>
                     </div>
-                    <span className="text-green-600 text-sm font-semibold shrink-0">
-                      Print →
-                    </span>
-                  </div>
-                </a>
-              ))}
+                  </a>
+                );
+              })}
             </div>
           )}
 
           {looseCount > 0 && (
             <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-sm text-orange-800 mb-6">
-              📦 {looseCount} loose box{looseCount !== 1 ? 'es' : ''} recorded — no physical sticker (system-tracked only).
+              {tr('palletVerify.looseBoxesNote', { count: looseCount })}
             </div>
           )}
 
           <p className="text-xs text-gray-400 text-center">
-            This page stays available for ~2 hours. Individual sticker pages stay available indefinitely.
+            {tr('palletVerify.expiryNote')}
           </p>
         </div>
         {debugPanel}
@@ -896,9 +915,9 @@ export default function PalletVerifyPage({
             <Package className="text-orange-500 w-5 h-5" />
             <div>
               <p className="text-sm font-bold text-gray-800">
-                Loose Boxes · {scanned} / {declared} scanned
+                {tr('palletVerify.looseHeader', { scanned, declared })}
               </p>
-              <p className="text-xs text-gray-500">Doc: {session?.document_number || '—'}</p>
+              <p className="text-xs text-gray-500" dir="ltr">{tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}</p>
             </div>
           </div>
           <div className="mt-2">
@@ -925,7 +944,7 @@ export default function PalletVerifyPage({
             <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
               <div className="bg-white rounded-xl px-4 py-3 flex items-center gap-2">
                 <Loader2 className="animate-spin w-5 h-5 text-orange-500" />
-                <span className="text-sm font-medium">Saving loose boxes…</span>
+                <span className="text-sm font-medium">{tr('palletVerify.savingLoose')}</span>
               </div>
             </div>
           )}
@@ -948,11 +967,11 @@ export default function PalletVerifyPage({
                       {displayName}
                     </span>
                     <span className="text-xs bg-orange-200 text-orange-800 rounded-full px-2 py-0.5 font-semibold">
-                      {boxes.length} box{boxes.length !== 1 ? 'es' : ''}
+                      {tr('palletVerify.boxesUnit', { count: boxes.length })}
                     </span>
                   </div>
                   {totalWeight > 0 && (
-                    <p className="text-xs text-gray-500 mb-1">{totalWeight.toFixed(3)} kg total</p>
+                    <p className="text-xs text-gray-500 mb-1">{tr('palletVerify.totalWeightLine', { weight: totalWeight.toFixed(3) })}</p>
                   )}
                   <div className="space-y-1">
                     {boxes.map((box, bi) => (
@@ -960,38 +979,38 @@ export default function PalletVerifyPage({
                         {box.ocr_status === 'processing' ? (
                           <>
                             <Loader2 className="w-3 h-3 animate-spin text-orange-400 shrink-0" />
-                            <span className="text-orange-500">Reading…</span>
+                            <span className="text-orange-500">{tr('palletVerify.reading')}</span>
                           </>
                         ) : box.ocr_status === 'done' ? (
                           <>
                             <CheckCircle className="w-3 h-3 text-green-500 shrink-0" />
                             <span>{box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}</span>
-                            {box.expiry && <span className="text-gray-400">· {box.expiry}</span>}
+                            {box.expiry && <span className="text-gray-400" dir="ltr">· {box.expiry}</span>}
                           </>
                         ) : (
                           <>
                             <AlertCircle className="w-3 h-3 text-red-300 shrink-0" />
-                            <span className="text-gray-400">OCR failed</span>
-                            <div className="flex gap-1 ml-auto">
+                            <span className="text-gray-400">{tr('ocr.failed')}</span>
+                            <div className="flex gap-1 ms-auto">
                               {box.image_data && (
                                 <button
                                   onClick={() => setViewingImage(box.image_data!)}
                                   className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] font-medium"
                                 >
-                                  View
+                                  {tr('ocr.view')}
                                 </button>
                               )}
                               <button
                                 onClick={() => retryLooseOcr(box.barcode)}
                                 className="px-1.5 py-0.5 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-[10px] font-medium"
                               >
-                                Retry
+                                {tr('ocr.retry')}
                               </button>
                               <button
                                 onClick={() => rescanLooseBox(box.barcode)}
                                 className="px-1.5 py-0.5 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded text-[10px] font-medium"
                               >
-                                Rescan
+                                {tr('ocr.rescan')}
                               </button>
                             </div>
                           </>
@@ -1018,10 +1037,10 @@ export default function PalletVerifyPage({
             }`}
           >
             {canConfirmLoose
-              ? `✅ Confirm ${scanned} Loose Box${scanned !== 1 ? 'es' : ''}`
+              ? tr('palletVerify.confirmLooseBtn', { count: scanned })
               : declared > 0
-              ? `Scan ${Math.max(0, declared - scanned)} more box${declared - scanned === 1 ? '' : 'es'}`
-              : `Scan at least 2 boxes`}
+              ? tr('palletVerify.scanMoreLoose', { count: Math.max(0, declared - scanned) })
+              : tr('palletVerify.scanAtLeast2')}
           </button>
         </div>
         {imageModal}
@@ -1035,24 +1054,24 @@ export default function PalletVerifyPage({
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-green-50 text-center">
         <CheckCircle className="text-green-500 w-14 h-14 mb-4" />
         <h1 className="text-xl font-bold text-green-700 mb-1">
-          Pallet {currentPallet}/{pallet_count} done!
+          {tr('palletVerify.palletDoneTitle', { current: currentPallet, total: pallet_count })}
         </h1>
         <p className="text-gray-700 mb-1">
-          LPN: <span className="font-mono font-bold">{lpn}</span>
+          <span className="font-mono font-bold" dir="ltr">{tr('palletVerify.lpnLabel', { lpn })}</span>
         </p>
         {lpnUrl && (
           <a
-            href={`${lpnUrl}?token=${encodeURIComponent(token)}`}
+            href={`${lpnUrl}?token=${encodeURIComponent(token)}${language === 'Hebrew' ? '&lang=Hebrew' : ''}`}
             target="_blank"
             rel="noopener noreferrer"
             className="mt-2 inline-block bg-green-600 text-white px-5 py-2 rounded-xl text-sm font-semibold hover:bg-green-700 transition"
           >
-            View & Print Sticker →
+            {tr('palletVerify.viewPrintSticker')}
           </a>
         )}
         <div className="mt-6 flex items-center gap-2 text-gray-500 text-sm">
           <Loader2 className="animate-spin w-4 h-4" />
-          <span>Moving to pallet {currentPallet + 1}…</span>
+          <span>{tr('palletVerify.movingNext', { next: currentPallet + 1 })}</span>
         </div>
         {debugPanel}
       </div>
@@ -1067,9 +1086,9 @@ export default function PalletVerifyPage({
             <Package className="text-blue-600 w-5 h-5" />
             <div>
               <p className="text-sm font-bold text-gray-800">
-                Pallet {currentPallet} of {pallet_count}
+                {tr('palletVerify.palletHeaderShort', { current: currentPallet, total: pallet_count })}
               </p>
-              <p className="text-xs text-gray-500">Doc: {session?.document_number || '—'}</p>
+              <p className="text-xs text-gray-500" dir="ltr">{tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}</p>
             </div>
           </div>
           <div className="flex gap-1 mt-2">
@@ -1091,10 +1110,10 @@ export default function PalletVerifyPage({
         <div className="flex-1 flex flex-col items-center justify-center px-6">
           <div className="w-full max-w-sm">
             <h2 className="text-xl font-bold text-gray-800 text-center mb-2">
-              📦 How many boxes?
+              {tr('palletVerify.howManyBoxes')}
             </h2>
             <p className="text-sm text-gray-500 text-center mb-6">
-              Total boxes on pallet {currentPallet}.
+              {tr('palletVerify.totalOnPallet', { current: currentPallet })}
             </p>
             <input
               type="number"
@@ -1103,7 +1122,7 @@ export default function PalletVerifyPage({
               value={boxCountInput}
               onChange={(e) => setBoxCountInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleBoxCountSubmit()}
-              placeholder="e.g. 10"
+              placeholder={tr('palletVerify.boxCountPlaceholder')}
               className="w-full text-center text-4xl font-bold text-gray-900 bg-white border-2 border-gray-400 rounded-xl py-5 px-4 shadow-sm transition outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-200 placeholder:text-gray-400 placeholder:text-2xl placeholder:font-medium"
               autoFocus
             />
@@ -1112,7 +1131,7 @@ export default function PalletVerifyPage({
               onClick={handleBoxCountSubmit}
               className="w-full mt-4 py-3 rounded-xl bg-blue-600 text-white font-semibold text-base hover:bg-blue-700 transition flex items-center justify-center gap-2"
             >
-              Start Scanning <ChevronRight className="w-5 h-5" />
+              {tr('palletVerify.startScanning')} <ChevronRight className="w-5 h-5" />
             </button>
           </div>
         </div>
@@ -1132,9 +1151,9 @@ export default function PalletVerifyPage({
             <Package className="text-blue-600 w-5 h-5" />
             <div>
               <p className="text-sm font-bold text-gray-800">
-                Pallet {currentPallet}/{pallet_count} · {confirmedBoxCount} boxes
+                {tr('palletVerify.palletHeaderWithCount', { current: currentPallet, total: pallet_count, count: confirmedBoxCount })}
               </p>
-              <p className="text-xs text-gray-500">Doc: {session?.document_number || '—'}</p>
+              <p className="text-xs text-gray-500" dir="ltr">{tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}</p>
             </div>
           </div>
           <TypeBadge />
@@ -1143,16 +1162,14 @@ export default function PalletVerifyPage({
         <div className="mt-2">
           <div className="flex justify-between text-xs text-gray-500 mb-1">
             <span>
-              {committed} / {confirmedBoxCount} committed
+              {tr('palletVerify.committed', { committed, total: confirmedBoxCount })}
             </span>
             <span className={canConfirm ? 'text-green-600 font-semibold' : 'text-gray-400'}>
               {canConfirm
-                ? '✅ Ready to confirm'
+                ? tr('palletVerify.readyToConfirm')
                 : pendingUniformPrompt
-                ? '⏳ Waiting for your input below'
-                : `${Math.max(0, confirmedBoxCount - committed)} more box${
-                    confirmedBoxCount - committed === 1 ? '' : 'es'
-                  } to go`}
+                ? tr('palletVerify.waitingInput')
+                : tr('palletVerify.moreBoxesToGo', { count: Math.max(0, confirmedBoxCount - committed) })}
             </span>
           </div>
           <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
@@ -1172,23 +1189,23 @@ export default function PalletVerifyPage({
         {(uniformGroups.size > 0 || pendingUniformPrompt) && (
           <div className="mt-2 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
             <p className="text-[11px] font-semibold text-emerald-700 mb-1">
-              🟢 Uniform items
+              {tr('palletVerify.uniformItemsHeader')}
             </p>
             <ul className="text-xs text-emerald-900 space-y-0.5">
               {Array.from(uniformGroups.values()).map((g) => {
                 const name = g.item_name_hebrew || g.item_name || g.sku;
                 return (
                   <li key={g.sku}>
-                    ✓ {name} — <span className="font-semibold">{g.total_count}</span> boxes locked
-                    <span className="text-emerald-600/70"> ({g.avg_weight} kg/box)</span>
+                    {tr('palletVerify.uniformLockedItem', { name, count: g.total_count, weight: g.avg_weight })}
                   </li>
                 );
               })}
               {pendingUniformPrompt && (
                 <li className="text-emerald-800">
-                  ⏳ {pendingUniformPrompt.item_name_hebrew || pendingUniformPrompt.item_name || pendingUniformPrompt.sku}{' '}
-                  — awaiting count below
-                  <span className="text-emerald-600/70"> ({pendingUniformPrompt.avg_weight} kg/box)</span>
+                  {tr('palletVerify.uniformPendingItem', {
+                    name: pendingUniformPrompt.item_name_hebrew || pendingUniformPrompt.item_name || pendingUniformPrompt.sku,
+                    weight: pendingUniformPrompt.avg_weight,
+                  })}
                 </li>
               )}
             </ul>
@@ -1209,7 +1226,7 @@ export default function PalletVerifyPage({
           <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
             <div className="bg-white rounded-xl px-4 py-3 flex items-center gap-2">
               <Loader2 className="animate-spin w-5 h-5 text-blue-500" />
-              <span className="text-sm font-medium">Saving pallet…</span>
+              <span className="text-sm font-medium">{tr('palletVerify.savingPallet')}</span>
             </div>
           </div>
         )}
@@ -1238,11 +1255,11 @@ export default function PalletVerifyPage({
                         {displayName}
                       </span>
                       <span className="text-xs bg-blue-200 text-blue-800 rounded-full px-2 py-0.5 font-semibold">
-                        {boxes.length} box{boxes.length !== 1 ? 'es' : ''}
+                        {tr('palletVerify.boxesUnit', { count: boxes.length })}
                       </span>
                     </div>
                     {avgWeight > 0 && (
-                      <p className="text-xs text-gray-500 mb-1">avg {avgWeight.toFixed(3)} kg/box</p>
+                      <p className="text-xs text-gray-500 mb-1">{tr('palletVerify.avgWeightLine', { weight: avgWeight.toFixed(3) })}</p>
                     )}
                     <div className="space-y-1">
                       {boxes.map((box, bi) => (
@@ -1250,38 +1267,38 @@ export default function PalletVerifyPage({
                           {box.ocr_status === 'processing' ? (
                             <>
                               <Loader2 className="w-3 h-3 animate-spin text-blue-400 shrink-0" />
-                              <span className="text-blue-500">Reading…</span>
+                              <span className="text-blue-500">{tr('palletVerify.reading')}</span>
                             </>
                           ) : box.ocr_status === 'done' ? (
                             <>
                               <CheckCircle className="w-3 h-3 text-green-500 shrink-0" />
                               <span>{box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}</span>
-                              {box.expiry && <span className="text-gray-400">· {box.expiry}</span>}
+                              {box.expiry && <span className="text-gray-400" dir="ltr">· {box.expiry}</span>}
                             </>
                           ) : (
                             <>
                               <AlertCircle className="w-3 h-3 text-red-300 shrink-0" />
-                              <span className="text-gray-400">OCR failed</span>
-                              <div className="flex gap-1 ml-auto">
+                              <span className="text-gray-400">{tr('ocr.failed')}</span>
+                              <div className="flex gap-1 ms-auto">
                                 {box.image_data && (
                                   <button
                                     onClick={() => setViewingImage(box.image_data!)}
                                     className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] font-medium"
                                   >
-                                    View
+                                    {tr('ocr.view')}
                                   </button>
                                 )}
                                 <button
                                   onClick={() => retryPalletOcr(box.barcode)}
                                   className="px-1.5 py-0.5 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-[10px] font-medium"
                                 >
-                                  Retry
+                                  {tr('ocr.retry')}
                                 </button>
                                 <button
                                   onClick={() => rescanPalletBox(box.barcode)}
                                   className="px-1.5 py-0.5 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded text-[10px] font-medium"
                                 >
-                                  Rescan
+                                  {tr('ocr.rescan')}
                                 </button>
                               </div>
                             </>
@@ -1293,8 +1310,7 @@ export default function PalletVerifyPage({
                 );
               })}
               <p className="text-xs text-gray-400 text-center mt-1">
-                {Object.keys(groupedBySku).length} item type
-                {Object.keys(groupedBySku).length !== 1 ? 's' : ''} detected
+                {tr('palletVerify.itemTypesDetected', { count: Object.keys(groupedBySku).length })}
               </p>
             </div>
           ) : (
@@ -1307,7 +1323,7 @@ export default function PalletVerifyPage({
 
           {canConfirm && (
             <p className="text-xs text-gray-400 text-center mt-3">
-              Confirm now or keep scanning to add more boxes
+              {tr('palletVerify.confirmOrKeep')}
             </p>
           )}
         </div>
@@ -1323,34 +1339,35 @@ export default function PalletVerifyPage({
         {pendingUniformPrompt?.mode === 'single_or_mix' ? (
           <div className="space-y-2">
             <p className="text-xs text-gray-600 text-center mb-1">
-              Same item & weight detected — choose how to proceed:
+              {tr('palletVerify.uniformChoose')}
             </p>
             <button
               onClick={handleCompleteAsSingle}
               disabled={phase === 'confirming'}
               className="w-full py-3 rounded-xl font-semibold text-base bg-green-600 text-white hover:bg-green-700 active:bg-green-800 transition disabled:bg-gray-200 disabled:text-gray-400"
             >
-              ✅ Complete as single-item ({confirmedBoxCount} boxes)
+              {tr('palletVerify.uniformCompleteBtn', { count: confirmedBoxCount })}
             </button>
             <button
               onClick={handleContinueAsMix}
               disabled={phase === 'confirming'}
               className="w-full py-3 rounded-xl font-semibold text-base bg-white border-2 border-blue-500 text-blue-700 hover:bg-blue-50 transition"
             >
-              ⏭ Continue scanning (this is a mix pallet)
+              {tr('palletVerify.uniformContinueMix')}
             </button>
           </div>
         ) : pendingUniformPrompt?.mode === 'mandatory_count' ? (
           <div className="space-y-2">
             <label className="block text-xs text-gray-700 font-medium">
-              How many boxes of{' '}
-              <span className="font-semibold">
-                {pendingUniformPrompt.item_name_hebrew || pendingUniformPrompt.item_name || pendingUniformPrompt.sku}
-              </span>{' '}
-              are on this pallet?
+              {tr('palletVerify.uniformHowMany', {
+                item: pendingUniformPrompt.item_name_hebrew || pendingUniformPrompt.item_name || pendingUniformPrompt.sku,
+              })}
             </label>
             <p className="text-[11px] text-gray-500">
-              Max {Math.max(0, confirmedBoxCount - committedExcludingPending())} (each box ≈ {pendingUniformPrompt.avg_weight} kg)
+              {tr('palletVerify.uniformMaxNote', {
+                max: Math.max(0, confirmedBoxCount - committedExcludingPending()),
+                weight: pendingUniformPrompt.avg_weight,
+              })}
             </p>
             <div className="flex gap-2">
               <input
@@ -1363,7 +1380,7 @@ export default function PalletVerifyPage({
                   setCountError(null);
                 }}
                 onKeyDown={(e) => e.key === 'Enter' && handleSetUniformCount()}
-                placeholder="Enter count"
+                placeholder={tr('palletVerify.uniformPlaceholder')}
                 className="flex-1 text-center text-xl font-bold text-gray-900 bg-white border-2 border-gray-400 rounded-xl py-2 px-3 shadow-sm transition outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-200 placeholder:text-gray-400 placeholder:font-medium placeholder:text-base"
                 autoFocus
               />
@@ -1371,7 +1388,7 @@ export default function PalletVerifyPage({
                 onClick={handleSetUniformCount}
                 className="px-5 py-2 rounded-xl bg-blue-600 text-white font-semibold text-sm hover:bg-blue-700 transition"
               >
-                Set
+                {tr('palletVerify.uniformSet')}
               </button>
             </div>
             {countError && (
@@ -1389,12 +1406,10 @@ export default function PalletVerifyPage({
             }`}
           >
             {canConfirm
-              ? `✅ Confirm Pallet ${currentPallet}`
+              ? tr('palletVerify.confirmPalletBtn', { current: currentPallet })
               : committed < 2
-              ? `Scan ${2 - committed} more box${2 - committed === 1 ? '' : 'es'} to continue`
-              : `${Math.max(0, confirmedBoxCount - committed)} more box${
-                  confirmedBoxCount - committed === 1 ? '' : 'es'
-                } needed`}
+              ? tr('palletVerify.scanMoreToContinue', { count: 2 - committed })
+              : tr('palletVerify.boxesNeeded', { count: Math.max(0, confirmedBoxCount - committed) })}
           </button>
         )}
       </div>

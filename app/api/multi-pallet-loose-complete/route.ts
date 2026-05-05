@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedisClient } from '@/lib/redis';
-import type { MultiPalletSession, MultiPalletBoxScan } from '@/types';
+import { t } from '@/lib/i18n/server';
+import type { MultiPalletSession, MultiPalletBoxScan, Language } from '@/types';
 
 const SESSION_TTL = 7200;
 
@@ -18,26 +19,27 @@ export async function POST(request: NextRequest) {
     const { token, scanned_boxes } = await request.json();
 
     if (!token) {
-      return NextResponse.json({ success: false, error: 'Missing token' }, { status: 400 });
+      return NextResponse.json({ success: false, error: t(undefined, 'errors.missingToken') }, { status: 400 });
     }
 
     const redis = getRedisClient();
     const raw = await redis.get(sessionKey(token));
 
     if (!raw) {
-      return NextResponse.json({ success: false, error: 'Session not found' }, { status: 404 });
+      return NextResponse.json({ success: false, error: t(undefined, 'errors.sessionNotFound') }, { status: 404 });
     }
 
     const session: MultiPalletSession =
       typeof raw === 'string' ? JSON.parse(raw) : (raw as MultiPalletSession);
+    const lang = session.language as Language | undefined;
 
     if (session.status !== 'active') {
-      return NextResponse.json({ success: false, error: 'Session already completed' }, { status: 409 });
+      return NextResponse.json({ success: false, error: t(lang, 'errors.sessionAlreadyCompleted') }, { status: 409 });
     }
 
     const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
     if (!botUrl) {
-      return NextResponse.json({ success: false, error: 'Bot webhook not configured' }, { status: 500 });
+      return NextResponse.json({ success: false, error: t(lang, 'errors.botWebhookNotConfigured') }, { status: 500 });
     }
 
     // Fire-and-forget to bot webhook
@@ -60,6 +62,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[multi-pallet-loose-complete] error:', error);
-    return NextResponse.json({ success: false, error: 'Internal error' }, { status: 500 });
+    return NextResponse.json({ success: false, error: t(undefined, 'errors.serverError') }, { status: 500 });
   }
 }

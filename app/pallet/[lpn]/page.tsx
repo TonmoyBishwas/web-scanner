@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import { PrintButton } from './PrintButton';
+import { t } from '@/lib/i18n/server';
+import type { Language } from '@/types';
 
 interface PalletRecord {
   lpn: string;
@@ -56,6 +58,17 @@ async function fetchPalletRecord(lpn: string): Promise<PalletRecord | null> {
   }
 }
 
+/**
+ * Resolve the page language from the `?lang=` query string.
+ * Accepts: 'he' | 'Hebrew' (case-insensitive). Anything else → English.
+ * The pallet-verify scanner appends &lang=Hebrew when the session is Hebrew.
+ */
+function resolveLanguage(raw: string | undefined): Language {
+  if (!raw) return 'English';
+  const v = raw.toLowerCase();
+  return v === 'he' || v === 'hebrew' ? 'Hebrew' : 'English';
+}
+
 export async function generateMetadata({
   params,
 }: {
@@ -70,25 +83,34 @@ export default async function PalletStickerPage({
   searchParams,
 }: {
   params: Promise<{ lpn: string }>;
-  searchParams: Promise<{ token?: string }>;
+  searchParams: Promise<{ token?: string; lang?: string }>;
 }) {
   const { lpn } = await params;
-  const { token } = await searchParams;
+  const { token, lang } = await searchParams;
+  const language = resolveLanguage(lang);
   const pallet = await fetchPalletRecord(lpn);
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://scanner.vercel.app';
-  const palletUrl = `${appUrl}/pallet/${encodeURIComponent(lpn)}`;
+  // Preserve language on the deep-linked URL so re-openings keep RTL.
+  const langSuffix = language === 'Hebrew' ? '?lang=Hebrew' : '';
+  const palletUrl = `${appUrl}/pallet/${encodeURIComponent(lpn)}${langSuffix}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(palletUrl)}`;
   // If reached from an active scanner session, "Back" returns there instead of the home page.
   const backHref = token ? `/pallet-verify/${encodeURIComponent(token)}` : '/';
-  const backLabel = token ? '← Back to scanner' : '← Back';
+  const backLabel = token ? t(language, 'lpn.backToScanner') : t(language, 'lpn.back');
+  const dir = language === 'Hebrew' ? 'rtl' : 'ltr';
 
+  // DD/MM/YYYY works for both en-GB and Israeli convention; keep as-is.
   const displayDate = pallet
     ? new Date(pallet.created_at).toLocaleDateString('en-GB')
     : new Date().toLocaleDateString('en-GB');
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4">
+    <div
+      lang={language === 'Hebrew' ? 'he' : 'en'}
+      dir={dir}
+      className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4"
+    >
       {/* Print button (hidden when printing) */}
       <div className="no-print mb-6 flex gap-3">
         <PrintButton />
@@ -108,8 +130,8 @@ export default async function PalletStickerPage({
       >
         {/* Header */}
         <div className="border-b-2 border-gray-800 pb-3 mb-3 text-center">
-          <p className="text-xs text-gray-500 uppercase tracking-widest">🏭 Warehouse Pallet</p>
-          <p className="text-xl font-bold text-gray-900 mt-1 tracking-wide">{lpn}</p>
+          <p className="text-xs text-gray-500 uppercase tracking-widest">🏭 {t(language, 'lpn.warehousePallet')}</p>
+          <p className="text-xl font-bold text-gray-900 mt-1 tracking-wide" dir="ltr">{lpn}</p>
         </div>
 
         {pallet ? (
@@ -117,39 +139,39 @@ export default async function PalletStickerPage({
             {/* Item info */}
             <div className="space-y-1.5 mb-4 text-sm">
               <div className="flex justify-between">
-                <span className="text-gray-500">Item</span>
-                <span className="font-semibold text-gray-900 text-right max-w-[60%] leading-tight">
+                <span className="text-gray-500">{t(language, 'lpn.itemLabelShort')}</span>
+                <span className="font-semibold text-gray-900 text-end max-w-[60%] leading-tight">
                   {pallet.item_name}
                 </span>
               </div>
               {pallet.item_code && (
                 <div className="flex justify-between">
-                  <span className="text-gray-500">SKU</span>
-                  <span className="font-mono text-xs text-gray-700">{pallet.item_code}</span>
+                  <span className="text-gray-500">{t(language, 'lpn.skuLabel')}</span>
+                  <span className="font-mono text-xs text-gray-700" dir="ltr">{pallet.item_code}</span>
                 </div>
               )}
               <div className="flex justify-between">
-                <span className="text-gray-500">Boxes</span>
+                <span className="text-gray-500">{t(language, 'lpn.boxesLabelShort')}</span>
                 <span className="font-bold text-gray-900">{pallet.box_count}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-500">Weight</span>
+                <span className="text-gray-500">{t(language, 'lpn.weightLabelShort')}</span>
                 <span className="font-bold text-gray-900">{pallet.calc_weight} kg</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-500">Scale</span>
+                <span className="text-gray-500">{t(language, 'lpn.scaleLabel')}</span>
                 <span className="text-gray-700">{pallet.scale_weight} kg</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-500">Doc</span>
-                <span className="text-gray-700">{pallet.document_number}</span>
+                <span className="text-gray-500">{t(language, 'lpn.docLabel')}</span>
+                <span className="text-gray-700" dir="ltr">{pallet.document_number}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-500">Date</span>
-                <span className="text-gray-700">{displayDate}</span>
+                <span className="text-gray-500">{t(language, 'lpn.dateLabelShort')}</span>
+                <span className="text-gray-700" dir="ltr">{displayDate}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-500">Status</span>
+                <span className="text-gray-500">{t(language, 'lpn.statusLabel')}</span>
                 <span
                   className={`text-xs font-semibold px-2 py-0.5 rounded ${
                     pallet.status === 'Verified'
@@ -164,8 +186,8 @@ export default async function PalletStickerPage({
           </>
         ) : (
           <div className="text-center text-sm text-gray-500 my-4">
-            <p>Pallet record not found in database.</p>
-            <p className="text-xs mt-1">LPN: {lpn}</p>
+            <p>{t(language, 'lpn.notFound')}</p>
+            <p className="text-xs mt-1" dir="ltr">{t(language, 'lpn.lpnLabel', { lpn })}</p>
           </div>
         )}
 
@@ -179,7 +201,7 @@ export default async function PalletStickerPage({
             height={160}
             className="rounded"
           />
-          <p className="text-[9px] text-gray-400 mt-1 text-center break-all">{palletUrl}</p>
+          <p className="text-[9px] text-gray-400 mt-1 text-center break-all" dir="ltr">{palletUrl}</p>
         </div>
       </div>
 

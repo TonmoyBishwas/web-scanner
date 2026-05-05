@@ -1,5 +1,6 @@
 'use client';
 
+import { useT } from '@/lib/i18n';
 import type { BoxLookupResult } from '@/types';
 
 interface BoxDetailModalProps {
@@ -15,21 +16,24 @@ export function BoxDetailModal({
   onCancel,
   isLoading,
 }: BoxDetailModalProps) {
+  const tr = useT();
+  const na = tr('components.boxDetail.notAvailable');
+
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60">
       <div className="w-full max-w-md bg-gray-800 rounded-t-2xl p-6">
-        <h2 className="text-xl font-bold text-white mb-4">Issue This Box?</h2>
+        <h2 className="text-xl font-bold text-white mb-4">{tr('components.boxDetail.issueThisBoxQ')}</h2>
 
         <div className="space-y-3 mb-6">
-          <DetailRow label="Item Name" value={box.item_name} />
-          <DetailRow label="SKU" value={box.sku} />
-          <DetailRow label="Weight" value={`${box.weight} kg`} highlight />
-          <DetailRow label="Expiry" value={box.expiry || 'N/A'} />
-          <DetailRow label="Supplier" value={box.supplier} />
-          <DetailRow label="Invoice" value={box.invoice_number || 'N/A'} />
-          <DetailRow label="Received" value={box.received_date || 'N/A'} />
+          <DetailRow label={tr('components.boxDetail.itemName')} value={box.item_name} />
+          <DetailRow label={tr('components.boxDetail.sku')} value={box.sku} />
+          <DetailRow label={tr('components.boxDetail.weight')} value={`${box.weight} kg`} highlight />
+          <DetailRow label={tr('components.boxDetail.expiry')} value={box.expiry || na} />
+          <DetailRow label={tr('components.boxDetail.supplier')} value={box.supplier} />
+          <DetailRow label={tr('components.boxDetail.invoice')} value={box.invoice_number || na} />
+          <DetailRow label={tr('components.boxDetail.received')} value={box.received_date || na} />
           {box.production_date && (
-            <DetailRow label="Production" value={box.production_date} />
+            <DetailRow label={tr('components.boxDetail.production')} value={box.production_date} />
           )}
         </div>
 
@@ -39,7 +43,7 @@ export function BoxDetailModal({
             disabled={isLoading}
             className="flex-1 py-3 rounded-lg bg-gray-700 text-white font-medium hover:bg-gray-600 disabled:opacity-50 transition-colors"
           >
-            Cancel
+            {tr('common.cancel')}
           </button>
           <button
             onClick={onConfirm}
@@ -49,10 +53,10 @@ export function BoxDetailModal({
             {isLoading ? (
               <span className="flex items-center justify-center gap-2">
                 <span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
-                Issuing...
+                {tr('components.boxDetail.issuing')}
               </span>
             ) : (
-              'Confirm Issue'
+              tr('components.boxDetail.confirmIssue')
             )}
           </button>
         </div>

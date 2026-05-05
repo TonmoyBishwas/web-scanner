@@ -1,6 +1,7 @@
 'use client';
 
 import { Loader2, AlertTriangle, Check } from 'lucide-react';
+import { useT } from '@/lib/i18n';
 import type { ParsedBarcode, BoxStickerOCR } from '@/types';
 
 interface ScannedListProps {
@@ -18,12 +19,13 @@ export function ScannedList({
   pendingOCR,
   onImageClick,
 }: ScannedListProps) {
+  const tr = useT();
   const entries = Array.from(scannedBarcodes.keys()).reverse();
 
   if (entries.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-gray-500 dark:text-gray-500">
-        <p className="text-sm">Scan a box to begin</p>
+        <p className="text-sm">{tr('components.scannedList.empty2')}</p>
       </div>
     );
   }
@@ -58,7 +60,7 @@ export function ScannedList({
               </div>
             ) : (
               <div className="w-12 h-12 rounded-lg bg-gray-700 flex items-center justify-center flex-shrink-0">
-                <span className="text-gray-500 text-xs">No img</span>
+                <span className="text-gray-500 text-xs">{tr('components.scannedList.noImg')}</span>
               </div>
             )}
 
@@ -80,17 +82,17 @@ export function ScannedList({
 
               {ocrResult ? (
                 <p className="text-sm text-gray-200 dark:text-gray-200 truncate">
-                  {ocrResult.product_name || ocrResult.product_name_hebrew || 'Unknown'}
+                  {ocrResult.product_name || ocrResult.product_name_hebrew || tr('common.unknown')}
                   {ocrResult.weight_kg ? (
-                    <span className="text-blue-300 ml-1.5">{ocrResult.weight_kg} kg</span>
+                    <span className="text-blue-300 ms-1.5">{ocrResult.weight_kg} kg</span>
                   ) : null}
                 </p>
               ) : isPending ? (
-                <p className="text-xs text-yellow-300/80">Analyzing...</p>
+                <p className="text-xs text-yellow-300/80">{tr('components.scannedList.analyzing')}</p>
               ) : ocrFailed ? (
-                <p className="text-xs text-amber-400">OCR failed — needs manual entry</p>
+                <p className="text-xs text-amber-400">{tr('components.scannedList.ocrFailedManual')}</p>
               ) : (
-                <p className="text-xs text-gray-500">Awaiting image...</p>
+                <p className="text-xs text-gray-500">{tr('components.scannedList.awaitingImage')}</p>
               )}
             </div>
           </div>

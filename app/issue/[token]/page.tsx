@@ -13,7 +13,7 @@ import type {
   BoxLookupResult,
   IssuedBox,
 } from '@/types';
-import { useLangDir } from '@/lib/i18n';
+import { useLangDir, useT, LanguageContext, t } from '@/lib/i18n';
 
 type IssuePhase =
   | 'loading'
@@ -32,7 +32,8 @@ export default function IssuePage({
 
   const [session, setSession] = useState<ScanSession | null>(null);
   const [phase, setPhase] = useState<IssuePhase>('loading');
-  useLangDir((session?.language as Language) || 'English');
+  const language = (session?.language as Language) || 'English';
+  useLangDir(language);
   const [error, setError] = useState<string | null>(null);
 
   // Scan tracking (needed for SmartScanner dedup)
@@ -101,14 +102,15 @@ export default function IssuePage({
       try {
         const res = await fetch(`/api/session?token=${encodeURIComponent(token)}`);
         if (!res.ok) {
-          setError('Session not found or expired');
+          setError(t(undefined, 'session.notFound'));
           setPhase('error');
           return;
         }
         const data: ScanSession = await res.json();
 
         if (data.operation_type !== 'ISSUE') {
-          setError('This is not an issue session');
+          // Use the loaded session's language for the error if possible.
+          setError(t(data.language as Language | undefined, 'session.notIssue'));
           setPhase('error');
           return;
         }
@@ -139,7 +141,7 @@ export default function IssuePage({
         setPhase('scanning');
       } catch (err) {
         console.error('Failed to load session:', err);
-        setError('Failed to load session');
+        setError(t(undefined, 'session.failedLoad'));
         setPhase('error');
       }
     }
@@ -154,7 +156,7 @@ export default function IssuePage({
       // Check local dedup
       if (scannedBarcodes.has(barcode)) {
         playErrorSound();
-        showToast('Already issued in this session', 'error');
+        showToast(t(language, 'issue.alreadyIssuedToast'), 'error');
         if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
         return;
       }
@@ -175,11 +177,11 @@ export default function IssuePage({
           if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
 
           if (result.error === 'not_found') {
-            showToast('Box not found in inventory', 'error');
+            showToast(t(language, 'issue.boxNotFoundToast'), 'error');
           } else if (result.error === 'already_issued') {
-            showToast(result.message || 'Box already issued', 'error');
+            showToast(result.message || t(language, 'issue.boxAlreadyIssuedToast'), 'error');
           } else {
-            showToast(result.message || 'Lookup failed', 'error');
+            showToast(result.message || t(language, 'issue.lookupFailedToast'), 'error');
           }
           return;
         }
@@ -192,12 +194,12 @@ export default function IssuePage({
       } catch (err) {
         console.error('Lookup error:', err);
         playErrorSound();
-        showToast('Failed to look up box', 'error');
+        showToast(t(language, 'issue.lookupErrorToast'), 'error');
       } finally {
         lookupInProgress.current = false;
       }
     },
-    [phase, scannedBarcodes, token, playSuccessSound, playErrorSound, showToast]
+    [phase, scannedBarcodes, token, language, playSuccessSound, playErrorSound, showToast]
   );
 
   // Confirm issue
@@ -228,7 +230,7 @@ export default function IssuePage({
 
       if (!result.success) {
         playErrorSound();
-        showToast(result.error || 'Failed to issue box', 'error');
+        showToast(result.error || t(language, 'issue.failedToIssue'), 'error');
         setIsConfirming(false);
         return;
       }
@@ -265,7 +267,10 @@ export default function IssuePage({
       });
 
       playSuccessSound();
-      showToast(`Issued: ${currentBox.item_name} (${currentBox.weight} kg)`, 'success');
+      showToast(
+        t(language, 'issue.issuedToast', { item: currentBox.item_name, weight: currentBox.weight }),
+        'success',
+      );
 
       // Back to scanning
       setCurrentBox(null);
@@ -274,10 +279,10 @@ export default function IssuePage({
     } catch (err) {
       console.error('Confirm error:', err);
       playErrorSound();
-      showToast('Failed to issue box', 'error');
+      showToast(t(language, 'issue.failedToIssue'), 'error');
       setIsConfirming(false);
     }
-  }, [currentBox, isConfirming, token, playSuccessSound, playErrorSound, showToast]);
+  }, [currentBox, isConfirming, token, language, playSuccessSound, playErrorSound, showToast]);
 
   // Cancel box detail
   const handleCancelDetail = useCallback(() => {
@@ -288,7 +293,7 @@ export default function IssuePage({
   // Complete session
   const handleComplete = useCallback(async () => {
     if (issuedBoxes.length === 0) {
-      showToast('No boxes issued yet', 'error');
+      showToast(t(language, 'issue.noBoxesYet'), 'error');
       return;
     }
 
@@ -304,7 +309,7 @@ export default function IssuePage({
       const result = await res.json();
 
       if (!result.success) {
-        showToast(result.error || 'Failed to complete', 'error');
+        showToast(result.error || t(language, 'issue.completeFailed'), 'error');
         setPhase('scanning');
         return;
       }
@@ -312,12 +317,67 @@ export default function IssuePage({
       setPhase('complete');
     } catch (err) {
       console.error('Complete error:', err);
-      showToast('Failed to complete session', 'error');
+      showToast(t(language, 'issue.completeFailedSession'), 'error');
       setPhase('scanning');
     }
-  }, [issuedBoxes.length, token, showToast]);
+  }, [issuedBoxes.length, token, language, showToast]);
 
-  // --- RENDER ---
+  return (
+    <LanguageContext.Provider value={language}>
+      <IssueRender
+        phase={phase}
+        error={error}
+        session={session}
+        issuedBoxes={issuedBoxes}
+        currentBox={currentBox}
+        isConfirming={isConfirming}
+        flashColor={flashColor}
+        toastMessage={toastMessage}
+        scannedBarcodes={scannedBarcodes}
+        ocrResults={ocrResults}
+        handleBarcodeDetected={handleBarcodeDetected}
+        handleComplete={handleComplete}
+        handleConfirmIssue={handleConfirmIssue}
+        handleCancelDetail={handleCancelDetail}
+      />
+    </LanguageContext.Provider>
+  );
+}
+
+interface IssueRenderProps {
+  phase: IssuePhase;
+  error: string | null;
+  session: ScanSession | null;
+  issuedBoxes: IssuedBox[];
+  currentBox: BoxLookupResult['box'] | null;
+  isConfirming: boolean;
+  flashColor: 'green' | 'red' | null;
+  toastMessage: string | null;
+  scannedBarcodes: Map<string, ParsedBarcode>;
+  ocrResults: Map<string, BoxStickerOCR>;
+  handleBarcodeDetected: (barcode: string, data: ParsedBarcode) => Promise<void>;
+  handleComplete: () => Promise<void>;
+  handleConfirmIssue: () => Promise<void>;
+  handleCancelDetail: () => void;
+}
+
+function IssueRender({
+  phase,
+  error,
+  session,
+  issuedBoxes,
+  currentBox,
+  isConfirming,
+  flashColor,
+  toastMessage,
+  scannedBarcodes,
+  ocrResults,
+  handleBarcodeDetected,
+  handleComplete,
+  handleConfirmIssue,
+  handleCancelDetail,
+}: IssueRenderProps) {
+  const tr = useT();
 
   // Loading
   if (phase === 'loading') {
@@ -325,7 +385,7 @@ export default function IssuePage({
       <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4" />
-          <p>Loading session...</p>
+          <p>{tr('issue.loadingSession')}</p>
         </div>
       </div>
     );
@@ -337,7 +397,7 @@ export default function IssuePage({
       <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center p-4">
         <div className="text-center">
           <AlertTriangle className="w-10 h-10 text-amber-400 mx-auto mb-4" />
-          <p className="mb-2 text-lg font-medium">Session Error</p>
+          <p className="mb-2 text-lg font-medium">{tr('session.errorTitle')}</p>
           <p className="text-gray-400">{error}</p>
         </div>
       </div>
@@ -347,27 +407,28 @@ export default function IssuePage({
   // Complete
   if (phase === 'complete') {
     const totalWeight = issuedBoxes.reduce((s, b) => s + b.weight, 0);
+    const summaryKey =
+      issuedBoxes.length === 1 ? 'issue.completeSummarySingle' : 'issue.completeSummary';
     return (
       <div className="min-h-screen bg-gray-900 text-white p-4">
         <div className="max-w-md mx-auto">
           <div className="text-center mb-8">
             <CheckCircle className="w-16 h-16 text-green-400 mx-auto mb-4" />
-            <h1 className="text-2xl font-bold mb-2">Issue Complete!</h1>
+            <h1 className="text-2xl font-bold mb-2">{tr('issue.completeTitle')}</h1>
             <p className="text-gray-400">
-              {issuedBoxes.length} box{issuedBoxes.length !== 1 ? 'es' : ''} issued,{' '}
-              {totalWeight.toFixed(2)} kg total
+              {tr(summaryKey, { count: issuedBoxes.length, weight: totalWeight.toFixed(2) })}
             </p>
           </div>
 
           <div className="bg-gray-800 rounded-lg p-4 mb-6">
-            <h2 className="text-lg font-medium mb-4">Summary</h2>
+            <h2 className="text-lg font-medium mb-4">{tr('issue.summaryTitle')}</h2>
             <div className="space-y-2">
               {issuedBoxes.map((box, idx) => (
                 <div
                   key={idx}
                   className="flex justify-between items-center border-b border-gray-700 pb-2 last:border-0"
                 >
-                  <span className="text-white truncate mr-2">{box.item_name}</span>
+                  <span className="text-white truncate me-2">{box.item_name}</span>
                   <span className="text-green-400 font-medium whitespace-nowrap">
                     {box.weight} kg
                   </span>
@@ -377,17 +438,14 @@ export default function IssuePage({
           </div>
 
           <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-4 mb-6">
-            <p className="text-sm">
-              <strong>Done!</strong> Return to Telegram to see the confirmation.
-              You can undo this operation from the Telegram chat.
-            </p>
+            <p className="text-sm">{tr('issue.doneNote')}</p>
           </div>
 
           <button
             onClick={() => window.close()}
             className="w-full bg-gray-700 py-3 rounded-lg font-medium hover:bg-gray-600 transition-colors"
           >
-            Close
+            {tr('issue.closeButton')}
           </button>
         </div>
       </div>
@@ -400,7 +458,7 @@ export default function IssuePage({
       <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-400 mx-auto mb-4" />
-          <p>Completing issue session...</p>
+          <p>{tr('issue.completing')}</p>
         </div>
       </div>
     );
@@ -428,11 +486,11 @@ export default function IssuePage({
       {/* Header */}
       <div className="bg-gray-800 p-4 flex justify-between items-center">
         <div>
-          <h1 className="text-lg font-bold">Issue to Production</h1>
-          <p className="text-gray-400 text-sm">Scan box barcodes to issue</p>
+          <h1 className="text-lg font-bold">{tr('issue.title')}</h1>
+          <p className="text-gray-400 text-sm">{tr('issue.headerSubtitle')}</p>
           {session?.user_info && (
             <p className="text-xs text-green-400 font-medium mt-1">
-              Scanning as: {session.user_info.nickname}
+              {tr('issue.scanningAs', { nickname: session.user_info.nickname })}
             </p>
           )}
         </div>
@@ -445,7 +503,7 @@ export default function IssuePage({
               : 'bg-gray-700 text-gray-500 cursor-not-allowed'
           }`}
         >
-          Done ({issuedBoxes.length})
+          {tr('issue.doneButton', { count: issuedBoxes.length })}
         </button>
       </div>
 

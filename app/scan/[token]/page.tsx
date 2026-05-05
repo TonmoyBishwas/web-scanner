@@ -41,7 +41,7 @@ import type {
   OCRIssue,
   ManualEntryData,
 } from '@/types';
-import { useLangDir } from '@/lib/i18n';
+import { useLangDir, LanguageContext, t } from '@/lib/i18n';
 
 // Phase enum for flow control
 type ScanPhase =
@@ -66,7 +66,13 @@ export default function ScanPage({
 
   // Session state
   const [session, setSession] = useState<ScanSession | null>(null);
-  useLangDir((session?.language as Language) || 'English');
+  const language = (session?.language as Language) || 'English';
+  useLangDir(language);
+  // Local translator bound to current language. Falls back to English until session loads.
+  const tr = useCallback(
+    (key: Parameters<typeof t>[1], vars?: Parameters<typeof t>[2]) => t(language, key, vars),
+    [language],
+  );
   const [phase, setPhase] = useState<ScanPhase>('loading');
   const [error, setError] = useState<string | null>(null);
 
@@ -209,7 +215,7 @@ export default function ScanPage({
     async function fetchSession() {
       try {
         const res = await fetch(`/api/session?token=${token}`);
-        if (!res.ok) throw new Error('Session not found or expired');
+        if (!res.ok) throw new Error(t(undefined, 'session.notFound'));
         const sessionData: ScanSession = await res.json();
         setSession(sessionData);
 
@@ -306,7 +312,7 @@ export default function ScanPage({
         }
 
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load session');
+        setError(err instanceof Error ? err.message : t(undefined, 'session.failedLoad'));
         setPhase('error');
       }
     }
@@ -872,12 +878,12 @@ export default function ScanPage({
       if (result.success) {
         setPhase('complete');
       } else {
-        setError(result.error || 'Failed to complete scan');
+        setError(result.error || tr('scan.failedComplete'));
       }
     } catch (err) {
       const msg = `Confirmation error: ${err instanceof Error ? err.message : String(err)}`;
       addErrorLog(msg);
-      setError('Network error during confirmation');
+      setError(tr('errors.networkErrorConfirm'));
       setPhase('error');
     }
   }, [token, addErrorLog]);
@@ -911,7 +917,7 @@ export default function ScanPage({
       <div className="min-h-screen bg-gray-900 dark:bg-gray-900 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-gray-300">Loading scanner session...</p>
+          <p className="text-gray-300">{tr('scan.loadingSession')}</p>
         </div>
       </div>
     );
@@ -928,7 +934,7 @@ export default function ScanPage({
             onClick={() => window.location.reload()}
             className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-white text-sm"
           >
-            Retry
+            {tr('common.retry')}
           </button>
         </div>
       </div>
@@ -941,13 +947,11 @@ export default function ScanPage({
       <div className="min-h-screen bg-gray-900 dark:bg-gray-900 flex items-center justify-center p-4">
         <div className="bg-green-900/30 border border-green-600 rounded-lg p-6 max-w-md text-center animate-scaleIn">
           <CheckCircle className="w-12 h-12 text-green-400 mx-auto mb-3" />
-          <h2 className="text-xl font-bold text-green-400 mb-2">Scan Complete!</h2>
+          <h2 className="text-xl font-bold text-green-400 mb-2">{tr('scan.scanComplete')}</h2>
           <p className="text-gray-300 text-sm mb-1">
-            {scannedBarcodes.size} boxes scanned and submitted
+            {tr('scan.boxesScannedAndSubmitted', { count: scannedBarcodes.size })}
           </p>
-          <p className="text-gray-400 text-xs">
-            Data has been sent to warehouse system. You can close this page.
-          </p>
+          <p className="text-gray-400 text-xs">{tr('scan.dataSent')}</p>
         </div>
       </div>
     );
@@ -963,10 +967,8 @@ export default function ScanPage({
       <div className="min-h-screen bg-gray-900 dark:bg-gray-900 flex items-center justify-center p-4">
         <div className="bg-gray-800/90 dark:bg-gray-800/90 backdrop-blur-md border border-gray-700 rounded-xl p-6 max-w-md text-center">
           <div className="animate-spin w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <h2 className="text-lg font-bold text-white mb-2">Processing OCR...</h2>
-          <p className="text-gray-400 text-sm mb-3">
-            Extracting data from box stickers via Gemini AI
-          </p>
+          <h2 className="text-lg font-bold text-white mb-2">{tr('ocr.processing')}</h2>
+          <p className="text-gray-400 text-sm mb-3">{tr('ocr.extractingData')}</p>
           <div className="bg-gray-900 rounded-full h-2 mb-2">
             <div
               className="bg-blue-500 h-2 rounded-full transition-all duration-500"
@@ -974,7 +976,7 @@ export default function ScanPage({
             ></div>
           </div>
           <p className="text-xs text-gray-500">
-            {completed} / {totalScanned} processed ({totalPending} remaining)
+            {tr('scan.processingProgress', { completed, total: totalScanned, pending: totalPending })}
           </p>
         </div>
       </div>
@@ -987,7 +989,7 @@ export default function ScanPage({
       <div className="min-h-screen bg-gray-900 dark:bg-gray-900 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin w-12 h-12 border-4 border-green-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-gray-300">Submitting scan data...</p>
+          <p className="text-gray-300">{tr('scan.submittingData')}</p>
         </div>
       </div>
     );
@@ -1000,6 +1002,7 @@ export default function ScanPage({
   const canForceConfirm = scannedBarcodes.size < boxesExpected && scannedBarcodes.size > 0;
 
   return (
+   <LanguageContext.Provider value={language}>
     <div className="min-h-screen bg-gray-900 dark:bg-gray-900 text-white dark:text-white flex flex-col">
       {/* ── Offline Banner ──────────────────────────────────── */}
       <OfflineBanner queueCount={offlineQueueCount} isSyncing={isSyncing} />
@@ -1019,19 +1022,19 @@ export default function ScanPage({
                 </span>
                 <span className="text-gray-500 mx-1">/</span>
                 <span className="text-gray-400">{boxesExpected}</span>
-                <span className="text-xs text-gray-500 ml-1.5">boxes</span>
+                <span className="text-xs text-gray-500 ms-1.5">{tr('scan.boxesUnit')}</span>
               </h1>
               <div className="flex items-center gap-2 flex-wrap">
                 {session?.document_number && (
-                  <p className="text-xs text-gray-500">
-                    Doc: {session.document_number}
+                  <p className="text-xs text-gray-500" dir="ltr">
+                    {tr('scan.docPrefix', { doc: session.document_number })}
                   </p>
                 )}
                 {session?.user_info && (
                   <>
                     {session?.document_number && <span className="text-xs text-gray-600">•</span>}
                     <p className="text-xs text-green-400 font-medium">
-                      Scanning as: {session.user_info.nickname}
+                      {tr('scan.scanningAs', { nickname: session.user_info.nickname })}
                     </p>
                   </>
                 )}
@@ -1047,7 +1050,7 @@ export default function ScanPage({
             {pendingOCR.size > 0 && (
               <span className="flex items-center gap-1 text-xs text-yellow-400">
                 <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
-                OCR: {pendingOCR.size}
+                {tr('scan.ocrPending', { count: pendingOCR.size })}
               </span>
             )}
             <SettingsPopover />
@@ -1058,7 +1061,7 @@ export default function ScanPage({
         <div className="mt-2 bg-gray-700/50 rounded-full h-1">
           <div
             className={`h-1 rounded-full transition-all duration-500 ${scannedBarcodes.size >= boxesExpected ? 'bg-green-500' : 'bg-blue-500'}`}
-            aria-label="Progress"
+            aria-label={tr('scan.progressAria')}
             style={{ width: `${boxesExpected > 0 ? Math.min(100, (scannedBarcodes.size / boxesExpected) * 100) : 0}%` }}
           ></div>
         </div>
@@ -1119,7 +1122,7 @@ export default function ScanPage({
             className="w-full py-3 bg-yellow-600 hover:bg-yellow-700 rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-2"
           >
             <Zap className="w-4 h-4" />
-            Force Confirm ({boxesExpected - scannedBarcodes.size} boxes remaining)
+            {tr('scan.forceConfirmButton', { count: boxesExpected - scannedBarcodes.size })}
           </button>
         )}
 
@@ -1127,15 +1130,16 @@ export default function ScanPage({
         {isReadyToConfirm && (
           <SwipeConfirm
             onConfirm={handleConfirm}
-            label="Slide to Confirm All Scans"
+            label={tr('scan.slideToConfirm')}
           />
         )}
 
         {/* Scanned barcodes summary */}
         {scannedBarcodes.size > 0 && phase === 'scanning' && (
           <p className="text-center text-xs text-gray-500">
-            {scannedBarcodes.size} box{scannedBarcodes.size !== 1 ? 'es' : ''} scanned
-            {pendingOCR.size > 0 ? ` \u00B7 ${pendingOCR.size} OCR pending` : ''}
+            {pendingOCR.size > 0
+              ? tr('scan.boxesSummaryWithOcr', { count: scannedBarcodes.size, pending: pendingOCR.size })
+              : tr('scan.boxesSummary', { count: scannedBarcodes.size })}
           </p>
         )}
 
@@ -1148,20 +1152,20 @@ export default function ScanPage({
                 <button
                   onClick={() => setShowInvoiceDrawer(true)}
                   className="flex items-center gap-1.5 px-3 py-2 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 rounded-lg text-blue-300 text-xs font-medium transition-colors"
-                  aria-label="View invoice"
+                  aria-label={tr('scan.viewInvoice')}
                 >
                   <FileText className="w-4 h-4" />
-                  <span>Invoice</span>
+                  <span>{tr('scan.invoiceButton')}</span>
                 </button>
               )}
               {ocrImageUrls.size > 0 && (
                 <button
                   onClick={() => setShowPhotoGallery(true)}
                   className="flex items-center gap-1.5 px-3 py-2 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 rounded-lg text-purple-300 text-xs font-medium transition-colors"
-                  aria-label="View photos"
+                  aria-label={tr('scan.viewPhotos')}
                 >
                   <ImageIcon className="w-4 h-4" />
-                  <span>Photos ({ocrImageUrls.size})</span>
+                  <span>{tr('scan.photosButton', { count: ocrImageUrls.size })}</span>
                 </button>
               )}
             </div>
@@ -1171,10 +1175,10 @@ export default function ScanPage({
               <button
                 onClick={() => setShowDebugPanel(!showDebugPanel)}
                 className="flex items-center gap-1.5 px-3 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 rounded-lg text-red-300 text-xs font-medium transition-colors"
-                aria-label="Debug log"
+                aria-label={tr('scan.debugLogAria')}
               >
                 <Bug className="w-4 h-4" />
-                <span>Debug ({errorLog.length})</span>
+                <span>{tr('scan.debugButton', { count: errorLog.length })}</span>
               </button>
             )}
           </div>
@@ -1201,9 +1205,9 @@ export default function ScanPage({
           <div className="flex justify-between items-center p-3 border-b border-gray-700 bg-gradient-to-r from-purple-900 to-blue-900">
             <div className="flex items-center gap-2">
               <Cpu className="w-4 h-4 text-purple-300" />
-              <span className="text-white font-bold text-sm">AI OCR Results</span>
-              <span className="text-purple-300 text-xs ml-1">
-                {ocrResults.size}/{ocrImageUrls.size} complete
+              <span className="text-white font-bold text-sm">{tr('ocr.aiResults')}</span>
+              <span className="text-purple-300 text-xs ms-1">
+                {tr('scan.ocrResultsCount', { done: ocrResults.size, total: ocrImageUrls.size })}
               </span>
             </div>
             <button
@@ -1236,29 +1240,29 @@ export default function ScanPage({
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="text-purple-300 text-xs font-mono">Box #{barcode.slice(-6)}</span>
+                        <span className="text-purple-300 text-xs font-mono" dir="ltr">{tr('scan.boxLabelShort', { id: barcode.slice(-6) })}</span>
                         {result ? (
                           <span className="flex items-center gap-1 text-green-400 text-xs px-1.5 py-0.5 bg-green-900/50 rounded-full">
-                            <Check className="w-3 h-3" /> Done
+                            <Check className="w-3 h-3" /> {tr('scan.ocrDoneBadge')}
                           </span>
                         ) : isPending ? (
                           <span className="flex items-center gap-1 text-yellow-400 text-xs px-1.5 py-0.5 bg-yellow-900/50 rounded-full animate-pulse">
-                            <Clock className="w-3 h-3" /> Analyzing
+                            <Clock className="w-3 h-3" /> {tr('scan.ocrAnalyzingBadge')}
                           </span>
                         ) : null}
                       </div>
                       {result ? (
                         <div className="space-y-0.5">
                           <div className="text-green-300 text-sm font-semibold truncate">
-                            {result.product_name || 'Product unclear'}
+                            {result.product_name || tr('scan.productUnclear')}
                           </div>
                           <div className="text-blue-200 text-xs">
-                            {result.weight_kg ? `${result.weight_kg} kg` : 'No weight'}
+                            {result.weight_kg ? `${result.weight_kg} kg` : tr('ocr.noWeight')}
                             {result.expiry_date ? ` \u00B7 Exp: ${result.expiry_date}` : ''}
                           </div>
                         </div>
                       ) : (
-                        <div className="text-yellow-200 text-xs">Gemini analyzing image...</div>
+                        <div className="text-yellow-200 text-xs">{tr('ocr.geminiAnalyzing')}</div>
                       )}
                     </div>
                   </div>
@@ -1275,18 +1279,18 @@ export default function ScanPage({
           <div className="flex justify-between items-center p-3 border-b border-gray-700 bg-gray-800/90 backdrop-blur-md">
             <div className="flex items-center gap-2">
               <Bug className="w-4 h-4 text-red-400" />
-              <span className="text-white font-bold text-sm">Debug Log</span>
+              <span className="text-white font-bold text-sm">{tr('scan.debugLog')}</span>
             </div>
             <div className="flex gap-2">
               <button
                 onClick={() => {
                   const text = errorLog.map(e => `${e.time}: ${e.msg}`).join('\n');
                   navigator.clipboard.writeText(text);
-                  alert('Debug log copied!');
+                  alert(tr('scan.debugCopied'));
                 }}
                 className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-lg flex items-center gap-1"
               >
-                <ClipboardList className="w-3 h-3" /> Copy All
+                <ClipboardList className="w-3 h-3" /> {tr('scan.copyAll')}
               </button>
               <button
                 onClick={() => setShowDebugPanel(false)}
@@ -1315,6 +1319,7 @@ export default function ScanPage({
           session={session}
           boxesScanned={scannedBarcodes.size}
           boxesExpected={boxesExpected}
+          tr={tr}
           onAddEntry={handleForceConfirmEntry}
           onClose={() => {
             setShowForceConfirm(false);
@@ -1344,6 +1349,7 @@ export default function ScanPage({
         />
       )}
     </div>
+   </LanguageContext.Provider>
   );
 }
 
@@ -1352,12 +1358,14 @@ function ForceConfirmModal({
   session,
   boxesScanned,
   boxesExpected,
+  tr,
   onAddEntry,
   onClose,
 }: {
   session: ScanSession;
   boxesScanned: number;
   boxesExpected: number;
+  tr: (key: Parameters<typeof t>[1], vars?: Parameters<typeof t>[2]) => string;
   onAddEntry: (entry: ManualEntryData) => Promise<void>;
   onClose: () => void;
 }) {
@@ -1404,7 +1412,7 @@ function ForceConfirmModal({
           <div className="flex items-center gap-2">
             <Zap className="w-5 h-5 text-yellow-400" />
             <h3 className="text-lg font-bold text-yellow-400">
-              Manual Entry ({remaining} boxes)
+              {tr('scan.manualEntryTitle', { count: remaining })}
             </h3>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white p-1">
@@ -1413,12 +1421,12 @@ function ForceConfirmModal({
         </div>
 
         <p className="text-xs text-gray-400">
-          Enter details for the remaining {remaining} unscanned boxes.
+          {tr('scan.manualEntryDesc', { count: remaining })}
         </p>
 
         {entries.map((entry, idx) => (
           <div key={idx} className="bg-gray-900/80 rounded-xl p-3 space-y-2">
-            <p className="text-sm font-medium text-gray-300">Box #{boxesScanned + idx + 1}</p>
+            <p className="text-sm font-medium text-gray-300">{tr('scan.boxNumber', { n: boxesScanned + idx + 1 })}</p>
 
             <select
               value={entry.item_name}
@@ -1429,10 +1437,10 @@ function ForceConfirmModal({
               }}
               className="w-full p-2 bg-gray-800 border border-gray-700 rounded-lg text-sm"
             >
-              <option value="">Select item *</option>
+              <option value="">{tr('scan.selectItem')}</option>
               {session.invoice_items.map(item => (
                 <option key={item.item_index} value={item.item_name_english}>
-                  {item.item_name_english} ({item.quantity_kg} kg)
+                  {tr('scan.itemOption', { name: item.item_name_english, weight: item.quantity_kg })}
                 </option>
               ))}
             </select>
@@ -1440,7 +1448,7 @@ function ForceConfirmModal({
             <input
               type="number"
               step="0.001"
-              placeholder="Weight (kg) *"
+              placeholder={tr('scan.weightPlaceholder')}
               value={entry.weight}
               onChange={e => {
                 const updated = [...entries];
@@ -1452,7 +1460,7 @@ function ForceConfirmModal({
 
             <input
               type="date"
-              placeholder="Expiry (optional)"
+              placeholder={tr('scan.expiryPlaceholder')}
               value={entry.expiry}
               onChange={e => {
                 const updated = [...entries];
@@ -1469,7 +1477,7 @@ function ForceConfirmModal({
           disabled={!allFilled || submitting}
           className="w-full py-3 bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-xl text-sm font-bold transition-colors"
         >
-          {submitting ? 'Submitting...' : `Submit ${remaining} Manual Entries`}
+          {submitting ? tr('scan.submitting') : tr('scan.submitManualEntries', { count: remaining })}
         </button>
       </div>
     </div>

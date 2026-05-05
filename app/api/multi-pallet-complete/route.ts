@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedisClient } from '@/lib/redis';
-import type { MultiPalletSession, MultiPalletBoxScan } from '@/types';
+import { t } from '@/lib/i18n/server';
+import type { MultiPalletSession, MultiPalletBoxScan, Language } from '@/types';
 
 const SESSION_TTL = 7200;
 
@@ -68,15 +69,16 @@ export async function POST(request: NextRequest) {
     };
 
     if (!token) {
-      return NextResponse.json({ success: false, error: 'Missing token' }, { status: 400 });
+      return NextResponse.json({ success: false, error: t(undefined, 'errors.missingToken') }, { status: 400 });
     }
 
     const session = await getSession(token);
     if (!session) {
-      return NextResponse.json({ success: false, error: 'Session not found' }, { status: 404 });
+      return NextResponse.json({ success: false, error: t(undefined, 'errors.sessionNotFound') }, { status: 404 });
     }
+    const lang = session.language as Language | undefined;
     if (session.status === 'completed') {
-      return NextResponse.json({ success: false, error: 'Session already completed' }, { status: 400 });
+      return NextResponse.json({ success: false, error: t(lang, 'errors.sessionAlreadyCompleted') }, { status: 400 });
     }
 
     const palletNumber = session.current_pallet;
@@ -220,6 +222,6 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('[multi-pallet-complete] POST error:', error);
-    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ success: false, error: t(undefined, 'errors.serverError') }, { status: 500 });
   }
 }

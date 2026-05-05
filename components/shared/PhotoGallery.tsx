@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { X, Image as ImageIcon } from 'lucide-react';
 import { ImageModal } from '@/components/shared/ImageModal';
+import { useT } from '@/lib/i18n';
 import type { BoxStickerOCR } from '@/types';
 
 interface PhotoGalleryProps {
@@ -12,6 +13,7 @@ interface PhotoGalleryProps {
 }
 
 export function PhotoGallery({ images, ocrResults, onClose }: PhotoGalleryProps) {
+  const tr = useT();
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
   const entries = Array.from(images.entries()).reverse();
@@ -25,7 +27,7 @@ export function PhotoGallery({ images, ocrResults, onClose }: PhotoGalleryProps)
           <div className="flex items-center gap-2">
             <ImageIcon className="w-5 h-5 text-purple-400" />
             <span className="text-white font-bold">
-              Photo Gallery ({entries.length})
+              {tr('components.photoGallery.galleryTitle', { count: entries.length })}
             </span>
           </div>
           <button
@@ -63,7 +65,7 @@ export function PhotoGallery({ images, ocrResults, onClose }: PhotoGalleryProps)
                     {ocr ? (
                       <>
                         <p className="text-xs text-white font-medium truncate">
-                          {ocr.product_name || ocr.product_name_hebrew || 'Unknown'}
+                          {ocr.product_name || ocr.product_name_hebrew || tr('common.unknown')}
                         </p>
                         {ocr.weight_kg && (
                           <p className="text-[10px] text-blue-300">
@@ -72,7 +74,7 @@ export function PhotoGallery({ images, ocrResults, onClose }: PhotoGalleryProps)
                         )}
                       </>
                     ) : (
-                      <p className="text-[10px] text-yellow-400">Processing...</p>
+                      <p className="text-[10px] text-yellow-400">{tr('components.photoGallery.processing')}</p>
                     )}
                   </div>
                 </div>
@@ -83,7 +85,7 @@ export function PhotoGallery({ images, ocrResults, onClose }: PhotoGalleryProps)
           {entries.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-gray-500">
               <ImageIcon className="w-12 h-12 mb-3" />
-              <p>No photos captured yet</p>
+              <p>{tr('components.photoGallery.empty2')}</p>
             </div>
           )}
         </div>

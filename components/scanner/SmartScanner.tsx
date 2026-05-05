@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { AlertTriangle, ScanLine } from 'lucide-react';
 import type { ParsedBarcode, BoxStickerOCR } from '@/types';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
+import { useT } from '@/lib/i18n';
 
 interface SmartScannerProps {
   onBarcodeDetected: (barcode: string, data: ParsedBarcode, imageData?: string) => void;
@@ -43,6 +44,7 @@ export function SmartScanner({
   onDuplicateFlash,
   className
 }: SmartScannerProps) {
+  const tr = useT();
   const [isSupported, setIsSupported] = useState<boolean | null>(null);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [currentCameraIndex, setCurrentCameraIndex] = useState(0);
@@ -612,7 +614,7 @@ export function SmartScanner({
   if (isSupported === null) {
     return (
       <div className={`w-full bg-gray-800 rounded-lg flex items-center justify-center ${className || 'aspect-square'}`}>
-        <p className="text-gray-400">Initializing scanner...</p>
+        <p className="text-gray-400">{tr('scanner.initializing')}</p>
       </div>
     );
   }
@@ -622,10 +624,9 @@ export function SmartScanner({
     return (
       <div className={`w-full bg-gray-800 rounded-lg flex flex-col items-center justify-center gap-3 p-6 ${className || 'aspect-square'}`}>
         <AlertTriangle className="w-10 h-10 text-amber-400" />
-        <p className="text-white font-medium text-center">Browser Not Supported</p>
+        <p className="text-white font-medium text-center">{tr('scanner.notSupportedTitle')}</p>
         <p className="text-gray-400 text-sm text-center">
-          This browser does not support the BarcodeDetector API.
-          Please use Chrome or Edge on Android for barcode scanning.
+          {tr('scanner.notSupportedDesc')}
         </p>
       </div>
     );
@@ -660,16 +661,16 @@ export function SmartScanner({
           {diag.state === 'init' && (
             <>
               <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-white mb-4" />
-              <p className="text-base font-medium">Requesting camera permission…</p>
-              <p className="text-xs text-gray-400 mt-2">Tap “Allow” if your browser asks for camera access.</p>
+              <p className="text-base font-medium">{tr('scanner.requestingPermission')}</p>
+              <p className="text-xs text-gray-400 mt-2">{tr('scanner.permissionHint')}</p>
             </>
           )}
           {diag.state === 'no_cameras' && (
             <>
               <AlertTriangle className="w-10 h-10 text-amber-400 mb-3" />
-              <p className="text-base font-semibold">No cameras detected</p>
+              <p className="text-base font-semibold">{tr('scanner.noCamerasTitle')}</p>
               <p className="text-xs text-gray-300 mt-2 max-w-xs">
-                Your device reported no video input. If you opened this link inside WhatsApp, tap “Open in browser” (Chrome on Android, Safari on iOS) and try again.
+                {tr('scanner.noCamerasDesc')}
               </p>
               <button
                 onClick={() => {
@@ -678,19 +679,19 @@ export function SmartScanner({
                 }}
                 className="mt-4 bg-white text-gray-900 px-5 py-2 rounded-lg text-sm font-semibold"
               >
-                Retry
+                {tr('common.retry')}
               </button>
             </>
           )}
           {diag.state === 'error' && (
             <>
               <AlertTriangle className="w-10 h-10 text-red-400 mb-3" />
-              <p className="text-base font-semibold">Camera error</p>
-              <p className="text-xs text-red-200 mt-2 break-words max-w-xs font-mono">
+              <p className="text-base font-semibold">{tr('scanner.cameraErrorTitle')}</p>
+              <p className="text-xs text-red-200 mt-2 break-words max-w-xs font-mono" dir="ltr">
                 {diag.message}
               </p>
               <p className="text-xs text-gray-400 mt-3 max-w-xs">
-                Common fixes: open the link in Chrome/Safari (not WhatsApp&apos;s in-app browser), check Settings → Site permissions → Camera, then tap Retry.
+                {tr('scanner.cameraErrorHint')}
               </p>
               <button
                 onClick={() => {
@@ -699,7 +700,7 @@ export function SmartScanner({
                 }}
                 className="mt-4 bg-white text-gray-900 px-5 py-2 rounded-lg text-sm font-semibold"
               >
-                Retry
+                {tr('common.retry')}
               </button>
             </>
           )}
@@ -729,7 +730,7 @@ export function SmartScanner({
               <>
                 <div className="absolute inset-0 border-[3px] border-red-500 rounded" />
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="text-base font-semibold text-red-400">Already scanned</span>
+                  <span className="text-base font-semibold text-red-400">{tr('scanner.alreadyScanned')}</span>
                 </div>
               </>
             )}
@@ -780,7 +781,7 @@ export function SmartScanner({
             {isInCooldown ? (
               <span className="text-white text-xs font-bold">{cooldownTimeLeft}s</span>
             ) : isDuplicate ? (
-              <span className="text-white text-xs font-bold">Duplicate</span>
+              <span className="text-white text-xs font-bold">{tr('scanner.duplicateBadge')}</span>
             ) : (
               <ScanLine className="w-3 h-3 text-white" />
             )}
@@ -792,14 +793,14 @@ export function SmartScanner({
             <button
               onClick={switchCamera}
               className="flex items-center gap-1.5 bg-gray-900/80 hover:bg-gray-800/80 px-3 py-2 rounded-full text-white text-xs font-medium transition-colors backdrop-blur-sm border border-gray-600/50"
-              aria-label="Switch camera"
-              title="Tap to switch camera"
+              aria-label={tr('scanner.switchCamera')}
+              title={tr('scanner.tapToSwitch')}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
               <span className="max-w-[140px] truncate">
-                {currentCameraLabel || 'Camera'}
+                {currentCameraLabel || tr('scanner.cameraGeneric')}
               </span>
             </button>
           </div>
