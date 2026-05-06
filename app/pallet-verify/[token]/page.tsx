@@ -6,7 +6,6 @@ import {
   XCircle,
   Loader2,
   Package,
-  ChevronRight,
   AlertCircle,
 } from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
@@ -75,7 +74,7 @@ const UNIFORM_WEIGHT_TOLERANCE = 0.5;
 
 // ── Page state machine ──
 
-type Phase = 'loading' | 'box_count' | 'scanning' | 'confirming' | 'pallet_done' | 'loose_scanning' | 'loose_confirming' | 'all_done' | 'error';
+type Phase = 'loading' | 'scanning' | 'confirming' | 'pallet_done' | 'loose_scanning' | 'loose_confirming' | 'all_done' | 'error';
 
 export default function PalletVerifyPage({
   params,
@@ -125,6 +124,19 @@ export default function PalletVerifyPage({
   // Number-input state for the mandatory_count prompt + its validation error.
   const [countInput, setCountInput] = useState('');
   const [countError, setCountError] = useState<string | null>(null);
+  // Deferred-single-confirm state: when the worker picks "Complete as
+  // single-item" in the uniform-pair prompt, we capture the group params
+  // here and surface the pallet box-count input in the footer. Locking
+  // the group + auto-confirm happens on count submit.
+  const [pendingSingleGroup, setPendingSingleGroup] = useState<{
+    sku: string;
+    item_name: string;
+    item_name_hebrew: string;
+    avg_weight: number;
+    sample_barcodes: string[];
+  } | null>(null);
+  // Validation error for the deferred pallet box-count input.
+  const [palletCountError, setPalletCountError] = useState<string | null>(null);
 
   // ── Load session ──
 
@@ -154,12 +166,14 @@ export default function PalletVerifyPage({
 
         setCurrentPallet(data.current_pallet);
         if (data.current_box_count && data.current_box_count > 0) {
+          // Resumed session — count was set in a previous tab/refresh.
           setConfirmedBoxCount(data.current_box_count);
           setBoxCountInput(String(data.current_box_count));
-          setPhase('scanning');
-        } else {
-          setPhase('box_count');
         }
+        // New flow: always start in scanning. The box-count input is
+        // surfaced in the footer after 2 OCR-completed scans (or after
+        // the user picks "Single-item" in the uniform-pair prompt).
+        setPhase('scanning');
       } catch {
         setError(t(undefined, 'palletVerify.failedLoad'));
         setPhase('error');
@@ -372,27 +386,31 @@ export default function PalletVerifyPage({
 
   // ── Uniform-prompt action handlers ──
 
-  // "Complete as single-item" path: lock the group at the declared box count
-  // and immediately confirm the pallet (treating it as single-uniform).
+  // "Complete as single-item" path: capture the group and surface the
+  // pallet box-count input in the footer. Locking + auto-confirm happens
+  // on count submit (handlePalletCountSubmit). Box count is unknown at
+  // this moment in the new deferred-count flow.
   function handleCompleteAsSingle() {
     const p = pendingUniformPrompt;
     if (!p || p.mode !== 'single_or_mix') return;
-    const group: UniformGroup = {
+    setPendingSingleGroup({
       sku: p.sku,
       item_name: p.item_name,
       item_name_hebrew: p.item_name_hebrew,
       avg_weight: p.avg_weight,
-      total_count: confirmedBoxCount,
       sample_barcodes: p.sample_barcodes,
-    };
-    setUniformGroups((prev) => {
-      const next = new Map(prev);
-      next.set(p.sku, group);
-      return next;
     });
     setPendingUniformPrompt(null);
-    // Defer one tick so React commits the state updates before we hit the API.
-    setTimeout(() => handleConfirmPallet(), 0);
+    setBoxCountInput('');
+    setPalletCountError(null);
+  }
+
+  // Worker backed out of "Single-item" choice → drop the captured group
+  // and let the regular footer count input show (mix path).
+  function handleCancelSingleConfirm() {
+    setPendingSingleGroup(null);
+    setBoxCountInput('');
+    setPalletCountError(null);
   }
 
   // "Continue scanning (this is mix)" → switch the prompt from
@@ -560,25 +578,55 @@ export default function PalletVerifyPage({
     }
   }
 
-  // ── Box count submitted ──
+  // ── Pallet box-count submitted (deferred footer input) ──
+  //
+  // Two paths converge here:
+  //   1. pendingSingleGroup set → worker picked "Complete as single-item"
+  //      earlier; lock the group at total_count = N and auto-confirm.
+  //   2. pendingSingleGroup null → mix/non-uniform path; just persist
+  //      the count to Redis and let the worker keep scanning.
 
-  function handleBoxCountSubmit() {
+  function handlePalletCountSubmit() {
     const count = parseInt(boxCountInput, 10);
     if (isNaN(count) || count < 1) {
-      setError(tr('palletVerify.invalidBoxNumber'));
+      setPalletCountError(tr('palletVerify.invalidBoxNumber'));
       return;
     }
-    setError(null);
+    // The total can't be smaller than what's already on the pallet.
+    const minRequired = Math.max(2, scannedBoxes.length);
+    if (count < minRequired) {
+      setPalletCountError(tr('palletVerify.deferredCountTooLow', { min: minRequired }));
+      return;
+    }
+    setPalletCountError(null);
     setConfirmedBoxCount(count);
-    setScannedBoxes([]);
-    processedRef.current.clear();
-    setDetectedType('unknown');
-    setPhase('scanning');
-    fetch('/api/multi-pallet-session', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, current_box_count: count }),
-    }).catch(() => {});
+
+    if (pendingSingleGroup) {
+      // Single-item path: lock the group at total_count = count, then
+      // auto-confirm on next tick once React commits the state.
+      const group: UniformGroup = {
+        sku: pendingSingleGroup.sku,
+        item_name: pendingSingleGroup.item_name,
+        item_name_hebrew: pendingSingleGroup.item_name_hebrew,
+        avg_weight: pendingSingleGroup.avg_weight,
+        total_count: count,
+        sample_barcodes: pendingSingleGroup.sample_barcodes,
+      };
+      setUniformGroups((prev) => {
+        const next = new Map(prev);
+        next.set(group.sku, group);
+        return next;
+      });
+      setPendingSingleGroup(null);
+      setTimeout(() => handleConfirmPallet(), 0);
+    } else {
+      // Mix / non-uniform path: persist the count for resume safety.
+      fetch('/api/multi-pallet-session', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, current_box_count: count }),
+      }).catch(() => {});
+    }
   }
 
   // ── Confirm pallet ──
@@ -666,7 +714,11 @@ export default function PalletVerifyPage({
           setPendingUniformPrompt(null);
           setCountInput('');
           setCountError(null);
-          setPhase('box_count');
+          setPendingSingleGroup(null);
+          setPalletCountError(null);
+          // New deferred-count flow: stay in 'scanning'. The footer
+          // surfaces the count input again after 2 OCR-completed scans.
+          setPhase('scanning');
         }, 4000);
       }
     } catch {
@@ -1078,68 +1130,6 @@ export default function PalletVerifyPage({
     );
   }
 
-  if (phase === 'box_count') {
-    return (
-      <div className="min-h-screen flex flex-col bg-gray-50">
-        <div className="bg-white border-b px-4 py-3 shadow-sm">
-          <div className="flex items-center gap-2">
-            <Package className="text-blue-600 w-5 h-5" />
-            <div>
-              <p className="text-sm font-bold text-gray-800">
-                {tr('palletVerify.palletHeaderShort', { current: currentPallet, total: pallet_count })}
-              </p>
-              <p className="text-xs text-gray-500" dir="ltr">{tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}</p>
-            </div>
-          </div>
-          <div className="flex gap-1 mt-2">
-            {Array.from({ length: pallet_count }, (_, i) => (
-              <div
-                key={i}
-                className={`h-1.5 flex-1 rounded-full ${
-                  i + 1 < currentPallet
-                    ? 'bg-green-500'
-                    : i + 1 === currentPallet
-                    ? 'bg-blue-500'
-                    : 'bg-gray-200'
-                }`}
-              />
-            ))}
-          </div>
-        </div>
-
-        <div className="flex-1 flex flex-col items-center justify-center px-6">
-          <div className="w-full max-w-sm">
-            <h2 className="text-xl font-bold text-gray-800 text-center mb-2">
-              {tr('palletVerify.howManyBoxes')}
-            </h2>
-            <p className="text-sm text-gray-500 text-center mb-6">
-              {tr('palletVerify.totalOnPallet', { current: currentPallet })}
-            </p>
-            <input
-              type="number"
-              inputMode="numeric"
-              min="1"
-              value={boxCountInput}
-              onChange={(e) => setBoxCountInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleBoxCountSubmit()}
-              placeholder={tr('palletVerify.boxCountPlaceholder')}
-              className="w-full text-center text-4xl font-bold text-gray-900 bg-white border-2 border-gray-400 rounded-xl py-5 px-4 shadow-sm transition outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-200 placeholder:text-gray-400 placeholder:text-2xl placeholder:font-medium"
-              autoFocus
-            />
-            {error && <p className="text-red-500 text-sm text-center mt-2">{error}</p>}
-            <button
-              onClick={handleBoxCountSubmit}
-              className="w-full mt-4 py-3 rounded-xl bg-blue-600 text-white font-semibold text-base hover:bg-blue-700 transition flex items-center justify-center gap-2"
-            >
-              {tr('palletVerify.startScanning')} <ChevronRight className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-        {debugPanel}
-      </div>
-    );
-  }
-
   // ── Scanning / confirming ──
 
   return (
@@ -1151,7 +1141,9 @@ export default function PalletVerifyPage({
             <Package className="text-blue-600 w-5 h-5" />
             <div>
               <p className="text-sm font-bold text-gray-800">
-                {tr('palletVerify.palletHeaderWithCount', { current: currentPallet, total: pallet_count, count: confirmedBoxCount })}
+                {confirmedBoxCount > 0
+                  ? tr('palletVerify.palletHeaderWithCount', { current: currentPallet, total: pallet_count, count: confirmedBoxCount })
+                  : tr('palletVerify.palletHeaderShort', { current: currentPallet, total: pallet_count })}
               </p>
               <p className="text-xs text-gray-500" dir="ltr">{tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}</p>
             </div>
@@ -1162,13 +1154,19 @@ export default function PalletVerifyPage({
         <div className="mt-2">
           <div className="flex justify-between text-xs text-gray-500 mb-1">
             <span>
-              {tr('palletVerify.committed', { committed, total: confirmedBoxCount })}
+              {confirmedBoxCount > 0
+                ? tr('palletVerify.committed', { committed, total: confirmedBoxCount })
+                : tr('palletVerify.scannedSoFar', { count: committed })}
             </span>
             <span className={canConfirm ? 'text-green-600 font-semibold' : 'text-gray-400'}>
               {canConfirm
                 ? tr('palletVerify.readyToConfirm')
                 : pendingUniformPrompt
                 ? tr('palletVerify.waitingInput')
+                : confirmedBoxCount === 0
+                ? (committed < 2
+                    ? tr('palletVerify.scanToStart')
+                    : tr('palletVerify.setTotalBelow'))
                 : tr('palletVerify.moreBoxesToGo', { count: Math.max(0, confirmedBoxCount - committed) })}
             </span>
           </div>
@@ -1329,10 +1327,13 @@ export default function PalletVerifyPage({
         </div>
       )}
 
-      {/* Footer — switches between three modes:
-          (1) single_or_mix prompt (Complete / Continue),
-          (2) mandatory_count prompt (number input + Set),
-          (3) standard Confirm Pallet button.                         */}
+      {/* Footer — priority-ordered modes:
+          (1) single_or_mix uniform prompt (Complete / Continue),
+          (2) mandatory_count per-SKU prompt (number input + Set),
+          (3) deferred pallet box-count input (NEW — surfaces after 2
+              OCR-completed scans when no count has been set yet, OR
+              after the worker picks "Single-item" in mode 1),
+          (4) standard Confirm Pallet button.                         */}
       <div className="p-4 bg-white border-t sticky bottom-0">
         {error && <p className="text-red-600 text-sm text-center mb-2">{error}</p>}
 
@@ -1346,7 +1347,7 @@ export default function PalletVerifyPage({
               disabled={phase === 'confirming'}
               className="w-full py-3 rounded-xl font-semibold text-base bg-green-600 text-white hover:bg-green-700 active:bg-green-800 transition disabled:bg-gray-200 disabled:text-gray-400"
             >
-              {tr('palletVerify.uniformCompleteBtn', { count: confirmedBoxCount })}
+              {tr('palletVerify.uniformCompleteBtn')}
             </button>
             <button
               onClick={handleContinueAsMix}
@@ -1393,6 +1394,48 @@ export default function PalletVerifyPage({
             </div>
             {countError && (
               <p className="text-red-600 text-xs">{countError}</p>
+            )}
+          </div>
+        ) : (confirmedBoxCount === 0 && scannedBoxes.length >= 2) ? (
+          <div className="space-y-2">
+            <label className="block text-xs text-gray-700 font-medium">
+              {tr('palletVerify.deferredCountTitle')}
+            </label>
+            <p className="text-[11px] text-gray-500">
+              {tr('palletVerify.deferredCountHint', { scanned: scannedBoxes.length })}
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                inputMode="numeric"
+                min={Math.max(2, scannedBoxes.length)}
+                value={boxCountInput}
+                onChange={(e) => {
+                  setBoxCountInput(e.target.value);
+                  setPalletCountError(null);
+                }}
+                onKeyDown={(e) => e.key === 'Enter' && handlePalletCountSubmit()}
+                placeholder={tr('palletVerify.boxCountPlaceholder')}
+                className="flex-1 text-center text-xl font-bold text-gray-900 bg-white border-2 border-gray-400 rounded-xl py-2 px-3 shadow-sm transition outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-200 placeholder:text-gray-400 placeholder:font-medium placeholder:text-base"
+                autoFocus
+              />
+              <button
+                onClick={handlePalletCountSubmit}
+                className="px-5 py-2 rounded-xl bg-blue-600 text-white font-semibold text-sm hover:bg-blue-700 transition"
+              >
+                {tr('palletVerify.uniformSet')}
+              </button>
+            </div>
+            {palletCountError && (
+              <p className="text-red-600 text-xs">{palletCountError}</p>
+            )}
+            {pendingSingleGroup && (
+              <button
+                onClick={handleCancelSingleConfirm}
+                className="w-full text-xs text-gray-500 hover:text-gray-700 underline pt-1"
+              >
+                {tr('palletVerify.cancelSingle')}
+              </button>
             )}
           </div>
         ) : (

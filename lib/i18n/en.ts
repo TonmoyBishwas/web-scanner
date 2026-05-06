@@ -191,7 +191,7 @@ export const en = {
   'palletVerify.itemTypesDetected': '{count} item types detected',
   'palletVerify.confirmOrKeep': 'Confirm now or keep scanning to add more boxes',
   'palletVerify.uniformChoose': 'Same item & weight detected — choose how to proceed:',
-  'palletVerify.uniformCompleteBtn': '✅ Complete as single-item ({count} boxes)',
+  'palletVerify.uniformCompleteBtn': '✅ Complete as single-item',
   'palletVerify.uniformContinueMix': '⏭ Continue scanning (this is a mix pallet)',
   'palletVerify.uniformHowMany': 'How many boxes of {item} are on this pallet?',
   'palletVerify.uniformMaxNote': 'Max {max} (each box ≈ {weight} kg)',
@@ -202,6 +202,13 @@ export const en = {
   'palletVerify.boxesNeeded': '{count} more boxes needed',
   'palletVerify.palletTypeSingle': 'single',
   'palletVerify.palletTypeMix': 'mix',
+  'palletVerify.scanToStart': 'Scan boxes on this pallet',
+  'palletVerify.setTotalBelow': 'Enter pallet total below',
+  'palletVerify.scannedSoFar': '{count} scanned',
+  'palletVerify.cancelSingle': 'Cancel — keep scanning',
+  'palletVerify.deferredCountTitle': 'How many boxes on this pallet?',
+  'palletVerify.deferredCountHint': 'Enter the total — including the {scanned} you already scanned.',
+  'palletVerify.deferredCountTooLow': 'Total must be at least {min} (boxes already scanned).',
 
   // ── OCR retry / failed UI ─────────────────────────────────────────
   'ocr.analyzing': 'Analyzing…',

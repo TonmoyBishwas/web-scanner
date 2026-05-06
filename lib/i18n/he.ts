@@ -195,7 +195,7 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.itemTypesDetected': 'זוהו {count} סוגי פריטים',
   'palletVerify.confirmOrKeep': 'אשר עכשיו או המשך לסרוק קופסאות נוספות',
   'palletVerify.uniformChoose': 'אותו פריט ומשקל זוהו — בחר כיצד להמשיך:',
-  'palletVerify.uniformCompleteBtn': '✅ סיים כפריט-יחיד ({count} קופסאות)',
+  'palletVerify.uniformCompleteBtn': '✅ זה משטח של פריט יחיד',
   'palletVerify.uniformContinueMix': '⏭ המשך לסרוק (זה משטח מעורב)',
   'palletVerify.uniformHowMany': 'כמה קופסאות של {item} יש על המשטח הזה?',
   'palletVerify.uniformMaxNote': 'מקסימום {max} (כל קופסה ≈ {weight} kg)',
@@ -206,6 +206,13 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.boxesNeeded': 'נדרשות עוד {count} קופסאות',
   'palletVerify.palletTypeSingle': 'יחיד',
   'palletVerify.palletTypeMix': 'מעורב',
+  'palletVerify.scanToStart': 'סרוק קופסאות על המשטח הזה',
+  'palletVerify.setTotalBelow': 'הזן את סה״כ הקופסאות למטה',
+  'palletVerify.scannedSoFar': '{count} נסרקו',
+  'palletVerify.cancelSingle': 'בטל — המשך לסרוק',
+  'palletVerify.deferredCountTitle': 'כמה קופסאות יש על המשטח?',
+  'palletVerify.deferredCountHint': 'הזן את הסך הכל — כולל {scanned} שכבר נסרקו.',
+  'palletVerify.deferredCountTooLow': 'הסך הכל חייב להיות לפחות {min} (קופסאות שכבר נסרקו).',
 
   // ── OCR retry / failed UI ─────────────────────────────────────────
   'ocr.analyzing': 'מנתח…',
