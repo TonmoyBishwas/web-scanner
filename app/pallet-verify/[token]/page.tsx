@@ -13,6 +13,7 @@ import { DebugLogPanel } from '@/components/shared/DebugLogPanel';
 import { installDebugLogCapture } from '@/lib/debug-log';
 import { LanguageContext, useLangDir, t } from '@/lib/i18n';
 import type { Language, MultiPalletSession, MultiPalletBoxScan, ParsedBarcode } from '@/types';
+import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
 
 // Set up the in-page console-log capture once at module load. Idempotent —
 // safe even with React Strict Mode mounting twice.
@@ -24,10 +25,15 @@ if (typeof window !== 'undefined') {
 
 type DetectedType = 'unknown' | 'single-uniform' | 'single-nonuniform' | 'mix';
 
-function detectType(boxes: BoxScan[]): DetectedType {
+function detectType(
+  boxes: BoxScan[],
+  mergeMap?: Map<string, string>,
+): DetectedType {
   if (boxes.length < 2) return 'unknown';
-  const skus = new Set(boxes.map((b) => b.sku).filter(Boolean));
-  if (skus.size > 1) return 'mix';
+  // Group by OCR'd Hebrew name (with worker-accepted merges applied),
+  // never by barcode digits — barcode is a per-box dedup key only.
+  const groups = groupBoxesByName(boxes, mergeMap);
+  if (groups.size > 1) return 'mix';
   const weights = boxes.map((b) => b.weight).filter((w) => w > 0);
   if (weights.length < 2) return 'unknown';
   const range = Math.max(...weights) - Math.min(...weights);
@@ -47,13 +53,18 @@ interface BoxScan extends MultiPalletBoxScan {
 
 // ── Uniform-pair detection state ──
 //
-// When 2+ boxes of the SAME SKU come back from OCR with the SAME weight (within
-// tolerance), the warehouse domain rule says ALL boxes of that SKU on this
-// pallet are the same weight. The worker only physically scans 2 samples and
+// When 2+ boxes of the same OCR'd Hebrew name come back with the same weight
+// (within tolerance), the warehouse domain rule says ALL boxes of that item
+// on this pallet are the same weight. Worker physically scans 2 samples and
 // reports the real total count via a prompt.
+//
+// Pre-2026-05-15 this was keyed on the barcode-derived `sku` (first 13
+// digits). That broke when OCR misread a digit and put physically-identical
+// boxes into different SKU buckets. Now keyed on the name-derived group key
+// from `groupKeyForBox` (see `lib/group-key.ts`).
 
 interface UniformGroup {
-  sku: string;
+  name_key: string;             // normalized-name group key, NOT a barcode
   item_name: string;
   item_name_hebrew: string;
   avg_weight: number;
@@ -62,11 +73,11 @@ interface UniformGroup {
 }
 
 type UniformPrompt =
-  // First uniform pair AND only one SKU has been scanned so far → ask the
+  // First uniform pair AND only one item has been scanned so far → ask the
   // worker whether this is single-item or actually mix.
-  | { mode: 'single_or_mix'; sku: string; item_name: string; item_name_hebrew: string; avg_weight: number; sample_barcodes: string[] }
+  | { mode: 'single_or_mix'; name_key: string; item_name: string; item_name_hebrew: string; avg_weight: number; sample_barcodes: string[] }
   // Any other case → mandatory: just need the count for this uniform sub-group.
-  | { mode: 'mandatory_count'; sku: string; item_name: string; item_name_hebrew: string; avg_weight: number; sample_barcodes: string[] };
+  | { mode: 'mandatory_count'; name_key: string; item_name: string; item_name_hebrew: string; avg_weight: number; sample_barcodes: string[] };
 
 // Tolerance (kg) for "same weight" — matches detectType() and the outbound
 // uniform-override threshold.
@@ -129,14 +140,129 @@ export default function PalletVerifyPage({
   // here and surface the pallet box-count input in the footer. Locking
   // the group + auto-confirm happens on count submit.
   const [pendingSingleGroup, setPendingSingleGroup] = useState<{
-    sku: string;
+    name_key: string;
     item_name: string;
     item_name_hebrew: string;
     avg_weight: number;
     sample_barcodes: string[];
   } | null>(null);
+  // AI consolidation state: worker-accepted merges (originalKey → canonicalKey).
+  // These get applied wherever we call `groupBoxesByName` and threaded into
+  // the webhook so the bot's Pallet Items rows reflect the merged groups.
+  const [acceptedMerges, setAcceptedMerges] = useState<Map<string, string>>(new Map());
+  // Pair-fingerprints the worker explicitly rejected this session, so the AI
+  // banner won't re-prompt the same suggestion repeatedly. Fingerprint =
+  // sorted pair of keys joined by `||`.
+  const [rejectedMergePairs, setRejectedMergePairs] = useState<Set<string>>(new Set());
+  // Latest suggestion from /api/consolidate-items that the worker hasn't yet
+  // accepted or rejected. Single banner at a time.
+  const [pendingMerge, setPendingMerge] = useState<{
+    from_keys: string[];
+    to_key: string;
+    sample_names: { he?: string; en?: string }[];
+    box_counts: number[];
+  } | null>(null);
   // Validation error for the deferred pallet box-count input.
   const [palletCountError, setPalletCountError] = useState<string | null>(null);
+
+  // ── AI consolidation: debounced call after scans settle ──
+  //
+  // 1.5 s after each change to `scannedBoxes` we fingerprint the current
+  // name-groups and call /api/consolidate-items. If Gemini suggests a merge
+  // we haven't already rejected, surface it as a banner. Cached by
+  // fingerprint so we don't re-call when nothing changed.
+  const lastConsolidationFingerprintRef = useRef<string>('');
+  useEffect(() => {
+    // Only run during scanning phase. Skip while OCR is still in flight.
+    if (phase !== 'scanning') return;
+    const doneBoxes = scannedBoxes.filter((b) => b.ocr_status === 'done');
+    if (doneBoxes.length < 2) return;
+    const groupedNow = groupBoxesByName(doneBoxes, acceptedMerges);
+    if (groupedNow.size < 2) return; // nothing to merge against itself
+
+    const groups = Array.from(groupedNow.entries()).map(([key, bs]) => ({
+      key,
+      name_he: bs.find((b) => b.item_name_hebrew)?.item_name_hebrew || '',
+      name_en: bs.find((b) => b.item_name)?.item_name || '',
+      box_count: bs.length,
+      sample_weights_kg: bs.map((b) => b.weight).filter((w) => w > 0).slice(0, 5),
+    }));
+    // Fingerprint = sorted(key:count) — skip duplicate calls for the same
+    // shape of groups (e.g. when scrolling re-renders the page).
+    const fingerprint = groups
+      .map((g) => `${g.key}#${g.box_count}`)
+      .sort()
+      .join('|');
+    if (fingerprint === lastConsolidationFingerprintRef.current) return;
+
+    const handle = setTimeout(async () => {
+      lastConsolidationFingerprintRef.current = fingerprint;
+      try {
+        const res = await fetch('/api/consolidate-items', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ language, groups }),
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const suggestions = Array.isArray(data.suggested_merges) ? data.suggested_merges : [];
+        // Pick the first suggestion the worker hasn't already rejected. Show
+        // one at a time to keep the UX simple.
+        for (const m of suggestions) {
+          const pairFp = [...m.from_keys].sort().join('||');
+          if (rejectedMergePairs.has(pairFp)) continue;
+          const sampleNames = m.from_keys.map((k: string) => {
+            const bs = groupedNow.get(k) ?? [];
+            return {
+              he: bs.find((b) => b.item_name_hebrew)?.item_name_hebrew,
+              en: bs.find((b) => b.item_name)?.item_name,
+            };
+          });
+          const boxCounts = m.from_keys.map((k: string) => groupedNow.get(k)?.length ?? 0);
+          setPendingMerge({
+            from_keys: m.from_keys,
+            to_key: m.to_key,
+            sample_names: sampleNames,
+            box_counts: boxCounts,
+          });
+          return;
+        }
+        setPendingMerge(null);
+      } catch {
+        // Swallow — Layer A grouping is the safety net.
+      }
+    }, 1500);
+    return () => clearTimeout(handle);
+    // We intentionally don't depend on `acceptedMerges` directly — the
+    // fingerprint already reflects it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scannedBoxes, phase, language, acceptedMerges, rejectedMergePairs]);
+
+  // Accept the pending merge: apply each from_key → to_key to acceptedMerges.
+  function handleAcceptMerge() {
+    if (!pendingMerge) return;
+    setAcceptedMerges((prev) => {
+      const next = new Map(prev);
+      for (const k of pendingMerge.from_keys) {
+        if (k !== pendingMerge.to_key) next.set(k, pendingMerge.to_key);
+      }
+      return next;
+    });
+    setPendingMerge(null);
+  }
+
+  // Reject + suppress this exact pair for the rest of the session.
+  function handleRejectMerge() {
+    if (!pendingMerge) return;
+    const pairFp = [...pendingMerge.from_keys].sort().join('||');
+    setRejectedMergePairs((prev) => {
+      const next = new Set(prev);
+      next.add(pairFp);
+      return next;
+    });
+    setPendingMerge(null);
+  }
 
   // ── Load session ──
 
@@ -238,27 +364,30 @@ export default function PalletVerifyPage({
     setScannedBoxes((prev) => {
       const target = prev.find((b) => b.barcode === barcode);
       const filtered = prev.filter((b) => b.barcode !== barcode);
-      setDetectedType(detectType(filtered));
+      setDetectedType(detectType(filtered, acceptedMerges));
 
       // If the rescanned box belonged to a locked uniform group and the group
       // would be left with fewer than 2 same-weight samples, drop the group
-      // (the worker can re-scan and re-prompt).
-      if (target?.sku) {
+      // (worker can re-scan and re-prompt). Keyed on name, not on the
+      // barcode-derived sku.
+      if (target) {
+        const targetKey = acceptedMerges.get(groupKeyForBox(target)) ?? groupKeyForBox(target);
         setUniformGroups((groups) => {
-          const g = groups.get(target.sku);
+          const g = groups.get(targetKey);
           if (!g) return groups;
-          const remainingSamples = filtered.filter(
-            (b) => b.sku === target.sku && b.ocr_status === 'done'
-          );
+          const remainingSamples = filtered.filter((b) => {
+            const k = acceptedMerges.get(groupKeyForBox(b)) ?? groupKeyForBox(b);
+            return k === targetKey && b.ocr_status === 'done';
+          });
           if (remainingSamples.length < 2) {
             const next = new Map(groups);
-            next.delete(target.sku);
+            next.delete(targetKey);
             return next;
           }
           return groups;
         });
-        // Also clear a pending prompt that's about this same SKU.
-        setPendingUniformPrompt((p) => (p && p.sku === target.sku ? null : p));
+        // Also clear a pending prompt that's about this same item.
+        setPendingUniformPrompt((p) => (p && p.name_key === targetKey ? null : p));
       }
 
       return filtered;
@@ -294,7 +423,7 @@ export default function PalletVerifyPage({
             }
             return { ...b, ocr_status: 'failed' as OcrStatus };
           });
-          setDetectedType(detectType(updated));
+          setDetectedType(detectType(updated, acceptedMerges));
           // Check if the box that just finished OCR triggers a uniform-pair prompt.
           maybeTriggerUniformPrompt(updated, barcode);
           return updated;
@@ -316,30 +445,44 @@ export default function PalletVerifyPage({
   function maybeTriggerUniformPrompt(latestBoxes: BoxScan[], justFinishedBarcode: string) {
     if (pendingUniformPromptRef.current) return; // already prompting
     const justFinished = latestBoxes.find((b) => b.barcode === justFinishedBarcode);
-    if (!justFinished || justFinished.ocr_status !== 'done' || !justFinished.sku || justFinished.weight <= 0) return;
-    const sku = justFinished.sku;
-    if (uniformGroupsRef.current.has(sku)) return; // already locked
+    if (
+      !justFinished ||
+      justFinished.ocr_status !== 'done' ||
+      justFinished.weight <= 0 ||
+      (!justFinished.item_name && !justFinished.item_name_hebrew)
+    ) {
+      return;
+    }
+    // Group key derived from the OCR'd Hebrew name (with worker-accepted
+    // merges applied), never from barcode digits.
+    const nameKey = acceptedMerges.get(groupKeyForBox(justFinished)) ?? groupKeyForBox(justFinished);
+    if (uniformGroupsRef.current.has(nameKey)) return; // already locked
 
-    const sameSkuDone = latestBoxes.filter(
-      (b) => b.sku === sku && b.ocr_status === 'done' && b.weight > 0
-    );
-    if (sameSkuDone.length < 2) return;
-    const ws = sameSkuDone.map((b) => b.weight);
+    const sameItemDone = latestBoxes.filter((b) => {
+      const k = acceptedMerges.get(groupKeyForBox(b)) ?? groupKeyForBox(b);
+      return k === nameKey && b.ocr_status === 'done' && b.weight > 0;
+    });
+    if (sameItemDone.length < 2) return;
+    const ws = sameItemDone.map((b) => b.weight);
     const span = Math.max(...ws) - Math.min(...ws);
     if (span >= UNIFORM_WEIGHT_TOLERANCE) return;
 
-    const distinctSkus = new Set(latestBoxes.map((b) => b.sku).filter(Boolean));
+    const distinctNameKeys = new Set(
+      latestBoxes
+        .filter((b) => b.item_name || b.item_name_hebrew)
+        .map((b) => acceptedMerges.get(groupKeyForBox(b)) ?? groupKeyForBox(b))
+    );
     const mode: UniformPrompt['mode'] =
-      distinctSkus.size === 1 && uniformGroupsRef.current.size === 0 ? 'single_or_mix' : 'mandatory_count';
+      distinctNameKeys.size === 1 && uniformGroupsRef.current.size === 0 ? 'single_or_mix' : 'mandatory_count';
 
     const avg = ws.reduce((a, b) => a + b, 0) / ws.length;
     setPendingUniformPrompt({
       mode,
-      sku,
+      name_key: nameKey,
       item_name: justFinished.item_name || '',
       item_name_hebrew: justFinished.item_name_hebrew || '',
       avg_weight: Math.round(avg * 1000) / 1000,
-      sample_barcodes: sameSkuDone.map((b) => b.barcode),
+      sample_barcodes: sameItemDone.map((b) => b.barcode),
     });
   }
 
@@ -394,7 +537,7 @@ export default function PalletVerifyPage({
     const p = pendingUniformPrompt;
     if (!p || p.mode !== 'single_or_mix') return;
     setPendingSingleGroup({
-      sku: p.sku,
+      name_key: p.name_key,
       item_name: p.item_name,
       item_name_hebrew: p.item_name_hebrew,
       avg_weight: p.avg_weight,
@@ -429,8 +572,9 @@ export default function PalletVerifyPage({
     const pendingSampleSet = new Set(pendingUniformPrompt?.sample_barcodes ?? []);
     let nonUniformIndividuals = 0;
     for (const box of scannedBoxes) {
-      if (uniformGroups.has(box.sku)) continue;            // already in a locked group
-      if (pendingSampleSet.has(box.barcode)) continue;     // pending; we'll add total_count instead
+      const k = acceptedMerges.get(groupKeyForBox(box)) ?? groupKeyForBox(box);
+      if (uniformGroups.has(k)) continue;                   // already in a locked group
+      if (pendingSampleSet.has(box.barcode)) continue;      // pending; we'll add total_count instead
       nonUniformIndividuals += 1;
     }
     let lockedTotal = 0;
@@ -457,7 +601,7 @@ export default function PalletVerifyPage({
       return;
     }
     const group: UniformGroup = {
-      sku: p.sku,
+      name_key: p.name_key,
       item_name: p.item_name,
       item_name_hebrew: p.item_name_hebrew,
       avg_weight: p.avg_weight,
@@ -466,7 +610,7 @@ export default function PalletVerifyPage({
     };
     setUniformGroups((prev) => {
       const next = new Map(prev);
-      next.set(p.sku, group);
+      next.set(p.name_key, group);
       return next;
     });
     setPendingUniformPrompt(null);
@@ -478,7 +622,8 @@ export default function PalletVerifyPage({
   function committedCount(): number {
     let nonUniformIndividuals = 0;
     for (const box of scannedBoxes) {
-      if (!uniformGroups.has(box.sku)) nonUniformIndividuals += 1;
+      const k = acceptedMerges.get(groupKeyForBox(box)) ?? groupKeyForBox(box);
+      if (!uniformGroups.has(k)) nonUniformIndividuals += 1;
     }
     let lockedTotal = 0;
     for (const g of uniformGroups.values()) lockedTotal += g.total_count;
@@ -605,7 +750,7 @@ export default function PalletVerifyPage({
       // Single-item path: lock the group at total_count = count, then
       // auto-confirm on next tick once React commits the state.
       const group: UniformGroup = {
-        sku: pendingSingleGroup.sku,
+        name_key: pendingSingleGroup.name_key,
         item_name: pendingSingleGroup.item_name,
         item_name_hebrew: pendingSingleGroup.item_name_hebrew,
         avg_weight: pendingSingleGroup.avg_weight,
@@ -614,7 +759,7 @@ export default function PalletVerifyPage({
       };
       setUniformGroups((prev) => {
         const next = new Map(prev);
-        next.set(group.sku, group);
+        next.set(group.name_key, group);
         return next;
       });
       setPendingSingleGroup(null);
@@ -638,11 +783,17 @@ export default function PalletVerifyPage({
 
     // Build uniform_groups overrides from locked groups (and image_data is
     // intentionally stripped from scanned_boxes — the server doesn't need it).
+    // `name_key` is the normalized-name grouping key, NOT the barcode digits.
     const uniformGroupsPayload = Array.from(uniformGroups.values()).map((g) => ({
-      sku: g.sku,
+      name_key: g.name_key,
       total_count: g.total_count,
       avg_weight: g.avg_weight,
     }));
+
+    // Worker-accepted AI merges (originalKey → canonicalKey). Server applies
+    // when grouping for the webhook so Pallet Items reflects the merged set.
+    const mergeMapPayload: Record<string, string> = {};
+    for (const [from, to] of acceptedMerges.entries()) mergeMapPayload[from] = to;
 
     try {
       const res = await fetch('/api/multi-pallet-complete', {
@@ -653,6 +804,7 @@ export default function PalletVerifyPage({
           scanned_boxes: scannedBoxes.map(({ ocr_status: _, image_data: _img, ...box }) => box),
           box_count: confirmedBoxCount,
           uniform_groups: uniformGroupsPayload,
+          merge_map: mergeMapPayload,
         }),
       });
       const data = await res.json();
@@ -669,8 +821,11 @@ export default function PalletVerifyPage({
       // Mirror what the API just persisted into React's session state so the
       // all_done view (which reads session.completed_pallets) sees every
       // confirmed pallet — without needing a refetch after each confirm.
+      // Per the user's config model: any non-uniform weights even on a single
+      // item-name → 'mix' (scenario 2 / "Mix (a)"). Only same-name AND
+      // same-weight counts as single.
       const palletTypeLabel: 'single' | 'mix' =
-        detectedType === 'mix' ? 'mix' : 'single';
+        detectedType === 'single-uniform' ? 'single' : 'mix';
       setSession((prev) =>
         prev
           ? {
@@ -716,6 +871,11 @@ export default function PalletVerifyPage({
           setCountError(null);
           setPendingSingleGroup(null);
           setPalletCountError(null);
+          // AI consolidation is per-pallet — merges accepted on pallet 1
+          // shouldn't carry over to pallet 2.
+          setAcceptedMerges(new Map());
+          setRejectedMergePairs(new Set());
+          setPendingMerge(null);
           // New deferred-count flow: stay in 'scanning'. The footer
           // surfaces the count input again after 2 OCR-completed scans.
           setPhase('scanning');
@@ -737,12 +897,14 @@ export default function PalletVerifyPage({
   const committed = committedCount();
   const canConfirm = !pendingUniformPrompt && committed >= Math.max(2, confirmedBoxCount);
 
-  const groupedBySku = scannedBoxes.reduce<Record<string, BoxScan[]>>((acc, box) => {
-    const key = box.sku || 'unknown';
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(box);
-    return acc;
-  }, {});
+  // Group scanned boxes by normalized OCR'd Hebrew name (with worker-accepted
+  // AI merges applied). Barcode digits are intentionally NOT used — they're
+  // per-box dedup keys, never product identifiers. See lib/group-key.ts.
+  const groupedByName = groupBoxesByName(scannedBoxes, acceptedMerges);
+  // Object<key, boxes[]> shape for the existing render paths (Object.entries
+  // is what the JSX below expects).
+  const groupedItems: Record<string, BoxScan[]> = {};
+  for (const [k, v] of groupedByName.entries()) groupedItems[k] = v;
 
   // ── Type badge ──
 
@@ -771,14 +933,20 @@ export default function PalletVerifyPage({
   // ── Box card ──
 
   function BoxCard({ box, idx }: { box: BoxScan; idx: number }) {
-    const firstSku = scannedBoxes[0]?.sku;
-    const skuMatch = box.sku === firstSku;
+    // "Same-item" colour cue derived from the OCR'd name (with worker-accepted
+    // merges applied), not barcode digits.
+    const firstBox = scannedBoxes[0];
+    const firstKey = firstBox
+      ? acceptedMerges.get(groupKeyForBox(firstBox)) ?? groupKeyForBox(firstBox)
+      : '';
+    const thisKey = acceptedMerges.get(groupKeyForBox(box)) ?? groupKeyForBox(box);
+    const sameItem = thisKey === firstKey;
     const displayName = box.item_name_hebrew || box.item_name;
 
     const cardBg =
       idx === 0
         ? 'bg-blue-50 border-blue-200'
-        : detectedType === 'mix' || skuMatch
+        : detectedType === 'mix' || sameItem
         ? 'bg-green-50 border-green-200'
         : 'bg-yellow-50 border-yellow-200';
 
@@ -840,7 +1008,7 @@ export default function PalletVerifyPage({
           <div className="shrink-0">
             {idx === 0 ? (
               <span className="text-xs bg-blue-200 text-blue-800 rounded px-1.5 py-0.5">#1</span>
-            ) : detectedType !== 'mix' && !skuMatch ? (
+            ) : detectedType !== 'mix' && !sameItem ? (
               <XCircle className="text-yellow-500 w-4 h-4" />
             ) : (
               <CheckCircle className="text-green-500 w-4 h-4" />
@@ -952,12 +1120,11 @@ export default function PalletVerifyPage({
     const declared = session?.loose_box_count || 0;
     const scanned = looseBoxes.length;
     const canConfirmLoose = scanned >= Math.min(2, declared) && (declared === 0 || scanned >= declared);
-    const looseGroupedBySku = looseBoxes.reduce<Record<string, BoxScan[]>>((acc, box) => {
-      const key = box.sku || 'unknown';
-      if (!acc[key]) acc[key] = [];
-      acc[key].push(box);
-      return acc;
-    }, {});
+    // Loose boxes: group by OCR'd name, same as the pallet path. Barcode is
+    // dedup-only and never used as a grouping key.
+    const looseGroupedMap = groupBoxesByName(looseBoxes);
+    const looseGroupedItems: Record<string, BoxScan[]> = {};
+    for (const [k, v] of looseGroupedMap.entries()) looseGroupedItems[k] = v;
 
     return (
       <div className="min-h-screen flex flex-col bg-gray-50">
@@ -1005,15 +1172,15 @@ export default function PalletVerifyPage({
         {/* Scanned loose boxes */}
         {looseBoxes.length > 0 && (
           <div className="px-4 py-3 flex-1 overflow-y-auto space-y-2">
-            {Object.entries(looseGroupedBySku).map(([sku, boxes]) => {
+            {Object.entries(looseGroupedItems).map(([nameKey, boxes]) => {
               const displayName =
                 boxes.find((b) => b.item_name_hebrew)?.item_name_hebrew ||
                 boxes.find((b) => b.item_name)?.item_name ||
-                sku;
+                nameKey.replace(/^(he|en|unknown):/, '');
               const doneWeights = boxes.filter((b) => b.weight > 0).map((b) => b.weight);
               const totalWeight = doneWeights.reduce((s, w) => s + w, 0);
               return (
-                <div key={sku} className="bg-orange-50 border border-orange-200 rounded-xl p-3">
+                <div key={nameKey} className="bg-orange-50 border border-orange-200 rounded-xl p-3">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-sm font-semibold text-orange-900 truncate max-w-[70%]">
                       {displayName}
@@ -1191,9 +1358,9 @@ export default function PalletVerifyPage({
             </p>
             <ul className="text-xs text-emerald-900 space-y-0.5">
               {Array.from(uniformGroups.values()).map((g) => {
-                const name = g.item_name_hebrew || g.item_name || g.sku;
+                const name = g.item_name_hebrew || g.item_name || g.name_key.replace(/^(he|en|unknown):/, '');
                 return (
-                  <li key={g.sku}>
+                  <li key={g.name_key}>
                     {tr('palletVerify.uniformLockedItem', { name, count: g.total_count, weight: g.avg_weight })}
                   </li>
                 );
@@ -1201,7 +1368,10 @@ export default function PalletVerifyPage({
               {pendingUniformPrompt && (
                 <li className="text-emerald-800">
                   {tr('palletVerify.uniformPendingItem', {
-                    name: pendingUniformPrompt.item_name_hebrew || pendingUniformPrompt.item_name || pendingUniformPrompt.sku,
+                    name:
+                      pendingUniformPrompt.item_name_hebrew ||
+                      pendingUniformPrompt.item_name ||
+                      pendingUniformPrompt.name_key.replace(/^(he|en|unknown):/, ''),
                     weight: pendingUniformPrompt.avg_weight,
                   })}
                 </li>
@@ -1230,16 +1400,57 @@ export default function PalletVerifyPage({
         )}
       </div>
 
+      {/* AI consolidation banner — appears when /api/consolidate-items
+          suggests two of the on-pallet groups are actually the same
+          product (OCR drift). Worker confirms or dismisses. */}
+      {pendingMerge && (
+        <div className="mx-4 mt-3 bg-amber-50 border border-amber-300 rounded-xl p-3 shadow-sm">
+          <p className="text-xs font-semibold text-amber-900 mb-1">
+            {tr('palletVerify.aiMergeBanner')}
+          </p>
+          <ul className="text-xs text-amber-900 mb-2 space-y-0.5">
+            {pendingMerge.sample_names.map((nm, i) => {
+              const fallbackKey = pendingMerge.from_keys[i]?.replace(/^(he|en|unknown):/, '') ?? '';
+              const display = nm.he || nm.en || fallbackKey;
+              const count = pendingMerge.box_counts[i] ?? 0;
+              return (
+                <li key={pendingMerge.from_keys[i] ?? i} className="flex items-baseline gap-1">
+                  <span className="font-semibold">{display}</span>
+                  <span className="text-amber-700">×{count}</span>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="flex gap-2">
+            <button
+              onClick={handleAcceptMerge}
+              className="flex-1 min-w-0 py-2 rounded-lg bg-amber-600 text-white text-xs font-semibold hover:bg-amber-700 active:bg-amber-800 transition"
+            >
+              {tr('palletVerify.aiMergeAccept')}
+            </button>
+            <button
+              onClick={handleRejectMerge}
+              className="shrink-0 px-4 py-2 rounded-lg bg-white border-2 border-amber-300 text-amber-800 text-xs font-semibold hover:bg-amber-100 transition"
+            >
+              {tr('palletVerify.aiMergeReject')}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Scanned boxes */}
       {scannedBoxes.length > 0 && (
         <div className="px-4 py-3 flex-1 overflow-y-auto">
           {detectedType === 'mix' ? (
             <div className="space-y-2">
-              {Object.entries(groupedBySku).map(([sku, boxes]) => {
+              {Object.entries(groupedItems).map(([nameKey, boxes]) => {
                 const displayName =
                   boxes.find((b) => b.item_name_hebrew)?.item_name_hebrew ||
                   boxes.find((b) => b.item_name)?.item_name ||
-                  sku;
+                  // Stripping the `he:` / `en:` prefix here is purely cosmetic
+                  // — the prefix is helpful for debugging the React key but
+                  // would look noisy in the UI.
+                  nameKey.replace(/^(he|en|unknown):/, '');
                 const doneWeights = boxes.filter((b) => b.weight > 0).map((b) => b.weight);
                 const avgWeight =
                   doneWeights.length > 0
@@ -1247,7 +1458,7 @@ export default function PalletVerifyPage({
                     : 0;
 
                 return (
-                  <div key={sku} className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+                  <div key={nameKey} className="bg-blue-50 border border-blue-200 rounded-xl p-3">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-sm font-semibold text-blue-900 truncate max-w-[70%]">
                         {displayName}
@@ -1308,7 +1519,7 @@ export default function PalletVerifyPage({
                 );
               })}
               <p className="text-xs text-gray-400 text-center mt-1">
-                {tr('palletVerify.itemTypesDetected', { count: Object.keys(groupedBySku).length })}
+                {tr('palletVerify.itemTypesDetected', { count: Object.keys(groupedItems).length })}
               </p>
             </div>
           ) : (
@@ -1361,7 +1572,10 @@ export default function PalletVerifyPage({
           <div className="space-y-2">
             <label className="block text-xs text-gray-700 font-medium">
               {tr('palletVerify.uniformHowMany', {
-                item: pendingUniformPrompt.item_name_hebrew || pendingUniformPrompt.item_name || pendingUniformPrompt.sku,
+                item:
+                  pendingUniformPrompt.item_name_hebrew ||
+                  pendingUniformPrompt.item_name ||
+                  pendingUniformPrompt.name_key.replace(/^(he|en|unknown):/, ''),
               })}
             </label>
             <p className="text-[11px] text-gray-500">

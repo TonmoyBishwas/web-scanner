@@ -210,6 +210,11 @@ export const en = {
   'palletVerify.deferredCountHint': 'Enter the total — including the {scanned} you already scanned.',
   'palletVerify.deferredCountTooLow': 'Total must be at least {min} (boxes already scanned).',
 
+  // ── AI consolidation banner ───────────────────────────────────────
+  'palletVerify.aiMergeBanner': '⚠️ Are these the same item?',
+  'palletVerify.aiMergeAccept': '✓ Merge into one',
+  'palletVerify.aiMergeReject': 'Keep separate',
+
   // ── OCR retry / failed UI ─────────────────────────────────────────
   'ocr.analyzing': 'Analyzing…',
   'ocr.failed': 'OCR failed',

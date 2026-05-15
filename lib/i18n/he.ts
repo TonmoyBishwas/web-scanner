@@ -214,6 +214,11 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.deferredCountHint': 'הזן את הסך הכל — כולל {scanned} שכבר נסרקו.',
   'palletVerify.deferredCountTooLow': 'הסך הכל חייב להיות לפחות {min} (קופסאות שכבר נסרקו).',
 
+  // ── AI consolidation banner ───────────────────────────────────────
+  'palletVerify.aiMergeBanner': '⚠️ האם אלו אותו פריט?',
+  'palletVerify.aiMergeAccept': '✓ מזג לאחד',
+  'palletVerify.aiMergeReject': 'שמור בנפרד',
+
   // ── OCR retry / failed UI ─────────────────────────────────────────
   'ocr.analyzing': 'מנתח…',
   'ocr.failed': 'OCR נכשל',
