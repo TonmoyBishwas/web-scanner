@@ -16,7 +16,7 @@ export interface CloudinaryUploadRequest {
   image_url?: string;  // Public URL to fetch image from (optional if image provided)
   barcode: string;
   document_number?: string;  // Invoice document number for folder structure
-  image_type?: 'box' | 'invoice';  // Type of image being uploaded
+  image_type?: 'box' | 'invoice' | 'lpn_sticker';  // Type of image being uploaded
 }
 
 /**
@@ -80,11 +80,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Determine folder structure based on document_number
+    // Determine folder structure based on document_number / image_type
     let folder = 'warehouse-boxes';
     let publicId: string;
 
-    if (document_number) {
+    if (image_type === 'lpn_sticker') {
+      // LPN stickers live in their own folder, keyed by LPN so re-renders
+      // overwrite in place. document_number is intentionally ignored here.
+      folder = 'lpn-stickers';
+      publicId = `sticker-${barcode}`;
+    } else if (document_number) {
       // Use invoice-based folder structure: "Invoice {document_number}/"
       folder = `Invoice ${document_number}`;
 

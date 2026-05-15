@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { PrintButton } from './PrintButton';
 import { t } from '@/lib/i18n/server';
 import type { Language } from '@/types';
+import { LPN_STICKER_MARKER } from '@/lib/lpn-constants';
+import { computeLpnSignature } from '@/lib/lpn-signature';
 
 interface PalletRecord {
   lpn: string;
@@ -91,9 +93,16 @@ export default async function PalletStickerPage({
   const pallet = await fetchPalletRecord(lpn);
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://scanner.vercel.app';
-  // Preserve language on the deep-linked URL so re-openings keep RTL.
-  const langSuffix = language === 'Hebrew' ? '?lang=Hebrew' : '';
-  const palletUrl = `${appUrl}/pallet/${encodeURIComponent(lpn)}${langSuffix}`;
+  // The QR payload uses the new `/sticker/v1/{lpn}?sig=WHPL-…` namespace so
+  // the bot can uniquely identify our printed stickers. The legacy
+  // `/pallet/{lpn}` URL stays alive (this page) for old physical stickers.
+  // Language is preserved as a query param so re-openings keep RTL.
+  const signature = computeLpnSignature(lpn);
+  const qrPayloadParams = new URLSearchParams();
+  if (signature) qrPayloadParams.set('sig', signature);
+  if (language === 'Hebrew') qrPayloadParams.set('lang', 'Hebrew');
+  const qrQuery = qrPayloadParams.toString();
+  const palletUrl = `${appUrl}/sticker/v1/${encodeURIComponent(lpn)}${qrQuery ? `?${qrQuery}` : ''}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(palletUrl)}`;
   // If reached from an active scanner session, "Back" returns there instead of the home page.
   const backHref = token ? `/pallet-verify/${encodeURIComponent(token)}` : '/';
@@ -128,9 +137,16 @@ export default async function PalletStickerPage({
         className="bg-white border-2 border-gray-800 rounded-xl p-6 w-full max-w-sm shadow-lg print:shadow-none print:border-black print:rounded-none print:p-4"
         style={{ fontFamily: 'monospace' }}
       >
-        {/* Header */}
+        {/* Header — the marker text is exactly what the bot's Gemini
+            classifier looks for to confirm "this is one of our printed
+            stickers". Don't translate it; keep the literal LPN_STICKER_MARKER. */}
         <div className="border-b-2 border-gray-800 pb-3 mb-3 text-center">
-          <p className="text-xs text-gray-500 uppercase tracking-widest">🏭 {t(language, 'lpn.warehousePallet')}</p>
+          <p className="text-sm font-bold text-gray-900 tracking-wide" dir="ltr">
+            {LPN_STICKER_MARKER}
+          </p>
+          <p className="text-[10px] text-gray-500 uppercase tracking-widest mt-1">
+            {t(language, 'lpn.warehousePallet')}
+          </p>
           <p className="text-xl font-bold text-gray-900 mt-1 tracking-wide" dir="ltr">{lpn}</p>
         </div>
 
@@ -201,6 +217,11 @@ export default async function PalletStickerPage({
             height={160}
             className="rounded"
           />
+          {signature && (
+            <p className="text-[11px] font-mono font-bold text-gray-700 mt-1 tracking-wide" dir="ltr">
+              {signature}
+            </p>
+          )}
           <p className="text-[9px] text-gray-400 mt-1 text-center break-all" dir="ltr">{palletUrl}</p>
         </div>
       </div>
