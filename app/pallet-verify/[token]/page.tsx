@@ -1370,6 +1370,10 @@ export default function PalletVerifyPage({
                 weight: pendingUniformPrompt.avg_weight,
               })}
             </p>
+            {/* min-w-0 on the input + shrink-0 on the button keeps the
+                button inside the viewport. Without min-w-0 the input's
+                intrinsic placeholder width forces the row wider than the
+                screen and the Set button slides off the (RTL) left edge. */}
             <div className="flex gap-2">
               <input
                 type="number"
@@ -1382,12 +1386,12 @@ export default function PalletVerifyPage({
                 }}
                 onKeyDown={(e) => e.key === 'Enter' && handleSetUniformCount()}
                 placeholder={tr('palletVerify.uniformPlaceholder')}
-                className="flex-1 text-center text-xl font-bold text-gray-900 bg-white border-2 border-gray-400 rounded-xl py-2 px-3 shadow-sm transition outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-200 placeholder:text-gray-400 placeholder:font-medium placeholder:text-base"
+                className="flex-1 min-w-0 text-center text-xl font-bold text-gray-900 bg-white border-2 border-gray-400 rounded-xl py-2 px-3 shadow-sm transition outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-200 placeholder:text-gray-400 placeholder:font-medium placeholder:text-base"
                 autoFocus
               />
               <button
                 onClick={handleSetUniformCount}
-                className="px-5 py-2 rounded-xl bg-blue-600 text-white font-semibold text-sm hover:bg-blue-700 transition"
+                className="shrink-0 px-5 py-2 rounded-xl bg-blue-600 text-white font-semibold text-sm hover:bg-blue-700 transition"
               >
                 {tr('palletVerify.uniformSet')}
               </button>
@@ -1416,12 +1420,12 @@ export default function PalletVerifyPage({
                 }}
                 onKeyDown={(e) => e.key === 'Enter' && handlePalletCountSubmit()}
                 placeholder={tr('palletVerify.boxCountPlaceholder')}
-                className="flex-1 text-center text-xl font-bold text-gray-900 bg-white border-2 border-gray-400 rounded-xl py-2 px-3 shadow-sm transition outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-200 placeholder:text-gray-400 placeholder:font-medium placeholder:text-base"
+                className="flex-1 min-w-0 text-center text-xl font-bold text-gray-900 bg-white border-2 border-gray-400 rounded-xl py-2 px-3 shadow-sm transition outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-200 placeholder:text-gray-400 placeholder:font-medium placeholder:text-base"
                 autoFocus
               />
               <button
                 onClick={handlePalletCountSubmit}
-                className="px-5 py-2 rounded-xl bg-blue-600 text-white font-semibold text-sm hover:bg-blue-700 transition"
+                className="shrink-0 px-5 py-2 rounded-xl bg-blue-600 text-white font-semibold text-sm hover:bg-blue-700 transition"
               >
                 {tr('palletVerify.uniformSet')}
               </button>
