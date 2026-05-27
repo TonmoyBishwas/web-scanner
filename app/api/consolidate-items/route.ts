@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 // Same OpenRouter fallback chain the bot uses for OCR.
 const MODELS = [
+  'google/gemini-3.1-flash-lite',
   'google/gemini-2.5-flash-lite',
   'google/gemini-3-flash-preview',
   'anthropic/claude-haiku-4.5',

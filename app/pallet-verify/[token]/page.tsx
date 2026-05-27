@@ -14,6 +14,7 @@ import { installDebugLogCapture } from '@/lib/debug-log';
 import { LanguageContext, useLangDir, t } from '@/lib/i18n';
 import type { Language, MultiPalletSession, MultiPalletBoxScan, ParsedBarcode } from '@/types';
 import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
+import { matchInvoiceItem } from '@/lib/invoice-match';
 
 // Set up the in-page console-log capture once at module load. Idempotent —
 // safe even with React Strict Mode mounting twice.
@@ -144,6 +145,17 @@ export default function PalletVerifyPage({
   // Which scanned-box row is expanded to reveal its Delete action. Two-step
   // (tap row → tap Delete) guards against misclicks. Reset between pallets.
   const [selectedBarcode, setSelectedBarcode] = useState<string | null>(null);
+  // Edit-a-scan: the box (by barcode) currently being edited + its in-flight
+  // name/weight values. Null when no edit modal is open. Reset between pallets.
+  const [editForm, setEditForm] = useState<
+    { barcode: string; name_he: string; name_en: string; weight: string } | null
+  >(null);
+  // Invoice item catalog for this delivery (mirrored to a ref so runOcr — which
+  // is reached via a memoized scan callback — always sees it without stale
+  // closures). Used to bias the OCR prompt AND snap OCR'd names to canonical
+  // invoice names so OCR drift doesn't fragment one item into several groups.
+  const invoiceItemsRef = useRef<MultiPalletSession['ocr_data']>([]);
+  useEffect(() => { invoiceItemsRef.current = session?.ocr_data ?? []; }, [session]);
   // Number-input state for the mandatory_count prompt + its validation error.
   const [countInput, setCountInput] = useState('');
   const [countError, setCountError] = useState<string | null>(null);
@@ -410,10 +422,17 @@ export default function PalletVerifyPage({
   // ── OCR helper ──
 
   function runOcr(barcode: string, imageData: string, capturedIndex: number) {
+    // Pass the invoice catalog so the bot's OCR prompt picks a known canonical
+    // Hebrew name (closed set) instead of free-form reading.
+    const candidates = invoiceItemsRef.current.map((it) => ({
+      name_hebrew: it.item_name_hebrew,
+      name_english: it.item_name_english,
+      code: it.item_code,
+    }));
     fetch('/api/multi-pallet-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageData, barcode }),
+      body: JSON.stringify({ image: imageData, barcode, candidates }),
     })
       .then((r) => r.json())
       .then((data) => {
@@ -424,11 +443,17 @@ export default function PalletVerifyPage({
           const updated = prev.map((b, i) => {
             if (i !== idx) return b;
             if (data.success && data.ocr_data) {
+              const rawHe = data.ocr_data.product_name_hebrew || '';
+              const rawEn = data.ocr_data.product_name_english || '';
+              // Snap the OCR'd name to the closest invoice item so drift
+              // ("כדורי עוף" vs "כדורי עוף-ת. הזנה") groups as one canonical
+              // item. No confident match (e.g. loose/unlisted box) → keep raw.
+              const match = matchInvoiceItem(rawHe, rawEn, invoiceItemsRef.current);
               return {
                 ...b,
                 ocr_status: 'done' as OcrStatus,
-                item_name: data.ocr_data.product_name_english || '',
-                item_name_hebrew: data.ocr_data.product_name_hebrew || '',
+                item_name: match?.item_name_english || rawEn,
+                item_name_hebrew: match?.item_name_hebrew || rawHe,
                 weight: data.ocr_data.weight_kg ?? 0,
                 expiry: data.ocr_data.expiry_date || '',
               };
@@ -593,6 +618,65 @@ export default function PalletVerifyPage({
     setCountError(null);
   }
 
+  // ── Edit a scan (name + weight) ──
+
+  // Open the edit modal pre-filled from the box's current values.
+  function openEdit(box: BoxScan) {
+    setSelectedBarcode(null);
+    setEditForm({
+      barcode: box.barcode,
+      name_he: box.item_name_hebrew || '',
+      name_en: box.item_name || '',
+      weight: box.weight > 0 ? String(box.weight) : '',
+    });
+  }
+
+  // Apply the edit: update the box, then re-group exactly like rescanPalletBox —
+  // changing the name moves the box's group key, so recompute detectedType and
+  // drop any uniform group / pending prompt that no longer has ≥2 done samples.
+  function handleSaveEdit() {
+    if (!editForm) return;
+    const { barcode, name_he, name_en } = editForm;
+    const w = parseFloat(editForm.weight);
+    setScannedBoxes((prev) => {
+      const updated = prev.map((b) =>
+        b.barcode === barcode
+          ? {
+              ...b,
+              ocr_status: 'done' as OcrStatus,
+              item_name: name_en,
+              item_name_hebrew: name_he,
+              weight: Number.isFinite(w) && w > 0 ? w : b.weight,
+            }
+          : b,
+      );
+      setDetectedType(detectType(updated, acceptedMerges));
+      // Drop locked uniform groups left with <2 samples after the name change.
+      setUniformGroups((groups) => {
+        const next = new Map(groups);
+        for (const key of groups.keys()) {
+          const samples = updated.filter((b) => {
+            const k = acceptedMerges.get(groupKeyForBox(b)) ?? groupKeyForBox(b);
+            return k === key && b.ocr_status === 'done';
+          });
+          if (samples.length < 2) next.delete(key);
+        }
+        return next;
+      });
+      // Clear a pending prompt whose item no longer has ≥2 done samples.
+      setPendingUniformPrompt((p) => {
+        if (!p) return p;
+        const samples = updated.filter((b) => {
+          const k = acceptedMerges.get(groupKeyForBox(b)) ?? groupKeyForBox(b);
+          return k === p.name_key && b.ocr_status === 'done';
+        });
+        return samples.length >= 2 ? p : null;
+      });
+      return updated;
+    });
+    setEditForm(null);
+  }
+
   // Sum of boxes already committed to the pallet from non-uniform scans
   // (excluding the sample barcodes of the currently-pending uniform prompt).
   function committedExcludingPending(): number {
@@ -684,6 +768,93 @@ export default function PalletVerifyPage({
       <p className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white text-xs opacity-70 whitespace-nowrap">
         {tr('pallet.tapOutsideToClose')}
       </p>
+    </div>
+  ) : null;
+
+  // Edit-a-scan modal: pick the correct item from the invoice catalog (no
+  // Hebrew typing needed), or type a name, and fix the weight. Bottom sheet.
+  const editModal = editForm ? (
+    <div
+      onClick={() => setEditForm(null)}
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md bg-white rounded-t-2xl p-5 space-y-4 max-h-[85vh] overflow-y-auto"
+      >
+        <h2 className="text-base font-bold text-gray-900">{tr('palletVerify.editTitle')}</h2>
+
+        {(session?.ocr_data?.length ?? 0) > 0 && (
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              {tr('palletVerify.editPickItem')}
+            </label>
+            <div className="space-y-1.5">
+              {(session?.ocr_data ?? []).map((it) => {
+                const active = editForm.name_he === it.item_name_hebrew && !!it.item_name_hebrew;
+                return (
+                  <button
+                    key={it.item_code + it.item_name_hebrew}
+                    onClick={() =>
+                      setEditForm({ ...editForm, name_he: it.item_name_hebrew, name_en: it.item_name_english })
+                    }
+                    className={`w-full text-start px-3 py-2 rounded-lg border text-sm transition ${
+                      active
+                        ? 'border-blue-500 bg-blue-50 text-blue-800 font-semibold'
+                        : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    {it.item_name_hebrew || it.item_name_english}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            {tr('palletVerify.editTypeManually')}
+          </label>
+          <input
+            type="text"
+            dir="rtl"
+            value={editForm.name_he}
+            onChange={(e) => setEditForm({ ...editForm, name_he: e.target.value })}
+            className="w-full text-base text-gray-900 bg-white border-2 border-gray-300 rounded-xl py-2 px-3 outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-200"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            {tr('palletVerify.editWeight')}
+          </label>
+          <input
+            type="number"
+            inputMode="decimal"
+            step="0.001"
+            min={0}
+            value={editForm.weight}
+            onChange={(e) => setEditForm({ ...editForm, weight: e.target.value })}
+            className="w-full text-center text-xl font-bold text-gray-900 bg-white border-2 border-gray-300 rounded-xl py-2 px-3 outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-200"
+          />
+        </div>
+
+        <div className="flex gap-3 pt-1">
+          <button
+            onClick={() => setEditForm(null)}
+            className="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold text-sm hover:bg-gray-200 transition"
+          >
+            {tr('palletVerify.editCancel')}
+          </button>
+          <button
+            onClick={handleSaveEdit}
+            className="flex-1 py-3 rounded-xl bg-green-600 text-white font-semibold text-sm hover:bg-green-700 transition"
+          >
+            {tr('palletVerify.editSave')}
+          </button>
+        </div>
+      </div>
     </div>
   ) : null;
 
@@ -896,6 +1067,7 @@ export default function PalletVerifyPage({
           setPendingUniformPrompt(null);
           setIndividualKeys(new Set());
           setSelectedBarcode(null);
+          setEditForm(null);
           setCountInput('');
           setCountError(null);
           setPendingSingleGroup(null);
@@ -1051,12 +1223,20 @@ export default function PalletVerifyPage({
         </div>
 
         {selected && box.ocr_status !== 'failed' && (
-          <button
-            onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
-            className="mt-2 w-full py-2 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700 active:bg-red-800 transition"
-          >
-            {tr('palletVerify.deleteScan')}
-          </button>
+          <div className="mt-2 flex gap-2">
+            <button
+              onClick={(e) => { e.stopPropagation(); openEdit(box); }}
+              className="flex-1 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 active:bg-blue-800 transition"
+            >
+              {tr('palletVerify.editScan')}
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
+              className="flex-1 py-2 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700 active:bg-red-800 transition"
+            >
+              {tr('palletVerify.deleteScan')}
+            </button>
+          </div>
         )}
       </div>
     );
@@ -1550,12 +1730,20 @@ export default function PalletVerifyPage({
                               <span>{box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}</span>
                               {box.expiry && <span className="text-gray-400" dir="ltr">· {box.expiry}</span>}
                               {selected && (
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
-                                  className="ms-auto px-1.5 py-0.5 bg-red-600 text-white rounded text-[10px] font-semibold hover:bg-red-700"
-                                >
-                                  {tr('palletVerify.deleteScan')}
-                                </button>
+                                <span className="ms-auto flex gap-1">
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); openEdit(box); }}
+                                    className="px-1.5 py-0.5 bg-blue-600 text-white rounded text-[10px] font-semibold hover:bg-blue-700"
+                                  >
+                                    {tr('palletVerify.editScan')}
+                                  </button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
+                                    className="px-1.5 py-0.5 bg-red-600 text-white rounded text-[10px] font-semibold hover:bg-red-700"
+                                  >
+                                    {tr('palletVerify.deleteScan')}
+                                  </button>
+                                </span>
                               )}
                             </>
                           ) : (
@@ -1770,6 +1958,7 @@ export default function PalletVerifyPage({
         )}
       </div>
       {imageModal}
+      {editModal}
       {debugPanel}
     </div>
   );

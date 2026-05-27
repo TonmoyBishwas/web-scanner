@@ -31,6 +31,75 @@ declare global {
 const CAMERA_PREFERENCE_KEY = 'pallet-scanner:preferred-camera-device-id';
 
 /**
+ * Relative sharpness score (gradient energy) of a canvas. Higher = sharper.
+ * Downscales to ~`sample` px wide grayscale and sums squared differences of
+ * horizontally-adjacent pixels — a cheap focus/motion-blur proxy.
+ */
+function sharpnessScore(source: CanvasImageSource, srcW: number, srcH: number, sample = 320): number {
+  if (!srcW || !srcH) return 0;
+  const w = Math.min(sample, srcW);
+  const h = Math.max(1, Math.round((srcH / srcW) * w));
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const cx = c.getContext('2d', { willReadFrequently: true });
+  if (!cx) return 0;
+  cx.drawImage(source, 0, 0, w, h);
+  const { data } = cx.getImageData(0, 0, w, h);
+  let energy = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 1; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const j = (y * w + x - 1) * 4;
+      // luma (Rec. 601) of the two adjacent pixels
+      const g1 = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      const g0 = 0.299 * data[j] + 0.587 * data[j + 1] + 0.114 * data[j + 2];
+      const d = g1 - g0;
+      energy += d * d;
+    }
+  }
+  return energy / (w * h);
+}
+
+/**
+ * Capture the OCR image: grab a short burst of FULL-frame stills from the live
+ * video and return the SHARPEST one as a JPEG data URL. Fixes the two capture
+ * problems behind bad Hebrew name OCR — (1) the frame grabbed at barcode-
+ * confirmation is motion-blurred, and (2) the barcode-detection canvas is
+ * cropped, cutting off the product name. Here we use the whole frame (capped
+ * at `maxWidth`) at higher quality.
+ */
+async function captureSharpestFrame(
+  video: HTMLVideoElement,
+  maxWidth = 1280,
+  frames = 4,
+  intervalMs = 110,
+): Promise<string> {
+  const vw = video.videoWidth || maxWidth;
+  const vh = video.videoHeight || Math.round(maxWidth * 0.75);
+  const w = Math.min(maxWidth, vw);
+  const h = Math.max(1, Math.round((vh / vw) * w));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return video as unknown as string; // unreachable; satisfies types
+
+  let bestData = '';
+  let bestScore = -1;
+  for (let f = 0; f < frames; f++) {
+    ctx.drawImage(video, 0, 0, w, h);
+    const score = sharpnessScore(canvas, w, h);
+    if (score > bestScore) {
+      bestScore = score;
+      bestData = canvas.toDataURL('image/jpeg', 0.9);
+    }
+    if (f < frames - 1) await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return bestData;
+}
+
+/**
  * SmartScanner - uses native BarcodeDetector API (hardware accelerated).
  * Shows unsupported browser message if BarcodeDetector is not available.
  */
@@ -587,7 +656,12 @@ export function SmartScanner({
             expiry_source: 'ocr_required' as const
           };
 
-          const imageData = canvas.toDataURL('image/jpeg', 0.8);
+          // OCR image: sharpest of a short burst of FULL-frame stills (not the
+          // cropped barcode region) so the whole sticker is captured and motion
+          // blur from the aiming moment is avoided. Runs inside the 3s cooldown.
+          const imageData = await captureSharpestFrame(video).catch(
+            () => canvas.toDataURL('image/jpeg', 0.9),
+          );
           onBarcodeDetected(barcode, parsedData, imageData);
         }
       } catch (err) {

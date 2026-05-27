@@ -6,12 +6,15 @@ import { NextRequest, NextResponse } from 'next/server';
  * Unlike /api/ocr (which is fire-and-forget and session-coupled), this
  * blocks until the bot returns a result.
  *
- * Body: { image: string (base64 data URL), barcode?: string }
+ * Body: { image: string (base64 data URL), barcode?: string,
+ *         candidates?: Array<{name_hebrew, name_english, code}> }
+ *   `candidates` = the delivery's invoice items, forwarded so the bot's OCR
+ *   prompt can pick a known canonical Hebrew name (closed set).
  * Returns: { success: boolean, ocr_data?: { product_name_hebrew, product_name_english, weight_kg, expiry_date, ... } }
  */
 export async function POST(request: NextRequest) {
   try {
-    const { image, barcode } = await request.json();
+    const { image, barcode, candidates } = await request.json();
 
     if (!image) {
       return NextResponse.json({ success: false, error: 'Missing image' }, { status: 400 });
@@ -25,7 +28,7 @@ export async function POST(request: NextRequest) {
     const res = await fetch(`${botUrl}/webhook/process-box-ocr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image, barcode: barcode || 'multi-pallet' }),
+      body: JSON.stringify({ image, barcode: barcode || 'multi-pallet', candidates: candidates || undefined }),
       signal: AbortSignal.timeout(30000),
     });
 

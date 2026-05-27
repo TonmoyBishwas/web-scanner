@@ -211,6 +211,13 @@ export const en = {
   'palletVerify.deferredCountHint': 'Enter the total — including the {scanned} you already scanned.',
   'palletVerify.deferredCountTooLow': 'Total must be at least {min} (boxes already scanned).',
   'palletVerify.deleteScan': '🗑 Delete this scan',
+  'palletVerify.editScan': '✎ Edit',
+  'palletVerify.editTitle': 'Edit scan',
+  'palletVerify.editPickItem': 'Pick the correct item (from the invoice)',
+  'palletVerify.editTypeManually': 'Or type the name',
+  'palletVerify.editWeight': 'Weight (kg)',
+  'palletVerify.editSave': 'Save',
+  'palletVerify.editCancel': 'Cancel',
 
   // ── AI consolidation banner ───────────────────────────────────────
   'palletVerify.aiMergeBanner': '⚠️ Are these the same item?',

@@ -215,6 +215,13 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.deferredCountHint': 'הזן את הסך הכל — כולל {scanned} שכבר נסרקו.',
   'palletVerify.deferredCountTooLow': 'הסך הכל חייב להיות לפחות {min} (קופסאות שכבר נסרקו).',
   'palletVerify.deleteScan': '🗑 מחק סריקה זו',
+  'palletVerify.editScan': '✎ ערוך',
+  'palletVerify.editTitle': 'עריכת סריקה',
+  'palletVerify.editPickItem': 'בחר את הפריט הנכון (מהחשבונית)',
+  'palletVerify.editTypeManually': 'או הקלד את השם',
+  'palletVerify.editWeight': 'משקל (ק״ג)',
+  'palletVerify.editSave': 'שמור',
+  'palletVerify.editCancel': 'ביטול',
 
   // ── AI consolidation banner ───────────────────────────────────────
   'palletVerify.aiMergeBanner': '⚠️ האם אלו אותו פריט?',

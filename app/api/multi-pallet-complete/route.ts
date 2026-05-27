@@ -3,7 +3,7 @@ import { getRedisClient } from '@/lib/redis';
 import { t } from '@/lib/i18n/server';
 import type { MultiPalletSession, MultiPalletBoxScan, Language } from '@/types';
 import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
-import { normalizeString } from '@/lib/string-utils';
+import { matchInvoiceItem } from '@/lib/invoice-match';
 
 const SESSION_TTL = 7200;
 // "Same weight" tolerance — kept at 0.5 kg per the user's instruction
@@ -72,28 +72,8 @@ function findInvoiceItemCode(
   sampleNameEnglish: string,
   invoiceItems: MultiPalletSession['ocr_data'] | undefined,
 ): string {
-  if (!invoiceItems || invoiceItems.length === 0) return '';
-  const heNorm = normalizeString(sampleNameHebrew);
-  const enNorm = normalizeString(sampleNameEnglish);
-
-  for (const line of invoiceItems) {
-    if (heNorm && normalizeString(line.item_name_hebrew) === heNorm) return line.item_code || '';
-    if (enNorm && normalizeString(line.item_name_english) === enNorm) return line.item_code || '';
-  }
-  // First-Hebrew-word fallback — handles "שניצל עוף" matching "שניצל עוף קפוא"
-  // where the invoice OCR captured a shorter form than the box sticker.
-  if (sampleNameHebrew) {
-    const firstWord = sampleNameHebrew.match(/[֐-׿]{3,}/)?.[0];
-    if (firstWord) {
-      const fw = normalizeString(firstWord);
-      for (const line of invoiceItems) {
-        if (normalizeString(line.item_name_hebrew).startsWith(fw)) return line.item_code || '';
-      }
-    }
-  }
-  // Group key fallback — never returns a useful value but keeps the type clean.
-  void groupKey;
-  return '';
+  void groupKey; // grouping is name-based; kept for call-site stability
+  return matchInvoiceItem(sampleNameHebrew, sampleNameEnglish, invoiceItems)?.item_code || '';
 }
 
 /**
