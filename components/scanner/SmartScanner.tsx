@@ -131,6 +131,13 @@ export function SmartScanner({
   const [captureCount, setCaptureCount] = useState(0); // 0 | 1 | 2 | 3
   const [isDuplicate, setIsDuplicate] = useState(false);
   const duplicateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Manual OCR-capture fallback (for boxes whose barcode won't decode — glare,
+  // a label folded around a corner, or a torn/half barcode). `lastActivityRef`
+  // tracks the last confirmed decode (or mount); when no decode has happened in
+  // a few seconds the "capture anyway" button surfaces prominently.
+  const lastActivityRef = useRef<number>(Date.now());
+  const [showCaptureHint, setShowCaptureHint] = useState(false);
+  const [captureBusy, setCaptureBusy] = useState(false);
   // Visible diagnostic state — surfaces silent camera failures to the user.
   const [diag, setDiag] = useState<
     | { state: 'init' }
@@ -419,6 +426,39 @@ export function SmartScanner({
     }
   }, [onDuplicateFlash, triggerRedFlash]);
 
+  // Surface the "capture anyway" button prominently once a few seconds pass
+  // with no successful decode (worker is fighting glare / a damaged barcode).
+  useEffect(() => {
+    const id = setInterval(() => {
+      setShowCaptureHint(!isInCooldown && Date.now() - lastActivityRef.current > 3500);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isInCooldown]);
+
+  // Manual OCR capture: grab the sharpest full frame and hand it to the parent
+  // WITHOUT a decoded barcode. OCR then reads the name/weight AND the printed
+  // digit string under the barcode (used as the dedupe ID). Guarded against the
+  // post-scan cooldown and rapid re-taps.
+  const handleManualCaptureClick = useCallback(async () => {
+    if (isInCooldown || captureBusy || !onManualCapture) return;
+    const video = videoRef.current;
+    if (!video) return;
+    setCaptureBusy(true);
+    setFlashColor('green');
+    setTimeout(() => setFlashColor(null), 200);
+    try {
+      const imageData = await captureSharpestFrame(video).catch(() => {
+        const c = canvasRef.current;
+        return c ? c.toDataURL('image/jpeg', 0.9) : '';
+      });
+      if (imageData) onManualCapture(imageData);
+      lastActivityRef.current = Date.now();
+      setShowCaptureHint(false);
+    } finally {
+      setTimeout(() => setCaptureBusy(false), 1200);
+    }
+  }, [isInCooldown, captureBusy, onManualCapture]);
+
   const stopNativeScanning = () => {
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
@@ -626,6 +666,7 @@ export function SmartScanner({
           // Process confirmed scan
           lastScannedRef.current = barcode;
           lastScanTimeRef.current = now;
+          lastActivityRef.current = now; // a decode just happened — reset the manual-capture nudge
 
           // Set cooldown state
           setIsInCooldown(true);
@@ -878,6 +919,34 @@ export function SmartScanner({
               </span>
             </button>
           </div>
+        )}
+
+        {/* Manual OCR-capture fallback — registers a box whose barcode won't
+            decode (glare / folded / torn). Subtle by default; pulses once a few
+            seconds pass with no decode. */}
+        {onManualCapture && !isInCooldown && (
+          <>
+            {showCaptureHint && (
+              <div className="absolute bottom-16 inset-x-0 flex justify-center px-4 pointer-events-none">
+                <span className="text-xs text-amber-100 bg-black/60 px-3 py-1 rounded-full text-center max-w-[260px]">
+                  {tr('scanner.captureHint')}
+                </span>
+              </div>
+            )}
+            <div className="absolute bottom-3 inset-x-0 flex justify-center pointer-events-auto">
+              <button
+                onClick={handleManualCaptureClick}
+                disabled={captureBusy}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-semibold transition-all backdrop-blur-sm border disabled:opacity-50 ${
+                  showCaptureHint
+                    ? 'bg-amber-500 text-white border-amber-300 animate-pulse shadow-lg scale-105'
+                    : 'bg-gray-900/70 text-gray-200 border-gray-600/50'
+                }`}
+              >
+                📷 {tr('scanner.captureAnyway')}
+              </button>
+            </div>
+          </>
         )}
 
       </div>

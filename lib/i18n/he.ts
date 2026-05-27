@@ -95,6 +95,8 @@ export const he: Record<TranslationKey, string> = {
   'scanner.cameraErrorHint': 'תיקונים נפוצים: פתח את הקישור ב-Chrome/Safari (לא בדפדפן הפנימי של WhatsApp), בדוק הגדרות → הרשאות אתר → מצלמה, ואז הקש על נסה שוב.',
   'scanner.alreadyScanned': 'כבר נסרק',
   'scanner.duplicateBadge': 'כפילות',
+  'scanner.captureAnyway': 'צלם בכל זאת',
+  'scanner.captureHint': 'הברקוד לא נסרק? הקש לצילום המדבקה',
   'scanner.cameraGeneric': 'מצלמה',
   'scanner.tapToSwitch': 'הקש להחלפת מצלמה',
 
@@ -216,6 +218,7 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.deferredCountTooLow': 'הסך הכל חייב להיות לפחות {min} (קופסאות שכבר נסרקו).',
   'palletVerify.deleteScan': '🗑 מחק סריקה זו',
   'palletVerify.editScan': '✎ ערוך',
+  'palletVerify.needsReview': 'לא הצלחנו לקרוא את הקוד — בדוק שם/משקל',
   'palletVerify.editTitle': 'עריכת סריקה',
   'palletVerify.editPickItem': 'בחר את הפריט הנכון (מהחשבונית)',
   'palletVerify.editTypeManually': 'או הקלד את השם',

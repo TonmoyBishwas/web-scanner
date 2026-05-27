@@ -50,6 +50,20 @@ interface BoxScan extends MultiPalletBoxScan {
   // Captured frame from the moment the barcode was detected. Kept around so
   // the user can retry OCR or view the image when OCR fails (e.g. blurry).
   image_data?: string;
+  // How this box entered: 'scan' = 1D barcode decoded; 'manual' = worker tapped
+  // "capture anyway" because the barcode wouldn't decode (glare/fold/tear) and
+  // the box identity comes from the OCR'd printed digits instead.
+  captured_via?: 'scan' | 'manual';
+  // Set on a manual box when OCR couldn't read the printed digits either — no
+  // dedupe ID is possible, so it's counted but flagged ⚠️ for the worker.
+  needs_review?: boolean;
+}
+
+// Digits-only normaliser for comparing the full printed barcode number across
+// bar-scanned and OCR-captured boxes (NOT the 13-digit SKU, which repeats
+// across every box of one product).
+function digitsOnly(s: string | null | undefined): string {
+  return (s || '').replace(/\D/g, '');
 }
 
 // ── Uniform-pair detection state ──
@@ -108,6 +122,10 @@ export default function PalletVerifyPage({
 
   const processedRef = useRef<Set<string>>(new Set());
   const [looseBoxes, setLooseBoxes] = useState<BoxScan[]>([]);
+  // SmartScanner hands us a fn to flash its red "already scanned" indicator.
+  // Used when a manually-captured box is rejected as a duplicate after OCR.
+  const dupFlashRef = useRef<(() => void) | null>(null);
+  const looseDupFlashRef = useRef<(() => void) | null>(null);
 
   // Language flows from the bot via the session payload. Set the
   // <html dir="rtl"> + lang attribute so Tailwind logical utilities
@@ -369,15 +387,40 @@ export default function PalletVerifyPage({
     []
   );
 
+  // ── Manual capture — barcode wouldn't decode (glare/fold/tear) ──
+  // No decoded barcode here, so we register a provisional box and let OCR
+  // resolve its real identity (the printed digit string) + dedupe afterwards.
+
+  const handleManualCapture = useCallback((imageData: string) => {
+    const provisional = `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const box: BoxScan = {
+      barcode: provisional,
+      sku: provisional,
+      item_name: '',
+      item_name_hebrew: '',
+      weight: 0,
+      expiry: '',
+      scanned_at: new Date().toISOString(),
+      ocr_status: 'processing',
+      image_data: imageData,
+      captured_via: 'manual',
+    };
+    setScannedBoxes((prev) => [...prev, box]);
+    runOcr(provisional, imageData, 0, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Retry / Rescan helpers (pallet phase) ──
 
   function retryPalletOcr(barcode: string) {
     setScannedBoxes((prev) => {
       const target = prev.find((b) => b.barcode === barcode);
       if (!target?.image_data) return prev;
-      // Schedule the OCR call after this state update commits.
+      // Schedule the OCR call after this state update commits. Preserve the
+      // manual flag so a retried manual-capture box still resolves its digits.
       const img = target.image_data;
-      setTimeout(() => runOcr(barcode, img, 0), 0);
+      const manual = target.captured_via === 'manual';
+      setTimeout(() => runOcr(barcode, img, 0, manual), 0);
       return prev.map((b) =>
         b.barcode === barcode ? { ...b, ocr_status: 'processing' as OcrStatus } : b
       );
@@ -421,7 +464,7 @@ export default function PalletVerifyPage({
 
   // ── OCR helper ──
 
-  function runOcr(barcode: string, imageData: string, capturedIndex: number) {
+  function runOcr(lookupKey: string, imageData: string, capturedIndex: number, manual = false) {
     // Pass the invoice catalog so the bot's OCR prompt picks a known canonical
     // Hebrew name (closed set) instead of free-form reading.
     const candidates = invoiceItemsRef.current.map((it) => ({
@@ -432,43 +475,72 @@ export default function PalletVerifyPage({
     fetch('/api/multi-pallet-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageData, barcode, candidates }),
+      body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey, candidates }),
     })
       .then((r) => r.json())
       .then((data) => {
         setScannedBoxes((prev) => {
-          // find the box by barcode (index may shift if state batched)
-          const idx = prev.findIndex((b) => b.barcode === barcode);
+          // find the box by its (provisional, for manual) barcode key
+          const idx = prev.findIndex((b) => b.barcode === lookupKey);
           if (idx === -1) return prev;
+
+          if (!(data.success && data.ocr_data)) {
+            return prev.map((b, i) => (i === idx ? { ...b, ocr_status: 'failed' as OcrStatus } : b));
+          }
+
+          const rawHe = data.ocr_data.product_name_hebrew || '';
+          const rawEn = data.ocr_data.product_name_english || '';
+          // Snap the OCR'd name to the closest invoice item so drift
+          // ("כדורי עוף" vs "כדורי עוף-ת. הזנה") groups as one canonical
+          // item. No confident match (e.g. loose/unlisted box) → keep raw.
+          const match = matchInvoiceItem(rawHe, rawEn, invoiceItemsRef.current);
+
+          // Manual capture: there was no decoded barcode, so resolve this box's
+          // dedupe identity from the OCR'd printed digit string.
+          let resolvedBarcode = prev[idx].barcode;
+          let resolvedSku = prev[idx].sku;
+          let needsReview = false;
+          if (manual) {
+            const digits = digitsOnly(data.ocr_data.barcode_digits);
+            if (digits.length >= 13) {
+              // Dedupe against every OTHER box (bar-scanned or manual) by the
+              // FULL printed number — not the SKU, which repeats per product.
+              const dup = prev.some((b, i) => i !== idx && digitsOnly(b.barcode) === digits);
+              if (dup) {
+                dupFlashRef.current?.(); // red "already scanned" flash
+                return prev.filter((_, i) => i !== idx); // drop the provisional box
+              }
+              resolvedBarcode = digits;
+              resolvedSku = digits.slice(0, 13);
+              processedRef.current.add(digits); // so a later bar-scan of this sticker is caught
+            } else {
+              needsReview = true; // OCR couldn't read the digits → can't dedupe
+            }
+          }
+
           const updated = prev.map((b, i) => {
             if (i !== idx) return b;
-            if (data.success && data.ocr_data) {
-              const rawHe = data.ocr_data.product_name_hebrew || '';
-              const rawEn = data.ocr_data.product_name_english || '';
-              // Snap the OCR'd name to the closest invoice item so drift
-              // ("כדורי עוף" vs "כדורי עוף-ת. הזנה") groups as one canonical
-              // item. No confident match (e.g. loose/unlisted box) → keep raw.
-              const match = matchInvoiceItem(rawHe, rawEn, invoiceItemsRef.current);
-              return {
-                ...b,
-                ocr_status: 'done' as OcrStatus,
-                item_name: match?.item_name_english || rawEn,
-                item_name_hebrew: match?.item_name_hebrew || rawHe,
-                weight: data.ocr_data.weight_kg ?? 0,
-                expiry: data.ocr_data.expiry_date || '',
-              };
-            }
-            return { ...b, ocr_status: 'failed' as OcrStatus };
+            return {
+              ...b,
+              barcode: resolvedBarcode,
+              sku: resolvedSku,
+              ocr_status: 'done' as OcrStatus,
+              item_name: match?.item_name_english || rawEn,
+              item_name_hebrew: match?.item_name_hebrew || rawHe,
+              weight: data.ocr_data.weight_kg ?? 0,
+              expiry: data.ocr_data.expiry_date || '',
+              needs_review: needsReview || undefined,
+            };
           });
           setDetectedType(detectType(updated, acceptedMerges));
           // Check if the box that just finished OCR triggers a uniform-pair prompt.
-          maybeTriggerUniformPrompt(updated, barcode);
+          maybeTriggerUniformPrompt(updated, resolvedBarcode);
           return updated;
         });
       })
       .catch(() => {
         setScannedBoxes((prev) => {
-          const idx = prev.findIndex((b) => b.barcode === barcode);
+          const idx = prev.findIndex((b) => b.barcode === lookupKey);
           if (idx === -1) return prev;
           return prev.map((b, i) => (i === idx ? { ...b, ocr_status: 'failed' } : b));
         });
@@ -546,6 +618,19 @@ export default function PalletVerifyPage({
     []
   );
 
+  // Manual capture for the loose phase — same fallback as the pallet phase.
+  const handleLooseManualCapture = useCallback((imageData: string) => {
+    const provisional = `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const box: BoxScan = {
+      barcode: provisional, sku: provisional, item_name: '', item_name_hebrew: '',
+      weight: 0, expiry: '', scanned_at: new Date().toISOString(),
+      ocr_status: 'processing', image_data: imageData, captured_via: 'manual',
+    };
+    setLooseBoxes((prev) => [...prev, box]);
+    runLooseOcr(provisional, imageData, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Retry / Rescan helpers (loose phase) ──
 
   function retryLooseOcr(barcode: string) {
@@ -553,7 +638,8 @@ export default function PalletVerifyPage({
       const target = prev.find((b) => b.barcode === barcode);
       if (!target?.image_data) return prev;
       const img = target.image_data;
-      setTimeout(() => runLooseOcr(barcode, img), 0);
+      const manual = target.captured_via === 'manual';
+      setTimeout(() => runLooseOcr(barcode, img, manual), 0);
       return prev.map((b) =>
         b.barcode === barcode ? { ...b, ocr_status: 'processing' as OcrStatus } : b
       );
@@ -861,36 +947,60 @@ export default function PalletVerifyPage({
     </div>
   ) : null;
 
-  function runLooseOcr(barcode: string, imageData: string) {
+  function runLooseOcr(lookupKey: string, imageData: string, manual = false) {
     fetch('/api/multi-pallet-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageData, barcode }),
+      body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey }),
     })
       .then((r) => r.json())
       .then((data) => {
         setLooseBoxes((prev) => {
-          const idx = prev.findIndex((b) => b.barcode === barcode);
+          const idx = prev.findIndex((b) => b.barcode === lookupKey);
           if (idx === -1) return prev;
+
+          if (!(data.success && data.ocr_data)) {
+            return prev.map((b, i) => (i === idx ? { ...b, ocr_status: 'failed' as OcrStatus } : b));
+          }
+
+          let resolvedBarcode = prev[idx].barcode;
+          let resolvedSku = prev[idx].sku;
+          let needsReview = false;
+          if (manual) {
+            const digits = digitsOnly(data.ocr_data.barcode_digits);
+            if (digits.length >= 13) {
+              const dup = prev.some((b, i) => i !== idx && digitsOnly(b.barcode) === digits);
+              if (dup) {
+                looseDupFlashRef.current?.();
+                return prev.filter((_, i) => i !== idx);
+              }
+              resolvedBarcode = digits;
+              resolvedSku = digits.slice(0, 13);
+              looseProcessedRef.current.add(digits);
+            } else {
+              needsReview = true;
+            }
+          }
+
           return prev.map((b, i) => {
             if (i !== idx) return b;
-            if (data.success && data.ocr_data) {
-              return {
-                ...b,
-                ocr_status: 'done' as OcrStatus,
-                item_name: data.ocr_data.product_name_english || '',
-                item_name_hebrew: data.ocr_data.product_name_hebrew || '',
-                weight: data.ocr_data.weight_kg ?? 0,
-                expiry: data.ocr_data.expiry_date || '',
-              };
-            }
-            return { ...b, ocr_status: 'failed' as OcrStatus };
+            return {
+              ...b,
+              barcode: resolvedBarcode,
+              sku: resolvedSku,
+              ocr_status: 'done' as OcrStatus,
+              item_name: data.ocr_data.product_name_english || '',
+              item_name_hebrew: data.ocr_data.product_name_hebrew || '',
+              weight: data.ocr_data.weight_kg ?? 0,
+              expiry: data.ocr_data.expiry_date || '',
+              needs_review: needsReview || undefined,
+            };
           });
         });
       })
       .catch(() => {
         setLooseBoxes((prev) => {
-          const idx = prev.findIndex((b) => b.barcode === barcode);
+          const idx = prev.findIndex((b) => b.barcode === lookupKey);
           if (idx === -1) return prev;
           return prev.map((b, i) => (i === idx ? { ...b, ocr_status: 'failed' } : b));
         });
@@ -1210,6 +1320,9 @@ export default function PalletVerifyPage({
                     <span className="text-xs text-gray-400" dir="ltr">exp {box.expiry}</span>
                   )}
                 </div>
+                {box.needs_review && (
+                  <p className="text-[11px] text-amber-600 mt-1">⚠️ {tr('palletVerify.needsReview')}</p>
+                )}
               </>
             )}
           </div>
@@ -1382,6 +1495,8 @@ export default function PalletVerifyPage({
           <SmartScanner
             key="loose-scanner"
             onBarcodeDetected={handleLooseBarcodeDetected}
+            onManualCapture={handleLooseManualCapture}
+            onDuplicateFlash={(fn) => { looseDupFlashRef.current = fn; }}
             scannedBarcodes={new Map()}
             ocrResults={new Map()}
           />
@@ -1629,6 +1744,8 @@ export default function PalletVerifyPage({
         <SmartScanner
           key={`pallet-scanner-${currentPallet}`}
           onBarcodeDetected={handleBarcodeDetected}
+          onManualCapture={handleManualCapture}
+          onDuplicateFlash={(fn) => { dupFlashRef.current = fn; }}
           scannedBarcodes={new Map()}
           ocrResults={new Map()}
         />

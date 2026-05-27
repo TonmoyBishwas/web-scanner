@@ -91,6 +91,8 @@ export const en = {
   'scanner.cameraErrorHint': 'Common fixes: open the link in Chrome/Safari (not WhatsApp\'s in-app browser), check Settings → Site permissions → Camera, then tap Retry.',
   'scanner.alreadyScanned': 'Already scanned',
   'scanner.duplicateBadge': 'Duplicate',
+  'scanner.captureAnyway': 'Capture anyway',
+  'scanner.captureHint': "Barcode won't scan? Tap to capture the label",
   'scanner.cameraGeneric': 'Camera',
   'scanner.tapToSwitch': 'Tap to switch camera',
 
@@ -212,6 +214,7 @@ export const en = {
   'palletVerify.deferredCountTooLow': 'Total must be at least {min} (boxes already scanned).',
   'palletVerify.deleteScan': '🗑 Delete this scan',
   'palletVerify.editScan': '✎ Edit',
+  'palletVerify.needsReview': "Couldn't read the code — check the name/weight",
   'palletVerify.editTitle': 'Edit scan',
   'palletVerify.editPickItem': 'Pick the correct item (from the invoice)',
   'palletVerify.editTypeManually': 'Or type the name',
