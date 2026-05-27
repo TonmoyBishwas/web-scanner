@@ -197,6 +197,7 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.uniformChoose': 'אותו פריט ומשקל זוהו — בחר כיצד להמשיך:',
   'palletVerify.uniformCompleteBtn': '✅ זה משטח של פריט יחיד',
   'palletVerify.uniformContinueMix': '⏭ המשך לסרוק (זה משטח מעורב)',
+  'palletVerify.uniformScanEach': 'משקלים שונים — סרוק כל קופסה',
   'palletVerify.uniformHowMany': 'כמה קופסאות של {item} יש על המשטח הזה?',
   'palletVerify.uniformMaxNote': 'מקסימום {max} (כל קופסה ≈ {weight} kg)',
   'palletVerify.uniformPlaceholder': 'הזן כמות',
@@ -213,6 +214,7 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.deferredCountTitle': 'כמה קופסאות יש על המשטח?',
   'palletVerify.deferredCountHint': 'הזן את הסך הכל — כולל {scanned} שכבר נסרקו.',
   'palletVerify.deferredCountTooLow': 'הסך הכל חייב להיות לפחות {min} (קופסאות שכבר נסרקו).',
+  'palletVerify.deleteScan': '🗑 מחק סריקה זו',
 
   // ── AI consolidation banner ───────────────────────────────────────
   'palletVerify.aiMergeBanner': '⚠️ האם אלו אותו פריט?',

@@ -193,6 +193,7 @@ export const en = {
   'palletVerify.uniformChoose': 'Same item & weight detected — choose how to proceed:',
   'palletVerify.uniformCompleteBtn': '✅ Complete as single-item',
   'palletVerify.uniformContinueMix': '⏭ Continue scanning (this is a mix pallet)',
+  'palletVerify.uniformScanEach': 'Different weights — scan each box',
   'palletVerify.uniformHowMany': 'How many boxes of {item} are on this pallet?',
   'palletVerify.uniformMaxNote': 'Max {max} (each box ≈ {weight} kg)',
   'palletVerify.uniformPlaceholder': 'Enter count',
@@ -209,6 +210,7 @@ export const en = {
   'palletVerify.deferredCountTitle': 'How many boxes on this pallet?',
   'palletVerify.deferredCountHint': 'Enter the total — including the {scanned} you already scanned.',
   'palletVerify.deferredCountTooLow': 'Total must be at least {min} (boxes already scanned).',
+  'palletVerify.deleteScan': '🗑 Delete this scan',
 
   // ── AI consolidation banner ───────────────────────────────────────
   'palletVerify.aiMergeBanner': '⚠️ Are these the same item?',

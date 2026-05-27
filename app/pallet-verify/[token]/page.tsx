@@ -132,6 +132,18 @@ export default function PalletVerifyPage({
   const pendingUniformPromptRef = useRef<UniformPrompt | null>(null);
   useEffect(() => { uniformGroupsRef.current = uniformGroups; }, [uniformGroups]);
   useEffect(() => { pendingUniformPromptRef.current = pendingUniformPrompt; }, [pendingUniformPrompt]);
+  // Item name_keys the worker marked "scan each box individually" — for the
+  // "mix-e" shape (one item whose boxes have mixed weights, some matching some
+  // not). Suppresses the uniform-count prompt for that item so every box is
+  // scanned and recorded with its own real weight. Per pallet (reset between
+  // pallets). Ref mirror so maybeTriggerUniformPrompt sees the latest set when
+  // it runs inside a setState callback.
+  const [individualKeys, setIndividualKeys] = useState<Set<string>>(new Set());
+  const individualKeysRef = useRef<Set<string>>(new Set());
+  useEffect(() => { individualKeysRef.current = individualKeys; }, [individualKeys]);
+  // Which scanned-box row is expanded to reveal its Delete action. Two-step
+  // (tap row → tap Delete) guards against misclicks. Reset between pallets.
+  const [selectedBarcode, setSelectedBarcode] = useState<string | null>(null);
   // Number-input state for the mandatory_count prompt + its validation error.
   const [countInput, setCountInput] = useState('');
   const [countError, setCountError] = useState<string | null>(null);
@@ -457,6 +469,7 @@ export default function PalletVerifyPage({
     // merges applied), never from barcode digits.
     const nameKey = acceptedMerges.get(groupKeyForBox(justFinished)) ?? groupKeyForBox(justFinished);
     if (uniformGroupsRef.current.has(nameKey)) return; // already locked
+    if (individualKeysRef.current.has(nameKey)) return; // worker chose scan-each
 
     const sameItemDone = latestBoxes.filter((b) => {
       const k = acceptedMerges.get(groupKeyForBox(b)) ?? groupKeyForBox(b);
@@ -562,6 +575,20 @@ export default function PalletVerifyPage({
     setPendingUniformPrompt((p) =>
       p ? { ...p, mode: 'mandatory_count' } : p
     );
+    setCountInput('');
+    setCountError(null);
+  }
+
+  // "Different weights — scan each box" → the mix-e shape: one item whose
+  // boxes have mixed weights. Decline the count shortcut for this item; mark
+  // its name_key so the uniform prompt won't fire again for it, and let the
+  // worker scan every box (each recorded with its real weight). The boxes are
+  // already counted as individuals by committedCount(), so nothing else to do.
+  function handleScanEachIndividually() {
+    const p = pendingUniformPrompt;
+    if (!p) return;
+    setIndividualKeys((prev) => new Set(prev).add(p.name_key));
+    setPendingUniformPrompt(null);
     setCountInput('');
     setCountError(null);
   }
@@ -867,6 +894,8 @@ export default function PalletVerifyPage({
           // Reset per-pallet uniform-detection state.
           setUniformGroups(new Map());
           setPendingUniformPrompt(null);
+          setIndividualKeys(new Set());
+          setSelectedBarcode(null);
           setCountInput('');
           setCountError(null);
           setPendingSingleGroup(null);
@@ -950,8 +979,13 @@ export default function PalletVerifyPage({
         ? 'bg-green-50 border-green-200'
         : 'bg-yellow-50 border-yellow-200';
 
+    // Tap the card to reveal a Delete action (two-step, to avoid misclicks).
+    const selected = selectedBarcode === box.barcode;
     return (
-      <div className={`rounded-xl p-3 border text-sm ${cardBg}`}>
+      <div
+        onClick={() => setSelectedBarcode(selected ? null : box.barcode)}
+        className={`rounded-xl p-3 border text-sm cursor-pointer ${cardBg} ${selected ? 'ring-2 ring-red-300' : ''}`}
+      >
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
             {box.ocr_status === 'processing' ? (
@@ -968,20 +1002,20 @@ export default function PalletVerifyPage({
                 <div className="flex flex-wrap gap-1.5 mt-1.5">
                   {box.image_data && (
                     <button
-                      onClick={() => setViewingImage(box.image_data!)}
+                      onClick={(e) => { e.stopPropagation(); setViewingImage(box.image_data!); }}
                       className="text-[11px] px-2 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded font-medium"
                     >
                       {tr('palletVerify.viewWithIcon')}
                     </button>
                   )}
                   <button
-                    onClick={() => retryPalletOcr(box.barcode)}
+                    onClick={(e) => { e.stopPropagation(); retryPalletOcr(box.barcode); }}
                     className="text-[11px] px-2 py-0.5 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded font-medium"
                   >
                     {tr('palletVerify.retryWithIcon')}
                   </button>
                   <button
-                    onClick={() => rescanPalletBox(box.barcode)}
+                    onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); }}
                     className="text-[11px] px-2 py-0.5 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded font-medium"
                   >
                     {tr('palletVerify.rescanWithIcon')}
@@ -1015,6 +1049,15 @@ export default function PalletVerifyPage({
             )}
           </div>
         </div>
+
+        {selected && box.ocr_status !== 'failed' && (
+          <button
+            onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
+            className="mt-2 w-full py-2 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700 active:bg-red-800 transition"
+          >
+            {tr('palletVerify.deleteScan')}
+          </button>
+        )}
       </div>
     );
   }
@@ -1193,8 +1236,15 @@ export default function PalletVerifyPage({
                     <p className="text-xs text-gray-500 mb-1">{tr('palletVerify.totalWeightLine', { weight: totalWeight.toFixed(3) })}</p>
                   )}
                   <div className="space-y-1">
-                    {boxes.map((box, bi) => (
-                      <div key={box.barcode + bi} className="text-xs text-gray-600 flex items-center gap-1.5 flex-wrap">
+                    {boxes.map((box, bi) => {
+                      // Tap a loose-box row to reveal its Delete action (two-step).
+                      const selected = selectedBarcode === box.barcode;
+                      return (
+                      <div
+                        key={box.barcode + bi}
+                        onClick={() => setSelectedBarcode(selected ? null : box.barcode)}
+                        className={`text-xs text-gray-600 flex items-center gap-1.5 flex-wrap cursor-pointer rounded px-1 ${selected ? 'bg-red-50 ring-1 ring-red-200' : ''}`}
+                      >
                         {box.ocr_status === 'processing' ? (
                           <>
                             <Loader2 className="w-3 h-3 animate-spin text-orange-400 shrink-0" />
@@ -1205,6 +1255,14 @@ export default function PalletVerifyPage({
                             <CheckCircle className="w-3 h-3 text-green-500 shrink-0" />
                             <span>{box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}</span>
                             {box.expiry && <span className="text-gray-400" dir="ltr">· {box.expiry}</span>}
+                            {selected && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); rescanLooseBox(box.barcode); setSelectedBarcode(null); }}
+                                className="ms-auto px-1.5 py-0.5 bg-red-600 text-white rounded text-[10px] font-semibold hover:bg-red-700"
+                              >
+                                {tr('palletVerify.deleteScan')}
+                              </button>
+                            )}
                           </>
                         ) : (
                           <>
@@ -1213,20 +1271,20 @@ export default function PalletVerifyPage({
                             <div className="flex gap-1 ms-auto">
                               {box.image_data && (
                                 <button
-                                  onClick={() => setViewingImage(box.image_data!)}
+                                  onClick={(e) => { e.stopPropagation(); setViewingImage(box.image_data!); }}
                                   className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] font-medium"
                                 >
                                   {tr('ocr.view')}
                                 </button>
                               )}
                               <button
-                                onClick={() => retryLooseOcr(box.barcode)}
+                                onClick={(e) => { e.stopPropagation(); retryLooseOcr(box.barcode); }}
                                 className="px-1.5 py-0.5 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-[10px] font-medium"
                               >
                                 {tr('ocr.retry')}
                               </button>
                               <button
-                                onClick={() => rescanLooseBox(box.barcode)}
+                                onClick={(e) => { e.stopPropagation(); rescanLooseBox(box.barcode); }}
                                 className="px-1.5 py-0.5 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded text-[10px] font-medium"
                               >
                                 {tr('ocr.rescan')}
@@ -1235,7 +1293,8 @@ export default function PalletVerifyPage({
                           </>
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -1471,8 +1530,15 @@ export default function PalletVerifyPage({
                       <p className="text-xs text-gray-500 mb-1">{tr('palletVerify.avgWeightLine', { weight: avgWeight.toFixed(3) })}</p>
                     )}
                     <div className="space-y-1">
-                      {boxes.map((box, bi) => (
-                        <div key={box.barcode + bi} className="text-xs text-gray-600 flex items-center gap-1.5 flex-wrap">
+                      {boxes.map((box, bi) => {
+                        // Tap a box row to reveal its Delete action (two-step).
+                        const selected = selectedBarcode === box.barcode;
+                        return (
+                        <div
+                          key={box.barcode + bi}
+                          onClick={() => setSelectedBarcode(selected ? null : box.barcode)}
+                          className={`text-xs text-gray-600 flex items-center gap-1.5 flex-wrap cursor-pointer rounded px-1 ${selected ? 'bg-red-50 ring-1 ring-red-200' : ''}`}
+                        >
                           {box.ocr_status === 'processing' ? (
                             <>
                               <Loader2 className="w-3 h-3 animate-spin text-blue-400 shrink-0" />
@@ -1483,6 +1549,14 @@ export default function PalletVerifyPage({
                               <CheckCircle className="w-3 h-3 text-green-500 shrink-0" />
                               <span>{box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}</span>
                               {box.expiry && <span className="text-gray-400" dir="ltr">· {box.expiry}</span>}
+                              {selected && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
+                                  className="ms-auto px-1.5 py-0.5 bg-red-600 text-white rounded text-[10px] font-semibold hover:bg-red-700"
+                                >
+                                  {tr('palletVerify.deleteScan')}
+                                </button>
+                              )}
                             </>
                           ) : (
                             <>
@@ -1491,20 +1565,20 @@ export default function PalletVerifyPage({
                               <div className="flex gap-1 ms-auto">
                                 {box.image_data && (
                                   <button
-                                    onClick={() => setViewingImage(box.image_data!)}
+                                    onClick={(e) => { e.stopPropagation(); setViewingImage(box.image_data!); }}
                                     className="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[10px] font-medium"
                                   >
                                     {tr('ocr.view')}
                                   </button>
                                 )}
                                 <button
-                                  onClick={() => retryPalletOcr(box.barcode)}
+                                  onClick={(e) => { e.stopPropagation(); retryPalletOcr(box.barcode); }}
                                   className="px-1.5 py-0.5 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-[10px] font-medium"
                                 >
                                   {tr('ocr.retry')}
                                 </button>
                                 <button
-                                  onClick={() => rescanPalletBox(box.barcode)}
+                                  onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); }}
                                   className="px-1.5 py-0.5 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded text-[10px] font-medium"
                                 >
                                   {tr('ocr.rescan')}
@@ -1513,7 +1587,8 @@ export default function PalletVerifyPage({
                             </>
                           )}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 );
@@ -1574,6 +1649,13 @@ export default function PalletVerifyPage({
             >
               {tr('palletVerify.uniformContinueMix')}
             </button>
+            <button
+              onClick={handleScanEachIndividually}
+              disabled={phase === 'confirming'}
+              className="w-full text-xs text-gray-500 hover:text-gray-700 underline pt-1"
+            >
+              {tr('palletVerify.uniformScanEach')}
+            </button>
           </div>
         ) : (pendingUniformPrompt?.mode === 'mandatory_count' && confirmedBoxCount > 0) ? (
           <div className="space-y-2">
@@ -1620,6 +1702,12 @@ export default function PalletVerifyPage({
             {countError && (
               <p className="text-red-600 text-xs">{countError}</p>
             )}
+            <button
+              onClick={handleScanEachIndividually}
+              className="w-full text-xs text-gray-500 hover:text-gray-700 underline pt-1"
+            >
+              {tr('palletVerify.uniformScanEach')}
+            </button>
           </div>
         ) : (confirmedBoxCount === 0 && scannedBoxes.length >= 2) ? (
           <div className="space-y-2">
