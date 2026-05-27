@@ -1540,10 +1540,17 @@ export default function PalletVerifyPage({
 
       {/* Footer — priority-ordered modes:
           (1) single_or_mix uniform prompt (Complete / Continue),
-          (2) mandatory_count per-SKU prompt (number input + Set),
-          (3) deferred pallet box-count input (NEW — surfaces after 2
+          (2) mandatory_count per-SKU prompt (number input + Set) —
+              ONLY once the pallet total is known (confirmedBoxCount > 0),
+              because its overflow validation caps the per-SKU count at
+              (pallet total − boxes already committed). With no total set
+              the cap would be 0 and the worker could never submit, so we
+              fall through to mode (3) first to capture the pallet total,
+              then this prompt re-appears with a meaningful cap.
+          (3) deferred pallet box-count input (surfaces after 2
               OCR-completed scans when no count has been set yet, OR
-              after the worker picks "Single-item" in mode 1),
+              after the worker picks "Single-item" in mode 1, OR while a
+              mandatory_count prompt is pending but the total is still 0),
           (4) standard Confirm Pallet button.                         */}
       <div className="p-4 bg-white border-t sticky bottom-0">
         {error && <p className="text-red-600 text-sm text-center mb-2">{error}</p>}
@@ -1568,7 +1575,7 @@ export default function PalletVerifyPage({
               {tr('palletVerify.uniformContinueMix')}
             </button>
           </div>
-        ) : pendingUniformPrompt?.mode === 'mandatory_count' ? (
+        ) : (pendingUniformPrompt?.mode === 'mandatory_count' && confirmedBoxCount > 0) ? (
           <div className="space-y-2">
             <label className="block text-xs text-gray-700 font-medium">
               {tr('palletVerify.uniformHowMany', {
