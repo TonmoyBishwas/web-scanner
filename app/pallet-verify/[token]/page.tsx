@@ -677,15 +677,18 @@ export default function PalletVerifyPage({
     setEditForm(null);
   }
 
-  // Sum of boxes already committed to the pallet from non-uniform scans
-  // (excluding the sample barcodes of the currently-pending uniform prompt).
+  // Boxes already committed to the pallet from OTHER products, used to cap the
+  // per-product count input. Exclude EVERY box of the product currently being
+  // counted (by name_key) — not just the 2 trigger samples — because the count
+  // the worker types covers all of them. (Counting the extra same-product
+  // scans as "other" was the off-by-N behind the "max 63 instead of 65" bug.)
   function committedExcludingPending(): number {
-    const pendingSampleSet = new Set(pendingUniformPrompt?.sample_barcodes ?? []);
+    const pendingKey = pendingUniformPrompt?.name_key;
     let nonUniformIndividuals = 0;
     for (const box of scannedBoxes) {
       const k = acceptedMerges.get(groupKeyForBox(box)) ?? groupKeyForBox(box);
       if (uniformGroups.has(k)) continue;                   // already in a locked group
-      if (pendingSampleSet.has(box.barcode)) continue;      // pending; we'll add total_count instead
+      if (pendingKey && k === pendingKey) continue;         // same product we're counting now
       nonUniformIndividuals += 1;
     }
     let lockedTotal = 0;
