@@ -1,42 +1,124 @@
 @import "tailwindcss";
 
+/* ============================================================
+   Web-Scanner — industrial UI design tokens (ui-redesign)
+   Mobile-only, dark-by-default, single hi-vis accent.
+   See lib/design-tokens.ts for the TS mirror.
+   ============================================================ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Legacy aliases — kept so pre-redesign pages don't break mid-rollout */
+  --background: #050505;
+  --foreground: #ffffff;
+
+  /* Surfaces (deepest → highest elevation) */
+  --surface-0: #050505;
+  --surface-1: #0f0f10;
+  --surface-2: #1a1a1c;
+  --surface-3: #26262a;
+
+  /* Borders */
+  --border-default: #2a2a2e;
+  --border-strong: #3a3a40;
+
+  /* Text */
+  --text-primary: #ffffff;
+  --text-secondary: #a8a8ad;
+  --text-tertiary: #6b6b72;
+
+  /* Hi-vis accent — single primary across the whole app */
+  --accent: #ff6b35;
+  --accent-pressed: #e85a26;
+  --accent-soft: rgba(255, 107, 53, 0.12);
+  --accent-ring: rgba(255, 107, 53, 0.35);
+
+  /* Semantic state — reserved for STATE indicators, not buttons */
+  --success: #16a34a;
+  --success-soft: rgba(22, 163, 74, 0.14);
+  --warning: #f59e0b;
+  --warning-soft: rgba(245, 158, 11, 0.14);
+  --danger: #ef4444;
+  --danger-soft: rgba(239, 68, 68, 0.16);
+
+  /* Safe-area (handles iOS notch / Android nav bar) */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: var(--surface-0);
+  --color-foreground: var(--text-primary);
+
+  /* Surfaces */
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+
+  /* Borders */
+  --color-border-default: var(--border-default);
+  --color-border-strong: var(--border-strong);
+
+  /* Text */
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+
+  /* Accent + state */
+  --color-accent: var(--accent);
+  --color-accent-pressed: var(--accent-pressed);
+  --color-accent-soft: var(--accent-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+
+  /* Fonts */
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
-/* Force dark mode when class applied */
-html.dark {
-  --background: #0a0a0a;
-  --foreground: #ededed;
-}
-
+/* Force-dark — light mode is intentionally out of scope */
+html,
+html.dark,
 html.light {
-  --background: #ffffff;
-  --foreground: #171717;
+  background: var(--surface-0);
+  color: var(--text-primary);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  /* Prevent the address-bar overscroll bounce + rubber-band feel on iOS — keeps
+     the scanner viewport stable under a worker's hand. */
+  overscroll-behavior: none;
 }
 
-/* Keyframe animations */
+/* Typography micro-utility — used by SectionLabel */
+.micro-label {
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+/* Big mono counter — `17 / 42` look */
+.counter-display {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-feature-settings: "tnum" 1, "zero" 1; /* tabular nums + slashed zero */
+  font-weight: 600;
+}
+
+/* ============================================================
+   Keyframes (kept from prior scanner build — used by overlays)
+   ============================================================ */
+
 @keyframes slideInUp {
   from {
     transform: translateY(16px);
@@ -64,12 +146,13 @@ body {
   }
 }
 
+/* Re-tuned: pulse using the accent (orange) instead of the old green */
 @keyframes pulseGlow {
   0%, 100% {
-    filter: drop-shadow(0 0 4px rgba(74, 222, 128, 0.3));
+    box-shadow: 0 0 0 0 var(--accent-soft);
   }
   50% {
-    filter: drop-shadow(0 0 12px rgba(74, 222, 128, 0.6));
+    box-shadow: 0 0 0 8px var(--accent-soft);
   }
 }
 
@@ -78,7 +161,15 @@ body {
   100% { opacity: 0; }
 }
 
-/* Custom utility classes for animations (Tailwind v4 compatible) */
+/* Scanner line sweep — used by ScannerOverlay */
+@keyframes scanLineSweep {
+  0%   { transform: translateY(0%);   opacity: 0.0; }
+  10%  {                              opacity: 1.0; }
+  90%  {                              opacity: 1.0; }
+  100% { transform: translateY(100%); opacity: 0.0; }
+}
+
+/* Tailwind-v4 utility wrappers so we can use `animate-*` classes */
 @utility animate-slideInUp {
   animation: slideInUp 0.3s ease-out;
 }
@@ -93,4 +184,12 @@ body {
 
 @utility animate-pulseGlow {
   animation: pulseGlow 2s ease-in-out infinite;
+}
+
+@utility animate-scanLine {
+  animation: scanLineSweep 1.8s ease-in-out infinite;
+}
+
+@utility animate-cameraFlash {
+  animation: cameraFlash 0.18s ease-out forwards;
 }
