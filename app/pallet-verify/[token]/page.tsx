@@ -166,7 +166,19 @@ export default function PalletVerifyPage({
   // Edit-a-scan: the box (by barcode) currently being edited + its in-flight
   // name/weight values. Null when no edit modal is open. Reset between pallets.
   const [editForm, setEditForm] = useState<
-    { barcode: string; name_he: string; name_en: string; weight: string } | null
+    {
+      barcode: string;
+      name_he: string;
+      name_en: string;
+      weight: string;
+      // Captured sticker frame so the modal can show what the OCR actually saw.
+      // Worker can't fix the name/weight blind — showing the photo is the whole
+      // point of this view. Optional because rescue/legacy boxes might not have one.
+      image_data?: string;
+      // Source collection: pallet phase (scannedBoxes) vs loose phase (looseBoxes).
+      // handleSaveEdit branches on this to update the right state.
+      isLoose?: boolean;
+    } | null
   >(null);
   // Invoice item catalog for this delivery (mirrored to a ref so runOcr — which
   // is reached via a memoized scan callback — always sees it without stale
@@ -517,6 +529,16 @@ export default function PalletVerifyPage({
               needsReview = true; // OCR couldn't read the digits → can't dedupe
             }
           }
+          // Even when OCR "succeeded", flag the box if the model didn't return
+          // a usable name OR a positive weight. These rows would otherwise ship
+          // to Airtable as blanks; the worker must open the edit modal, see
+          // the captured sticker, and fix them before advancing.
+          const heName = (data.ocr_data.product_name_hebrew || '').trim();
+          const enName = (data.ocr_data.product_name_english || '').trim();
+          const ocrWeight = data.ocr_data.weight_kg ?? 0;
+          if ((!heName && !enName) || !(ocrWeight > 0)) {
+            needsReview = true;
+          }
 
           const updated = prev.map((b, i) => {
             if (i !== idx) return b;
@@ -706,36 +728,57 @@ export default function PalletVerifyPage({
 
   // ── Edit a scan (name + weight) ──
 
-  // Open the edit modal pre-filled from the box's current values.
-  function openEdit(box: BoxScan) {
+  // Open the edit modal pre-filled from the box's current values. `isLoose`
+  // tells handleSaveEdit which collection (scannedBoxes vs looseBoxes) the
+  // box lives in — the modal itself is shared between both phases.
+  function openEdit(box: BoxScan, isLoose = false) {
     setSelectedBarcode(null);
     setEditForm({
       barcode: box.barcode,
       name_he: box.item_name_hebrew || '',
       name_en: box.item_name || '',
       weight: box.weight > 0 ? String(box.weight) : '',
+      image_data: box.image_data,
+      isLoose,
     });
   }
 
   // Apply the edit: update the box, then re-group exactly like rescanPalletBox —
   // changing the name moves the box's group key, so recompute detectedType and
   // drop any uniform group / pending prompt that no longer has ≥2 done samples.
+  // Loose-phase edits skip the regrouping (loose has no uniform groups) and
+  // just patch the looseBoxes row.
   function handleSaveEdit() {
     if (!editForm) return;
-    const { barcode, name_he, name_en } = editForm;
+    const { barcode, name_he, name_en, isLoose } = editForm;
     const w = parseFloat(editForm.weight);
+
+    // Same patch shape for both collections. Crucially: clear needs_review
+    // when the worker's edit gives us BOTH a non-empty name AND a positive
+    // weight — otherwise leave the flag as-is so the gate still holds.
+    function patch(b: BoxScan): BoxScan {
+      if (b.barcode !== barcode) return b;
+      const newWeight = Number.isFinite(w) && w > 0 ? w : b.weight;
+      const hasName = !!(name_he.trim() || name_en.trim());
+      const hasWeight = newWeight > 0;
+      return {
+        ...b,
+        ocr_status: 'done' as OcrStatus,
+        item_name: name_en,
+        item_name_hebrew: name_he,
+        weight: newWeight,
+        needs_review: hasName && hasWeight ? undefined : b.needs_review,
+      };
+    }
+
+    if (isLoose) {
+      setLooseBoxes((prev) => prev.map(patch));
+      setEditForm(null);
+      return;
+    }
+
     setScannedBoxes((prev) => {
-      const updated = prev.map((b) =>
-        b.barcode === barcode
-          ? {
-              ...b,
-              ocr_status: 'done' as OcrStatus,
-              item_name: name_en,
-              item_name_hebrew: name_he,
-              weight: Number.isFinite(w) && w > 0 ? w : b.weight,
-            }
-          : b,
-      );
+      const updated = prev.map(patch);
       setDetectedType(detectType(updated, acceptedMerges));
       // Drop locked uniform groups left with <2 samples after the name change.
       setUniformGroups((groups) => {
@@ -873,6 +916,27 @@ export default function PalletVerifyPage({
       >
         <h2 className="text-base font-bold text-gray-900">{tr('palletVerify.editTitle')}</h2>
 
+        {/* Captured sticker preview — the whole point of the modal is to let
+            the worker fix the OCR by looking at the actual photo. Tap to
+            open the existing fullscreen viewer. */}
+        {editForm.image_data && (
+          <button
+            type="button"
+            onClick={() => setViewingImage(editForm.image_data!)}
+            className="block w-full"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={editForm.image_data}
+              alt={tr('palletVerify.viewWithIcon')}
+              className="w-full max-h-44 object-contain rounded-xl bg-gray-50 border border-gray-200"
+            />
+            <p className="text-[11px] text-gray-500 mt-1 text-center">
+              {tr('palletVerify.tapToZoom')}
+            </p>
+          </button>
+        )}
+
         {(session?.ocr_data?.length ?? 0) > 0 && (
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">
@@ -980,6 +1044,15 @@ export default function PalletVerifyPage({
             } else {
               needsReview = true;
             }
+          }
+          // Same widened gate as the pallet phase: a successful OCR with no
+          // name OR a non-positive weight is still bad data and must be
+          // resolved before the worker can finish the loose phase.
+          const heName = (data.ocr_data.product_name_hebrew || '').trim();
+          const enName = (data.ocr_data.product_name_english || '').trim();
+          const ocrWeight = data.ocr_data.weight_kg ?? 0;
+          if ((!heName && !enName) || !(ocrWeight > 0)) {
+            needsReview = true;
           }
 
           return prev.map((b, i) => {
@@ -1207,9 +1280,18 @@ export default function PalletVerifyPage({
   // Confirm is only enabled when:
   //  - no uniform prompt is awaiting an answer, and
   //  - the committed count (non-uniform individuals + locked group totals)
-  //    matches the declared box count for this pallet (with a 2-box minimum).
+  //    matches the declared box count for this pallet (with a 2-box minimum),
+  //    AND
+  //  - every scanned box has resolved data (no `needs_review` flag).
+  //    Worker must tap each warning, see the captured sticker, and fix
+  //    the name/weight before the pallet can advance.
   const committed = committedCount();
-  const canConfirm = !pendingUniformPrompt && committed >= Math.max(2, confirmedBoxCount);
+  const unresolvedWarnings = scannedBoxes.filter((b) => b.needs_review).length;
+  const hasUnresolvedWarnings = unresolvedWarnings > 0;
+  const canConfirm =
+    !pendingUniformPrompt &&
+    committed >= Math.max(2, confirmedBoxCount) &&
+    !hasUnresolvedWarnings;
 
   // Group scanned boxes by normalized OCR'd Hebrew name (with worker-accepted
   // AI merges applied). Barcode digits are intentionally NOT used — they're
@@ -1265,11 +1347,21 @@ export default function PalletVerifyPage({
         : 'bg-yellow-50 border-yellow-200';
 
     // Tap the card to reveal a Delete action (two-step, to avoid misclicks).
+    // Exception: a needs_review box opens the edit modal directly — the worker
+    // has to fix it before the pallet can be confirmed, so the warning row IS
+    // a "fix me" affordance.
     const selected = selectedBarcode === box.barcode;
+    const cardBgFinal = box.needs_review
+      ? 'bg-amber-50 border-amber-300'
+      : cardBg;
     return (
       <div
-        onClick={() => setSelectedBarcode(selected ? null : box.barcode)}
-        className={`rounded-xl p-3 border text-sm cursor-pointer ${cardBg} ${selected ? 'ring-2 ring-red-300' : ''}`}
+        onClick={() =>
+          box.needs_review
+            ? openEdit(box)
+            : setSelectedBarcode(selected ? null : box.barcode)
+        }
+        className={`rounded-xl p-3 border text-sm cursor-pointer ${cardBgFinal} ${selected ? 'ring-2 ring-red-300' : ''}`}
       >
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
@@ -1321,7 +1413,9 @@ export default function PalletVerifyPage({
                   )}
                 </div>
                 {box.needs_review && (
-                  <p className="text-[11px] text-amber-600 mt-1">⚠️ {tr('palletVerify.needsReview')}</p>
+                  <p className="text-[11px] text-amber-700 mt-1 font-medium">
+                    ⚠️ {tr('palletVerify.needsReview')} · {tr('palletVerify.tapToFix')}
+                  </p>
                 )}
               </>
             )}
@@ -1458,7 +1552,15 @@ export default function PalletVerifyPage({
   if (phase === 'loose_scanning' || phase === 'loose_confirming') {
     const declared = session?.loose_box_count || 0;
     const scanned = looseBoxes.length;
-    const canConfirmLoose = scanned >= Math.min(2, declared) && (declared === 0 || scanned >= declared);
+    // Block loose-finish on unresolved warnings, same gate as the pallet phase.
+    // Loose boxes go straight to Box Inventory with no further OCR pass, so
+    // bad data here is just as harmful as on a pallet.
+    const unresolvedLooseWarnings = looseBoxes.filter((b) => b.needs_review).length;
+    const hasUnresolvedLooseWarnings = unresolvedLooseWarnings > 0;
+    const canConfirmLoose =
+      scanned >= Math.min(2, declared) &&
+      (declared === 0 || scanned >= declared) &&
+      !hasUnresolvedLooseWarnings;
     // Loose boxes: group by OCR'd name, same as the pallet path. Barcode is
     // dedup-only and never used as a grouping key.
     const looseGroupedMap = groupBoxesByName(looseBoxes);
@@ -1536,12 +1638,27 @@ export default function PalletVerifyPage({
                   <div className="space-y-1">
                     {boxes.map((box, bi) => {
                       // Tap a loose-box row to reveal its Delete action (two-step).
+                      // Exception: a needs_review row opens the edit modal —
+                      // the worker has to fix it before loose-phase Confirm
+                      // unlocks. openEdit is called with isLoose=true so the
+                      // save patches looseBoxes (not scannedBoxes).
                       const selected = selectedBarcode === box.barcode;
+                      const needsReviewRow = !!box.needs_review;
                       return (
                       <div
                         key={box.barcode + bi}
-                        onClick={() => setSelectedBarcode(selected ? null : box.barcode)}
-                        className={`text-xs text-gray-600 flex items-center gap-1.5 flex-wrap cursor-pointer rounded px-1 ${selected ? 'bg-red-50 ring-1 ring-red-200' : ''}`}
+                        onClick={() =>
+                          needsReviewRow
+                            ? openEdit(box, true)
+                            : setSelectedBarcode(selected ? null : box.barcode)
+                        }
+                        className={`text-xs text-gray-600 flex items-center gap-1.5 flex-wrap cursor-pointer rounded px-1 ${
+                          needsReviewRow
+                            ? 'bg-amber-50 ring-1 ring-amber-300 py-1'
+                            : selected
+                            ? 'bg-red-50 ring-1 ring-red-200'
+                            : ''
+                        }`}
                       >
                         {box.ocr_status === 'processing' ? (
                           <>
@@ -1550,16 +1667,29 @@ export default function PalletVerifyPage({
                           </>
                         ) : box.ocr_status === 'done' ? (
                           <>
-                            <CheckCircle className="w-3 h-3 text-green-500 shrink-0" />
+                            <CheckCircle className={`w-3 h-3 shrink-0 ${needsReviewRow ? 'text-amber-500' : 'text-green-500'}`} />
                             <span>{box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}</span>
                             {box.expiry && <span className="text-gray-400" dir="ltr">· {box.expiry}</span>}
-                            {selected && (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); rescanLooseBox(box.barcode); setSelectedBarcode(null); }}
-                                className="ms-auto px-1.5 py-0.5 bg-red-600 text-white rounded text-[10px] font-semibold hover:bg-red-700"
-                              >
-                                {tr('palletVerify.deleteScan')}
-                              </button>
+                            {needsReviewRow && (
+                              <span className="text-amber-700 font-medium">
+                                ⚠️ {tr('palletVerify.tapToFix')}
+                              </span>
+                            )}
+                            {selected && !needsReviewRow && (
+                              <span className="ms-auto flex gap-1">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); openEdit(box, true); }}
+                                  className="px-1.5 py-0.5 bg-blue-600 text-white rounded text-[10px] font-semibold hover:bg-blue-700"
+                                >
+                                  {tr('palletVerify.editScan')}
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); rescanLooseBox(box.barcode); setSelectedBarcode(null); }}
+                                  className="px-1.5 py-0.5 bg-red-600 text-white rounded text-[10px] font-semibold hover:bg-red-700"
+                                >
+                                  {tr('palletVerify.deleteScan')}
+                                </button>
+                              </span>
                             )}
                           </>
                         ) : (
@@ -1614,12 +1744,20 @@ export default function PalletVerifyPage({
           >
             {canConfirmLoose
               ? tr('palletVerify.confirmLooseBtn', { count: scanned })
+              : hasUnresolvedLooseWarnings
+              ? tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })
               : declared > 0
               ? tr('palletVerify.scanMoreLoose', { count: Math.max(0, declared - scanned) })
               : tr('palletVerify.scanAtLeast2')}
           </button>
+          {hasUnresolvedLooseWarnings && (
+            <p className="text-[11px] text-amber-700 text-center mt-1.5">
+              ⚠️ {tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })}
+            </p>
+          )}
         </div>
         {imageModal}
+        {editModal}
         {debugPanel}
       </div>
     );
@@ -2060,21 +2198,30 @@ export default function PalletVerifyPage({
             )}
           </div>
         ) : (
-          <button
-            onClick={handleConfirmPallet}
-            disabled={!canConfirm || phase === 'confirming'}
-            className={`w-full py-3 rounded-xl font-semibold text-base transition ${
-              canConfirm && phase !== 'confirming'
-                ? 'bg-green-600 text-white hover:bg-green-700 active:bg-green-800'
-                : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-            }`}
-          >
-            {canConfirm
-              ? tr('palletVerify.confirmPalletBtn', { current: currentPallet })
-              : committed < 2
-              ? tr('palletVerify.scanMoreToContinue', { count: 2 - committed })
-              : tr('palletVerify.boxesNeeded', { count: Math.max(0, confirmedBoxCount - committed) })}
-          </button>
+          <>
+            <button
+              onClick={handleConfirmPallet}
+              disabled={!canConfirm || phase === 'confirming'}
+              className={`w-full py-3 rounded-xl font-semibold text-base transition ${
+                canConfirm && phase !== 'confirming'
+                  ? 'bg-green-600 text-white hover:bg-green-700 active:bg-green-800'
+                  : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+              }`}
+            >
+              {canConfirm
+                ? tr('palletVerify.confirmPalletBtn', { current: currentPallet })
+                : hasUnresolvedWarnings
+                ? tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })
+                : committed < 2
+                ? tr('palletVerify.scanMoreToContinue', { count: 2 - committed })
+                : tr('palletVerify.boxesNeeded', { count: Math.max(0, confirmedBoxCount - committed) })}
+            </button>
+            {hasUnresolvedWarnings && (
+              <p className="text-[11px] text-amber-700 text-center mt-1.5">
+                ⚠️ {tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })}
+              </p>
+            )}
+          </>
         )}
       </div>
       {imageModal}
