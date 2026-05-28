@@ -725,6 +725,37 @@ export function SmartScanner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSupported, currentCameraIndex, cameras.length]);
 
+  // Resume the camera after the page comes back from background. Mobile
+  // browsers freeze MediaStream tracks while the tab is hidden; on return
+  // they don't restart, so the worker sees a frozen frame until reload.
+  // We restart only when we can prove the existing stream is dead (a track
+  // is no longer `live` OR the <video> is paused) — so a clean foreground
+  // tab-switch doesn't cause an unnecessary camera flicker.
+  useEffect(() => {
+    function isStreamDead() {
+      const s = streamRef.current;
+      if (!s) return false; // never started yet — let the normal effects handle it
+      if (videoRef.current?.paused) return true;
+      return !s.getVideoTracks().some((t) => t.readyState === 'live');
+    }
+    function maybeRestart() {
+      if (!isMountedRef.current) return;
+      if (document.visibilityState !== 'visible') return;
+      if (isSupported !== true || cameras.length === 0) return;
+      if (!isStreamDead()) return;
+      console.log('[SmartScanner] Resuming from background — stream dead, restarting');
+      stopNativeScanning();
+      startNativeScanning();
+    }
+    document.addEventListener('visibilitychange', maybeRestart);
+    window.addEventListener('pageshow', maybeRestart);
+    return () => {
+      document.removeEventListener('visibilitychange', maybeRestart);
+      window.removeEventListener('pageshow', maybeRestart);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSupported, cameras.length]);
+
   // Loading state
   if (isSupported === null) {
     return (
