@@ -1,13 +1,13 @@
 import type { ReactNode, MouseEventHandler } from "react";
 
 /**
- * ListRow — generic row inside a list (scanned boxes, issued boxes, items grid).
+ * ListRow — generic row inside a list (scanned boxes, issued boxes, items).
  *
- * Slots:
- *   [leading]   [label/sublabel]                [trailing]
+ * Slots (RTL-aware via Tailwind logical properties):
+ *   [leading]   [label / sublabel]                [trailing]
  *
- * - `onClick` makes the row interactive (hover/press feedback, role=button).
- * - Use the `borderless` prop on the LAST row of a card to skip the divider.
+ * Minimal direction: hairline divider between rows, no full borders, more
+ * breathing room than the prior industrial look.
  */
 
 interface ListRowProps {
@@ -17,19 +17,16 @@ interface ListRowProps {
   trailing?: ReactNode;
   onClick?: MouseEventHandler<HTMLDivElement>;
   borderless?: boolean;
-  /**
-   * `tone` lets a row signal state without a separate badge — e.g. a soft red tint
-   * on a duplicate-rejected entry. Default = no tint.
-   */
+  /** Soft tonal background — for needs-review / duplicate-rejected rows. */
   tone?: "default" | "success" | "warning" | "danger";
   className?: string;
 }
 
-const toneRingClasses = {
+const toneClasses = {
   default: "",
-  success: "ring-1 ring-inset ring-[var(--success)]/30 bg-[var(--success-soft)]",
-  warning: "ring-1 ring-inset ring-[var(--warning)]/30 bg-[var(--warning-soft)]",
-  danger: "ring-1 ring-inset ring-[var(--danger)]/30 bg-[var(--danger-soft)]",
+  success: "bg-[var(--success-soft)]",
+  warning: "bg-[var(--warning-soft)]",
+  danger: "bg-[var(--danger-soft)]",
 } as const;
 
 export function ListRow({
@@ -59,12 +56,12 @@ export function ListRow({
           : undefined
       }
       className={[
-        "flex items-center gap-3 px-4 min-h-[56px] py-2",
+        "flex items-center gap-3 px-5 min-h-[64px] py-2.5",
         borderless ? "" : "border-b border-[var(--border-default)] last:border-b-0",
         interactive
-          ? "cursor-pointer active:bg-[var(--surface-3)] transition-colors"
+          ? "cursor-pointer active:bg-[var(--surface-2)] transition-colors"
           : "",
-        toneRingClasses[tone],
+        toneClasses[tone],
         className ?? "",
       ]
         .filter(Boolean)

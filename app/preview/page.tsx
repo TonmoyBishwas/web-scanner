@@ -1,11 +1,13 @@
 "use client";
 
 /**
- * /preview — visual gallery of the redesign primitives.
+ * /preview — visual gallery of the redesign for the ui-redesign branch only.
  *
- * This route exists ONLY on the `ui-redesign` branch as a review gate before
- * the real pages get restyled. Open on a phone (Vercel preview URL) and
- * scroll. No real data, no API calls — all literals.
+ * Direction (v2 after user pivot 2026-05-28):
+ *  - Light theme. Worker reads Hebrew, not English.
+ *  - Minimal: scanner screen = camera + counter + ONE confirm button.
+ *  - The scanned-list lives behind a floating chip; tap to open a BottomSheet.
+ *  - Icons reinforce; text is small, Hebrew, optional.
  *
  * Delete this file before merging `ui-redesign` → `pallet-flow`.
  */
@@ -13,20 +15,19 @@
 import { useState } from "react";
 import {
   Camera,
-  Settings,
-  Bug,
-  Languages,
   Package,
-  RotateCcw,
-  Factory,
-  GitMerge,
-  Trash2,
-  Pencil,
+  Settings,
+  X,
+  Check,
+  AlertTriangle,
+  ChevronLeft,
+  List,
 } from "lucide-react";
 
 import {
   Button,
   Card,
+  Chip,
   Counter,
   ProgressBar,
   StatusBadge,
@@ -38,8 +39,8 @@ import {
 } from "@/components/ui";
 
 export default function PreviewPage() {
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [sheetWarning, setSheetWarning] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [flash, setFlash] = useState<"success" | "danger" | undefined>();
 
   function triggerFlash(kind: "success" | "danger") {
@@ -48,29 +49,99 @@ export default function PreviewPage() {
   }
 
   return (
-    <main className="min-h-dvh bg-[var(--surface-0)] text-[var(--text-primary)] pb-24">
-      {/* Header — anchors the page; reads like equipment branding */}
-      <header
-        className="sticky top-0 z-10 border-b border-[var(--border-default)] bg-[var(--surface-0)]/95 backdrop-blur-sm"
-        style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top, 0px))" }}
-      >
-        <div className="flex items-center justify-between px-4 pb-3">
-          <div className="flex flex-col">
-            <span className="micro-label">Web Scanner · ui-redesign</span>
-            <h1 className="text-[20px] leading-[26px] font-semibold">
-              Design system preview
-            </h1>
-          </div>
-          <IconButton size="sm" tone="neutral" aria-label="Settings">
-            <Settings size={18} />
+    // Force RTL on the preview so the user sees the real Hebrew layout.
+    <main
+      dir="rtl"
+      lang="he"
+      className="min-h-dvh bg-[var(--surface-0)] text-[var(--text-primary)] pb-24"
+    >
+      {/* ----- Hero scanner screen (the main one) ----- */}
+      <section className="px-4 pt-6 space-y-5">
+        <header className="flex items-center justify-between">
+          <IconButton size="sm" aria-label="חזרה">
+            <ChevronLeft size={20} />
           </IconButton>
-        </div>
-      </header>
+          <IconButton size="sm" aria-label="הגדרות">
+            <Settings size={20} />
+          </IconButton>
+        </header>
 
-      <div className="px-4 pt-5 space-y-8">
-        {/* COLOR PALETTE */}
+        {/* The single focus: pallet 2/4, boxes 17/42 */}
+        <div className="flex flex-col items-center pt-2 gap-3">
+          <Counter
+            size="display"
+            current={2}
+            target={4}
+            label="משטח"
+            icon={<Package size={16} />}
+          />
+          <Counter size="hero" current={17} target={42} />
+          <div className="w-full max-w-[260px]">
+            <ProgressBar current={17} target={42} />
+          </div>
+        </div>
+
+        {/* Camera card */}
+        <Card flush className="overflow-hidden">
+          <div className="relative aspect-[4/5] bg-gradient-to-b from-[#1a1a1c] to-[#0a0a0a]">
+            {/* Fake camera "feed" */}
+            <div
+              className="absolute inset-0 opacity-25"
+              style={{
+                backgroundImage:
+                  "repeating-linear-gradient(45deg, #444 0 6px, transparent 6px 12px)",
+              }}
+            />
+            <ScannerOverlay
+              armed
+              tone="success"
+              flash={flash}
+              topActions={
+                <>
+                  <span />
+                  <Chip
+                    variant="floating"
+                    leadingIcon={<List size={14} />}
+                    onClick={() => setListOpen(true)}
+                  >
+                    17
+                  </Chip>
+                </>
+              }
+              bottomActions={
+                <IconButton
+                  tone="neutral"
+                  size="lg"
+                  aria-label="צילום ידני"
+                  onClick={() => triggerFlash("success")}
+                  className="!bg-white/95 backdrop-blur-sm"
+                >
+                  <Camera size={22} />
+                </IconButton>
+              }
+            />
+          </div>
+        </Card>
+
+        {/* The single primary action */}
+        <Button
+          fullWidth
+          leadingIcon={<Check size={20} strokeWidth={2.5} />}
+          onClick={() => setConfirmOpen(true)}
+        >
+          סיים משטח
+        </Button>
+
+        <p className="text-center text-[12px] text-[var(--text-tertiary)] pt-1">
+          /preview · ui-redesign v2
+        </p>
+      </section>
+
+      {/* ----- The reference gallery (scrolls below the hero) ----- */}
+      <div className="px-4 pt-10 space-y-7">
+        {/* Color tokens */}
         <section>
-          <SectionLabel>Color tokens</SectionLabel>
+          <SectionLabel>צבעים</SectionLabel>
           <div className="grid grid-cols-4 gap-2">
             <Swatch name="surface-0" value="var(--surface-0)" />
             <Swatch name="surface-1" value="var(--surface-1)" />
@@ -83,294 +154,250 @@ export default function PreviewPage() {
           </div>
         </section>
 
-        {/* TYPOGRAPHY */}
+        {/* Counters */}
         <section>
-          <SectionLabel>Typography</SectionLabel>
-          <Card className="space-y-3">
-            <div>
-              <span className="micro-label">Display · Geist Mono</span>
-              <div className="counter-display text-[32px] leading-[38px]">
-                17 <span className="text-[var(--text-tertiary)]">/</span>{" "}
-                <span className="text-[var(--text-secondary)]">42</span>
-              </div>
-            </div>
-            <div>
-              <span className="micro-label">H1 · Geist Sans 700</span>
-              <div className="text-[28px] leading-[32px] font-bold">
-                Pallet 2 of 4
-              </div>
-            </div>
-            <div>
-              <span className="micro-label">H2 · Geist Sans 600</span>
-              <div className="text-[20px] leading-[26px] font-semibold">
-                Scanning loose boxes
-              </div>
-            </div>
-            <div>
-              <span className="micro-label">Body</span>
-              <div className="text-[16px] leading-[22px]">
-                The quick brown fox jumps over the lazy dog · אנטריקוט בקר
-              </div>
-            </div>
-            <div>
-              <span className="micro-label">Micro</span>
-              <div className="micro-label">PRODUCTS</div>
-            </div>
+          <SectionLabel>מונה</SectionLabel>
+          <Card className="flex justify-around items-end gap-4">
+            <Counter
+              current={17}
+              target={42}
+              size="hero"
+              label="ארגזים"
+              icon={<Package size={14} />}
+            />
           </Card>
+          <div className="mt-3 grid grid-cols-3 gap-3">
+            <Card className="flex items-center justify-center">
+              <Counter current={2} target={4} size="display" label="משטח" />
+            </Card>
+            <Card className="flex items-center justify-center">
+              <Counter
+                current={42}
+                target={42}
+                size="display"
+                tone="success"
+                label="סיים"
+              />
+            </Card>
+            <Card className="flex items-center justify-center">
+              <Counter current={8} target={12} size="display" label="ארגזים שונים" />
+            </Card>
+          </div>
         </section>
 
-        {/* COUNTER */}
+        {/* Buttons */}
         <section>
-          <SectionLabel>Counter</SectionLabel>
-          <Card className="flex items-end gap-6">
-            <Counter current={17} target={42} label="Boxes" />
-            <Counter current="8.4" target="12" label="Mix kg" accent="warning" />
-            <Counter current={4} target={4} label="Done" accent="success" />
-          </Card>
-        </section>
-
-        {/* PROGRESS BAR */}
-        <section>
-          <SectionLabel>Progress</SectionLabel>
-          <Card className="space-y-4">
-            <div>
-              <p className="micro-label mb-2">Segmented · target=12</p>
-              <ProgressBar current={5} target={12} />
-            </div>
-            <div>
-              <p className="micro-label mb-2">Smooth · target=65 · warning</p>
-              <ProgressBar current={48} target={65} tone="warning" />
-            </div>
-            <div>
-              <p className="micro-label mb-2">Done · success</p>
-              <ProgressBar current={42} target={42} tone="success" />
-            </div>
-          </Card>
-        </section>
-
-        {/* BUTTONS */}
-        <section>
-          <SectionLabel>Buttons</SectionLabel>
+          <SectionLabel>כפתורים</SectionLabel>
           <div className="space-y-3">
-            <Button fullWidth>Confirm pallet</Button>
+            <Button fullWidth leadingIcon={<Check size={18} strokeWidth={2.5} />}>
+              סיים משטח
+            </Button>
             <Button fullWidth variant="secondary">
-              Rescan
+              ביטול
             </Button>
-            <Button fullWidth variant="danger" leadingIcon={<Trash2 size={18} />}>
-              Delete this scan
+            <Button
+              fullWidth
+              variant="success"
+              leadingIcon={<Check size={18} strokeWidth={2.5} />}
+            >
+              אישור
             </Button>
-            <div className="flex gap-3">
-              <Button variant="primary" size="md" leadingIcon={<Camera size={18} />}>
-                Capture anyway
-              </Button>
-              <Button variant="ghost" size="md" leadingIcon={<Pencil size={16} />}>
-                Edit
-              </Button>
-            </div>
-            <Button fullWidth loading>
-              Submitting…
-            </Button>
-            <Button fullWidth disabled>
-              Disabled
+            <Button
+              fullWidth
+              variant="danger"
+              leadingIcon={<X size={18} strokeWidth={2.5} />}
+            >
+              מחק סריקה
             </Button>
           </div>
         </section>
 
-        {/* STATUS BADGES */}
+        {/* Progress */}
         <section>
-          <SectionLabel>Status</SectionLabel>
+          <SectionLabel>התקדמות</SectionLabel>
+          <Card className="space-y-4">
+            <div>
+              <ProgressBar current={5} target={12} />
+              <p className="hebrew-label mt-1.5">5 / 12 — segmented</p>
+            </div>
+            <div>
+              <ProgressBar current={48} target={65} />
+              <p className="hebrew-label mt-1.5">48 / 65 — smooth (target &gt; 30)</p>
+            </div>
+            <div>
+              <ProgressBar current={42} target={42} />
+              <p className="hebrew-label mt-1.5">42 / 42 — done auto-greens</p>
+            </div>
+          </Card>
+        </section>
+
+        {/* Status pills */}
+        <section>
+          <SectionLabel>מצבים</SectionLabel>
           <Card className="flex flex-wrap gap-2">
-            <StatusBadge tone="success">Scanned</StatusBadge>
-            <StatusBadge tone="pending">Reading…</StatusBadge>
-            <StatusBadge tone="warning">Needs review</StatusBadge>
-            <StatusBadge tone="danger">Duplicate</StatusBadge>
+            <StatusBadge tone="success">תקין</StatusBadge>
+            <StatusBadge tone="pending">בעיבוד</StatusBadge>
+            <StatusBadge tone="warning">בדוק</StatusBadge>
+            <StatusBadge tone="danger">כפול</StatusBadge>
             <StatusBadge tone="neutral" icon={null}>
-              MIX
+              מיקס
             </StatusBadge>
             <StatusBadge tone="neutral" icon={null}>
-              LOOSE
+              ארגזים פזורים
             </StatusBadge>
           </Card>
         </section>
 
-        {/* ICON BUTTONS */}
+        {/* Chips */}
         <section>
-          <SectionLabel>Icon buttons</SectionLabel>
-          <Card className="flex flex-wrap gap-3">
-            <IconButton aria-label="Camera"><Camera size={20} /></IconButton>
-            <IconButton aria-label="Switch language"><Languages size={20} /></IconButton>
-            <IconButton aria-label="Debug"><Bug size={20} /></IconButton>
-            <IconButton aria-label="Settings"><Settings size={20} /></IconButton>
-            <IconButton aria-label="Merge" tone="accent"><GitMerge size={20} /></IconButton>
-            <IconButton aria-label="Cancel" tone="danger"><Trash2 size={20} /></IconButton>
-            <IconButton aria-label="Back" size="lg"><RotateCcw size={22} /></IconButton>
+          <SectionLabel>צ&apos;יפים</SectionLabel>
+          <Card className="flex flex-wrap gap-2">
+            <Chip leadingIcon={<List size={14} />}>17 סריקות</Chip>
+            <Chip variant="subtle">8 / 12</Chip>
+            <Chip variant="floating" tone="success">
+              42 תקין
+            </Chip>
+            <Chip variant="default" tone="warning">
+              1 לבדיקה
+            </Chip>
           </Card>
         </section>
 
-        {/* LIST */}
+        {/* List */}
         <section>
-          <SectionLabel trailing="3">Scanned boxes · ListRow</SectionLabel>
+          <SectionLabel trailing="3">סריקות אחרונות</SectionLabel>
           <Card flush>
             <ListRow
               leading={
-                <div className="size-10 rounded-md bg-[var(--surface-3)] flex items-center justify-center">
-                  <Package size={20} className="text-[var(--text-secondary)]" />
+                <div className="size-10 rounded-xl bg-[var(--surface-2)] flex items-center justify-center">
+                  <Package size={18} className="text-[var(--text-secondary)]" />
                 </div>
               }
               label="פילה בקר נקייה"
-              sublabel="SKU 7290015234567 · 8.42 kg"
-              trailing={<StatusBadge tone="success">OK</StatusBadge>}
+              sublabel="8.42 ק״ג"
+              trailing={<StatusBadge tone="success" icon={<Check size={14} />} />}
               onClick={() => {}}
             />
             <ListRow
               leading={
-                <div className="size-10 rounded-md bg-[var(--surface-3)] flex items-center justify-center">
-                  <Package size={20} className="text-[var(--text-secondary)]" />
+                <div className="size-10 rounded-xl bg-[var(--surface-2)] flex items-center justify-center">
+                  <Package size={18} className="text-[var(--text-secondary)]" />
                 </div>
               }
               label="אנטריקוט"
-              sublabel="SKU 7290019876543 · 7.18 kg"
-              trailing={<StatusBadge tone="pending">…</StatusBadge>}
+              sublabel="7.18 ק״ג"
+              trailing={<StatusBadge tone="pending" />}
               onClick={() => {}}
             />
             <ListRow
               tone="warning"
               leading={
-                <div className="size-10 rounded-md bg-[var(--surface-3)] flex items-center justify-center">
-                  <Package size={20} className="text-[var(--warning)]" />
+                <div className="size-10 rounded-xl bg-[var(--warning-soft)] flex items-center justify-center">
+                  <AlertTriangle size={18} className="text-[var(--warning)]" />
                 </div>
               }
-              label="(unreadable label)"
-              sublabel="MANUAL-1748341... · weight missing"
-              trailing={
-                <StatusBadge tone="warning">Review</StatusBadge>
-              }
+              label="—"
+              sublabel="ברקוד לא נקרא"
+              trailing={<StatusBadge tone="warning" />}
               onClick={() => {}}
             />
           </Card>
         </section>
 
-        {/* SCANNER OVERLAY DEMO */}
+        {/* Bottom-sheet triggers */}
         <section>
-          <SectionLabel>Scanner overlay</SectionLabel>
-          <Card flush className="overflow-hidden">
-            <div className="relative aspect-[3/4] bg-gradient-to-b from-[#080808] to-[#1a1a1c]">
-              {/* Fake camera "feed" — diagonal stripes so the chrome is visible */}
-              <div
-                className="absolute inset-0 opacity-20"
-                style={{
-                  backgroundImage:
-                    "repeating-linear-gradient(45deg, #333 0 6px, transparent 6px 12px)",
-                }}
-              />
-              <ScannerOverlay
-                armed
-                tone="accent"
-                flash={flash}
-                hint="Aim at the barcode label"
-                topActions={
-                  <>
-                    <IconButton size="sm" aria-label="Switch camera">
-                      <RotateCcw size={18} />
-                    </IconButton>
-                    <IconButton size="sm" aria-label="Settings">
-                      <Settings size={18} />
-                    </IconButton>
-                  </>
-                }
-                bottomActions={
-                  <Button
-                    variant="primary"
-                    size="md"
-                    leadingIcon={<Camera size={18} />}
-                    onClick={() => triggerFlash("success")}
-                  >
-                    Capture anyway
-                  </Button>
-                }
-              />
-            </div>
-            <div className="flex gap-2 p-3">
-              <Button variant="secondary" size="sm" onClick={() => triggerFlash("danger")}>
-                Trigger danger flash
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => triggerFlash("success")}>
-                Success flash
-              </Button>
-            </div>
-          </Card>
-        </section>
-
-        {/* BOTTOM SHEET TRIGGERS */}
-        <section>
-          <SectionLabel>Bottom sheet</SectionLabel>
+          <SectionLabel>חלון מידע</SectionLabel>
           <div className="space-y-3">
-            <Button fullWidth variant="primary" onClick={() => setSheetOpen(true)}>
-              Open detail sheet
+            <Button fullWidth variant="secondary" onClick={() => setListOpen(true)}>
+              פתח רשימת סריקות
             </Button>
-            <Button
-              fullWidth
-              variant="secondary"
-              onClick={() => setSheetWarning(true)}
-              leadingIcon={<Factory size={18} />}
-            >
-              Open warning-mode sheet (loose phase)
+            <Button fullWidth variant="secondary" onClick={() => setConfirmOpen(true)}>
+              פתח אישור משטח
             </Button>
           </div>
         </section>
+
+        <p className="text-center text-[12px] text-[var(--text-tertiary)] py-4">
+          web-scanner · ui-redesign · v2 light minimal
+        </p>
       </div>
 
-      {/* Demo sheet — accent */}
+      {/* ----- Bottom sheets ----- */}
       <BottomSheet
-        open={sheetOpen}
-        onClose={() => setSheetOpen(false)}
-        title="Issue this box?"
-        accent="accent"
+        open={listOpen}
+        onClose={() => setListOpen(false)}
+        title="17 סריקות"
+        footer={
+          <Button fullWidth variant="secondary" onClick={() => setListOpen(false)}>
+            סגור
+          </Button>
+        }
+      >
+        <div className="-mx-5">
+          <ListRow
+            leading={<Counter current={1} size="inline" />}
+            label="פילה בקר נקייה"
+            sublabel="8.42 ק״ג"
+            trailing={<StatusBadge tone="success" icon={<Check size={14} />} />}
+          />
+          <ListRow
+            leading={<Counter current={2} size="inline" />}
+            label="פילה בקר נקייה"
+            sublabel="8.31 ק״ג"
+            trailing={<StatusBadge tone="success" icon={<Check size={14} />} />}
+          />
+          <ListRow
+            leading={<Counter current={3} size="inline" />}
+            label="אנטריקוט"
+            sublabel="7.20 ק״ג"
+            trailing={<StatusBadge tone="pending" />}
+          />
+          <ListRow
+            tone="warning"
+            leading={<Counter current={4} size="inline" />}
+            label="—"
+            sublabel="ברקוד לא נקרא"
+            trailing={<StatusBadge tone="warning" />}
+          />
+        </div>
+      </BottomSheet>
+
+      <BottomSheet
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        title="לסיים משטח 2?"
         footer={
           <div className="flex gap-3">
             <Button
               variant="secondary"
               fullWidth
-              onClick={() => setSheetOpen(false)}
+              onClick={() => setConfirmOpen(false)}
             >
-              Cancel
+              לא
             </Button>
-            <Button fullWidth onClick={() => setSheetOpen(false)}>
-              Confirm
+            <Button
+              fullWidth
+              leadingIcon={<Check size={18} strokeWidth={2.5} />}
+              onClick={() => setConfirmOpen(false)}
+            >
+              כן
             </Button>
           </div>
         }
       >
-        <dl className="space-y-3">
-          <DetailRow label="Item" value="פילה בקר נקייה" />
-          <DetailRow label="SKU" value="7290015234567" mono />
-          <DetailRow label="Weight" value="8.42 kg" />
-          <DetailRow label="Expiry" value="2026-08-14" mono />
-          <DetailRow label="Pallet" value="LPN-20260520-DOC1234-P2" mono />
-        </dl>
-      </BottomSheet>
-
-      {/* Demo sheet — warning mode */}
-      <BottomSheet
-        open={sheetWarning}
-        onClose={() => setSheetWarning(false)}
-        title="Loose boxes phase"
-        accent="warning"
-        footer={
-          <Button
-            fullWidth
-            onClick={() => setSheetWarning(false)}
-            leadingIcon={<Camera size={18} />}
-          >
-            Start scanning loose
-          </Button>
-        }
-      >
-        <p className="text-[var(--text-secondary)] leading-relaxed">
-          You have <span className="text-[var(--warning)] font-semibold">8 loose boxes</span>{" "}
-          declared. Each one will be scanned individually — different items and
-          weights are expected.
-        </p>
+        <div className="flex flex-col items-center gap-3 py-3">
+          <Counter
+            current={17}
+            target={42}
+            size="hero"
+            label="ארגזים"
+            icon={<Package size={14} />}
+          />
+          <ProgressBar current={17} target={42} className="max-w-[240px]" />
+          <p className="text-[var(--text-secondary)] text-center text-[14px] pt-2">
+            יישלח אישור, סטיקר LPN יודפס.
+          </p>
+        </div>
       </BottomSheet>
     </main>
   );
@@ -378,36 +405,13 @@ export default function PreviewPage() {
 
 function Swatch({ name, value }: { name: string; value: string }) {
   return (
-    <div className="rounded-lg border border-[var(--border-default)] overflow-hidden">
+    <div className="rounded-xl border border-[var(--border-default)] overflow-hidden bg-[var(--surface-1)]">
       <div className="h-12" style={{ background: value }} />
-      <div className="px-2 py-1.5 bg-[var(--surface-1)]">
-        <p className="text-[11px] font-mono text-[var(--text-secondary)]">{name}</p>
+      <div className="px-2 py-1.5">
+        <p className="text-[11px] font-mono text-[var(--text-secondary)] truncate" dir="ltr">
+          {name}
+        </p>
       </div>
-    </div>
-  );
-}
-
-function DetailRow({
-  label,
-  value,
-  mono,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 border-b border-[var(--border-default)] pb-2 last:border-b-0 last:pb-0">
-      <dt className="micro-label">{label}</dt>
-      <dd
-        className={[
-          "text-[16px] text-[var(--text-primary)] truncate",
-          mono ? "font-mono text-[14px]" : "",
-        ].join(" ")}
-        dir="ltr"
-      >
-        {value}
-      </dd>
     </div>
   );
 }

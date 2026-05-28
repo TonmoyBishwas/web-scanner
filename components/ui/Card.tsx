@@ -1,12 +1,14 @@
 import type { HTMLAttributes, ReactNode } from "react";
 
 /**
- * Card — bordered, surface-1 container. Replaces the prior `bg-gray-800
- * rounded-2xl shadow-lg` pattern. Separation is by border, not shadow, so it
- * doesn't get washed out under warehouse lighting.
+ * Card — white surface with a soft hairline border.
  *
- * Use `elevated` for modals / bottom-sheet bodies (surface-2).
- * Use `flush` (no padding) when the card hosts a list (let ListRow control inset).
+ * Minimal-clean direction: thin borders + generous rounded corners.
+ * No drop shadows by default (they add visual noise; the border does the job).
+ *
+ * `elevated` = surface-2 (the lighter grouping behind a card-of-cards or a
+ * sheet body). `flush` removes padding (use when the card hosts a list and you
+ * want ListRow to control inset).
  */
 
 interface CardProps extends HTMLAttributes<HTMLDivElement> {
@@ -20,8 +22,8 @@ export function Card({ elevated, flush, children, className, ...rest }: CardProp
     <div
       className={[
         elevated ? "bg-[var(--surface-2)]" : "bg-[var(--surface-1)]",
-        "border border-[var(--border-default)] rounded-xl",
-        flush ? "" : "p-4",
+        "border border-[var(--border-default)] rounded-2xl",
+        flush ? "" : "p-5",
         className ?? "",
       ]
         .filter(Boolean)

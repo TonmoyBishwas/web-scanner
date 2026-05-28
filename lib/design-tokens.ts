@@ -1,55 +1,58 @@
 /**
  * Design tokens — TypeScript mirror of the CSS variables in app/globals.css.
  *
- * Prefer Tailwind classes (e.g. `bg-surface-1`, `text-text-secondary`, `border-border-default`)
- * over reading from this file. Use these constants ONLY when you need a raw value:
- * - inline `style={{ ... }}` props (e.g. dynamic accent color on the scanner overlay)
- * - canvas / SVG fill values
- * - JS-driven animations
+ * Prefer Tailwind classes (`bg-surface-1`, `text-text-secondary`,
+ * `border-border-default`, etc.) over reading from this file. Use these
+ * constants ONLY when you need a raw value:
+ *  - inline `style={{ ... }}` (dynamic colors)
+ *  - canvas / SVG fills
+ *  - JS-driven animations
  *
- * If you change a value here, change it in `app/globals.css` too — they MUST stay in sync.
+ * If you change a value here, change it in `app/globals.css` too —
+ * they MUST stay in sync.
  */
 
 export const colors = {
-  // Surfaces
-  surface0: "#050505",
-  surface1: "#0f0f10",
-  surface2: "#1a1a1c",
-  surface3: "#26262a",
+  // Surfaces (lightest → deepest)
+  surface0: "#fafaf7",
+  surface1: "#ffffff",
+  surface2: "#f4f4f0",
+  surface3: "#e8e8e2",
 
   // Borders
-  borderDefault: "#2a2a2e",
-  borderStrong: "#3a3a40",
+  borderDefault: "#ececea",
+  borderStrong: "#d4d4cc",
 
   // Text
-  textPrimary: "#ffffff",
-  textSecondary: "#a8a8ad",
-  textTertiary: "#6b6b72",
+  textPrimary: "#0a0a0a",
+  textSecondary: "#5b5b5b",
+  textTertiary: "#9a9a96",
 
-  // Hi-vis accent
-  accent: "#ff6b35",
-  accentPressed: "#e85a26",
-  accentSoft: "rgba(255, 107, 53, 0.12)",
-  accentRing: "rgba(255, 107, 53, 0.35)",
+  // Accent — calm near-black for primary buttons (iOS feel)
+  accent: "#0a0a0a",
+  accentPressed: "#2a2a2a",
+  accentSoft: "rgba(10, 10, 10, 0.06)",
+  accentRing: "rgba(10, 10, 10, 0.22)",
 
   // State
-  success: "#16a34a",
-  successSoft: "rgba(22, 163, 74, 0.14)",
-  warning: "#f59e0b",
-  warningSoft: "rgba(245, 158, 11, 0.14)",
-  danger: "#ef4444",
-  dangerSoft: "rgba(239, 68, 68, 0.16)",
+  success: "#15803d",
+  successSoft: "#e7f5ec",
+  warning: "#b45309",
+  warningSoft: "#fcf2e3",
+  danger: "#b91c1c",
+  dangerSoft: "#fdeaea",
 } as const;
 
 export type ColorToken = keyof typeof colors;
 
-/** Geometry — kept narrow on purpose; most spacing should use Tailwind classes. */
+/** Geometry — generous corners read minimal/clean (iOS feel). */
 export const radii = {
-  sm: 6,
-  md: 8,
-  lg: 12,
-  xl: 16,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 20,
+  pill: 9999,
 } as const;
 
-/** Minimum tap target. Buttons should be `h-14` (56px) or `h-12` (48px); never below 44. */
-export const minTap = 44;
+/** Minimum tap target. Primary buttons should be `h-14` / 56 px. */
+export const minTap = 48;

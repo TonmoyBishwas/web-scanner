@@ -1,24 +1,23 @@
 /**
- * ProgressBar — horizontal segmented bar. Replaces the round ProgressRing
- * (rings read consumer-app; a bar reads industrial).
+ * ProgressBar — calm rounded bar. Replaces the round ProgressRing.
  *
- * `segmented` mode draws N ticks so the worker can count progress at a glance
- * — useful for small pallet counts (≤ 30). Above that, fall back to a smooth
- * bar (`segmented={false}`).
+ * - Track: light surface (--surface-3).
+ * - Fill: black by default (matches the primary accent). Green when done.
+ * - Segments are auto-shown for small targets (≤ 30) and auto-hidden above.
  */
 
 interface ProgressBarProps {
   current: number;
   target: number;
-  tone?: "accent" | "warning" | "success";
+  tone?: "accent" | "success" | "warning";
   segmented?: boolean;
   className?: string;
 }
 
 const toneFill = {
   accent: "bg-[var(--accent)]",
-  warning: "bg-[var(--warning)]",
   success: "bg-[var(--success)]",
+  warning: "bg-[var(--warning)]",
 } as const;
 
 export function ProgressBar({
@@ -31,9 +30,9 @@ export function ProgressBar({
   const safeTarget = Math.max(1, target);
   const filled = Math.max(0, Math.min(current, safeTarget));
   const pct = (filled / safeTarget) * 100;
-
-  // Segment only when target is small enough to perceive each tick.
   const showSegments = segmented ?? safeTarget <= 30;
+  const done = filled >= safeTarget;
+  const fill = done ? toneFill.success : toneFill[tone];
 
   return (
     <div
@@ -42,14 +41,14 @@ export function ProgressBar({
       aria-valuemin={0}
       aria-valuemax={safeTarget}
       className={[
-        "relative h-2 w-full overflow-hidden rounded-full bg-[var(--surface-3)]",
+        "relative h-1.5 w-full overflow-hidden rounded-full bg-[var(--surface-3)]",
         className ?? "",
       ]
         .filter(Boolean)
         .join(" ")}
     >
       <div
-        className={["h-full transition-[width] duration-200", toneFill[tone]].join(" ")}
+        className={["h-full transition-[width] duration-200 rounded-full", fill].join(" ")}
         style={{ width: `${pct}%` }}
       />
       {showSegments && safeTarget > 1 ? (
@@ -58,7 +57,7 @@ export function ProgressBar({
             <span
               key={i}
               style={{ width: `${100 / safeTarget}%` }}
-              className="block border-r border-[var(--surface-0)]/80 last:border-r-0"
+              className="block border-r border-[var(--surface-0)] last:border-r-0"
             />
           ))}
         </div>

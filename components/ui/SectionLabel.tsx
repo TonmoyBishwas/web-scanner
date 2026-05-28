@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
 
 /**
- * SectionLabel — all-caps micro label. Used as the header above a list
- * (e.g. "PRODUCTS", "SCANNED", "ISSUED"). Reads like an equipment label.
+ * SectionLabel — small Hebrew (or English) label above a group, with an
+ * optional trailing chip.
  *
- * Pass `trailing` for a counter chip aligned to the opposite side.
+ * Minimal direction: no all-caps shouting, just a soft secondary-text label
+ * with breathing room.
  */
 
 interface SectionLabelProps {
@@ -17,15 +18,14 @@ export function SectionLabel({ children, trailing, className }: SectionLabelProp
   return (
     <div
       className={[
-        "flex items-center justify-between",
-        "border-b border-[var(--border-default)] pb-2 mb-3",
+        "flex items-center justify-between mb-3 px-1",
         className ?? "",
       ]
         .filter(Boolean)
         .join(" ")}
     >
-      <span className="micro-label">{children}</span>
-      {trailing ? <span className="micro-label">{trailing}</span> : null}
+      <span className="hebrew-label">{children}</span>
+      {trailing ? <span className="hebrew-label">{trailing}</span> : null}
     </div>
   );
 }

@@ -2,20 +2,20 @@ import { forwardRef } from "react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 /**
- * Button — single primitive for every clickable action across the scanner.
+ * Button — single primitive for every clickable action.
  *
- * - `primary`  = the hi-vis accent (orange). Use ONE per screen for the main action.
- * - `secondary`= outlined neutral. Cancel, back, alt actions.
- * - `ghost`    = transparent. Inline links / "edit" buttons inside list rows.
- * - `danger`   = red. Destructive only (delete-scan, force-cancel pallet).
+ * Minimal-clean direction (iOS-feel pills, light theme):
+ *  - `primary`   = black pill, white text. ONE per screen.
+ *  - `secondary` = white pill, black border, black text. Cancel / back / alt.
+ *  - `ghost`     = transparent, black text. Inline "edit" inside list rows.
+ *  - `success`   = green pill — use only for "this worked" affirmations
+ *                  (e.g. confirm after a green check is needed; rare).
+ *  - `danger`    = red pill, white text. Destructive only.
  *
- * Sizing:
- * - `lg` = h-14 (56 px). Default for any sticky bottom CTA — gloves-safe.
- * - `md` = h-12 (48 px). For inline / per-row actions.
- * - `sm` = h-10 (40 px). Use sparingly — never the only action on a screen.
+ * Sizing — defaults to gloves-safe. `lg` = 56 px.
  */
 
-type Variant = "primary" | "secondary" | "ghost" | "danger";
+type Variant = "primary" | "secondary" | "ghost" | "success" | "danger";
 type Size = "lg" | "md" | "sm";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -29,17 +29,25 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantClasses: Record<Variant, string> = {
   primary:
-    "bg-[var(--accent)] text-black active:bg-[var(--accent-pressed)] disabled:bg-[var(--surface-3)] disabled:text-[var(--text-tertiary)]",
+    "bg-[var(--accent)] text-white active:bg-[var(--accent-pressed)] " +
+    "disabled:bg-[var(--surface-3)] disabled:text-[var(--text-tertiary)]",
   secondary:
-    "bg-transparent text-[var(--text-primary)] border border-[var(--border-strong)] active:bg-[var(--surface-2)] disabled:text-[var(--text-tertiary)] disabled:border-[var(--border-default)]",
+    "bg-[var(--surface-1)] text-[var(--text-primary)] border border-[var(--border-strong)] " +
+    "active:bg-[var(--surface-2)] " +
+    "disabled:text-[var(--text-tertiary)] disabled:border-[var(--border-default)]",
   ghost:
-    "bg-transparent text-[var(--text-primary)] active:bg-[var(--surface-2)] disabled:text-[var(--text-tertiary)]",
+    "bg-transparent text-[var(--text-primary)] active:bg-[var(--surface-2)] " +
+    "disabled:text-[var(--text-tertiary)]",
+  success:
+    "bg-[var(--success)] text-white active:brightness-95 " +
+    "disabled:bg-[var(--surface-3)] disabled:text-[var(--text-tertiary)]",
   danger:
-    "bg-[var(--danger)] text-white active:brightness-90 disabled:bg-[var(--surface-3)] disabled:text-[var(--text-tertiary)]",
+    "bg-[var(--danger)] text-white active:brightness-95 " +
+    "disabled:bg-[var(--surface-3)] disabled:text-[var(--text-tertiary)]",
 };
 
 const sizeClasses: Record<Size, string> = {
-  lg: "h-14 text-[18px] px-6 gap-2.5",
+  lg: "h-14 text-[17px] px-7 gap-2.5",
   md: "h-12 text-[16px] px-5 gap-2",
   sm: "h-10 text-[14px] px-4 gap-2",
 };
@@ -64,7 +72,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       ref={ref}
       disabled={disabled || loading}
       className={[
-        "inline-flex items-center justify-center rounded-lg font-semibold tracking-[-0.01em]",
+        "inline-flex items-center justify-center rounded-full font-semibold",
         "transition-[background-color,color] duration-100 select-none",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-ring)]",
         "disabled:cursor-not-allowed",
@@ -82,7 +90,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       ) : (
         leadingIcon
       )}
-      <span>{children}</span>
+      {children ? <span>{children}</span> : null}
       {!loading && trailingIcon}
     </button>
   );
