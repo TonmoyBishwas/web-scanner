@@ -10,11 +10,14 @@ import {
 } from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
 import { DebugLogPanel } from '@/components/shared/DebugLogPanel';
+import { SettingsPopover } from '@/components/shared/SettingsPopover';
 import { installDebugLogCapture } from '@/lib/debug-log';
 import { LanguageContext, useLangDir, t } from '@/lib/i18n';
 import type { Language, MultiPalletSession, MultiPalletBoxScan, ParsedBarcode } from '@/types';
 import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
 import { matchInvoiceItem } from '@/lib/invoice-match';
+import { useSettingsStore } from '@/stores/settings-store';
+import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
 
 // Set up the in-page console-log capture once at module load. Idempotent —
 // safe even with React Strict Mode mounting twice.
@@ -122,6 +125,14 @@ export default function PalletVerifyPage({
 
   const processedRef = useRef<Set<string>>(new Set());
   const [looseBoxes, setLooseBoxes] = useState<BoxScan[]>([]);
+
+  // Hydrate the Sound / Vibration settings from localStorage so scan-feedback
+  // honours the worker's toggles (defaults to ON until hydrated).
+  const hydrateSettings = useSettingsStore((s) => s.hydrate);
+  useEffect(() => {
+    hydrateSettings();
+  }, [hydrateSettings]);
+
   // SmartScanner hands us a fn to flash its red "already scanned" indicator.
   // Used when a manually-captured box is rejected as a duplicate after OCR.
   const dupFlashRef = useRef<(() => void) | null>(null);
@@ -369,8 +380,12 @@ export default function PalletVerifyPage({
   const handleBarcodeDetected = useCallback(
     (_barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
       const barcode = _barcode.trim();
-      if (processedRef.current.has(barcode)) return;
+      if (processedRef.current.has(barcode)) {
+        scanDuplicateFeedback(); // already scanned this sticker
+        return;
+      }
       processedRef.current.add(barcode);
+      scanSuccessFeedback(); // good scan — box added below
 
       // Barcode is an identifier only — extract first 13 digits as dedup key
       const digits = barcode.replace(/\D/g, '');
@@ -521,6 +536,7 @@ export default function PalletVerifyPage({
               const dup = prev.some((b, i) => i !== idx && digitsOnly(b.barcode) === digits);
               if (dup) {
                 dupFlashRef.current?.(); // red "already scanned" flash
+                scanDuplicateFeedback();
                 return prev.filter((_, i) => i !== idx); // drop the provisional box
               }
               resolvedBarcode = digits;
@@ -624,8 +640,12 @@ export default function PalletVerifyPage({
   const handleLooseBarcodeDetected = useCallback(
     (_barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
       const barcode = _barcode.trim();
-      if (looseProcessedRef.current.has(barcode)) return;
+      if (looseProcessedRef.current.has(barcode)) {
+        scanDuplicateFeedback(); // already scanned this loose box
+        return;
+      }
       looseProcessedRef.current.add(barcode);
+      scanSuccessFeedback(); // good scan — box added below
       const digits = barcode.replace(/\D/g, '');
       const sku = digits.length >= 13 ? digits.slice(0, 13) : digits || barcode;
       const box: BoxScan = {
@@ -1064,6 +1084,7 @@ export default function PalletVerifyPage({
               const dup = prev.some((b, i) => i !== idx && digitsOnly(b.barcode) === digits);
               if (dup) {
                 looseDupFlashRef.current?.();
+                scanDuplicateFeedback();
                 return prev.filter((_, i) => i !== idx);
               }
               resolvedBarcode = digits;
@@ -1599,14 +1620,17 @@ export default function PalletVerifyPage({
       <div className="min-h-screen flex flex-col bg-gray-50">
         {/* Header */}
         <div className="bg-white border-b px-4 py-3 shadow-sm">
-          <div className="flex items-center gap-2">
-            <Package className="text-orange-500 w-5 h-5" />
-            <div>
-              <p className="text-sm font-bold text-gray-800">
-                {tr('palletVerify.looseHeader', { scanned, declared })}
-              </p>
-              <p className="text-xs text-gray-500" dir="ltr">{tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Package className="text-orange-500 w-5 h-5" />
+              <div>
+                <p className="text-sm font-bold text-gray-800">
+                  {tr('palletVerify.looseHeader', { scanned, declared })}
+                </p>
+                <p className="text-xs text-gray-500" dir="ltr">{tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}</p>
+              </div>
             </div>
+            <SettingsPopover />
           </div>
           <div className="mt-2">
             <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
@@ -1838,7 +1862,10 @@ export default function PalletVerifyPage({
               <p className="text-xs text-gray-500" dir="ltr">{tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}</p>
             </div>
           </div>
-          <TypeBadge />
+          <div className="flex items-center gap-1">
+            <TypeBadge />
+            <SettingsPopover />
+          </div>
         </div>
 
         <div className="mt-2">

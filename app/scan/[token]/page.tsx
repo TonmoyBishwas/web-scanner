@@ -14,6 +14,7 @@ import { OfflineBanner } from '@/components/shared/OfflineBanner';
 import { SwipeConfirm } from '@/components/shared/SwipeConfirm';
 import { PhotoGallery } from '@/components/shared/PhotoGallery';
 import { useSettingsStore } from '@/stores/settings-store';
+import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
 import { queueScan, getQueue, replayQueue } from '@/lib/offline-queue';
 import {
   Package,
@@ -62,7 +63,7 @@ export default function ScanPage({
   const { token } = use(params);
 
   // Settings
-  const { soundEnabled, vibrationEnabled, _hydrated, hydrate } = useSettingsStore();
+  const hydrate = useSettingsStore((s) => s.hydrate);
 
   // Session state
   const [session, setSession] = useState<ScanSession | null>(null);
@@ -121,83 +122,25 @@ export default function ScanPage({
   }, []);
 
 
-  // ──  Audio feedback using Web Audio API ──────────────────────
-  const playSuccessSound = useCallback(() => {
-    // Only block if hydrated AND disabled (allow before hydration)
-    if (_hydrated && !soundEnabled) return;
-    try {
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-
-      oscillator.frequency.value = 800;
-      oscillator.type = 'sine';
-
-      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
-
-      oscillator.start(audioContext.currentTime);
-      oscillator.stop(audioContext.currentTime + 0.15);
-    } catch (e) {
-      // Audio not supported
-    }
-  }, [soundEnabled, _hydrated]);
-
-  const playErrorSound = useCallback(() => {
-    // Only block if hydrated AND disabled (allow before hydration)
-    if (_hydrated && !soundEnabled) return;
-    try {
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-
-      oscillator.frequency.value = 200;
-      oscillator.type = 'sawtooth';
-
-      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
-
-      oscillator.start(audioContext.currentTime);
-      oscillator.stop(audioContext.currentTime + 0.3);
-    } catch (e) {
-      // Audio not supported
-    }
-  }, [soundEnabled, _hydrated]);
-
-  // ── Visual feedback ──────────────────────────────────────────
+  // ── Visual + audio/haptic feedback ───────────────────────────
+  // Sound + vibration are delegated to the shared scan-feedback module so all
+  // scanner pages cue identically and honour the same Sound / Vibration toggles.
   const triggerSuccessFeedback = useCallback(() => {
     setFlashColor('green');
     setTimeout(() => setFlashColor(null), 150);
 
-    playSuccessSound();
-
-    // Only vibrate if hydrated AND enabled (or if not hydrated yet)
-    if ((!_hydrated || vibrationEnabled) && 'vibrate' in navigator) {
-      navigator.vibrate(100);
-    }
+    scanSuccessFeedback();
 
     setCounterBounce(true);
     setTimeout(() => setCounterBounce(false), 300);
-  }, [playSuccessSound, vibrationEnabled, _hydrated]);
+  }, []);
 
   const triggerDuplicateFeedback = useCallback(() => {
     if (redFlashTriggerRef.current) {
       redFlashTriggerRef.current();
     }
-
-    playErrorSound();
-
-    // Only vibrate if hydrated AND enabled (or if not hydrated yet)
-    if ((!_hydrated || vibrationEnabled) && 'vibrate' in navigator) {
-      navigator.vibrate([200, 100, 200]);
-    }
-  }, [playErrorSound, vibrationEnabled, _hydrated]);
+    scanDuplicateFeedback();
+  }, []);
 
   // Polling ref
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);

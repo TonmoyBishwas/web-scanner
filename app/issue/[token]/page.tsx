@@ -14,6 +14,9 @@ import type {
   IssuedBox,
 } from '@/types';
 import { useLangDir, useT, LanguageContext, t } from '@/lib/i18n';
+import { SettingsPopover } from '@/components/shared/SettingsPopover';
+import { useSettingsStore } from '@/stores/settings-store';
+import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
 
 type IssuePhase =
   | 'loading'
@@ -54,37 +57,22 @@ export default function IssuePage({
   // Refs
   const lookupInProgress = useRef(false);
 
-  // Audio feedback
+  // Hydrate Sound / Vibration settings from localStorage so scan-feedback
+  // honours the worker's toggles (defaults to ON until hydrated).
+  const hydrateSettings = useSettingsStore((s) => s.hydrate);
+  useEffect(() => {
+    hydrateSettings();
+  }, [hydrateSettings]);
+
+  // Audio + haptic feedback — delegated to the shared scan-feedback module so
+  // this page cues identically to the other scanners and honours the same
+  // Sound / Vibration toggles (both handle vibration internally).
   const playSuccessSound = useCallback(() => {
-    try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.value = 800;
-      osc.type = 'sine';
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.15);
-    } catch {}
+    scanSuccessFeedback();
   }, []);
 
   const playErrorSound = useCallback(() => {
-    try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.value = 300;
-      osc.type = 'square';
-      gain.gain.setValueAtTime(0.2, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.3);
-    } catch {}
+    scanDuplicateFeedback();
   }, []);
 
   const showToast = useCallback((msg: string, type: 'success' | 'error') => {
@@ -157,7 +145,6 @@ export default function IssuePage({
       if (scannedBarcodes.has(barcode)) {
         playErrorSound();
         showToast(t(language, 'issue.alreadyIssuedToast'), 'error');
-        if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
         return;
       }
 
@@ -174,7 +161,6 @@ export default function IssuePage({
 
         if (!result.found || !result.box) {
           playErrorSound();
-          if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
 
           if (result.error === 'not_found') {
             showToast(t(language, 'issue.boxNotFoundToast'), 'error');
@@ -188,7 +174,6 @@ export default function IssuePage({
 
         // Found and available - show detail modal
         playSuccessSound();
-        if (navigator.vibrate) navigator.vibrate(100);
         setCurrentBox(result.box);
         setPhase('box_detail');
       } catch (err) {
@@ -494,17 +479,20 @@ function IssueRender({
             </p>
           )}
         </div>
-        <button
-          onClick={handleComplete}
-          disabled={issuedBoxes.length === 0}
-          className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-            issuedBoxes.length > 0
-              ? 'bg-green-600 hover:bg-green-500 text-white'
-              : 'bg-gray-700 text-gray-500 cursor-not-allowed'
-          }`}
-        >
-          {tr('issue.doneButton', { count: issuedBoxes.length })}
-        </button>
+        <div className="flex items-center gap-1">
+          <SettingsPopover />
+          <button
+            onClick={handleComplete}
+            disabled={issuedBoxes.length === 0}
+            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+              issuedBoxes.length > 0
+                ? 'bg-green-600 hover:bg-green-500 text-white'
+                : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+            }`}
+          >
+            {tr('issue.doneButton', { count: issuedBoxes.length })}
+          </button>
+        </div>
       </div>
 
       {/* Scanner */}
