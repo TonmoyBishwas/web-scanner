@@ -171,6 +171,7 @@ export default function PalletVerifyPage({
       name_he: string;
       name_en: string;
       weight: string;
+      expiry: string;
       // Captured sticker frame so the modal can show what the OCR actually saw.
       // Worker can't fix the name/weight blind — showing the photo is the whole
       // point of this view. Optional because rescue/legacy boxes might not have one.
@@ -738,6 +739,7 @@ export default function PalletVerifyPage({
       name_he: box.item_name_hebrew || '',
       name_en: box.item_name || '',
       weight: box.weight > 0 ? String(box.weight) : '',
+      expiry: box.expiry || '',
       image_data: box.image_data,
       isLoose,
     });
@@ -751,6 +753,7 @@ export default function PalletVerifyPage({
   function handleSaveEdit() {
     if (!editForm) return;
     const { barcode, name_he, name_en, isLoose } = editForm;
+    const expiry = editForm.expiry.trim();
     const w = parseFloat(editForm.weight);
 
     // Same patch shape for both collections. Crucially: clear needs_review
@@ -767,6 +770,7 @@ export default function PalletVerifyPage({
         item_name: name_en,
         item_name_hebrew: name_he,
         weight: newWeight,
+        expiry,
         needs_review: hasName && hasWeight ? undefined : b.needs_review,
       };
     }
@@ -882,7 +886,7 @@ export default function PalletVerifyPage({
   const imageModal = viewingImage ? (
     <div
       onClick={() => setViewingImage(null)}
-      className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
+      className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4"
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
@@ -903,22 +907,30 @@ export default function PalletVerifyPage({
     </div>
   ) : null;
 
-  // Edit-a-scan modal: pick the correct item from the invoice catalog (no
-  // Hebrew typing needed), or type a name, and fix the weight. Bottom sheet.
+  // Edit-a-scan view: a FULL-SCREEN sheet so the worker can see the captured
+  // sticker large AND fix the item / weight / expiry in the same view. The
+  // sticker sits at the top of a scrollable body; tapping it opens the pinch-
+  // zoom overlay (z-[60], above this sheet). Save/Cancel stay pinned at the
+  // bottom so they're always reachable regardless of how far the worker scrolls.
   const editModal = editForm ? (
-    <div
-      onClick={() => setEditForm(null)}
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60"
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md bg-white rounded-t-2xl p-5 space-y-4 max-h-[85vh] overflow-y-auto"
-      >
+    <div className="fixed inset-0 z-50 flex flex-col bg-white">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 shrink-0">
         <h2 className="text-base font-bold text-gray-900">{tr('palletVerify.editTitle')}</h2>
+        <button
+          onClick={() => setEditForm(null)}
+          aria-label={tr('palletVerify.editCancel')}
+          className="text-gray-400 hover:text-gray-700 text-3xl leading-none px-2 -mr-2"
+        >
+          &times;
+        </button>
+      </div>
 
-        {/* Captured sticker preview — the whole point of the modal is to let
-            the worker fix the OCR by looking at the actual photo. Tap to
-            open the existing fullscreen viewer. */}
+      {/* Scrollable body */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Captured sticker preview — large. The whole point of this view is to
+            let the worker fix the OCR by reading the actual photo. Tap to open
+            the pinch-zoom overlay for an even closer look. */}
         {editForm.image_data && (
           <button
             type="button"
@@ -929,7 +941,7 @@ export default function PalletVerifyPage({
             <img
               src={editForm.image_data}
               alt={tr('palletVerify.viewWithIcon')}
-              className="w-full max-h-44 object-contain rounded-xl bg-gray-50 border border-gray-200"
+              className="w-full max-h-[45vh] object-contain rounded-xl bg-gray-50 border border-gray-200"
             />
             <p className="text-[11px] text-gray-500 mt-1 text-center">
               {tr('palletVerify.tapToZoom')}
@@ -993,20 +1005,36 @@ export default function PalletVerifyPage({
           />
         </div>
 
-        <div className="flex gap-3 pt-1">
-          <button
-            onClick={() => setEditForm(null)}
-            className="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold text-sm hover:bg-gray-200 transition"
-          >
-            {tr('palletVerify.editCancel')}
-          </button>
-          <button
-            onClick={handleSaveEdit}
-            className="flex-1 py-3 rounded-xl bg-green-600 text-white font-semibold text-sm hover:bg-green-700 transition"
-          >
-            {tr('palletVerify.editSave')}
-          </button>
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            {tr('palletVerify.editExpiry')}
+          </label>
+          <input
+            type="text"
+            inputMode="numeric"
+            dir="ltr"
+            placeholder="DD/MM/YYYY"
+            value={editForm.expiry}
+            onChange={(e) => setEditForm({ ...editForm, expiry: e.target.value })}
+            className="w-full text-center text-base text-gray-900 bg-white border-2 border-gray-300 rounded-xl py-2 px-3 outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-200"
+          />
         </div>
+      </div>
+
+      {/* Sticky action bar */}
+      <div className="flex gap-3 p-4 border-t border-gray-200 shrink-0">
+        <button
+          onClick={() => setEditForm(null)}
+          className="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold text-sm hover:bg-gray-200 transition"
+        >
+          {tr('palletVerify.editCancel')}
+        </button>
+        <button
+          onClick={handleSaveEdit}
+          className="flex-1 py-3 rounded-xl bg-green-600 text-white font-semibold text-sm hover:bg-green-700 transition"
+        >
+          {tr('palletVerify.editSave')}
+        </button>
       </div>
     </div>
   ) : null;

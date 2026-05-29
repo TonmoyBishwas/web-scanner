@@ -226,6 +226,7 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.editPickItem': 'בחר את הפריט הנכון (מהחשבונית)',
   'palletVerify.editTypeManually': 'או הקלד את השם',
   'palletVerify.editWeight': 'משקל (ק״ג)',
+  'palletVerify.editExpiry': 'תוקף (אופציונלי)',
   'palletVerify.editSave': 'שמור',
   'palletVerify.editCancel': 'ביטול',
 

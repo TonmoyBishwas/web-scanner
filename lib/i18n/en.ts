@@ -222,6 +222,7 @@ export const en = {
   'palletVerify.editPickItem': 'Pick the correct item (from the invoice)',
   'palletVerify.editTypeManually': 'Or type the name',
   'palletVerify.editWeight': 'Weight (kg)',
+  'palletVerify.editExpiry': 'Expiry (optional)',
   'palletVerify.editSave': 'Save',
   'palletVerify.editCancel': 'Cancel',
 
