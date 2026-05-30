@@ -5,6 +5,36 @@ import { AlertTriangle, ScanLine } from 'lucide-react';
 import type { ParsedBarcode, BoxStickerOCR } from '@/types';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
 import { useT } from '@/lib/i18n';
+import { useSettingsStore } from '@/stores/settings-store';
+
+// Build a tiny looped silent WAV at runtime (no giant base64 literal). The
+// volume-button capture trick needs an actively-playing <audio> element so the
+// OS routes hardware volume-key presses to it; we then read `volumechange` as a
+// capture trigger. Best-effort: flaky on some Android builds, a no-op on iOS.
+function makeSilentWavUrl(): string {
+  const sampleRate = 8000;
+  const numSamples = sampleRate; // ~1s of silence, loops cleanly
+  const buffer = new ArrayBuffer(44 + numSamples);
+  const view = new DataView(buffer);
+  const writeStr = (off: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+  };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + numSamples, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate, true);
+  view.setUint16(32, 1, true);
+  view.setUint16(34, 8, true); // 8-bit
+  writeStr(36, 'data');
+  view.setUint32(40, numSamples, true);
+  for (let i = 0; i < numSamples; i++) view.setUint8(44 + i, 128); // 8-bit silence
+  return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
+}
 
 interface SmartScannerProps {
   onBarcodeDetected: (barcode: string, data: ParsedBarcode, imageData?: string) => void;
@@ -114,6 +144,7 @@ export function SmartScanner({
   className
 }: SmartScannerProps) {
   const tr = useT();
+  const hardwareTriggerEnabled = useSettingsStore((s) => s.hardwareTriggerEnabled);
   const [isSupported, setIsSupported] = useState<boolean | null>(null);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [currentCameraIndex, setCurrentCameraIndex] = useState(0);
@@ -458,6 +489,73 @@ export function SmartScanner({
       setTimeout(() => setCaptureBusy(false), 1200);
     }
   }, [isInCooldown, captureBusy, onManualCapture]);
+
+  // ── Hardware capture trigger: Bluetooth remote keystroke ──
+  // Opt-in (settings). A paired BT camera-remote / ring clicker emits a real
+  // keydown; we fire the same manual-capture path. Deterministic — one press =
+  // one capture (handleManualCaptureClick is debounced by cooldown/captureBusy,
+  // so a held or repeated key can't double-fire). Ignored while typing.
+  useEffect(() => {
+    if (!hardwareTriggerEnabled || !onManualCapture) return;
+    const TRIGGER_KEYS = new Set([
+      'Enter', ' ', 'Spacebar', 'ArrowUp', 'ArrowDown',
+      'AudioVolumeUp', 'AudioVolumeDown', 'VolumeUp', 'VolumeDown',
+      'MediaPlayPause',
+    ]);
+    function onKey(e: KeyboardEvent) {
+      const tgt = e.target as HTMLElement | null;
+      if (
+        tgt &&
+        (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)
+      ) {
+        return; // don't hijack count inputs / the edit modal
+      }
+      if (!TRIGGER_KEYS.has(e.key)) return;
+      e.preventDefault();
+      handleManualCaptureClick();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [hardwareTriggerEnabled, onManualCapture, handleManualCaptureClick]);
+
+  // ── Hardware capture trigger: phone volume button (volumechange hack) ──
+  // Opt-in (settings). Play a silent looped <audio> so the OS routes hardware
+  // volume presses to it, then treat any volume change as a capture and
+  // re-center the level. Best-effort — known to be flaky on some Android builds
+  // and inert on iOS; the on-screen button + BT remote are the reliable paths.
+  useEffect(() => {
+    if (!hardwareTriggerEnabled || !onManualCapture) return;
+    if (typeof window === 'undefined') return;
+    const url = makeSilentWavUrl();
+    const audio = document.createElement('audio');
+    audio.loop = true;
+    audio.src = url;
+    audio.volume = 0.5;
+    let ready = false;     // ignore the volumechange from our own initial set
+    let resetting = false; // ignore the volumechange from our re-center
+    const onVolume = () => {
+      if (!ready || resetting) return;
+      resetting = true;
+      handleManualCaptureClick();
+      audio.volume = 0.5; // headroom for the next press in either direction
+      setTimeout(() => { resetting = false; }, 60);
+    };
+    const tryPlay = () => {
+      audio.play().then(() => { ready = true; }).catch(() => { /* needs gesture */ });
+    };
+    audio.addEventListener('volumechange', onVolume);
+    tryPlay();
+    // Autoplay is often blocked until a user gesture — retry on the first tap.
+    const onGesture = () => tryPlay();
+    window.addEventListener('pointerdown', onGesture, { once: true });
+    return () => {
+      audio.removeEventListener('volumechange', onVolume);
+      window.removeEventListener('pointerdown', onGesture);
+      audio.pause();
+      audio.src = '';
+      URL.revokeObjectURL(url);
+    };
+  }, [hardwareTriggerEnabled, onManualCapture, handleManualCaptureClick]);
 
   const stopNativeScanning = () => {
     if (animationFrameRef.current) {
@@ -975,6 +1073,11 @@ export function SmartScanner({
                 }`}
               >
                 📷 {tr('scanner.captureAnyway')}
+                {hardwareTriggerEnabled && (
+                  <span className="ms-1 text-[10px] text-green-300 font-medium">
+                    {tr('scanner.hardwareTriggerOn')}
+                  </span>
+                )}
               </button>
             </div>
           </>
