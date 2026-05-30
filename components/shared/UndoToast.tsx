@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Undo2, X } from 'lucide-react';
+import { useT } from '@/lib/i18n';
 
 interface UndoToastProps {
   barcode: string;
@@ -11,6 +12,7 @@ interface UndoToastProps {
 }
 
 export function UndoToast({ barcode, onUndo, onDismiss, durationMs = 5000 }: UndoToastProps) {
+  const tr = useT();
   const [visible, setVisible] = useState(true);
   const [exiting, setExiting] = useState(false);
 
@@ -43,8 +45,8 @@ export function UndoToast({ barcode, onUndo, onDismiss, durationMs = 5000 }: Und
       }`}
     >
       <div className="flex-1 min-w-0">
-        <p className="text-sm text-gray-200 truncate">
-          Scanned: Box #{barcode.slice(-6)}
+        <p className="text-sm text-gray-200 truncate" dir="ltr">
+          {tr('scanner.scanned')}: {tr('scan.boxLabelShort', { id: barcode.slice(-6) })}
         </p>
       </div>
       <button
@@ -52,7 +54,7 @@ export function UndoToast({ barcode, onUndo, onDismiss, durationMs = 5000 }: Und
         className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium text-white transition-colors shrink-0"
       >
         <Undo2 className="w-3.5 h-3.5" />
-        Undo
+        {tr('issue.undo')}
       </button>
       <button
         onClick={handleDismiss}

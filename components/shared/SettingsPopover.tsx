@@ -1,13 +1,22 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Settings, Volume2, VolumeX, Vibrate, X } from 'lucide-react';
+import { Settings, Volume2, VolumeX, Vibrate, Aperture, X } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useT } from '@/lib/i18n';
 
 export function SettingsPopover() {
+  const tr = useT();
   const [open, setOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const { soundEnabled, vibrationEnabled, toggleSound, toggleVibration } = useSettingsStore();
+  const {
+    soundEnabled,
+    vibrationEnabled,
+    hardwareTriggerEnabled,
+    toggleSound,
+    toggleVibration,
+    toggleHardwareTrigger,
+  } = useSettingsStore();
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -24,7 +33,7 @@ export function SettingsPopover() {
       <button
         onClick={() => setOpen(!open)}
         className="p-2 rounded-lg hover:bg-white/10 dark:hover:bg-white/10 transition-colors"
-        aria-label="Settings"
+        aria-label={tr('components.settings.aria')}
       >
         <Settings className="w-5 h-5 text-gray-400" />
       </button>
@@ -32,7 +41,7 @@ export function SettingsPopover() {
       {open && (
         <div className="absolute right-0 top-full mt-2 w-56 bg-gray-800 dark:bg-gray-800 border border-gray-700 dark:border-gray-700 rounded-xl shadow-2xl z-[70] overflow-hidden animate-fadeIn">
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
-            <span className="text-sm font-semibold text-white">Settings</span>
+            <span className="text-sm font-semibold text-white">{tr('components.settings.title')}</span>
             <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-white">
               <X className="w-4 h-4" />
             </button>
@@ -50,7 +59,7 @@ export function SettingsPopover() {
                 ) : (
                   <VolumeX className="w-4 h-4 text-gray-500" />
                 )}
-                <span className="text-sm text-gray-200">Sound</span>
+                <span className="text-sm text-gray-200">{tr('components.settings.sound')}</span>
               </div>
               <TogglePill enabled={soundEnabled} />
             </button>
@@ -62,9 +71,21 @@ export function SettingsPopover() {
             >
               <div className="flex items-center gap-3">
                 <Vibrate className={`w-4 h-4 ${vibrationEnabled ? 'text-green-400' : 'text-gray-500'}`} />
-                <span className="text-sm text-gray-200">Vibration</span>
+                <span className="text-sm text-gray-200">{tr('components.settings.vibration')}</span>
               </div>
               <TogglePill enabled={vibrationEnabled} />
+            </button>
+
+            {/* Hardware capture trigger (volume button + Bluetooth remote) */}
+            <button
+              onClick={toggleHardwareTrigger}
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg hover:bg-white/5 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <Aperture className={`w-4 h-4 ${hardwareTriggerEnabled ? 'text-green-400' : 'text-gray-500'}`} />
+                <span className="text-sm text-gray-200">{tr('components.settings.hardwareTrigger')}</span>
+              </div>
+              <TogglePill enabled={hardwareTriggerEnabled} />
             </button>
           </div>
         </div>

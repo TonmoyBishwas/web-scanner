@@ -2,6 +2,7 @@
 
 import { X, FileText } from 'lucide-react';
 import { ItemProgress } from '@/components/progress/ItemProgress';
+import { useT } from '@/lib/i18n';
 import type { InvoiceItem, ScannedItem, BoxStickerOCR } from '@/types';
 
 interface InvoiceDrawerProps {
@@ -14,6 +15,7 @@ interface InvoiceDrawerProps {
 }
 
 export function InvoiceDrawer({ open, onClose, items, scannedItems, ocrResults, ocrPending }: InvoiceDrawerProps) {
+  const tr = useT();
   if (!open) return null;
 
   return (
@@ -30,7 +32,7 @@ export function InvoiceDrawer({ open, onClose, items, scannedItems, ocrResults, 
         <div className="flex justify-between items-center px-4 py-3 border-b border-gray-700">
           <div className="flex items-center gap-2">
             <FileText className="w-4 h-4 text-blue-400" />
-            <span className="text-white font-bold text-sm">Invoice Overview</span>
+            <span className="text-white font-bold text-sm">{tr('components.invoiceDrawer.overviewTitle')}</span>
           </div>
           <button
             onClick={onClose}

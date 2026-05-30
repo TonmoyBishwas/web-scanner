@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sessionStorage } from '@/lib/redis';
 import { findBoxByBarcode, getInventoryRecord } from '@/lib/airtable';
-import type { BoxLookupResult, ScanSession } from '@/types';
+import { t } from '@/lib/i18n/server';
+import type { BoxLookupResult, ScanSession, Language } from '@/types';
 
 /**
  * POST /api/issue-lookup
@@ -14,30 +15,31 @@ export async function POST(request: NextRequest) {
 
     if (!token || !barcode) {
       return NextResponse.json(
-        { found: false, error: 'error', message: 'Missing token or barcode' },
+        { found: false, error: 'error', message: t(undefined, 'errors.missingTokenOrBarcode') },
         { status: 400 }
       );
     }
 
     // Validate session
     const session: ScanSession | null = await sessionStorage.get(token);
+    const lang = (session?.language as Language | undefined);
     if (!session) {
       return NextResponse.json(
-        { found: false, error: 'error', message: 'Session not found' },
+        { found: false, error: 'error', message: t(lang, 'errors.sessionNotFound') },
         { status: 404 }
       );
     }
 
     if (session.operation_type !== 'ISSUE') {
       return NextResponse.json(
-        { found: false, error: 'error', message: 'Session is not an ISSUE type' },
+        { found: false, error: 'error', message: t(lang, 'errors.notIssueSession') },
         { status: 400 }
       );
     }
 
     if (session.status !== 'ACTIVE') {
       return NextResponse.json(
-        { found: false, error: 'error', message: 'Session is not active' },
+        { found: false, error: 'error', message: t(lang, 'errors.sessionInactive') },
         { status: 400 }
       );
     }
@@ -48,7 +50,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         found: false,
         error: 'already_issued',
-        message: 'This box has already been issued in this session',
+        message: t(lang, 'errors.boxAlreadyIssuedSession'),
       } satisfies BoxLookupResult);
     }
 
@@ -58,7 +60,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         found: false,
         error: 'not_found',
-        message: 'Box not found in inventory',
+        message: t(lang, 'errors.boxNotFound'),
       } satisfies BoxLookupResult);
     }
 
@@ -69,21 +71,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         found: false,
         error: 'already_issued',
-        message: `Box status is "${fields['Status']}" - not available for issue`,
+        message: t(lang, 'errors.boxStatusNotAvailable', { status: String(fields['Status']) }),
       } satisfies BoxLookupResult);
-    }
-
-    // If session is LPN-restricted, verify box belongs to that pallet
-    if (session.pallet_record_id) {
-      const boxPalletIds: string[] = Array.isArray(fields['Pallet']) ? fields['Pallet'] : [];
-      if (!boxPalletIds.includes(session.pallet_record_id)) {
-        const lpn = session.document_number || 'the requested pallet';
-        return NextResponse.json({
-          found: false,
-          error: 'wrong_pallet',
-          message: `Box is not on pallet ${lpn}`,
-        } satisfies BoxLookupResult);
-      }
     }
 
     // Get linked inventory batch for item name, supplier, etc.
@@ -126,7 +115,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('[issue-lookup] Error:', error);
     return NextResponse.json(
-      { found: false, error: 'error', message: 'Internal server error' },
+      { found: false, error: 'error', message: t(undefined, 'errors.serverError') },
       { status: 500 }
     );
   }

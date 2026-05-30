@@ -7,7 +7,8 @@ import {
   issueBox,
   updateInventoryQuantity,
 } from '@/lib/airtable';
-import type { IssuedBox, ScanSession } from '@/types';
+import { t } from '@/lib/i18n/server';
+import type { IssuedBox, ScanSession, Language } from '@/types';
 
 /**
  * POST /api/issue-confirm
@@ -32,7 +33,7 @@ export async function POST(request: NextRequest) {
 
     if (!token || !box_record_id || !barcode) {
       return NextResponse.json(
-        { success: false, error: 'Missing required fields' },
+        { success: false, error: t(undefined, 'errors.missingFields') },
         { status: 400 }
       );
     }
@@ -46,15 +47,16 @@ export async function POST(request: NextRequest) {
         const session: ScanSession | null = await sessionStorage.get(token);
         if (!session) {
           errorResponse = NextResponse.json(
-            { success: false, error: 'Session not found' },
+            { success: false, error: t(undefined, 'errors.sessionNotFound') },
             { status: 404 }
           );
           return;
         }
+        const lang = session.language as Language | undefined;
 
         if (session.operation_type !== 'ISSUE' || session.status !== 'ACTIVE') {
           errorResponse = NextResponse.json(
-            { success: false, error: 'Invalid session state' },
+            { success: false, error: t(lang, 'errors.invalidSessionState') },
             { status: 400 }
           );
           return;
@@ -64,7 +66,7 @@ export async function POST(request: NextRequest) {
         const boxRecord = await findBoxByBarcode(barcode);
         if (!boxRecord || boxRecord.fields['Status'] !== 'Available') {
           errorResponse = NextResponse.json(
-            { success: false, error: 'Box is no longer available' },
+            { success: false, error: t(lang, 'errors.boxNoLongerAvailable') },
             { status: 409 }
           );
           return;
@@ -146,7 +148,7 @@ export async function POST(request: NextRequest) {
     } catch (lockError) {
       console.error('[issue-confirm] Lock error:', lockError);
       return NextResponse.json(
-        { success: false, error: 'Failed to acquire lock. Please try again.' },
+        { success: false, error: t(undefined, 'errors.lockFailed') },
         { status: 500 }
       );
     }
@@ -156,7 +158,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('[issue-confirm] Error:', error);
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
+      { success: false, error: t(undefined, 'errors.serverError') },
       { status: 500 }
     );
   }

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { WifiOff, Wifi, Loader2 } from 'lucide-react';
+import { useT } from '@/lib/i18n';
 
 interface OfflineBannerProps {
   queueCount: number;
@@ -9,6 +10,7 @@ interface OfflineBannerProps {
 }
 
 export function OfflineBanner({ queueCount, isSyncing }: OfflineBannerProps) {
+  const tr = useT();
   const [isOffline, setIsOffline] = useState(false);
   const [showReconnected, setShowReconnected] = useState(false);
 
@@ -41,7 +43,7 @@ export function OfflineBanner({ queueCount, isSyncing }: OfflineBannerProps) {
     return (
       <div className="bg-amber-600/90 text-white px-4 py-2 text-sm flex items-center gap-2 animate-slideInUp">
         <WifiOff className="w-4 h-4 shrink-0" />
-        <span>You&apos;re offline — scans will be saved locally</span>
+        <span>{tr('components.offlineSavedLocally')}</span>
         {queueCount > 0 && (
           <span className="ml-auto bg-amber-800 px-2 py-0.5 rounded-full text-xs font-bold">
             {queueCount}
@@ -55,7 +57,7 @@ export function OfflineBanner({ queueCount, isSyncing }: OfflineBannerProps) {
     return (
       <div className="bg-blue-600/90 text-white px-4 py-2 text-sm flex items-center gap-2 animate-slideInUp">
         <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-        <span>Syncing {queueCount} scan{queueCount !== 1 ? 's' : ''}...</span>
+        <span>{tr('components.offlineSyncing', { count: queueCount })}</span>
       </div>
     );
   }
@@ -64,7 +66,7 @@ export function OfflineBanner({ queueCount, isSyncing }: OfflineBannerProps) {
     return (
       <div className="bg-green-600/90 text-white px-4 py-2 text-sm flex items-center gap-2 animate-slideInUp">
         <Wifi className="w-4 h-4 shrink-0" />
-        <span>Back online</span>
+        <span>{tr('components.offlineBackOnline')}</span>
       </div>
     );
   }

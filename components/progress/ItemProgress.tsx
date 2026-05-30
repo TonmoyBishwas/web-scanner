@@ -1,6 +1,7 @@
 'use client';
 
 import { Check, Clock } from 'lucide-react';
+import { useT } from '@/lib/i18n';
 import type { InvoiceItem, ScannedItem, BoxStickerOCR } from '@/types';
 
 interface ItemProgressProps {
@@ -11,6 +12,7 @@ interface ItemProgressProps {
 }
 
 export function ItemProgress({ items, scanned, ocrResults = new Map(), ocrPending = new Set() }: ItemProgressProps) {
+  const tr = useT();
   // Create a map for quick lookup
   const scannedMap = new Map<number, ScannedItem>();
   for (const item of scanned) {
@@ -26,7 +28,7 @@ export function ItemProgress({ items, scanned, ocrResults = new Map(), ocrPendin
       {/* Overall Progress */}
       <div className="bg-gray-800 rounded-lg p-4">
         <div className="flex justify-between items-center mb-2">
-          <span className="text-sm font-medium">Overall Progress</span>
+          <span className="text-sm font-medium">{tr('components.itemProgress.overall')}</span>
           <span className="text-sm text-gray-400">
             {totalWeightScanned.toFixed(2)} kg / {totalWeightExpected.toFixed(2)} kg
           </span>
@@ -38,13 +40,13 @@ export function ItemProgress({ items, scanned, ocrResults = new Map(), ocrPendin
           />
         </div>
         <p className="text-xs text-gray-400 mt-1 text-center">
-          {completionRate.toFixed(1)}% complete
+          {tr('components.itemProgress.percentComplete', { percent: completionRate.toFixed(1) })}
         </p>
       </div>
 
       {/* Per-Item Progress */}
       <div className="space-y-2">
-        <h3 className="text-sm font-medium">Items</h3>
+        <h3 className="text-sm font-medium">{tr('components.itemProgress.itemsTitle')}</h3>
         {items.map((item) => {
           const scannedData = scannedMap.get(item.item_index);
           const scannedWeight = scannedData?.scanned_weight || 0;
@@ -67,7 +69,11 @@ export function ItemProgress({ items, scanned, ocrResults = new Map(), ocrPendin
 
               <div className="flex justify-between items-center mb-1">
                 <span className="text-xs text-gray-400">
-                  {scannedCount} boxes • {scannedWeight.toFixed(2)} kg / {item.quantity_kg} kg
+                  {tr('components.itemProgress.boxesAndWeight', {
+                    count: scannedCount,
+                    scanned: scannedWeight.toFixed(2),
+                    expected: item.quantity_kg,
+                  })}
                 </span>
                 <span className="text-xs text-gray-400">
                   {itemProgress.toFixed(0)}%
@@ -98,6 +104,7 @@ export function OCRStatusIndicator({
   ocrPending: Set<string>;
   ocrResults: Map<string, BoxStickerOCR>;
 }) {
+  const tr = useT();
   if (ocrPending.size === 0 && ocrResults.size === 0) {
     return null;
   }
@@ -105,16 +112,16 @@ export function OCRStatusIndicator({
   return (
     <div className="bg-gray-800 rounded-lg p-3 mb-4">
       <div className="flex justify-between items-center">
-        <span className="text-sm font-medium">Product Data (OCR)</span>
+        <span className="text-sm font-medium">{tr('components.itemProgress.productData')}</span>
         <div className="flex gap-4 text-xs">
           {ocrPending.size > 0 && (
             <span className="flex items-center gap-1 text-yellow-400">
-              <Clock className="w-3 h-3" /> Processing {ocrPending.size}
+              <Clock className="w-3 h-3" /> {tr('components.itemProgress.processingN', { count: ocrPending.size })}
             </span>
           )}
           {ocrResults.size > 0 && (
             <span className="flex items-center gap-1 text-green-400">
-              <Check className="w-3 h-3" /> {ocrResults.size} enriched
+              <Check className="w-3 h-3" /> {tr('components.itemProgress.enriched', { count: ocrResults.size })}
             </span>
           )}
         </div>

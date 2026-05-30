@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
       document_number,
       invoice_image_url,
       user_info,
-      pallet_record_id,
+      language,
     } = body;
 
     // Validate required fields
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
       invoice_image_url,  // Store invoice image URL if provided
       ...(operation_type === 'ISSUE' ? { issued_boxes: [] } : {}),
       ...(user_info ? { user_info } : {}),
-      ...(pallet_record_id ? { pallet_record_id } : {}),
+      language: language === 'Hebrew' ? 'Hebrew' : 'English',
     };
 
     // Store in Redis

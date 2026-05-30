@@ -4,6 +4,8 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { AlertTriangle, ScanLine } from 'lucide-react';
 import type { ParsedBarcode, BoxStickerOCR } from '@/types';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
+import { useT } from '@/lib/i18n';
+import { useSettingsStore } from '@/stores/settings-store';
 
 interface SmartScannerProps {
   onBarcodeDetected: (barcode: string, data: ParsedBarcode, imageData?: string) => void;
@@ -23,6 +25,81 @@ declare global {
   }
 }
 
+// localStorage key for the worker's preferred-camera deviceId. Survives
+// the per-pallet SmartScanner remounts triggered by the `key` prop on
+// pallet-verify, and across page reloads. Picked up at mount time;
+// updated whenever the worker taps the camera-switch button.
+const CAMERA_PREFERENCE_KEY = 'pallet-scanner:preferred-camera-device-id';
+
+/**
+ * Relative sharpness score (gradient energy) of a canvas. Higher = sharper.
+ * Downscales to ~`sample` px wide grayscale and sums squared differences of
+ * horizontally-adjacent pixels — a cheap focus/motion-blur proxy.
+ */
+function sharpnessScore(source: CanvasImageSource, srcW: number, srcH: number, sample = 320): number {
+  if (!srcW || !srcH) return 0;
+  const w = Math.min(sample, srcW);
+  const h = Math.max(1, Math.round((srcH / srcW) * w));
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const cx = c.getContext('2d', { willReadFrequently: true });
+  if (!cx) return 0;
+  cx.drawImage(source, 0, 0, w, h);
+  const { data } = cx.getImageData(0, 0, w, h);
+  let energy = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 1; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const j = (y * w + x - 1) * 4;
+      // luma (Rec. 601) of the two adjacent pixels
+      const g1 = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      const g0 = 0.299 * data[j] + 0.587 * data[j + 1] + 0.114 * data[j + 2];
+      const d = g1 - g0;
+      energy += d * d;
+    }
+  }
+  return energy / (w * h);
+}
+
+/**
+ * Capture the OCR image: grab a short burst of FULL-frame stills from the live
+ * video and return the SHARPEST one as a JPEG data URL. Fixes the two capture
+ * problems behind bad Hebrew name OCR — (1) the frame grabbed at barcode-
+ * confirmation is motion-blurred, and (2) the barcode-detection canvas is
+ * cropped, cutting off the product name. Here we use the whole frame (capped
+ * at `maxWidth`) at higher quality.
+ */
+async function captureSharpestFrame(
+  video: HTMLVideoElement,
+  maxWidth = 1280,
+  frames = 4,
+  intervalMs = 110,
+): Promise<string> {
+  const vw = video.videoWidth || maxWidth;
+  const vh = video.videoHeight || Math.round(maxWidth * 0.75);
+  const w = Math.min(maxWidth, vw);
+  const h = Math.max(1, Math.round((vh / vw) * w));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return video as unknown as string; // unreachable; satisfies types
+
+  let bestData = '';
+  let bestScore = -1;
+  for (let f = 0; f < frames; f++) {
+    ctx.drawImage(video, 0, 0, w, h);
+    const score = sharpnessScore(canvas, w, h);
+    if (score > bestScore) {
+      bestScore = score;
+      bestData = canvas.toDataURL('image/jpeg', 0.9);
+    }
+    if (f < frames - 1) await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return bestData;
+}
+
 /**
  * SmartScanner - uses native BarcodeDetector API (hardware accelerated).
  * Shows unsupported browser message if BarcodeDetector is not available.
@@ -37,6 +114,8 @@ export function SmartScanner({
   onDuplicateFlash,
   className
 }: SmartScannerProps) {
+  const tr = useT();
+  const hardwareTriggerEnabled = useSettingsStore((s) => s.hardwareTriggerEnabled);
   const [isSupported, setIsSupported] = useState<boolean | null>(null);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [currentCameraIndex, setCurrentCameraIndex] = useState(0);
@@ -54,6 +133,20 @@ export function SmartScanner({
   const [captureCount, setCaptureCount] = useState(0); // 0 | 1 | 2 | 3
   const [isDuplicate, setIsDuplicate] = useState(false);
   const duplicateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Manual OCR-capture fallback (for boxes whose barcode won't decode — glare,
+  // a label folded around a corner, or a torn/half barcode). `lastActivityRef`
+  // tracks the last confirmed decode (or mount); when no decode has happened in
+  // a few seconds the "capture anyway" button surfaces prominently.
+  const lastActivityRef = useRef<number>(Date.now());
+  const [showCaptureHint, setShowCaptureHint] = useState(false);
+  const [captureBusy, setCaptureBusy] = useState(false);
+  // Visible diagnostic state — surfaces silent camera failures to the user.
+  const [diag, setDiag] = useState<
+    | { state: 'init' }
+    | { state: 'ready' }
+    | { state: 'no_cameras' }
+    | { state: 'error'; message: string }
+  >({ state: 'init' });
 
   // Multi-read validation to ensure barcode is read correctly
   const pendingReadsRef = useRef<{ barcode: string; count: number; timestamp: number } | null>(null);
@@ -78,59 +171,233 @@ export function SmartScanner({
     return checkDigit === expectedCheckDigit;
   };
 
-  // Enumerate available cameras (AFTER getting initial permission for labels)
+  // Enumerate available cameras and pick a sensible default.
+  //
+  // On Samsung phones (S21 FE, S25 Ultra) the OS often returns the
+  // ULTRAWIDE camera for `facingMode: 'environment'`, even though the
+  // worker wants the MAIN lens. Labels alone don't disambiguate either
+  // (some labels are just "camera2 0", with no descriptive text). The
+  // signal that DOES discriminate reliably is `track.getCapabilities()`:
+  // main back cameras virtually always advertise `zoom.max >= 2`;
+  // ultrawide / fixed-FoV lenses report no zoom or zoom.max == 1.
+  //
+  // Selection priority (first hit wins):
+  //   1. Worker's saved preference from localStorage.
+  //   2. Lowest-numbered back camera (`camera 0, facing back` over
+  //      `camera 2, facing back`). Samsung's Camera2 HAL consistently
+  //      puts the main lens at camera 0; its facingMode='environment'
+  //      default is the ULTRAWIDE (camera 2) which ALSO reports zoom>=2,
+  //      so all the capability-based rules below pick wrong on Samsung.
+  //      The label number is the only reliable discriminator. Falls
+  //      through cleanly when labels don't match (iOS, custom skins).
+  //   3. OS-picked rear camera, IF its capabilities advertise zoom — i.e.
+  //      it's the main lens on most phones. Free check: we already have
+  //      the stream open from the permission probe.
+  //   4. Probe the other back cameras one at a time (briefly) and pick
+  //      the first one with `zoom.max >= 2`. ~500ms per probe; only
+  //      runs on first mount when nothing's saved AND the OS default
+  //      is the wrong lens.
+  //   5. OS-picked rear camera (even without zoom).
+  //   6. Label heuristic that prefers main/wide and avoids
+  //      ultrawide / telephoto / macro tags.
+  //   7. Any back-labelled camera.
+  //   8. First device.
   const enumerateCameras = useCallback(async () => {
     try {
-      // First request permission to get proper camera labels
-      const tempStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' }
-      });
-      tempStream.getTracks().forEach(track => track.stop());
+      // Helper: open a track briefly, return whether it has zoom >= 2.
+      const probeHasZoom = async (deviceId: string): Promise<boolean> => {
+        let stream: MediaStream | null = null;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { deviceId: { exact: deviceId } },
+            audio: false,
+          });
+          const track = stream.getVideoTracks()[0];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const caps = (track?.getCapabilities?.() as any) || {};
+          return !!(caps.zoom && typeof caps.zoom.max === 'number' && caps.zoom.max >= 2);
+        } catch {
+          return false;
+        } finally {
+          stream?.getTracks().forEach((t) => t.stop());
+        }
+      };
 
-      // Now enumerate - labels will be available
+      // Step 1: probe with facingMode='environment' to (a) trigger the
+      // permission prompt so labels populate, (b) read the deviceId the
+      // OS picked, and (c) check whether that camera supports zoom.
+      let osDefaultDeviceId: string | undefined;
+      let osDefaultHasZoom = false;
+      try {
+        const tempStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+        });
+        const track = tempStream.getVideoTracks()[0];
+        osDefaultDeviceId = track?.getSettings().deviceId;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const caps = (track?.getCapabilities?.() as any) || {};
+        osDefaultHasZoom = !!(caps.zoom && typeof caps.zoom.max === 'number' && caps.zoom.max >= 2);
+        tempStream.getTracks().forEach((t) => t.stop());
+      } catch (probeErr) {
+        console.warn('[SmartScanner] facingMode probe failed:', probeErr);
+      }
+
+      // Step 2: full enumeration (labels are now populated thanks to step 1).
       const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter(device => device.kind === 'videoinput');
+      const videoDevices = devices.filter((d) => d.kind === 'videoinput');
 
-      console.log('[SmartScanner] Found cameras:', videoDevices.map(d => ({
-        id: d.deviceId.slice(0, 8) + '...',
-        label: d.label
-      })));
+      console.log(
+        '[SmartScanner] Found cameras:',
+        videoDevices.map((d) => ({
+          id: d.deviceId.slice(0, 8) + '...',
+          label: d.label,
+          isOsDefault: d.deviceId === osDefaultDeviceId,
+          osDefaultHasZoom: d.deviceId === osDefaultDeviceId ? osDefaultHasZoom : undefined,
+        })),
+      );
 
       if (videoDevices.length === 0) {
         console.error('[SmartScanner] No cameras found');
+        setDiag({ state: 'no_cameras' });
         return;
       }
 
       setCameras(videoDevices);
 
-      // Find back camera as default (check for back/rear/environment keywords)
-      let backCameraIndex = videoDevices.findIndex(device =>
-        device.label.toLowerCase().includes('back') ||
-        device.label.toLowerCase().includes('rear') ||
-        device.label.toLowerCase().includes('environment') ||
-        device.label.toLowerCase().includes('traseira') // Portuguese
+      let chosenIndex = -1;
+      let pickedBy = '';
+
+      // (1) Saved preference — user previously hit camera-switch.
+      try {
+        const saved = window.localStorage?.getItem(CAMERA_PREFERENCE_KEY);
+        if (saved) {
+          const i = videoDevices.findIndex((d) => d.deviceId === saved);
+          if (i !== -1) {
+            chosenIndex = i;
+            pickedBy = 'saved-preference';
+          }
+        }
+      } catch {
+        // localStorage may throw (privacy mode); ignore.
+      }
+
+      // (2) Lowest-numbered back camera. On Samsung's Camera2 HAL labels
+      // ("camera 0, facing back", "camera 2, facing back", …) camera 0 is
+      // consistently the main lens — but the OS default for
+      // facingMode='environment' returns the ULTRAWIDE (camera 2) and
+      // even reports zoom>=2, defeating the rules below. The label
+      // numbering is the only reliable discriminator on this hardware.
+      // Falls through cleanly when labels don't match this format
+      // (iOS Safari, custom Android skins, etc.).
+      if (chosenIndex === -1) {
+        const isBack = (s: string) =>
+          /back|rear|environment|traseira/i.test(s);
+        const numberedBacks = videoDevices
+          .map((d, i) => {
+            if (!isBack(d.label || '')) return null;
+            const m = /\bcamera\s*(\d+)/i.exec(d.label || '');
+            return m ? { device: d, index: i, number: parseInt(m[1], 10) } : null;
+          })
+          .filter((x): x is { device: MediaDeviceInfo; index: number; number: number } => x !== null);
+        if (numberedBacks.length >= 2) {
+          numberedBacks.sort((a, b) => a.number - b.number);
+          const winner = numberedBacks[0];
+          chosenIndex = winner.index;
+          pickedBy = `lowest-back-number(camera ${winner.number})`;
+        }
+      }
+
+      // (3) OS default + has zoom — that's the main lens on most phones.
+      if (chosenIndex === -1 && osDefaultDeviceId && osDefaultHasZoom) {
+        const i = videoDevices.findIndex((d) => d.deviceId === osDefaultDeviceId);
+        if (i !== -1) {
+          chosenIndex = i;
+          pickedBy = 'os-default-with-zoom';
+        }
+      }
+
+      // (4) Probe other back cameras for zoom support — finds the main
+      // lens on Samsung where the OS default is the ultrawide.
+      if (chosenIndex === -1) {
+        const isFront = (s: string) => /front|user|face/i.test(s);
+        const candidates = videoDevices
+          .map((d, i) => ({ device: d, index: i }))
+          .filter(
+            ({ device }) =>
+              !isFront(device.label) && device.deviceId !== osDefaultDeviceId,
+          );
+        for (const { device, index } of candidates) {
+          // eslint-disable-next-line no-await-in-loop
+          const hasZoom = await probeHasZoom(device.deviceId);
+          if (hasZoom) {
+            chosenIndex = index;
+            pickedBy = 'probe-zoom-capable';
+            break;
+          }
+        }
+      }
+
+      // (5) OS default (fallback even if it had no zoom — better than nothing).
+      if (chosenIndex === -1 && osDefaultDeviceId) {
+        const i = videoDevices.findIndex((d) => d.deviceId === osDefaultDeviceId);
+        if (i !== -1) {
+          chosenIndex = i;
+          pickedBy = 'os-default-fallback';
+        }
+      }
+
+      // (6) Label heuristic — prefer main/wide, skip ultra/tele/macro.
+      if (chosenIndex === -1) {
+        const isBack = (s: string) =>
+          /back|rear|environment|traseira/i.test(s);
+        const isAuxLens = (s: string) =>
+          /ultra|tele|macro|wide-?angle|2\s*x|3\s*x|5\s*x/i.test(s);
+        const i = videoDevices.findIndex(
+          (d) => isBack(d.label) && !isAuxLens(d.label),
+        );
+        if (i !== -1) {
+          chosenIndex = i;
+          pickedBy = 'label-heuristic';
+        }
+      }
+
+      // (7) Any back-labelled camera.
+      if (chosenIndex === -1) {
+        const i = videoDevices.findIndex((d) =>
+          /back|rear|environment|traseira/i.test(d.label),
+        );
+        if (i !== -1) {
+          chosenIndex = i;
+          pickedBy = 'any-back';
+        }
+      }
+
+      // (8) Fallback to first device.
+      if (chosenIndex === -1) {
+        chosenIndex = 0;
+        pickedBy = 'first-device';
+      }
+
+      const chosen = videoDevices[chosenIndex];
+      console.log(
+        `[SmartScanner] Default camera (${pickedBy}): ${chosen.label || 'unlabelled'}`,
       );
-
-      // If no back camera found by label, assume first camera is back (mobile convention)
-      if (backCameraIndex === -1 && videoDevices.length > 1) {
-        backCameraIndex = 0;
-        console.log('[SmartScanner] No back camera label found, using first camera');
-      }
-
-      if (backCameraIndex !== -1) {
-        setCurrentCameraIndex(backCameraIndex);
-        setCurrentCameraLabel(videoDevices[backCameraIndex].label || 'Back Camera');
-      } else {
-        setCurrentCameraIndex(0);
-        setCurrentCameraLabel(videoDevices[0].label || 'Camera');
-      }
+      setCurrentCameraIndex(chosenIndex);
+      setCurrentCameraLabel(chosen.label || 'Camera');
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error('[SmartScanner] Failed to enumerate cameras:', err);
-      onError?.(err instanceof Error ? err.message : String(err));
+      setDiag({ state: 'error', message });
+      onError?.(message);
     }
   }, [onError]);
 
   useEffect(() => {
+    // Re-arm the mounted flag every time this effect runs so a key-driven
+    // remount doesn't leave us stuck with isMountedRef.current === false
+    // from a previous instance's cleanup.
+    isMountedRef.current = true;
+
     if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
       console.log('[SmartScanner] Native BarcodeDetector API available');
       setIsSupported(true);
@@ -161,6 +428,67 @@ export function SmartScanner({
     }
   }, [onDuplicateFlash, triggerRedFlash]);
 
+  // Surface the "capture anyway" button prominently once a few seconds pass
+  // with no successful decode (worker is fighting glare / a damaged barcode).
+  useEffect(() => {
+    const id = setInterval(() => {
+      setShowCaptureHint(!isInCooldown && Date.now() - lastActivityRef.current > 3500);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isInCooldown]);
+
+  // Manual OCR capture: grab the sharpest full frame and hand it to the parent
+  // WITHOUT a decoded barcode. OCR then reads the name/weight AND the printed
+  // digit string under the barcode (used as the dedupe ID). Guarded against the
+  // post-scan cooldown and rapid re-taps.
+  const handleManualCaptureClick = useCallback(async () => {
+    if (isInCooldown || captureBusy || !onManualCapture) return;
+    const video = videoRef.current;
+    if (!video) return;
+    setCaptureBusy(true);
+    setFlashColor('green');
+    setTimeout(() => setFlashColor(null), 200);
+    try {
+      const imageData = await captureSharpestFrame(video).catch(() => {
+        const c = canvasRef.current;
+        return c ? c.toDataURL('image/jpeg', 0.9) : '';
+      });
+      if (imageData) onManualCapture(imageData);
+      lastActivityRef.current = Date.now();
+      setShowCaptureHint(false);
+    } finally {
+      setTimeout(() => setCaptureBusy(false), 1200);
+    }
+  }, [isInCooldown, captureBusy, onManualCapture]);
+
+  // ── Hardware capture trigger: Bluetooth remote keystroke ──
+  // Opt-in (settings). A paired BT camera-remote / ring clicker emits a real
+  // keydown; we fire the same manual-capture path. Deterministic — one press =
+  // one capture (handleManualCaptureClick is debounced by cooldown/captureBusy,
+  // so a held or repeated key can't double-fire). Ignored while typing.
+  useEffect(() => {
+    if (!hardwareTriggerEnabled || !onManualCapture) return;
+    const TRIGGER_KEYS = new Set([
+      'Enter', ' ', 'Spacebar', 'ArrowUp', 'ArrowDown',
+      'AudioVolumeUp', 'AudioVolumeDown', 'VolumeUp', 'VolumeDown',
+      'MediaPlayPause',
+    ]);
+    function onKey(e: KeyboardEvent) {
+      const tgt = e.target as HTMLElement | null;
+      if (
+        tgt &&
+        (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)
+      ) {
+        return; // don't hijack count inputs / the edit modal
+      }
+      if (!TRIGGER_KEYS.has(e.key)) return;
+      e.preventDefault();
+      handleManualCaptureClick();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [hardwareTriggerEnabled, onManualCapture, handleManualCaptureClick]);
+
   const stopNativeScanning = () => {
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
@@ -181,6 +509,16 @@ export function SmartScanner({
     const nextCamera = cameras[nextIndex];
 
     setCurrentCameraIndex(nextIndex);
+
+    // Persist this explicit choice — survives the per-pallet
+    // SmartScanner remount (driven by the `key` prop on pallet-verify)
+    // and across page reloads. Without this the worker had to switch
+    // away from ultrawide on every single pallet.
+    try {
+      window.localStorage?.setItem(CAMERA_PREFERENCE_KEY, nextCamera.deviceId);
+    } catch {
+      // localStorage may throw (privacy mode); preference just won't persist.
+    }
 
     // Create informative label
     let label = nextCamera.label || `Camera ${nextIndex + 1}`;
@@ -251,11 +589,14 @@ export function SmartScanner({
       if (videoRef.current && isMountedRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
+        setDiag({ state: 'ready' });
         scanContinuously();
       }
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error('[SmartScanner] Camera error:', err);
-      onError?.(err instanceof Error ? err.message : String(err));
+      setDiag({ state: 'error', message });
+      onError?.(message);
     }
   };
 
@@ -321,38 +662,26 @@ export function SmartScanner({
           const barcode = barcodes[0].rawValue;
           const now = Date.now();
 
-          // Log format info (no blocking — let all detected barcodes through)
-          const isGS1Format = /^\d{25}$|^\d{31}$/.test(barcode);
-          if (!isGS1Format) {
-            console.log('[SmartScanner] Non-standard barcode length:', barcode.length, 'digits — passing through');
-          }
-
           // Multi-read validation: require 2 consecutive identical reads within 3 seconds
-          // to filter out single misreads caused by blur/motion, while staying fast.
           const pending = pendingReadsRef.current;
 
           if (!pending || pending.barcode !== barcode || now - pending.timestamp > 3000) {
-            // First read or different barcode or timeout - start new validation
             pendingReadsRef.current = { barcode, count: 1, timestamp: now };
             setCaptureCount(1);
-            console.log('[SmartScanner] Barcode read 1/2:', barcode);
             animationFrameRef.current = requestAnimationFrame(detect);
             return;
           }
 
-          // Same barcode read again - increment count
           pending.count++;
           setCaptureCount(pending.count);
-          console.log(`[SmartScanner] Barcode read ${pending.count}/2:`, barcode);
 
           if (pending.count < 2) {
-            // Need one more confirmation
             animationFrameRef.current = requestAnimationFrame(detect);
             return;
           }
 
-          // SUCCESS: 2 identical reads confirmed! Process the scan
-          console.log('[SmartScanner] Barcode CONFIRMED after 2 identical reads:', barcode);
+          // SUCCESS: 2 identical reads confirmed
+          console.log('[SmartScanner] Barcode confirmed:', barcode);
           pendingReadsRef.current = null;
           setCaptureCount(0);
 
@@ -367,6 +696,7 @@ export function SmartScanner({
           // Process confirmed scan
           lastScannedRef.current = barcode;
           lastScanTimeRef.current = now;
+          lastActivityRef.current = now; // a decode just happened — reset the manual-capture nudge
 
           // Set cooldown state
           setIsInCooldown(true);
@@ -397,7 +727,12 @@ export function SmartScanner({
             expiry_source: 'ocr_required' as const
           };
 
-          const imageData = canvas.toDataURL('image/jpeg', 0.8);
+          // OCR image: sharpest of a short burst of FULL-frame stills (not the
+          // cropped barcode region) so the whole sticker is captured and motion
+          // blur from the aiming moment is avoided. Runs inside the 3s cooldown.
+          const imageData = await captureSharpestFrame(video).catch(
+            () => canvas.toDataURL('image/jpeg', 0.9),
+          );
           onBarcodeDetected(barcode, parsedData, imageData);
         }
       } catch (err) {
@@ -420,11 +755,42 @@ export function SmartScanner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSupported, currentCameraIndex, cameras.length]);
 
+  // Resume the camera after the page comes back from background. Mobile
+  // browsers freeze MediaStream tracks while the tab is hidden; on return
+  // they don't restart, so the worker sees a frozen frame until reload.
+  // We restart only when we can prove the existing stream is dead (a track
+  // is no longer `live` OR the <video> is paused) — so a clean foreground
+  // tab-switch doesn't cause an unnecessary camera flicker.
+  useEffect(() => {
+    function isStreamDead() {
+      const s = streamRef.current;
+      if (!s) return false; // never started yet — let the normal effects handle it
+      if (videoRef.current?.paused) return true;
+      return !s.getVideoTracks().some((t) => t.readyState === 'live');
+    }
+    function maybeRestart() {
+      if (!isMountedRef.current) return;
+      if (document.visibilityState !== 'visible') return;
+      if (isSupported !== true || cameras.length === 0) return;
+      if (!isStreamDead()) return;
+      console.log('[SmartScanner] Resuming from background — stream dead, restarting');
+      stopNativeScanning();
+      startNativeScanning();
+    }
+    document.addEventListener('visibilitychange', maybeRestart);
+    window.addEventListener('pageshow', maybeRestart);
+    return () => {
+      document.removeEventListener('visibilitychange', maybeRestart);
+      window.removeEventListener('pageshow', maybeRestart);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSupported, cameras.length]);
+
   // Loading state
   if (isSupported === null) {
     return (
       <div className={`w-full bg-gray-800 rounded-lg flex items-center justify-center ${className || 'aspect-square'}`}>
-        <p className="text-gray-400">Initializing scanner...</p>
+        <p className="text-gray-400">{tr('scanner.initializing')}</p>
       </div>
     );
   }
@@ -434,10 +800,9 @@ export function SmartScanner({
     return (
       <div className={`w-full bg-gray-800 rounded-lg flex flex-col items-center justify-center gap-3 p-6 ${className || 'aspect-square'}`}>
         <AlertTriangle className="w-10 h-10 text-amber-400" />
-        <p className="text-white font-medium text-center">Browser Not Supported</p>
+        <p className="text-white font-medium text-center">{tr('scanner.notSupportedTitle')}</p>
         <p className="text-gray-400 text-sm text-center">
-          This browser does not support the BarcodeDetector API.
-          Please use Chrome or Edge on Android for barcode scanning.
+          {tr('scanner.notSupportedDesc')}
         </p>
       </div>
     );
@@ -454,6 +819,22 @@ export function SmartScanner({
       />
       <canvas ref={canvasRef} className="hidden" />
 
+      {/* Tap-anywhere capture (opt-in). A full-area transparent layer that fires
+          the same manual capture as the on-screen button — no aiming for a small
+          target. Placed BEFORE the control buttons in the DOM so the camera-
+          switch / capture buttons (later siblings, pointer-events-auto) paint on
+          top and still receive their own taps. Hidden during cooldown so a tap
+          can't queue a capture mid-cooldown; the handler also bails on cooldown. */}
+      {hardwareTriggerEnabled && onManualCapture && !isInCooldown && (
+        <button
+          type="button"
+          onClick={handleManualCaptureClick}
+          disabled={captureBusy}
+          aria-label={tr('scanner.captureAnyway')}
+          className="absolute inset-0 z-0 bg-transparent"
+        />
+      )}
+
       {/* Camera flash overlay */}
       {flashColor && (
         <div
@@ -464,6 +845,58 @@ export function SmartScanner({
             zIndex: 10
           }}
         />
+      )}
+
+      {/* Diagnostic overlay — visible camera state for debugging silent failures */}
+      {diag.state !== 'ready' && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 text-white p-6 text-center">
+          {diag.state === 'init' && (
+            <>
+              <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-white mb-4" />
+              <p className="text-base font-medium">{tr('scanner.requestingPermission')}</p>
+              <p className="text-xs text-gray-400 mt-2">{tr('scanner.permissionHint')}</p>
+            </>
+          )}
+          {diag.state === 'no_cameras' && (
+            <>
+              <AlertTriangle className="w-10 h-10 text-amber-400 mb-3" />
+              <p className="text-base font-semibold">{tr('scanner.noCamerasTitle')}</p>
+              <p className="text-xs text-gray-300 mt-2 max-w-xs">
+                {tr('scanner.noCamerasDesc')}
+              </p>
+              <button
+                onClick={() => {
+                  setDiag({ state: 'init' });
+                  enumerateCameras();
+                }}
+                className="mt-4 bg-white text-gray-900 px-5 py-2 rounded-lg text-sm font-semibold"
+              >
+                {tr('common.retry')}
+              </button>
+            </>
+          )}
+          {diag.state === 'error' && (
+            <>
+              <AlertTriangle className="w-10 h-10 text-red-400 mb-3" />
+              <p className="text-base font-semibold">{tr('scanner.cameraErrorTitle')}</p>
+              <p className="text-xs text-red-200 mt-2 break-words max-w-xs font-mono" dir="ltr">
+                {diag.message}
+              </p>
+              <p className="text-xs text-gray-400 mt-3 max-w-xs">
+                {tr('scanner.cameraErrorHint')}
+              </p>
+              <button
+                onClick={() => {
+                  setDiag({ state: 'init' });
+                  enumerateCameras();
+                }}
+                className="mt-4 bg-white text-gray-900 px-5 py-2 rounded-lg text-sm font-semibold"
+              >
+                {tr('common.retry')}
+              </button>
+            </>
+          )}
+        </div>
       )}
 
       {/* Minimal scanning indicator */}
@@ -489,7 +922,7 @@ export function SmartScanner({
               <>
                 <div className="absolute inset-0 border-[3px] border-red-500 rounded" />
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="text-base font-semibold text-red-400">Already scanned</span>
+                  <span className="text-base font-semibold text-red-400">{tr('scanner.alreadyScanned')}</span>
                 </div>
               </>
             )}
@@ -540,7 +973,7 @@ export function SmartScanner({
             {isInCooldown ? (
               <span className="text-white text-xs font-bold">{cooldownTimeLeft}s</span>
             ) : isDuplicate ? (
-              <span className="text-white text-xs font-bold">Duplicate</span>
+              <span className="text-white text-xs font-bold">{tr('scanner.duplicateBadge')}</span>
             ) : (
               <ScanLine className="w-3 h-3 text-white" />
             )}
@@ -552,17 +985,50 @@ export function SmartScanner({
             <button
               onClick={switchCamera}
               className="flex items-center gap-1.5 bg-gray-900/80 hover:bg-gray-800/80 px-3 py-2 rounded-full text-white text-xs font-medium transition-colors backdrop-blur-sm border border-gray-600/50"
-              aria-label="Switch camera"
-              title="Tap to switch camera"
+              aria-label={tr('scanner.switchCamera')}
+              title={tr('scanner.tapToSwitch')}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
               <span className="max-w-[140px] truncate">
-                {currentCameraLabel || 'Camera'}
+                {currentCameraLabel || tr('scanner.cameraGeneric')}
               </span>
             </button>
           </div>
+        )}
+
+        {/* Manual OCR-capture fallback — registers a box whose barcode won't
+            decode (glare / folded / torn). Subtle by default; pulses once a few
+            seconds pass with no decode. */}
+        {onManualCapture && !isInCooldown && (
+          <>
+            {showCaptureHint && (
+              <div className="absolute bottom-16 inset-x-0 flex justify-center px-4 pointer-events-none">
+                <span className="text-xs text-amber-100 bg-black/60 px-3 py-1 rounded-full text-center max-w-[260px]">
+                  {tr('scanner.captureHint')}
+                </span>
+              </div>
+            )}
+            <div className="absolute bottom-3 inset-x-0 flex justify-center pointer-events-auto">
+              <button
+                onClick={handleManualCaptureClick}
+                disabled={captureBusy}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-semibold transition-all backdrop-blur-sm border disabled:opacity-50 ${
+                  showCaptureHint
+                    ? 'bg-amber-500 text-white border-amber-300 animate-pulse shadow-lg scale-105'
+                    : 'bg-gray-900/70 text-gray-200 border-gray-600/50'
+                }`}
+              >
+                📷 {tr('scanner.captureAnyway')}
+                {hardwareTriggerEnabled && (
+                  <span className="ms-1 text-[10px] text-green-300 font-medium">
+                    {tr('scanner.hardwareTriggerOn')}
+                  </span>
+                )}
+              </button>
+            </div>
+          </>
         )}
 
       </div>

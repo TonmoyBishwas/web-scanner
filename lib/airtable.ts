@@ -128,6 +128,7 @@ export async function createIssueTransaction(params: {
         'Supplier Hebrew': params.supplierHebrew,
         'Quantity KG': params.quantity,
         'Document Number': `ISSUE-${params.boxBarcode.slice(0, 8)}`,
+        'Chat ID': params.chatId,
         'Batch ID': params.batchId,
         'Is Undone': false,
         'Box Barcode': params.boxBarcode,

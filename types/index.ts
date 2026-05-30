@@ -74,6 +74,8 @@ export interface ScannedItem {
   expected_boxes: number;
 }
 
+export type Language = 'English' | 'Hebrew';
+
 export interface ScanSession {
   token: string;
   chat_id: string;
@@ -95,7 +97,10 @@ export interface ScanSession {
     role: string;
     phone?: string;
   };
-  pallet_record_id?: string;
+  /** User's preferred language ("English" / "Hebrew"). Set by the bot
+   *  when creating the session; the page reads it on mount and renders
+   *  its UI in this language. Defaults to "English" if missing. */
+  language?: Language;
 }
 
 export interface SessionResponse {
@@ -208,7 +213,7 @@ export interface BoxLookupResult {
     received_date: string;
     production_date?: string;
   };
-  error?: 'not_found' | 'already_issued' | 'error' | 'wrong_pallet';
+  error?: 'not_found' | 'already_issued' | 'error';
   message?: string;
 }
 
@@ -223,15 +228,6 @@ export interface PalletBoxScan {
   expiry: string;
   image_url: string;
   scanned_at: string;
-}
-
-export interface MixItem {
-  item_code: string;
-  item_name_english: string;
-  item_name_hebrew: string;
-  quantity_kg: number;
-  expected_box_count: number;
-  uniform_weight: boolean; // true → need ≥2 sample scans; false → need all expected scans
 }
 
 export interface PalletSession {
@@ -251,11 +247,6 @@ export interface PalletSession {
   scanned_boxes: PalletBoxScan[];
   status: 'active' | 'verified' | 'completed';
   created_at: string;
-  pallet_type?: 'single' | 'mix';
-  mix_items?: MixItem[];
-  receipt_id?: string;
-  pallet_record_id?: string;
-  manual_assignments?: Record<string, number>; // barcode → mix_items index
 }
 
 export interface PalletVerificationResult {
@@ -270,6 +261,45 @@ export interface PalletVerificationResult {
   box_count: number;
   verified_scan_count: number;
   mismatches: string[];
+}
+
+// ─── Multi-Pallet Session ─────────────────────────────────────────────────────
+
+export interface MultiPalletBoxScan {
+  barcode: string;
+  sku: string;
+  item_name: string;
+  item_name_hebrew?: string;
+  weight: number;
+  expiry: string;
+  scanned_at: string;
+}
+
+export interface MultiPalletSession {
+  token: string;
+  chat_id: string;
+  pallet_count: number;
+  loose_box_count: number;
+  current_pallet: number;
+  current_box_count?: number;  // persisted so refresh doesn't lose the entered count
+  document_number: string;
+  ocr_data: Array<{
+    item_code: string;
+    item_name_english: string;
+    item_name_hebrew: string;
+    quantity_kg: number;
+  }>;
+  receipt_id?: string;
+  completed_pallets: Array<{
+    pallet_number: number;
+    lpn: string;
+    pallet_type: string;
+    box_count: number;
+  }>;
+  status: 'active' | 'completed';
+  created_at: string;
+  /** User's preferred language. Set by the bot when creating the session. */
+  language?: Language;
 }
 
 // ─── UI State Types ────────────────────────────────────────────────────────────
