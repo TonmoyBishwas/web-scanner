@@ -3,10 +3,9 @@ import { create } from 'zustand';
 export interface SettingsState {
   soundEnabled: boolean;
   vibrationEnabled: boolean;
-  // Hardware capture trigger: Bluetooth remote keystroke + the volume-button
-  // (volumechange) workaround. Default OFF so we never hijack a worker's volume
-  // rocker unless they explicitly opt in. The on-screen capture button is
-  // always available regardless of this setting.
+  // Extra capture triggers: tap-anywhere-on-the-camera + a Bluetooth remote
+  // keystroke. Default OFF so a stray tap can't fire a capture for workers who
+  // don't want it. The on-screen capture button is always available regardless.
   hardwareTriggerEnabled: boolean;
   _hydrated: boolean;
   toggleSound: () => void;
