@@ -21,8 +21,8 @@ export function BoxDetailModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60">
-      <div className="w-full max-w-md bg-gray-800 rounded-t-2xl p-6">
-        <h2 className="text-xl font-bold text-white mb-4">{tr('components.boxDetail.issueThisBoxQ')}</h2>
+      <div className="w-full max-w-md bg-raised rounded-t-2xl p-6">
+        <h2 className="text-xl font-bold text-ink mb-4">{tr('components.boxDetail.issueThisBoxQ')}</h2>
 
         <div className="space-y-3 mb-6">
           <DetailRow label={tr('components.boxDetail.itemName')} value={box.item_name} />
@@ -41,14 +41,14 @@ export function BoxDetailModal({
           <button
             onClick={onCancel}
             disabled={isLoading}
-            className="flex-1 py-3 rounded-lg bg-gray-700 text-white font-medium hover:bg-gray-600 disabled:opacity-50 transition-colors"
+            className="flex-1 py-3 rounded-lg bg-sunken text-ink font-medium hover:bg-hover disabled:opacity-50 transition-colors"
           >
             {tr('common.cancel')}
           </button>
           <button
             onClick={onConfirm}
             disabled={isLoading}
-            className="flex-1 py-3 rounded-lg bg-green-600 text-white font-medium hover:bg-green-500 disabled:opacity-50 transition-colors"
+            className="flex-1 py-3 rounded-lg bg-ok text-ink-inverse font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
           >
             {isLoading ? (
               <span className="flex items-center justify-center gap-2">
@@ -76,9 +76,9 @@ function DetailRow({
 }) {
   return (
     <div className="flex justify-between items-center">
-      <span className="text-gray-400 text-sm">{label}</span>
+      <span className="text-ink-muted text-sm">{label}</span>
       <span
-        className={`font-medium ${highlight ? 'text-green-400 text-lg' : 'text-white'}`}
+        className={`font-medium ${highlight ? 'text-ok text-lg' : 'text-ink'}`}
       >
         {value}
       </span>

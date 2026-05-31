@@ -21,20 +21,20 @@ export function PhotoGallery({ images, ocrResults, onClose }: PhotoGalleryProps)
   return (
     <>
       {/* Full-screen overlay */}
-      <div className="fixed inset-0 z-[80] bg-gray-900/95 backdrop-blur-lg flex flex-col animate-fadeIn">
+      <div className="fixed inset-0 z-[80] bg-canvas flex flex-col animate-fadeIn">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-line">
           <div className="flex items-center gap-2">
-            <ImageIcon className="w-5 h-5 text-purple-400" />
-            <span className="text-white font-bold">
+            <ImageIcon className="w-5 h-5 text-brand" />
+            <span className="text-ink font-bold">
               {tr('components.photoGallery.galleryTitle', { count: entries.length })}
             </span>
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+            className="p-2 rounded-lg hover:bg-hover transition-colors"
           >
-            <X className="w-5 h-5 text-gray-400" />
+            <X className="w-5 h-5 text-ink-muted" />
           </button>
         </div>
 
@@ -46,7 +46,7 @@ export function PhotoGallery({ images, ocrResults, onClose }: PhotoGalleryProps)
               return (
                 <div
                   key={barcode}
-                  className="relative rounded-xl overflow-hidden bg-gray-800 border border-gray-700 cursor-pointer hover:ring-2 hover:ring-purple-500 transition-all group"
+                  className="relative rounded-xl overflow-hidden bg-sunken border border-line cursor-pointer hover:ring-2 hover:ring-brand transition-all group"
                   onClick={() => setSelectedImage(imageUrl)}
                 >
                   <div className="aspect-square">
@@ -59,7 +59,7 @@ export function PhotoGallery({ images, ocrResults, onClose }: PhotoGalleryProps)
                   </div>
                   {/* OCR data overlay */}
                   <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-2">
-                    <p className="text-[10px] font-mono text-gray-400">
+                    <p className="text-[10px] font-mono text-white/60">
                       #{barcode.slice(-6)}
                     </p>
                     {ocr ? (
@@ -68,13 +68,13 @@ export function PhotoGallery({ images, ocrResults, onClose }: PhotoGalleryProps)
                           {ocr.product_name || ocr.product_name_hebrew || tr('common.unknown')}
                         </p>
                         {ocr.weight_kg && (
-                          <p className="text-[10px] text-blue-300">
+                          <p className="text-[10px] text-white/80">
                             {ocr.weight_kg} kg
                           </p>
                         )}
                       </>
                     ) : (
-                      <p className="text-[10px] text-yellow-400">{tr('components.photoGallery.processing')}</p>
+                      <p className="text-[10px] text-white/70">{tr('components.photoGallery.processing')}</p>
                     )}
                   </div>
                 </div>
@@ -83,7 +83,7 @@ export function PhotoGallery({ images, ocrResults, onClose }: PhotoGalleryProps)
           </div>
 
           {entries.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full text-gray-500">
+            <div className="flex flex-col items-center justify-center h-full text-ink-muted">
               <ImageIcon className="w-12 h-12 mb-3" />
               <p>{tr('components.photoGallery.empty2')}</p>
             </div>

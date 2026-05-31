@@ -24,7 +24,7 @@ export function ProgressRing({ current, total, size = 52 }: ProgressRingProps) {
           r={radius}
           fill="none"
           stroke="currentColor"
-          className="text-gray-700 dark:text-gray-700"
+          className="text-line-strong"
           strokeWidth={strokeWidth}
         />
         {/* Progress circle */}
@@ -35,7 +35,7 @@ export function ProgressRing({ current, total, size = 52 }: ProgressRingProps) {
           fill="none"
           stroke="currentColor"
           className={`transition-all duration-700 ease-out ${
-            isComplete ? 'text-green-400' : 'text-blue-400'
+            isComplete ? 'text-ok' : 'text-brand'
           }`}
           strokeWidth={strokeWidth}
           strokeLinecap="round"
@@ -45,10 +45,10 @@ export function ProgressRing({ current, total, size = 52 }: ProgressRingProps) {
       </svg>
       {/* Center text */}
       <div className={`absolute inset-0 flex flex-col items-center justify-center ${isComplete ? 'animate-pulseGlow' : ''}`}>
-        <span className={`text-xs font-bold leading-none ${isComplete ? 'text-green-400' : 'text-white dark:text-white'}`}>
+        <span className={`text-xs font-bold leading-none ${isComplete ? 'text-ok' : 'text-ink'}`}>
           {current}
         </span>
-        <span className="text-[9px] text-gray-500 leading-none">
+        <span className="text-[9px] text-ink-muted leading-none">
           /{total}
         </span>
       </div>

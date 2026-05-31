@@ -26,17 +26,17 @@ export function InvoiceDrawer({ open, onClose, items, scannedItems, ocrResults, 
         onClick={onClose}
       />
       {/* Drawer */}
-      <div className="fixed bottom-0 left-0 right-0 z-[56] bg-gray-900 dark:bg-gray-900 border-t-2 border-blue-500 rounded-t-2xl shadow-2xl animate-slideInUp"
+      <div className="fixed bottom-0 left-0 right-0 z-[56] bg-raised border-t-2 border-brand rounded-t-2xl shadow-2xl animate-slideInUp"
         style={{ maxHeight: '70vh' }}
       >
-        <div className="flex justify-between items-center px-4 py-3 border-b border-gray-700">
+        <div className="flex justify-between items-center px-4 py-3 border-b border-line">
           <div className="flex items-center gap-2">
-            <FileText className="w-4 h-4 text-blue-400" />
-            <span className="text-white font-bold text-sm">{tr('components.invoiceDrawer.overviewTitle')}</span>
+            <FileText className="w-4 h-4 text-brand" />
+            <span className="text-ink font-bold text-sm">{tr('components.invoiceDrawer.overviewTitle')}</span>
           </div>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors"
+            className="text-ink-muted hover:text-ink p-1 rounded-lg hover:bg-hover transition-colors"
           >
             <X className="w-5 h-5" />
           </button>

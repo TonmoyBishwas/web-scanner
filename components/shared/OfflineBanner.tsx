@@ -41,11 +41,11 @@ export function OfflineBanner({ queueCount, isSyncing }: OfflineBannerProps) {
 
   if (isOffline) {
     return (
-      <div className="bg-amber-600/90 text-white px-4 py-2 text-sm flex items-center gap-2 animate-slideInUp">
+      <div className="bg-warn text-ink-inverse px-4 py-2 text-sm flex items-center gap-2 animate-slideInUp">
         <WifiOff className="w-4 h-4 shrink-0" />
         <span>{tr('components.offlineSavedLocally')}</span>
         {queueCount > 0 && (
-          <span className="ml-auto bg-amber-800 px-2 py-0.5 rounded-full text-xs font-bold">
+          <span className="ms-auto bg-black/20 px-2 py-0.5 rounded-full text-xs font-bold">
             {queueCount}
           </span>
         )}
@@ -55,7 +55,7 @@ export function OfflineBanner({ queueCount, isSyncing }: OfflineBannerProps) {
 
   if (isSyncing) {
     return (
-      <div className="bg-blue-600/90 text-white px-4 py-2 text-sm flex items-center gap-2 animate-slideInUp">
+      <div className="bg-info text-ink-inverse px-4 py-2 text-sm flex items-center gap-2 animate-slideInUp">
         <Loader2 className="w-4 h-4 animate-spin shrink-0" />
         <span>{tr('components.offlineSyncing', { count: queueCount })}</span>
       </div>
@@ -64,7 +64,7 @@ export function OfflineBanner({ queueCount, isSyncing }: OfflineBannerProps) {
 
   if (showReconnected) {
     return (
-      <div className="bg-green-600/90 text-white px-4 py-2 text-sm flex items-center gap-2 animate-slideInUp">
+      <div className="bg-ok text-ink-inverse px-4 py-2 text-sm flex items-center gap-2 animate-slideInUp">
         <Wifi className="w-4 h-4 shrink-0" />
         <span>{tr('components.offlineBackOnline')}</span>
       </div>

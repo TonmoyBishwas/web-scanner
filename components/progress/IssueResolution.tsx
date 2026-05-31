@@ -46,8 +46,8 @@ export function IssueResolution({
     return (
         <div className="space-y-4">
             <div className="flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-yellow-400" />
-                <h3 className="text-lg font-bold text-yellow-400">
+                <AlertTriangle className="w-5 h-5 text-warn" />
+                <h3 className="text-lg font-bold text-warn">
                     {tr('components.issueResolution.foundTitle', { count: issues.length - resolvedCount })}
                 </h3>
             </div>
@@ -88,9 +88,9 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
 
     if (resolved) {
         return (
-            <div className="bg-green-900/30 border border-green-600 rounded-lg p-3 flex items-center gap-2">
-                <CheckCircle className="w-4 h-4 text-green-400" />
-                <p className="text-green-400 text-sm">{tr('components.issueResolution.resolvedNote', { n: index + 1 })}</p>
+            <div className="bg-ok-weak border border-ok/30 rounded-lg p-3 flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-ok" />
+                <p className="text-ok-weak-ink text-sm">{tr('components.issueResolution.resolvedNote', { n: index + 1 })}</p>
             </div>
         );
     }
@@ -99,8 +99,8 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
     const needsWeight = issue.type === 'missing_weight' || issue.type === 'missing_both';
 
     return (
-        <div className="bg-gray-800 border border-yellow-600/50 rounded-lg p-4 space-y-3">
-            <div className="flex items-center gap-2 text-sm text-yellow-400">
+        <div className="bg-raised border border-warn/40 rounded-lg p-4 space-y-3">
+            <div className="flex items-center gap-2 text-sm text-warn">
                 <AlertTriangle className="w-4 h-4" />
                 <span>{tr('components.issueResolution.issuePrefix', {
                     n: index + 1,
@@ -115,7 +115,7 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
             {issue.image_url && (
                 <>
                     <div
-                        className="rounded-lg overflow-hidden border border-gray-700 cursor-pointer hover:border-yellow-500 transition-colors"
+                        className="rounded-lg overflow-hidden border border-line cursor-pointer hover:border-warn transition-colors"
                         onClick={() => setShowImageModal(true)}
                     >
                         <img
@@ -123,7 +123,7 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
                             alt="Box sticker"
                             className="w-full h-32 object-cover"
                         />
-                        <div className="flex items-center justify-center gap-1 text-xs text-gray-400 py-1 bg-gray-900/50">
+                        <div className="flex items-center justify-center gap-1 text-xs text-ink-muted py-1 bg-sunken">
                             <Search className="w-3 h-3" />
                             {tr('components.issueResolution.clickToEnlarge')}
                         </div>
@@ -140,11 +140,11 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
             {/* Item name selector (when name is missing) */}
             {needsName && (
                 <div>
-                    <label className="block text-xs text-gray-400 mb-1">{tr('components.issueResolution.selectItemLabel')}</label>
+                    <label className="block text-xs text-ink-muted mb-1">{tr('components.issueResolution.selectItemLabel')}</label>
                     <select
                         value={selectedItem}
                         onChange={(e) => setSelectedItem(e.target.value)}
-                        className="w-full p-2 bg-gray-900 border border-gray-700 rounded-lg text-sm"
+                        className="w-full p-2 bg-sunken border border-line rounded-lg text-sm text-ink"
                     >
                         <option value="">{tr('components.issueResolution.selectItemEmpty')}</option>
                         {invoiceItems.map((item) => (
@@ -159,10 +159,10 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
             {/* Weight input (when weight is missing or needs confirmation) */}
             {needsWeight && (
                 <div>
-                    <label className="block text-xs text-gray-400 mb-1">
+                    <label className="block text-xs text-ink-muted mb-1">
                         {tr('components.issueResolution.weightLabel')}
                         {issue.inferred_weight && (
-                            <span className="text-blue-400 ms-1">
+                            <span className="text-brand ms-1">
                                 {tr('components.issueResolution.smartInference', { weight: issue.inferred_weight.toFixed(2) })}
                             </span>
                         )}
@@ -172,7 +172,7 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
                         step="0.001"
                         value={weight}
                         onChange={(e) => setWeight(e.target.value)}
-                        className="w-full p-2 bg-gray-900 border border-gray-700 rounded-lg text-sm"
+                        className="w-full p-2 bg-sunken border border-line rounded-lg text-sm text-ink"
                         placeholder={tr('components.issueResolution.weightPlaceholder')}
                     />
                 </div>
@@ -180,12 +180,12 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
 
             {/* Expiry (always optional) */}
             <div>
-                <label className="block text-xs text-gray-400 mb-1">{tr('components.issueResolution.expiryLabel')}</label>
+                <label className="block text-xs text-ink-muted mb-1">{tr('components.issueResolution.expiryLabel')}</label>
                 <input
                     type="date"
                     value={expiry}
                     onChange={(e) => setExpiry(e.target.value)}
-                    className="w-full p-2 bg-gray-900 border border-gray-700 rounded-lg text-sm"
+                    className="w-full p-2 bg-sunken border border-line rounded-lg text-sm text-ink"
                 />
             </div>
 
@@ -203,7 +203,7 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
                     });
                 }}
                 disabled={(needsName && !selectedItem) || (needsWeight && !weight)}
-                className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                className="w-full py-2 bg-brand hover:bg-brand-hover text-ink-inverse disabled:bg-border-strong disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
             >
                 <Check className="w-4 h-4" />
                 {tr('components.issueResolution.resolveBtn')}

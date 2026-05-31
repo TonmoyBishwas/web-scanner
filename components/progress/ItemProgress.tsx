@@ -26,20 +26,20 @@ export function ItemProgress({ items, scanned, ocrResults = new Map(), ocrPendin
   return (
     <div className="space-y-4">
       {/* Overall Progress */}
-      <div className="bg-gray-800 rounded-lg p-4">
+      <div className="bg-raised border border-line rounded-lg p-4">
         <div className="flex justify-between items-center mb-2">
           <span className="text-sm font-medium">{tr('components.itemProgress.overall')}</span>
-          <span className="text-sm text-gray-400">
+          <span className="text-sm text-ink-muted">
             {totalWeightScanned.toFixed(2)} kg / {totalWeightExpected.toFixed(2)} kg
           </span>
         </div>
-        <div className="w-full bg-gray-700 rounded-full h-3">
+        <div className="w-full bg-sunken rounded-full h-3">
           <div
-            className="bg-green-500 h-3 rounded-full transition-all duration-300"
+            className="bg-ok h-3 rounded-full transition-all duration-300"
             style={{ width: `${Math.min(completionRate, 100)}%` }}
           />
         </div>
-        <p className="text-xs text-gray-400 mt-1 text-center">
+        <p className="text-xs text-ink-muted mt-1 text-center">
           {tr('components.itemProgress.percentComplete', { percent: completionRate.toFixed(1) })}
         </p>
       </div>
@@ -56,34 +56,34 @@ export function ItemProgress({ items, scanned, ocrResults = new Map(), ocrPendin
           const isComplete = scannedWeight >= item.quantity_kg;
 
           return (
-            <div key={item.item_index} className="bg-gray-800 rounded-lg p-3">
+            <div key={item.item_index} className="bg-raised border border-line rounded-lg p-3">
               <div className="flex justify-between items-start mb-2">
                 <div className="flex-1">
                   <p className="text-sm font-medium">{item.item_name_english}</p>
-                  <p className="text-xs text-gray-400">{item.item_code}</p>
+                  <p className="text-xs text-ink-muted">{item.item_code}</p>
                 </div>
                 {isComplete && (
-                  <Check className="w-5 h-5 text-green-400" />
+                  <Check className="w-5 h-5 text-ok" />
                 )}
               </div>
 
               <div className="flex justify-between items-center mb-1">
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-ink-muted">
                   {tr('components.itemProgress.boxesAndWeight', {
                     count: scannedCount,
                     scanned: scannedWeight.toFixed(2),
                     expected: item.quantity_kg,
                   })}
                 </span>
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-ink-muted">
                   {itemProgress.toFixed(0)}%
                 </span>
               </div>
 
-              <div className="w-full bg-gray-700 rounded-full h-2">
+              <div className="w-full bg-sunken rounded-full h-2">
                 <div
                   className={`h-2 rounded-full transition-all duration-300 ${
-                    isComplete ? 'bg-green-500' : 'bg-blue-500'
+                    isComplete ? 'bg-ok' : 'bg-brand'
                   }`}
                   style={{ width: `${Math.min(itemProgress, 100)}%` }}
                 />
@@ -110,17 +110,17 @@ export function OCRStatusIndicator({
   }
 
   return (
-    <div className="bg-gray-800 rounded-lg p-3 mb-4">
+    <div className="bg-raised border border-line rounded-lg p-3 mb-4">
       <div className="flex justify-between items-center">
         <span className="text-sm font-medium">{tr('components.itemProgress.productData')}</span>
         <div className="flex gap-4 text-xs">
           {ocrPending.size > 0 && (
-            <span className="flex items-center gap-1 text-yellow-400">
+            <span className="flex items-center gap-1 text-warn">
               <Clock className="w-3 h-3" /> {tr('components.itemProgress.processingN', { count: ocrPending.size })}
             </span>
           )}
           {ocrResults.size > 0 && (
-            <span className="flex items-center gap-1 text-green-400">
+            <span className="flex items-center gap-1 text-ok">
               <Check className="w-3 h-3" /> {tr('components.itemProgress.enriched', { count: ocrResults.size })}
             </span>
           )}
