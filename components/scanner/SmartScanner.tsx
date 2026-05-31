@@ -971,11 +971,11 @@ export function SmartScanner({
               (isInCooldown || isDuplicate) ? 'bg-red-300' : 'bg-green-300 animate-pulse'
             }`}></div>
             {isInCooldown ? (
-              <span className="text-white text-xs font-bold">{cooldownTimeLeft}s</span>
+              <span className="text-cam-ink text-xs font-bold">{cooldownTimeLeft}s</span>
             ) : isDuplicate ? (
-              <span className="text-white text-xs font-bold">{tr('scanner.duplicateBadge')}</span>
+              <span className="text-cam-ink text-xs font-bold">{tr('scanner.duplicateBadge')}</span>
             ) : (
-              <ScanLine className="w-3 h-3 text-white" />
+              <ScanLine className="w-3 h-3 text-cam-ink" />
             )}
           </div>
         </div>
@@ -984,7 +984,7 @@ export function SmartScanner({
           <div className="absolute top-2 right-2 pointer-events-auto">
             <button
               onClick={switchCamera}
-              className="flex items-center gap-1.5 bg-gray-900/80 hover:bg-gray-800/80 px-3 py-2 rounded-full text-white text-xs font-medium transition-colors backdrop-blur-sm border border-gray-600/50"
+              className="flex items-center gap-1.5 bg-gray-900/80 hover:bg-gray-800/80 px-3 py-2 rounded-full text-cam-ink text-xs font-medium transition-colors backdrop-blur-sm border border-cam-border/50"
               aria-label={tr('scanner.switchCamera')}
               title={tr('scanner.tapToSwitch')}
             >
