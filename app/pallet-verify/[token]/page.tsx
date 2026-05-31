@@ -101,12 +101,11 @@ interface UniformGroup {
   sample_barcodes: string[];    // the scanned-sample barcodes (2+)
 }
 
+// Only ever the single-vs-mix choice now (shown after >=4 OCR'd boxes of one
+// product at the same weight). The per-item mandatory_count mode was removed:
+// any mix pallet = scan every box.
 type UniformPrompt =
-  // First uniform pair AND only one item has been scanned so far → ask the
-  // worker whether this is single-item or actually mix.
-  | { mode: 'single_or_mix'; name_key: string; item_name: string; item_name_hebrew: string; avg_weight: number; sample_barcodes: string[] }
-  // Any other case → mandatory: just need the count for this uniform sub-group.
-  | { mode: 'mandatory_count'; name_key: string; item_name: string; item_name_hebrew: string; avg_weight: number; sample_barcodes: string[] };
+  | { mode: 'single_or_mix'; name_key: string; item_name: string; item_name_hebrew: string; avg_weight: number; sample_barcodes: string[] };
 
 // Tolerance (kg) for "same weight" — matches detectType() and the outbound
 // uniform-override threshold.
@@ -167,21 +166,18 @@ export default function PalletVerifyPage({
   // Uniform-pair state (per pallet — reset between pallets).
   const [uniformGroups, setUniformGroups] = useState<Map<string, UniformGroup>>(new Map());
   const [pendingUniformPrompt, setPendingUniformPrompt] = useState<UniformPrompt | null>(null);
+  // The worker confirmed the pallet is mix ("other products too"), or used the
+  // "fewer than 4 boxes" escape. Suppresses the single-vs-mix prompt and lets
+  // the pallet-total input appear so they scan-all + enter the total. Per pallet.
+  const [forcedMix, setForcedMix] = useState(false);
+  const forcedMixRef = useRef(false);
+  useEffect(() => { forcedMixRef.current = forcedMix; }, [forcedMix]);
   // Refs mirror the above state for read-during-callback access without stale
   // closure issues (used inside runOcr's success path).
   const uniformGroupsRef = useRef<Map<string, UniformGroup>>(new Map());
   const pendingUniformPromptRef = useRef<UniformPrompt | null>(null);
   useEffect(() => { uniformGroupsRef.current = uniformGroups; }, [uniformGroups]);
   useEffect(() => { pendingUniformPromptRef.current = pendingUniformPrompt; }, [pendingUniformPrompt]);
-  // Item name_keys the worker marked "scan each box individually" — for the
-  // "mix-e" shape (one item whose boxes have mixed weights, some matching some
-  // not). Suppresses the uniform-count prompt for that item so every box is
-  // scanned and recorded with its own real weight. Per pallet (reset between
-  // pallets). Ref mirror so maybeTriggerUniformPrompt sees the latest set when
-  // it runs inside a setState callback.
-  const [individualKeys, setIndividualKeys] = useState<Set<string>>(new Set());
-  const individualKeysRef = useRef<Set<string>>(new Set());
-  useEffect(() => { individualKeysRef.current = individualKeys; }, [individualKeys]);
   // Which scanned-box row is expanded to reveal its Delete action. Two-step
   // (tap row → tap Delete) guards against misclicks. Reset between pallets.
   const [selectedBarcode, setSelectedBarcode] = useState<string | null>(null);
@@ -209,9 +205,6 @@ export default function PalletVerifyPage({
   // invoice names so OCR drift doesn't fragment one item into several groups.
   const invoiceItemsRef = useRef<MultiPalletSession['ocr_data']>([]);
   useEffect(() => { invoiceItemsRef.current = session?.ocr_data ?? []; }, [session]);
-  // Number-input state for the mandatory_count prompt + its validation error.
-  const [countInput, setCountInput] = useState('');
-  const [countError, setCountError] = useState<string | null>(null);
   // Deferred-single-confirm state: when the worker picks "Complete as
   // single-item" in the uniform-pair prompt, we capture the group params
   // here and surface the pallet box-count input in the footer. Locking
@@ -597,52 +590,33 @@ export default function PalletVerifyPage({
       });
   }
 
-  // Decide whether the just-completed scan should fire a prompt. Reads via
-  // refs (kept in sync by the useEffects above) so we always see the latest
-  // uniformGroups / pendingUniformPrompt values, even when this is called
-  // from inside another setState callback.
-  function maybeTriggerUniformPrompt(latestBoxes: BoxScan[], justFinishedBarcode: string) {
-    if (pendingUniformPromptRef.current) return; // already prompting
-    const justFinished = latestBoxes.find((b) => b.barcode === justFinishedBarcode);
-    if (
-      !justFinished ||
-      justFinished.ocr_status !== 'done' ||
-      justFinished.weight <= 0 ||
-      (!justFinished.item_name && !justFinished.item_name_hebrew)
-    ) {
-      return;
-    }
-    // Group key derived from the OCR'd Hebrew name (with worker-accepted
-    // merges applied), never from barcode digits.
-    const nameKey = acceptedMerges.get(groupKeyForBox(justFinished)) ?? groupKeyForBox(justFinished);
-    if (uniformGroupsRef.current.has(nameKey)) return; // already locked
-    if (individualKeysRef.current.has(nameKey)) return; // worker chose scan-each
-
-    const sameItemDone = latestBoxes.filter((b) => {
-      const k = acceptedMerges.get(groupKeyForBox(b)) ?? groupKeyForBox(b);
-      return k === nameKey && b.ocr_status === 'done' && b.weight > 0;
-    });
-    if (sameItemDone.length < 2) return;
-    const ws = sameItemDone.map((b) => b.weight);
-    const span = Math.max(...ws) - Math.min(...ws);
-    if (span >= UNIFORM_WEIGHT_TOLERANCE) return;
-
-    const distinctNameKeys = new Set(
-      latestBoxes
-        .filter((b) => b.item_name || b.item_name_hebrew)
-        .map((b) => acceptedMerges.get(groupKeyForBox(b)) ?? groupKeyForBox(b))
+  // Classify the pallet once >=4 boxes have finished OCR (and none are still
+  // processing). Only the single-uniform case (one product, all same weight)
+  // raises the single-vs-mix choice. Variable-weight or multi-product pallets
+  // raise NO prompt — they fall through to the pallet-total input (mix path).
+  function maybeTriggerUniformPrompt(latestBoxes: BoxScan[], _justFinishedBarcode: string) {
+    if (pendingUniformPromptRef.current) return;     // already prompting
+    if (forcedMixRef.current) return;                // worker already said it's mix
+    if (uniformGroupsRef.current.size > 0) return;   // single already locked in
+    const done = latestBoxes.filter(
+      (b) => b.ocr_status === 'done' && b.weight > 0 && (b.item_name || b.item_name_hebrew),
     );
-    const mode: UniformPrompt['mode'] =
-      distinctNameKeys.size === 1 && uniformGroupsRef.current.size === 0 ? 'single_or_mix' : 'mandatory_count';
-
+    const anyProcessing = latestBoxes.some((b) => b.ocr_status === 'processing');
+    if (anyProcessing || done.length < 4) return;    // wait for >=4 OCR'd boxes
+    const keyOf = (b: BoxScan) => acceptedMerges.get(groupKeyForBox(b)) ?? groupKeyForBox(b);
+    const distinct = new Set(done.map(keyOf));
+    if (distinct.size !== 1) return;                 // multiple products -> mix path
+    const ws = done.map((b) => b.weight);
+    if (Math.max(...ws) - Math.min(...ws) >= UNIFORM_WEIGHT_TOLERANCE) return; // varies -> mix
+    const sample = done[0];
     const avg = ws.reduce((a, b) => a + b, 0) / ws.length;
     setPendingUniformPrompt({
-      mode,
-      name_key: nameKey,
-      item_name: justFinished.item_name || '',
-      item_name_hebrew: justFinished.item_name_hebrew || '',
+      mode: 'single_or_mix',
+      name_key: keyOf(sample),
+      item_name: sample.item_name || '',
+      item_name_hebrew: sample.item_name_hebrew || '',
       avg_weight: Math.round(avg * 1000) / 1000,
-      sample_barcodes: sameItemDone.map((b) => b.barcode),
+      sample_barcodes: done.map((b) => b.barcode),
     });
   }
 
@@ -734,28 +708,9 @@ export default function PalletVerifyPage({
     setPalletCountError(null);
   }
 
-  // "Continue scanning (this is mix)" → switch the prompt from
-  // single_or_mix to mandatory_count for the same SKU.
   function handleContinueAsMix() {
-    setPendingUniformPrompt((p) =>
-      p ? { ...p, mode: 'mandatory_count' } : p
-    );
-    setCountInput('');
-    setCountError(null);
-  }
-
-  // "Different weights — scan each box" → the mix-e shape: one item whose
-  // boxes have mixed weights. Decline the count shortcut for this item; mark
-  // its name_key so the uniform prompt won't fire again for it, and let the
-  // worker scan every box (each recorded with its real weight). The boxes are
-  // already counted as individuals by committedCount(), so nothing else to do.
-  function handleScanEachIndividually() {
-    const p = pendingUniformPrompt;
-    if (!p) return;
-    setIndividualKeys((prev) => new Set(prev).add(p.name_key));
+    setForcedMix(true);            // pallet is mix → show pallet-total input, scan all
     setPendingUniformPrompt(null);
-    setCountInput('');
-    setCountError(null);
   }
 
   // ── Edit a scan (name + weight) ──
@@ -839,61 +794,6 @@ export default function PalletVerifyPage({
       return updated;
     });
     setEditForm(null);
-  }
-
-  // Boxes already committed to the pallet from OTHER products, used to cap the
-  // per-product count input. Exclude EVERY box of the product currently being
-  // counted (by name_key) — not just the 2 trigger samples — because the count
-  // the worker types covers all of them. (Counting the extra same-product
-  // scans as "other" was the off-by-N behind the "max 63 instead of 65" bug.)
-  function committedExcludingPending(): number {
-    const pendingKey = pendingUniformPrompt?.name_key;
-    let nonUniformIndividuals = 0;
-    for (const box of scannedBoxes) {
-      const k = acceptedMerges.get(groupKeyForBox(box)) ?? groupKeyForBox(box);
-      if (uniformGroups.has(k)) continue;                   // already in a locked group
-      if (pendingKey && k === pendingKey) continue;         // same product we're counting now
-      nonUniformIndividuals += 1;
-    }
-    let lockedTotal = 0;
-    for (const g of uniformGroups.values()) lockedTotal += g.total_count;
-    return nonUniformIndividuals + lockedTotal;
-  }
-
-  function handleSetUniformCount() {
-    const p = pendingUniformPrompt;
-    if (!p || p.mode !== 'mandatory_count') return;
-    const n = parseInt(countInput, 10);
-    if (!Number.isFinite(n) || n < 1) {
-      setCountError(tr('palletVerify.uniformInvalidCount'));
-      return;
-    }
-    const remaining = confirmedBoxCount - committedExcludingPending();
-    if (n > remaining) {
-      setCountError(
-        tr('palletVerify.uniformExceedsCount', {
-          declared: confirmedBoxCount,
-          max: Math.max(0, remaining),
-        }),
-      );
-      return;
-    }
-    const group: UniformGroup = {
-      name_key: p.name_key,
-      item_name: p.item_name,
-      item_name_hebrew: p.item_name_hebrew,
-      avg_weight: p.avg_weight,
-      total_count: n,
-      sample_barcodes: p.sample_barcodes,
-    };
-    setUniformGroups((prev) => {
-      const next = new Map(prev);
-      next.set(p.name_key, group);
-      return next;
-    });
-    setPendingUniformPrompt(null);
-    setCountInput('');
-    setCountError(null);
   }
 
   // ── Derived: committed count for progress + canConfirm ──
@@ -1311,11 +1211,9 @@ export default function PalletVerifyPage({
           // Reset per-pallet uniform-detection state.
           setUniformGroups(new Map());
           setPendingUniformPrompt(null);
-          setIndividualKeys(new Set());
+          setForcedMix(false);
           setSelectedBarcode(null);
           setEditForm(null);
-          setCountInput('');
-          setCountError(null);
           setPendingSingleGroup(null);
           setPalletCountError(null);
           // AI consolidation is per-pallet — merges accepted on pallet 1
@@ -1346,11 +1244,19 @@ export default function PalletVerifyPage({
   //    Worker must tap each warning, see the captured sticker, and fix
   //    the name/weight before the pallet can advance.
   const committed = committedCount();
+  // OCR-complete box count + whether any scan is still being read. Used to gate
+  // classification and the pallet-total input to ">=4 boxes, OCR done".
+  const doneCount = scannedBoxes.filter(
+    (b) => b.ocr_status === 'done' && b.weight > 0 && (b.item_name || b.item_name_hebrew),
+  ).length;
+  const anyProcessing = scannedBoxes.some((b) => b.ocr_status === 'processing');
   const unresolvedWarnings = scannedBoxes.filter((b) => b.needs_review).length;
   const hasUnresolvedWarnings = unresolvedWarnings > 0;
   const canConfirm =
     !pendingUniformPrompt &&
-    committed >= Math.max(2, confirmedBoxCount) &&
+    !pendingSingleGroup &&
+    confirmedBoxCount > 0 &&
+    committed >= confirmedBoxCount &&
     !hasUnresolvedWarnings;
 
   // Group scanned boxes by normalized OCR'd Hebrew name (with worker-accepted
@@ -1906,8 +1812,9 @@ export default function PalletVerifyPage({
           </div>
         </div>
 
-        {/* Uniform-group banner: shows locked groups + the currently-pending one. */}
-        {(uniformGroups.size > 0 || pendingUniformPrompt) && (
+        {/* Uniform-group banner: shows locked single-item groups. The
+            single-vs-mix choice is asked in the footer, not listed here. */}
+        {uniformGroups.size > 0 && (
           <div className="mt-2 bg-ok-weak border border-ok/30 rounded-lg px-3 py-2">
             <p className="flex items-center gap-1 text-[11px] font-semibold text-ok-weak-ink mb-1">
               <CheckCircle className="w-3.5 h-3.5 shrink-0" /> {tr('palletVerify.uniformItemsHeader')}
@@ -1921,17 +1828,6 @@ export default function PalletVerifyPage({
                   </li>
                 );
               })}
-              {pendingUniformPrompt && (
-                <li className="text-ok-weak-ink opacity-70">
-                  {tr('palletVerify.uniformPendingItem', {
-                    name:
-                      pendingUniformPrompt.item_name_hebrew ||
-                      pendingUniformPrompt.item_name ||
-                      pendingUniformPrompt.name_key.replace(/^(he|en|unknown):/, ''),
-                    weight: pendingUniformPrompt.avg_weight,
-                  })}
-                </li>
-              )}
             </ul>
           </div>
         )}
@@ -2121,19 +2017,12 @@ export default function PalletVerifyPage({
       )}
 
       {/* Footer — priority-ordered modes:
-          (1) single_or_mix uniform prompt (Complete / Continue),
-          (2) mandatory_count per-SKU prompt (number input + Set) —
-              ONLY once the pallet total is known (confirmedBoxCount > 0),
-              because its overflow validation caps the per-SKU count at
-              (pallet total − boxes already committed). With no total set
-              the cap would be 0 and the worker could never submit, so we
-              fall through to mode (3) first to capture the pallet total,
-              then this prompt re-appears with a meaningful cap.
-          (3) deferred pallet box-count input (surfaces after 2
-              OCR-completed scans when no count has been set yet, OR
-              after the worker picks "Single-item" in mode 1, OR while a
-              mandatory_count prompt is pending but the total is still 0),
-          (4) standard Confirm Pallet button.                         */}
+          (1) single_or_mix uniform prompt (Complete / Continue) — shown
+              after >=4 OCR'd boxes of one product at the same weight,
+          (2) deferred pallet box-count input (surfaces after >=4
+              OCR-completed scans, OR once the worker picks "Single-item"
+              in mode 1, OR once they confirm the pallet is mix),
+          (3) standard Confirm Pallet button.                         */}
       <div className="p-4 bg-raised border-t sticky bottom-0">
         {error && <p className="text-danger-weak-ink text-sm text-center mb-2">{error}</p>}
 
@@ -2156,67 +2045,8 @@ export default function PalletVerifyPage({
             >
               <Plus className="w-4 h-4" /> {tr('palletVerify.uniformContinueMix')}
             </button>
-            <button
-              onClick={handleScanEachIndividually}
-              disabled={phase === 'confirming'}
-              className="w-full text-xs text-ink-muted hover:text-ink-body underline pt-1"
-            >
-              {tr('palletVerify.uniformScanEach')}
-            </button>
           </div>
-        ) : (pendingUniformPrompt?.mode === 'mandatory_count' && confirmedBoxCount > 0) ? (
-          <div className="space-y-2">
-            <label className="block text-xs text-ink-body font-medium">
-              {tr('palletVerify.uniformHowMany', {
-                item:
-                  pendingUniformPrompt.item_name_hebrew ||
-                  pendingUniformPrompt.item_name ||
-                  pendingUniformPrompt.name_key.replace(/^(he|en|unknown):/, ''),
-              })}
-            </label>
-            <p className="text-[11px] text-ink-muted">
-              {tr('palletVerify.uniformMaxNote', {
-                max: Math.max(0, confirmedBoxCount - committedExcludingPending()),
-                weight: pendingUniformPrompt.avg_weight,
-              })}
-            </p>
-            {/* min-w-0 on the input + shrink-0 on the button keeps the
-                button inside the viewport. Without min-w-0 the input's
-                intrinsic placeholder width forces the row wider than the
-                screen and the Set button slides off the (RTL) left edge. */}
-            <div className="flex gap-2">
-              <input
-                type="number"
-                inputMode="numeric"
-                min={1}
-                value={countInput}
-                onChange={(e) => {
-                  setCountInput(e.target.value);
-                  setCountError(null);
-                }}
-                onKeyDown={(e) => e.key === 'Enter' && handleSetUniformCount()}
-                placeholder={tr('palletVerify.uniformPlaceholder')}
-                className="flex-1 min-w-0 text-center text-xl font-bold text-ink bg-raised border-2 border-gray-400 rounded-xl py-2 px-3 shadow-sm transition outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-200 placeholder:text-ink-muted placeholder:font-medium placeholder:text-base"
-                autoFocus
-              />
-              <button
-                onClick={handleSetUniformCount}
-                className="shrink-0 px-5 py-2 rounded-xl bg-brand text-ink-inverse font-semibold text-sm hover:bg-brand-hover transition"
-              >
-                {tr('palletVerify.uniformSet')}
-              </button>
-            </div>
-            {countError && (
-              <p className="text-danger-weak-ink text-xs">{countError}</p>
-            )}
-            <button
-              onClick={handleScanEachIndividually}
-              className="w-full text-xs text-ink-muted hover:text-ink-body underline pt-1"
-            >
-              {tr('palletVerify.uniformScanEach')}
-            </button>
-          </div>
-        ) : (confirmedBoxCount === 0 && scannedBoxes.length >= 2) ? (
+        ) : (confirmedBoxCount === 0 && !anyProcessing && (doneCount >= 4 || forcedMix || !!pendingSingleGroup)) ? (
           <div className="space-y-2">
             <label className="block text-xs text-ink-body font-medium">
               {tr('palletVerify.deferredCountTitle')}
@@ -2277,6 +2107,14 @@ export default function PalletVerifyPage({
                 ? tr('palletVerify.scanMoreToContinue', { count: 2 - committed })
                 : tr('palletVerify.boxesNeeded', { count: Math.max(0, confirmedBoxCount - committed) })}
             </button>
+            {confirmedBoxCount === 0 && !forcedMix && !pendingSingleGroup && doneCount < 4 && doneCount >= 1 && !anyProcessing && (
+              <button
+                onClick={() => setForcedMix(true)}
+                className="w-full text-xs text-ink-muted hover:text-ink-body underline pt-2"
+              >
+                {tr('palletVerify.fewerThan4')}
+              </button>
+            )}
             {hasUnresolvedWarnings && (
               <p className="flex items-center justify-center gap-1 text-[11px] text-warn-weak-ink text-center mt-1.5">
                 <AlertTriangle className="w-3 h-3 shrink-0" /> {tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })}

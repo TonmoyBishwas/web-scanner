@@ -147,7 +147,6 @@ export const en = {
   'palletVerify.failedLooseComplete': 'Failed to complete loose boxes.',
   'palletVerify.invalidBoxNumber': 'Please enter a valid number of boxes (minimum 1).',
   'palletVerify.uniformInvalidCount': 'Enter a valid number ≥ 1.',
-  'palletVerify.uniformExceedsCount': 'Total would exceed declared {declared} boxes — max is {max} for this item.',
   'palletVerify.closeButton': 'Close',
 
   'palletVerify.loadingSession': 'Loading session…',
@@ -203,20 +202,17 @@ export const en = {
 
   'palletVerify.uniformLockedItem': '{name} — {count} boxes locked ({weight} kg/box)',
 
-  'palletVerify.uniformPendingItem': '⏳ {name} — awaiting count below ({weight} kg/box)',
   'palletVerify.boxesUnit': '{count} boxes',
   'palletVerify.avgWeightLine': 'avg {weight} kg/box',
   'palletVerify.totalWeightLine': '{weight} kg total',
   'palletVerify.itemTypesDetected': '{count} item types detected',
   'palletVerify.confirmOrKeep': 'Confirm now or keep scanning to add more boxes',
-  'palletVerify.uniformChoose': 'One product detected. What is on this pallet?',
-  'palletVerify.uniformCompleteBtn': 'Only this product — enter total count',
+  'palletVerify.uniformChoose': 'Same product, same weight. Is this the only product on the pallet?',
+  'palletVerify.uniformCompleteBtn': 'Yes — only this product',
 
-  'palletVerify.uniformContinueMix': 'Other (different) products too',
+  'palletVerify.uniformContinueMix': 'No — other products too',
 
-  'palletVerify.uniformScanEach': 'Same product, weights vary — scan each box',
-  'palletVerify.uniformHowMany': 'How many boxes of {item} are on this pallet?',
-  'palletVerify.uniformMaxNote': 'Max {max} (each box ≈ {weight} kg)',
+  'palletVerify.fewerThan4': 'Fewer than 4 boxes? Tap to finish',
   'palletVerify.uniformPlaceholder': 'Enter count',
   'palletVerify.uniformSet': 'Set',
   'palletVerify.confirmPalletBtn': 'Confirm Pallet {current}',

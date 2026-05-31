@@ -151,7 +151,6 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.failedLooseComplete': 'השלמת הקופסאות הבודדות נכשלה.',
   'palletVerify.invalidBoxNumber': 'הזן מספר קופסאות תקין (מינימום 1).',
   'palletVerify.uniformInvalidCount': 'הזן מספר תקין ≥ 1.',
-  'palletVerify.uniformExceedsCount': 'הסה״כ יחרוג מ-{declared} קופסאות שהוצהרו — המקסימום הוא {max} לפריט הזה.',
   'palletVerify.closeButton': 'סגור',
 
   'palletVerify.loadingSession': 'טוען סשן…',
@@ -207,20 +206,17 @@ export const he: Record<TranslationKey, string> = {
 
   'palletVerify.uniformLockedItem': '{name} — {count} קופסאות ננעלו ({weight} kg לקופסה)',
 
-  'palletVerify.uniformPendingItem': '⏳ {name} — ממתין לכמות למטה ({weight} kg לקופסה)',
   'palletVerify.boxesUnit': '{count} קופסאות',
   'palletVerify.avgWeightLine': 'ממוצע {weight} kg לקופסה',
   'palletVerify.totalWeightLine': '{weight} kg סה״כ',
   'palletVerify.itemTypesDetected': 'זוהו {count} סוגי פריטים',
   'palletVerify.confirmOrKeep': 'אשר עכשיו או המשך לסרוק קופסאות נוספות',
-  'palletVerify.uniformChoose': 'זוהה פריט אחד. מה יש על המשטח הזה?',
-  'palletVerify.uniformCompleteBtn': 'רק הפריט הזה — הזן כמות כוללת',
+  'palletVerify.uniformChoose': 'אותו מוצר, אותו משקל. האם זה המוצר היחיד על המשטח?',
+  'palletVerify.uniformCompleteBtn': 'כן — רק המוצר הזה',
 
-  'palletVerify.uniformContinueMix': 'יש גם פריטים אחרים (שונים)',
+  'palletVerify.uniformContinueMix': 'לא — יש גם מוצרים אחרים',
 
-  'palletVerify.uniformScanEach': 'אותו פריט, משקלים שונים — סרוק כל קופסה',
-  'palletVerify.uniformHowMany': 'כמה קופסאות של {item} יש על המשטח הזה?',
-  'palletVerify.uniformMaxNote': 'מקסימום {max} (כל קופסה ≈ {weight} kg)',
+  'palletVerify.fewerThan4': 'פחות מ-4 קופסאות? הקש לסיום',
   'palletVerify.uniformPlaceholder': 'הזן כמות',
   'palletVerify.uniformSet': 'קבע',
   'palletVerify.confirmPalletBtn': 'אשר משטח {current}',
