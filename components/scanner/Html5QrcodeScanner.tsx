@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+import { Camera, FolderOpen, Check } from 'lucide-react';
 import type { ParsedBarcode } from '@/types';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
 import type { BoxStickerOCR } from '@/types';
