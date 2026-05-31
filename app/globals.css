@@ -1,42 +1,136 @@
 @import "tailwindcss";
 
+/* ──────────────────────────────────────────────────────────────────────────
+   Design tokens — light theme, teal brand. Single source of truth.
+   The app is light-only (no dark media variant). The only "dark" surface is
+   chrome that overlays the live camera video (the --cam-* set), which is
+   constant and theme-independent so it stays legible over arbitrary imagery.
+   ────────────────────────────────────────────────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Surfaces */
+  --surface-canvas: #f7f8f8; /* app background — bright near-white, faint cool gray */
+  --surface-raised: #ffffff; /* cards, headers, list rows, modals */
+  --surface-sunken: #eef1f1; /* inset wells, track backgrounds, skeletons */
+  --surface-hover:  #e7ebeb; /* row/button hover on light */
+
+  /* Borders */
+  --border-subtle: #e2e6e6; /* hairlines, card borders, dividers */
+  --border-strong: #c9cfcf; /* input borders, emphasized separators */
+
+  /* Ink (text) */
+  --ink-strong:  #14201f; /* primary text — near-black, slight teal cast */
+  --ink-body:    #36433f; /* secondary/body text */
+  --ink-muted:   #6a7672; /* captions, labels, placeholders (AA on canvas) */
+  --ink-inverse: #ffffff; /* text on teal / on dark glass */
+
+  /* Brand (teal) */
+  --brand:          #0e9888;
+  --brand-hover:    #0b7e72;
+  --brand-active:   #095f56;
+  --brand-weak:     #dcf1ed; /* tinted backgrounds, selected chips */
+  --brand-weak-ink: #075a50; /* text/icon on brand-weak */
+  --brand-ring:     rgba(14, 152, 136, 0.4);
+
+  /* Status — success / done (green) */
+  --ok:          #1a8f4c;
+  --ok-weak:     #dbf1e2;
+  --ok-weak-ink: #136638;
+
+  /* Status — warning / needs-fix (amber, dark enough for AA text on white) */
+  --warn:          #b5740a;
+  --warn-weak:     #fbefd6;
+  --warn-weak-ink: #8a5703;
+
+  /* Status — danger (red) */
+  --danger:          #c42b2b;
+  --danger-weak:     #fbe0e0;
+  --danger-weak-ink: #97201f;
+
+  /* Status — processing / info (cool blue, distinct from brand) */
+  --info:          #2563b5;
+  --info-weak:     #e1ecfb;
+  --info-weak-ink: #1b4a8a;
+
+  /* Camera-overlay glass — used ONLY over the live <video>; constant values */
+  --cam-scrim:     rgba(8, 12, 12, 0.82);  /* full-screen diagnostic overlay */
+  --cam-chip:      rgba(17, 24, 24, 0.72);  /* status chips / switch button bg */
+  --cam-chip-hover: rgba(30, 38, 38, 0.78);
+  --cam-ink:       #f4f7f6;                  /* text on glass */
+  --cam-ink-muted: #b9c2c0;
+  --cam-border:    rgba(255, 255, 255, 0.18);
 }
 
+/* Map tokens → Tailwind v4 utilities (bg-canvas, text-ink, bg-brand, …) */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-canvas: var(--surface-canvas);
+  --color-raised: var(--surface-raised);
+  --color-sunken: var(--surface-sunken);
+  --color-hover: var(--surface-hover);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+  --color-line: var(--border-subtle);
+  --color-line-strong: var(--border-strong);
 
-/* Force dark mode when class applied */
-html.dark {
-  --background: #0a0a0a;
-  --foreground: #ededed;
-}
+  --color-ink: var(--ink-strong);
+  --color-ink-body: var(--ink-body);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-inverse: var(--ink-inverse);
 
-html.light {
-  --background: #ffffff;
-  --foreground: #171717;
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-active: var(--brand-active);
+  --color-brand-weak: var(--brand-weak);
+  --color-brand-weak-ink: var(--brand-weak-ink);
+
+  --color-ok: var(--ok);
+  --color-ok-weak: var(--ok-weak);
+  --color-ok-weak-ink: var(--ok-weak-ink);
+
+  --color-warn: var(--warn);
+  --color-warn-weak: var(--warn-weak);
+  --color-warn-weak-ink: var(--warn-weak-ink);
+
+  --color-danger: var(--danger);
+  --color-danger-weak: var(--danger-weak);
+  --color-danger-weak-ink: var(--danger-weak-ink);
+
+  --color-info: var(--info);
+  --color-info-weak: var(--info-weak);
+  --color-info-weak-ink: var(--info-weak-ink);
+
+  --color-cam-scrim: var(--cam-scrim);
+  --color-cam-chip: var(--cam-chip);
+  --color-cam-chip-hover: var(--cam-chip-hover);
+  --color-cam-ink: var(--cam-ink);
+  --color-cam-ink-muted: var(--cam-ink-muted);
+  --color-cam-border: var(--cam-border);
+
+  --font-sans: var(--font-app-sans);
+  --font-mono: var(--font-app-mono);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--surface-canvas);
+  color: var(--ink-strong);
+  font-family: var(--font-app-sans), system-ui, sans-serif;
 }
 
-/* Keyframe animations */
+/* ── Mobile / Android helpers ─────────────────────────────────────────────── */
+/* Safe-area padding for gesture-nav devices. Requires viewport-fit=cover. */
+@utility safe-bottom {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 0.5rem);
+}
+
+@utility safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Minimum comfortable touch target for rushed / gloved hands (Material min). */
+@utility tap-target {
+  min-height: 48px;
+  min-width: 48px;
+}
+
+/* ── Keyframe animations (unchanged) ──────────────────────────────────────── */
 @keyframes slideInUp {
   from {
     transform: translateY(16px);

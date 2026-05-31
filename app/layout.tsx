@@ -1,17 +1,25 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Rubik, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { EnvExposer } from "@/components/scanner/EnvExposer";
 import { ThemeProvider } from "@/components/shared/ThemeProvider";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
+// Rubik — first-class Hebrew + Latin in one voice, tall x-height + softly
+// rounded terminals read clearly at a glance for low-literacy warehouse
+// workers. (subsets:["hebrew"] ships the Hebrew glyphs Geist lacked.)
+const appSans = Rubik({
+  variable: "--font-app-sans",
+  subsets: ["latin", "hebrew"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+// IBM Plex Mono — disambiguates 0/O, 1/l/I, 5/S for barcodes, SKUs, LPNs.
+const appMono = IBM_Plex_Mono({
+  variable: "--font-app-mono",
   subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -24,6 +32,9 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  // Let content extend under the status bar / gesture pill so safe-area
+  // insets can pad it back (preserves the zoom lock above).
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
@@ -32,9 +43,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="light">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${appSans.variable} ${appMono.variable} antialiased`}
       >
         <EnvExposer />
         <ThemeProvider>
