@@ -52,7 +52,7 @@ function detectType(
   const weights = boxes.map((b) => b.weight).filter((w) => w > 0);
   if (weights.length < 2) return 'unknown';
   const range = Math.max(...weights) - Math.min(...weights);
-  return range < 0.5 ? 'single-uniform' : 'single-nonuniform';
+  return range < UNIFORM_WEIGHT_TOLERANCE ? 'single-uniform' : 'single-nonuniform';
 }
 
 // ── Local box type with OCR state ──
@@ -82,10 +82,11 @@ function digitsOnly(s: string | null | undefined): string {
 
 // ── Uniform-pair detection state ──
 //
-// When 2+ boxes of the same OCR'd Hebrew name come back with the same weight
-// (within tolerance), the warehouse domain rule says ALL boxes of that item
-// on this pallet are the same weight. Worker physically scans 2 samples and
-// reports the real total count via a prompt.
+// When the same-named boxes all come back with the EXACT same printed weight
+// (a fixed-weight product), the warehouse domain rule says ALL boxes of that
+// item on this pallet are that weight. Worker scans 4 samples and reports the
+// real total count via a prompt instead of scanning every box. Any weight
+// difference at all (catch-weight) means each box must be scanned.
 //
 // Pre-2026-05-15 this was keyed on the barcode-derived `sku` (first 13
 // digits). That broke when OCR misread a digit and put physically-identical
@@ -107,9 +108,14 @@ interface UniformGroup {
 type UniformPrompt =
   | { mode: 'single_or_mix'; name_key: string; item_name: string; item_name_hebrew: string; avg_weight: number; sample_barcodes: string[] };
 
-// Tolerance (kg) for "same weight" — matches detectType() and the outbound
-// uniform-override threshold.
-const UNIFORM_WEIGHT_TOLERANCE = 0.5;
+// "Same weight" means the printed weights are EXACTLY equal — a fixed-weight
+// product stamps the identical kg on every box. Catch-weight boxes that merely
+// look close (e.g. 10.090 vs 10.080 — 10 g apart, or even 1 g apart) are
+// DIFFERENT and must each be scanned, so there is no grace band. This epsilon
+// (0.1 g — below the 1 g label resolution) only absorbs floating-point
+// representation noise. Mirrored by UNIFORM_WEIGHT_TOLERANCE_KG in
+// app/api/multi-pallet-complete/route.ts.
+const UNIFORM_WEIGHT_TOLERANCE = 0.0001;
 
 // ── Page state machine ──
 

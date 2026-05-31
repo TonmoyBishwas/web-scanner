@@ -6,9 +6,13 @@ import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
 import { matchInvoiceItem } from '@/lib/invoice-match';
 
 const SESSION_TTL = 7200;
-// "Same weight" tolerance — kept at 0.5 kg per the user's instruction
-// (2026-05-15). Mirrors UNIFORM_WEIGHT_TOLERANCE in pallet-verify/page.tsx.
-const UNIFORM_WEIGHT_TOLERANCE_KG = 0.5;
+// "Same weight" means the printed weights are EXACTLY equal — a fixed-weight
+// product stamps the identical kg on every box. Catch-weight boxes that look
+// close (e.g. 10.090 vs 10.080 — 10 g apart) are DIFFERENT and must each be
+// scanned, so there is NO grace band (changed from 0.5 kg on 2026-05-31). This
+// epsilon (0.1 g — below the 1 g label resolution) only absorbs floating-point
+// noise. Mirrors UNIFORM_WEIGHT_TOLERANCE in pallet-verify/page.tsx.
+const UNIFORM_WEIGHT_TOLERANCE_KG = 0.0001;
 
 function sessionKey(token: string) {
   return `pallet:multi:${token}`;
@@ -31,8 +35,8 @@ function generateLPN(documentNumber: string, palletNumber: number): string {
  * Classify the pallet into one of the four configurations the warehouse
  * domain recognises:
  *
- *   1. Single   — one item, all weights within 0.5 kg                 →  single
- *   2. Mix (a)  — one item, weights >0.5 kg apart                     →  mix
+ *   1. Single   — one item, all weights EXACTLY equal                 →  single
+ *   2. Mix (a)  — one item, weights differ at all (even ~10 g)        →  mix
  *   3. Mix (b)  — 2+ items, varying weights per item                  →  mix
  *   4. Mix (c)  — 2+ items, each item uniform internally              →  mix
  *
