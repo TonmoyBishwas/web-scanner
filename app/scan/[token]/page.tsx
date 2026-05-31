@@ -857,10 +857,10 @@ export default function ScanPage({
   // Loading
   if (phase === 'loading') {
     return (
-      <div className="min-h-screen bg-gray-900 dark:bg-gray-900 flex items-center justify-center">
+      <div className="min-h-screen bg-canvas dark:bg-canvas flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-gray-300">{tr('scan.loadingSession')}</p>
+          <div className="animate-spin w-12 h-12 border-4 border-brand border-t-transparent rounded-full mx-auto mb-4"></div>
+          <p className="text-ink-body">{tr('scan.loadingSession')}</p>
         </div>
       </div>
     );
@@ -869,13 +869,13 @@ export default function ScanPage({
   // Error
   if (phase === 'error') {
     return (
-      <div className="min-h-screen bg-gray-900 dark:bg-gray-900 flex items-center justify-center p-4">
-        <div className="bg-red-900/30 border border-red-600 rounded-lg p-6 max-w-md text-center">
-          <XCircle className="w-10 h-10 text-red-400 mx-auto mb-3" />
-          <p className="text-red-400 font-medium">{error}</p>
+      <div className="min-h-screen bg-canvas dark:bg-canvas flex items-center justify-center p-4">
+        <div className="bg-red-900/30 border border-danger/30 rounded-lg p-6 max-w-md text-center">
+          <XCircle className="w-10 h-10 text-danger mx-auto mb-3" />
+          <p className="text-danger font-medium">{error}</p>
           <button
             onClick={() => window.location.reload()}
-            className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-white text-sm"
+            className="mt-4 px-4 py-2 bg-danger hover:bg-red-700 rounded-lg text-ink text-sm"
           >
             {tr('common.retry')}
           </button>
@@ -887,14 +887,14 @@ export default function ScanPage({
   // Complete
   if (phase === 'complete') {
     return (
-      <div className="min-h-screen bg-gray-900 dark:bg-gray-900 flex items-center justify-center p-4">
-        <div className="bg-green-900/30 border border-green-600 rounded-lg p-6 max-w-md text-center animate-scaleIn">
-          <CheckCircle className="w-12 h-12 text-green-400 mx-auto mb-3" />
-          <h2 className="text-xl font-bold text-green-400 mb-2">{tr('scan.scanComplete')}</h2>
-          <p className="text-gray-300 text-sm mb-1">
+      <div className="min-h-screen bg-canvas dark:bg-canvas flex items-center justify-center p-4">
+        <div className="bg-ok-weak border border-ok/30 rounded-lg p-6 max-w-md text-center animate-scaleIn">
+          <CheckCircle className="w-12 h-12 text-ok mx-auto mb-3" />
+          <h2 className="text-xl font-bold text-ok mb-2">{tr('scan.scanComplete')}</h2>
+          <p className="text-ink-body text-sm mb-1">
             {tr('scan.boxesScannedAndSubmitted', { count: scannedBarcodes.size })}
           </p>
-          <p className="text-gray-400 text-xs">{tr('scan.dataSent')}</p>
+          <p className="text-ink-muted text-xs">{tr('scan.dataSent')}</p>
         </div>
       </div>
     );
@@ -907,18 +907,18 @@ export default function ScanPage({
     const completed = totalScanned - totalPending;
 
     return (
-      <div className="min-h-screen bg-gray-900 dark:bg-gray-900 flex items-center justify-center p-4">
-        <div className="bg-gray-800/90 dark:bg-gray-800/90 backdrop-blur-md border border-gray-700 rounded-xl p-6 max-w-md text-center">
-          <div className="animate-spin w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <h2 className="text-lg font-bold text-white mb-2">{tr('ocr.processing')}</h2>
-          <p className="text-gray-400 text-sm mb-3">{tr('ocr.extractingData')}</p>
-          <div className="bg-gray-900 rounded-full h-2 mb-2">
+      <div className="min-h-screen bg-canvas dark:bg-canvas flex items-center justify-center p-4">
+        <div className="bg-raised dark:bg-raised backdrop-blur-md border border-line rounded-xl p-6 max-w-md text-center">
+          <div className="animate-spin w-12 h-12 border-4 border-brand border-t-transparent rounded-full mx-auto mb-4"></div>
+          <h2 className="text-lg font-bold text-ink mb-2">{tr('ocr.processing')}</h2>
+          <p className="text-ink-muted text-sm mb-3">{tr('ocr.extractingData')}</p>
+          <div className="bg-canvas rounded-full h-2 mb-2">
             <div
-              className="bg-blue-500 h-2 rounded-full transition-all duration-500"
+              className="bg-brand h-2 rounded-full transition-all duration-500"
               style={{ width: `${totalScanned > 0 ? (completed / totalScanned) * 100 : 0}%` }}
             ></div>
           </div>
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-ink-muted">
             {tr('scan.processingProgress', { completed, total: totalScanned, pending: totalPending })}
           </p>
         </div>
@@ -929,10 +929,10 @@ export default function ScanPage({
   // Confirming
   if (phase === 'confirming') {
     return (
-      <div className="min-h-screen bg-gray-900 dark:bg-gray-900 flex items-center justify-center">
+      <div className="min-h-screen bg-canvas dark:bg-canvas flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin w-12 h-12 border-4 border-green-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-gray-300">{tr('scan.submittingData')}</p>
+          <div className="animate-spin w-12 h-12 border-4 border-ok/30 border-t-transparent rounded-full mx-auto mb-4"></div>
+          <p className="text-ink-body">{tr('scan.submittingData')}</p>
         </div>
       </div>
     );
@@ -946,37 +946,37 @@ export default function ScanPage({
 
   return (
    <LanguageContext.Provider value={language}>
-    <div className="min-h-screen bg-gray-900 dark:bg-gray-900 text-white dark:text-white flex flex-col">
+    <div className="min-h-screen bg-canvas dark:bg-canvas text-ink dark:text-ink flex flex-col">
       {/* ── Offline Banner ──────────────────────────────────── */}
       <OfflineBanner queueCount={offlineQueueCount} isSyncing={isSyncing} />
 
       {/* ── Header ──────────────────────────────────────────── */}
-      <div className="sticky top-0 z-50 bg-gray-800/90 dark:bg-gray-800/90 backdrop-blur-md border-b border-gray-700/50 dark:border-gray-700/50 px-4 py-3">
+      <div className="sticky top-0 z-50 bg-raised dark:bg-raised backdrop-blur-md border-b border-line dark:border-line px-4 py-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <ProgressRing current={scannedBarcodes.size} total={boxesExpected} />
             <div>
               <h1 className="text-sm font-bold">
                 <span
-                  className={`${scannedBarcodes.size >= boxesExpected ? 'text-green-400' : 'text-white'} transition-transform duration-300`}
+                  className={`${scannedBarcodes.size >= boxesExpected ? 'text-ok' : 'text-ink'} transition-transform duration-300`}
                   style={counterBounce ? { transform: 'scale(1.3)', display: 'inline-block' } : {}}
                 >
                   {scannedBarcodes.size}
                 </span>
-                <span className="text-gray-500 mx-1">/</span>
-                <span className="text-gray-400">{boxesExpected}</span>
-                <span className="text-xs text-gray-500 ms-1.5">{tr('scan.boxesUnit')}</span>
+                <span className="text-ink-muted mx-1">/</span>
+                <span className="text-ink-muted">{boxesExpected}</span>
+                <span className="text-xs text-ink-muted ms-1.5">{tr('scan.boxesUnit')}</span>
               </h1>
               <div className="flex items-center gap-2 flex-wrap">
                 {session?.document_number && (
-                  <p className="text-xs text-gray-500" dir="ltr">
+                  <p className="text-xs text-ink-muted" dir="ltr">
                     {tr('scan.docPrefix', { doc: session.document_number })}
                   </p>
                 )}
                 {session?.user_info && (
                   <>
                     {session?.document_number && <span className="text-xs text-gray-600">•</span>}
-                    <p className="text-xs text-green-400 font-medium">
+                    <p className="text-xs text-ok font-medium">
                       {tr('scan.scanningAs', { nickname: session.user_info.nickname })}
                     </p>
                   </>
@@ -991,7 +991,7 @@ export default function ScanPage({
           {/* Right side: status + settings */}
           <div className="flex items-center gap-2">
             {pendingOCR.size > 0 && (
-              <span className="flex items-center gap-1 text-xs text-yellow-400">
+              <span className="flex items-center gap-1 text-xs text-warn">
                 <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
                 {tr('scan.ocrPending', { count: pendingOCR.size })}
               </span>
@@ -1001,9 +1001,9 @@ export default function ScanPage({
         </div>
 
         {/* Progress bar (secondary) */}
-        <div className="mt-2 bg-gray-700/50 rounded-full h-1">
+        <div className="mt-2 bg-sunken rounded-full h-1">
           <div
-            className={`h-1 rounded-full transition-all duration-500 ${scannedBarcodes.size >= boxesExpected ? 'bg-green-500' : 'bg-blue-500'}`}
+            className={`h-1 rounded-full transition-all duration-500 ${scannedBarcodes.size >= boxesExpected ? 'bg-ok' : 'bg-brand'}`}
             aria-label={tr('scan.progressAria')}
             style={{ width: `${boxesExpected > 0 ? Math.min(100, (scannedBarcodes.size / boxesExpected) * 100) : 0}%` }}
           ></div>
@@ -1057,7 +1057,7 @@ export default function ScanPage({
       )}
 
       {/* ── Footer: Action Buttons ────────────────────────────── */}
-      <div className="sticky bottom-0 bg-gray-800/90 dark:bg-gray-800/90 backdrop-blur-md border-t border-gray-700/50 dark:border-gray-700/50 p-4 space-y-2">
+      <div className="sticky bottom-0 bg-raised dark:bg-raised backdrop-blur-md border-t border-line dark:border-line p-4 space-y-2">
         {/* Force Confirm button */}
         {canForceConfirm && phase === 'scanning' && (
           <button
@@ -1079,7 +1079,7 @@ export default function ScanPage({
 
         {/* Scanned barcodes summary */}
         {scannedBarcodes.size > 0 && phase === 'scanning' && (
-          <p className="text-center text-xs text-gray-500">
+          <p className="text-center text-xs text-ink-muted">
             {pendingOCR.size > 0
               ? tr('scan.boxesSummaryWithOcr', { count: scannedBarcodes.size, pending: pendingOCR.size })
               : tr('scan.boxesSummary', { count: scannedBarcodes.size })}
@@ -1088,13 +1088,13 @@ export default function ScanPage({
 
         {/* Tool buttons row */}
         {(session || errorLog.length > 0 || ocrImageUrls.size > 0) && (phase === 'scanning' || phase === 'ready_confirm') && (
-          <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-gray-700/50">
+          <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-line">
             {/* Left side: Invoice & Photos */}
             <div className="flex items-center gap-2">
               {session && (
                 <button
                   onClick={() => setShowInvoiceDrawer(true)}
-                  className="flex items-center gap-1.5 px-3 py-2 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 rounded-lg text-blue-300 text-xs font-medium transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-brand/20 hover:bg-brand-hover/30 border border-brand/30 rounded-lg text-brand text-xs font-medium transition-colors"
                   aria-label={tr('scan.viewInvoice')}
                 >
                   <FileText className="w-4 h-4" />
@@ -1117,7 +1117,7 @@ export default function ScanPage({
             {errorLog.length > 0 && (
               <button
                 onClick={() => setShowDebugPanel(!showDebugPanel)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 rounded-lg text-red-300 text-xs font-medium transition-colors"
+                className="flex items-center gap-1.5 px-3 py-2 bg-danger/20 hover:bg-danger/30 border border-danger/30/30 rounded-lg text-red-300 text-xs font-medium transition-colors"
                 aria-label={tr('scan.debugLogAria')}
               >
                 <Bug className="w-4 h-4" />
@@ -1144,18 +1144,18 @@ export default function ScanPage({
 
       {/* OCR drawer removed - redundant with scanned list */}
       {false && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-gray-900/95 dark:bg-gray-900/95 backdrop-blur-lg border-t-2 border-purple-500 shadow-2xl animate-slideInUp" style={{ maxHeight: '55vh' }}>
-          <div className="flex justify-between items-center p-3 border-b border-gray-700 bg-gradient-to-r from-purple-900 to-blue-900">
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-canvas/95 dark:bg-canvas/95 backdrop-blur-lg border-t-2 border-purple-500 shadow-2xl animate-slideInUp" style={{ maxHeight: '55vh' }}>
+          <div className="flex justify-between items-center p-3 border-b border-line bg-gradient-to-r from-purple-900 to-blue-900">
             <div className="flex items-center gap-2">
               <Cpu className="w-4 h-4 text-purple-300" />
-              <span className="text-white font-bold text-sm">{tr('ocr.aiResults')}</span>
+              <span className="text-ink font-bold text-sm">{tr('ocr.aiResults')}</span>
               <span className="text-purple-300 text-xs ms-1">
                 {tr('scan.ocrResultsCount', { done: ocrResults.size, total: ocrImageUrls.size })}
               </span>
             </div>
             <button
               onClick={() => {}}
-              className="text-gray-400 hover:text-white p-1"
+              className="text-ink-muted hover:text-ink p-1"
             >
               <X className="w-5 h-5" />
             </button>
@@ -1165,10 +1165,10 @@ export default function ScanPage({
               const result = ocrResults.get(barcode);
               const isPending = pendingOCR.has(barcode);
               return (
-                <div key={barcode} className="bg-black/40 rounded-xl border border-gray-700 overflow-hidden">
+                <div key={barcode} className="bg-black/40 rounded-xl border border-line overflow-hidden">
                   <div className="flex gap-3 p-3">
                     <div
-                      className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-gray-800 cursor-pointer hover:ring-2 hover:ring-purple-500 transition-all relative group"
+                      className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-raised cursor-pointer hover:ring-2 hover:ring-purple-500 transition-all relative group"
                       onClick={() => setSelectedImage(imageUrl)}
                     >
                       <img
@@ -1178,25 +1178,25 @@ export default function ScanPage({
                         onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                       />
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                        <Search className="w-4 h-4 text-white" />
+                        <Search className="w-4 h-4 text-ink" />
                       </div>
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-purple-300 text-xs font-mono" dir="ltr">{tr('scan.boxLabelShort', { id: barcode.slice(-6) })}</span>
                         {result ? (
-                          <span className="flex items-center gap-1 text-green-400 text-xs px-1.5 py-0.5 bg-green-900/50 rounded-full">
+                          <span className="flex items-center gap-1 text-ok text-xs px-1.5 py-0.5 bg-ok-weak/50 rounded-full">
                             <Check className="w-3 h-3" /> {tr('scan.ocrDoneBadge')}
                           </span>
                         ) : isPending ? (
-                          <span className="flex items-center gap-1 text-yellow-400 text-xs px-1.5 py-0.5 bg-yellow-900/50 rounded-full animate-pulse">
+                          <span className="flex items-center gap-1 text-warn text-xs px-1.5 py-0.5 bg-yellow-900/50 rounded-full animate-pulse">
                             <Clock className="w-3 h-3" /> {tr('scan.ocrAnalyzingBadge')}
                           </span>
                         ) : null}
                       </div>
                       {result ? (
                         <div className="space-y-0.5">
-                          <div className="text-green-300 text-sm font-semibold truncate">
+                          <div className="text-ok text-sm font-semibold truncate">
                             {result.product_name || tr('scan.productUnclear')}
                           </div>
                           <div className="text-blue-200 text-xs">
@@ -1218,11 +1218,11 @@ export default function ScanPage({
 
       {/* ── Debug Panel (Bottom Drawer) ──────────────────────── */}
       {showDebugPanel && errorLog.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-gray-900/95 dark:bg-gray-900/95 backdrop-blur-lg border-t-2 border-red-500 shadow-2xl animate-slideInUp" style={{ maxHeight: '40vh' }}>
-          <div className="flex justify-between items-center p-3 border-b border-gray-700 bg-gray-800/90 backdrop-blur-md">
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-canvas/95 dark:bg-canvas/95 backdrop-blur-lg border-t-2 border-danger/30 shadow-2xl animate-slideInUp" style={{ maxHeight: '40vh' }}>
+          <div className="flex justify-between items-center p-3 border-b border-line bg-raised backdrop-blur-md">
             <div className="flex items-center gap-2">
-              <Bug className="w-4 h-4 text-red-400" />
-              <span className="text-white font-bold text-sm">{tr('scan.debugLog')}</span>
+              <Bug className="w-4 h-4 text-danger" />
+              <span className="text-ink font-bold text-sm">{tr('scan.debugLog')}</span>
             </div>
             <div className="flex gap-2">
               <button
@@ -1231,13 +1231,13 @@ export default function ScanPage({
                   navigator.clipboard.writeText(text);
                   alert(tr('scan.debugCopied'));
                 }}
-                className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-lg flex items-center gap-1"
+                className="px-3 py-1 bg-brand hover:bg-brand-hover text-ink text-xs rounded-lg flex items-center gap-1"
               >
                 <ClipboardList className="w-3 h-3" /> {tr('scan.copyAll')}
               </button>
               <button
                 onClick={() => setShowDebugPanel(false)}
-                className="text-gray-400 hover:text-white p-1"
+                className="text-ink-muted hover:text-ink p-1"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1245,9 +1245,9 @@ export default function ScanPage({
           </div>
           <div className="overflow-y-auto p-3 space-y-1" style={{ maxHeight: 'calc(40vh - 60px)' }}>
             {errorLog.map((entry, i) => (
-              <div key={i} className="text-xs bg-black/50 p-2 rounded border border-gray-800">
-                <span className="text-gray-500">[{entry.time}]</span>
-                <div className={`mt-1 ${entry.msg.includes('DUPLICATE') || entry.msg.includes('warning') ? 'text-red-400' : entry.msg.includes('Uploaded') || entry.msg.includes('Saved') ? 'text-green-400' : 'text-yellow-300'}`}>
+              <div key={i} className="text-xs bg-black/50 p-2 rounded border border-line">
+                <span className="text-ink-muted">[{entry.time}]</span>
+                <div className={`mt-1 ${entry.msg.includes('DUPLICATE') || entry.msg.includes('warning') ? 'text-danger' : entry.msg.includes('Uploaded') || entry.msg.includes('Saved') ? 'text-ok' : 'text-yellow-300'}`}>
                   {entry.msg}
                 </div>
               </div>
@@ -1350,26 +1350,26 @@ function ForceConfirmModal({
 
   return (
     <div className="fixed inset-0 z-60 bg-black/80 backdrop-blur-sm flex items-end xl:items-center justify-center animate-fadeIn">
-      <div className="bg-gray-800/95 dark:bg-gray-800/95 backdrop-blur-md w-full max-w-md max-h-[85vh] overflow-y-auto rounded-t-2xl xl:rounded-2xl p-4 space-y-4 animate-slideInUp">
+      <div className="bg-raised/95 dark:bg-raised/95 backdrop-blur-md w-full max-w-md max-h-[85vh] overflow-y-auto rounded-t-2xl xl:rounded-2xl p-4 space-y-4 animate-slideInUp">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Zap className="w-5 h-5 text-yellow-400" />
-            <h3 className="text-lg font-bold text-yellow-400">
+            <Zap className="w-5 h-5 text-warn" />
+            <h3 className="text-lg font-bold text-warn">
               {tr('scan.manualEntryTitle', { count: remaining })}
             </h3>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white p-1">
+          <button onClick={onClose} className="text-ink-muted hover:text-ink p-1">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-ink-muted">
           {tr('scan.manualEntryDesc', { count: remaining })}
         </p>
 
         {entries.map((entry, idx) => (
-          <div key={idx} className="bg-gray-900/80 rounded-xl p-3 space-y-2">
-            <p className="text-sm font-medium text-gray-300">{tr('scan.boxNumber', { n: boxesScanned + idx + 1 })}</p>
+          <div key={idx} className="bg-canvas/80 rounded-xl p-3 space-y-2">
+            <p className="text-sm font-medium text-ink-body">{tr('scan.boxNumber', { n: boxesScanned + idx + 1 })}</p>
 
             <select
               value={entry.item_name}
@@ -1378,7 +1378,7 @@ function ForceConfirmModal({
                 updated[idx].item_name = e.target.value;
                 setEntries(updated);
               }}
-              className="w-full p-2 bg-gray-800 border border-gray-700 rounded-lg text-sm"
+              className="w-full p-2 bg-raised border border-line rounded-lg text-sm"
             >
               <option value="">{tr('scan.selectItem')}</option>
               {session.invoice_items.map(item => (
@@ -1398,7 +1398,7 @@ function ForceConfirmModal({
                 updated[idx].weight = e.target.value;
                 setEntries(updated);
               }}
-              className="w-full p-2 bg-gray-800 border border-gray-700 rounded-lg text-sm"
+              className="w-full p-2 bg-raised border border-line rounded-lg text-sm"
             />
 
             <input
@@ -1410,7 +1410,7 @@ function ForceConfirmModal({
                 updated[idx].expiry = e.target.value;
                 setEntries(updated);
               }}
-              className="w-full p-2 bg-gray-800 border border-gray-700 rounded-lg text-sm"
+              className="w-full p-2 bg-raised border border-line rounded-lg text-sm"
             />
           </div>
         ))}
@@ -1418,7 +1418,7 @@ function ForceConfirmModal({
         <button
           onClick={handleSubmitAll}
           disabled={!allFilled || submitting}
-          className="w-full py-3 bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-xl text-sm font-bold transition-colors"
+          className="w-full py-3 bg-yellow-600 hover:bg-yellow-700 disabled:bg-border-strong disabled:cursor-not-allowed rounded-xl text-sm font-bold transition-colors"
         >
           {submitting ? tr('scan.submitting') : tr('scan.submitManualEntries', { count: remaining })}
         </button>
