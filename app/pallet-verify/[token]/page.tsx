@@ -1930,7 +1930,7 @@ export default function PalletVerifyPage({
                 );
               })}
               {pendingUniformPrompt && (
-                <li className="text-emerald-800">
+                <li className="text-ok-weak-ink opacity-70">
                   {tr('palletVerify.uniformPendingItem', {
                     name:
                       pendingUniformPrompt.item_name_hebrew ||
