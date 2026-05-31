@@ -857,7 +857,7 @@ export default function ScanPage({
   // Loading
   if (phase === 'loading') {
     return (
-      <div className="min-h-screen bg-canvas dark:bg-canvas flex items-center justify-center">
+      <div className="min-h-screen bg-canvas flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin w-12 h-12 border-4 border-brand border-t-transparent rounded-full mx-auto mb-4"></div>
           <p className="text-ink-body">{tr('scan.loadingSession')}</p>
@@ -869,7 +869,7 @@ export default function ScanPage({
   // Error
   if (phase === 'error') {
     return (
-      <div className="min-h-screen bg-canvas dark:bg-canvas flex items-center justify-center p-4">
+      <div className="min-h-screen bg-canvas flex items-center justify-center p-4">
         <div className="bg-red-900/30 border border-danger/30 rounded-lg p-6 max-w-md text-center">
           <XCircle className="w-10 h-10 text-danger mx-auto mb-3" />
           <p className="text-danger font-medium">{error}</p>
@@ -887,7 +887,7 @@ export default function ScanPage({
   // Complete
   if (phase === 'complete') {
     return (
-      <div className="min-h-screen bg-canvas dark:bg-canvas flex items-center justify-center p-4">
+      <div className="min-h-screen bg-canvas flex items-center justify-center p-4">
         <div className="bg-ok-weak border border-ok/30 rounded-lg p-6 max-w-md text-center animate-scaleIn">
           <CheckCircle className="w-12 h-12 text-ok mx-auto mb-3" />
           <h2 className="text-xl font-bold text-ok mb-2">{tr('scan.scanComplete')}</h2>
@@ -907,8 +907,8 @@ export default function ScanPage({
     const completed = totalScanned - totalPending;
 
     return (
-      <div className="min-h-screen bg-canvas dark:bg-canvas flex items-center justify-center p-4">
-        <div className="bg-raised dark:bg-raised backdrop-blur-md border border-line rounded-xl p-6 max-w-md text-center">
+      <div className="min-h-screen bg-canvas flex items-center justify-center p-4">
+        <div className="bg-raised backdrop-blur-md border border-line rounded-xl p-6 max-w-md text-center">
           <div className="animate-spin w-12 h-12 border-4 border-brand border-t-transparent rounded-full mx-auto mb-4"></div>
           <h2 className="text-lg font-bold text-ink mb-2">{tr('ocr.processing')}</h2>
           <p className="text-ink-muted text-sm mb-3">{tr('ocr.extractingData')}</p>
@@ -929,7 +929,7 @@ export default function ScanPage({
   // Confirming
   if (phase === 'confirming') {
     return (
-      <div className="min-h-screen bg-canvas dark:bg-canvas flex items-center justify-center">
+      <div className="min-h-screen bg-canvas flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin w-12 h-12 border-4 border-ok/30 border-t-transparent rounded-full mx-auto mb-4"></div>
           <p className="text-ink-body">{tr('scan.submittingData')}</p>
@@ -946,12 +946,12 @@ export default function ScanPage({
 
   return (
    <LanguageContext.Provider value={language}>
-    <div className="min-h-screen bg-canvas dark:bg-canvas text-ink dark:text-ink flex flex-col">
+    <div className="min-h-screen bg-canvas text-ink flex flex-col">
       {/* ── Offline Banner ──────────────────────────────────── */}
       <OfflineBanner queueCount={offlineQueueCount} isSyncing={isSyncing} />
 
       {/* ── Header ──────────────────────────────────────────── */}
-      <div className="sticky top-0 z-50 bg-raised dark:bg-raised backdrop-blur-md border-b border-line dark:border-line px-4 py-3">
+      <div className="sticky top-0 z-50 bg-raised backdrop-blur-md border-b border-line px-4 py-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <ProgressRing current={scannedBarcodes.size} total={boxesExpected} />
@@ -1057,7 +1057,7 @@ export default function ScanPage({
       )}
 
       {/* ── Footer: Action Buttons ────────────────────────────── */}
-      <div className="sticky bottom-0 bg-raised dark:bg-raised backdrop-blur-md border-t border-line dark:border-line p-4 space-y-2">
+      <div className="sticky bottom-0 bg-raised backdrop-blur-md border-t border-line p-4 space-y-2">
         {/* Force Confirm button */}
         {canForceConfirm && phase === 'scanning' && (
           <button
@@ -1144,7 +1144,7 @@ export default function ScanPage({
 
       {/* OCR drawer removed - redundant with scanned list */}
       {false && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-canvas/95 dark:bg-canvas/95 backdrop-blur-lg border-t-2 border-purple-500 shadow-2xl animate-slideInUp" style={{ maxHeight: '55vh' }}>
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-canvas/95 backdrop-blur-lg border-t-2 border-purple-500 shadow-2xl animate-slideInUp" style={{ maxHeight: '55vh' }}>
           <div className="flex justify-between items-center p-3 border-b border-line bg-gradient-to-r from-purple-900 to-blue-900">
             <div className="flex items-center gap-2">
               <Cpu className="w-4 h-4 text-purple-300" />
@@ -1218,7 +1218,7 @@ export default function ScanPage({
 
       {/* ── Debug Panel (Bottom Drawer) ──────────────────────── */}
       {showDebugPanel && errorLog.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-canvas/95 dark:bg-canvas/95 backdrop-blur-lg border-t-2 border-danger/30 shadow-2xl animate-slideInUp" style={{ maxHeight: '40vh' }}>
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-canvas/95 backdrop-blur-lg border-t-2 border-danger/30 shadow-2xl animate-slideInUp" style={{ maxHeight: '40vh' }}>
           <div className="flex justify-between items-center p-3 border-b border-line bg-raised backdrop-blur-md">
             <div className="flex items-center gap-2">
               <Bug className="w-4 h-4 text-danger" />
@@ -1350,7 +1350,7 @@ function ForceConfirmModal({
 
   return (
     <div className="fixed inset-0 z-60 bg-black/80 backdrop-blur-sm flex items-end xl:items-center justify-center animate-fadeIn">
-      <div className="bg-raised/95 dark:bg-raised/95 backdrop-blur-md w-full max-w-md max-h-[85vh] overflow-y-auto rounded-t-2xl xl:rounded-2xl p-4 space-y-4 animate-slideInUp">
+      <div className="bg-raised/95 backdrop-blur-md w-full max-w-md max-h-[85vh] overflow-y-auto rounded-t-2xl xl:rounded-2xl p-4 space-y-4 animate-slideInUp">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Zap className="w-5 h-5 text-warn" />
