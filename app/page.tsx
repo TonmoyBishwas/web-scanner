@@ -1,24 +1,26 @@
+import { Package } from 'lucide-react';
+
 export default function Home() {
   return (
-    <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center p-4">
-      <div className="max-w-md w-full text-center">
-        <div className="text-6xl mb-6">📦</div>
-        <h1 className="text-3xl font-bold mb-4">Warehouse Barcode Scanner</h1>
-        <p className="text-gray-400 mb-8">
-          Access this scanner through the Telegram bot to start scanning items.
-        </p>
-        <div className="bg-gray-800 rounded-lg p-6 text-left">
-          <h2 className="font-medium mb-3">Features:</h2>
-          <ul className="space-y-2 text-sm text-gray-300">
-            <li>🔲 Scan items in any order</li>
-            <li>📷 Automatic barcode detection</li>
-            <li>📊 Real-time progress tracking</li>
-            <li>⚡ Works offline</li>
-          </ul>
+    <div className="min-h-screen bg-canvas text-ink flex items-center justify-center p-6">
+      <div className="max-w-md w-full bg-raised border border-line rounded-2xl p-8 text-center space-y-4 shadow-sm">
+        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-brand-weak text-brand-weak-ink mb-2">
+          <Package className="w-8 h-8" strokeWidth={2} />
         </div>
-        <p className="mt-8 text-sm text-gray-500">
-          Powered by html5-qrcode
+        <h1 className="text-2xl font-bold">Warehouse Scanner</h1>
+        <p className="text-ink-muted">
+          This scanner works through your Telegram bot. Please scan the QR code or open the link sent to you on Telegram.
         </p>
+        <div className="bg-sunken rounded-xl p-4 text-sm text-ink-body">
+          <p className="font-semibold mb-1">How to use:</p>
+          <ol className="text-left space-y-1 list-decimal list-inside">
+            <li>Open Telegram</li>
+            <li>Start a receiving or issuing session</li>
+            <li>Tap the scanner link</li>
+            <li>Allow camera access</li>
+            <li>Start scanning barcodes</li>
+          </ol>
+        </div>
       </div>
     </div>
   );

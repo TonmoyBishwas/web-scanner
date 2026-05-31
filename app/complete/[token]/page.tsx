@@ -2,119 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { scannerAPI } from '@/lib/api';
-import { CheckCircle, AlertTriangle, Check } from 'lucide-react';
-import { useLangDir, useT, LanguageContext } from '@/lib/i18n';
-import type { Language, ScanSession } from '@/types';
-
-function CompleteContent({ session }: { session: ScanSession }) {
-  const tr = useT();
-
-  const scannedItems = Object.values(session.scanned_items || {});
-  const totalScans = session.scanned_barcodes?.length || 0;
-  const totalWeight = scannedItems.reduce((sum, item) => sum + item.scanned_weight, 0);
-
-  return (
-    <div className="min-h-screen bg-gray-900 text-white p-4">
-      <div className="max-w-md mx-auto">
-        {/* Success Header */}
-        <div className="text-center mb-8">
-          <CheckCircle className="w-16 h-16 text-green-400 mx-auto mb-4" />
-          <h1 className="text-2xl font-bold mb-2">{tr('complete.title')}</h1>
-          <p className="text-gray-400">{tr('complete.returnToWhatsApp')}</p>
-        </div>
-
-        {/* Summary */}
-        <div className="bg-gray-800 rounded-lg p-4 mb-6">
-          <h2 className="text-lg font-medium mb-4">{tr('complete.summary')}</h2>
-          <div className="space-y-2">
-            <div className="flex justify-between">
-              <span className="text-gray-400">{tr('complete.totalScanned')}</span>
-              <span className="font-medium">{totalScans}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-400">{tr('complete.totalWeightLabel')}</span>
-              <span className="font-medium">{totalWeight.toFixed(2)} kg</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-400">{tr('complete.itemsLabel')}</span>
-              <span className="font-medium">{scannedItems.length}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Items List */}
-        <div className="bg-gray-800 rounded-lg p-4 mb-6">
-          <h2 className="text-lg font-medium mb-4">{tr('complete.scannedItemsTitle')}</h2>
-          <div className="space-y-3">
-            {scannedItems.map((item) => {
-              const percentage = (item.scanned_weight / item.expected_weight) * 100;
-              const isComplete = item.scanned_weight >= item.expected_weight;
-
-              return (
-                <div key={item.item_index} className="border-b border-gray-700 pb-3 last:border-0">
-                  <div className="flex justify-between items-start mb-1">
-                    <span className="font-medium">{item.item_name}</span>
-                    {isComplete && <Check className="w-4 h-4 text-green-500" />}
-                  </div>
-                  <div className="text-sm text-gray-400 space-y-1">
-                    <p>{tr('complete.boxesUnit', { count: item.scanned_count })}</p>
-                    <p>
-                      {item.scanned_weight.toFixed(2)} / {item.expected_weight.toFixed(2)} kg
-                      {' '}({percentage.toFixed(0)}%)
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Instructions */}
-        <div className="bg-blue-900 bg-opacity-30 border border-blue-700 rounded-lg p-4">
-          <p className="text-sm">
-            <strong>{tr('complete.nextSteps')}</strong><br />
-            1. {tr('complete.step1')}<br />
-            2. {tr('complete.step2')}<br />
-            3. {tr('complete.step3')}
-          </p>
-        </div>
-
-        {/* Close Button */}
-        <button
-          onClick={() => window.close()}
-          className="w-full mt-6 bg-gray-700 py-3 rounded-lg font-medium hover:bg-gray-600 transition-colors"
-        >
-          {tr('complete.closeButton')}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function LoadingScreen() {
-  const tr = useT();
-  return (
-    <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-        <p>{tr('common.loading')}</p>
-      </div>
-    </div>
-  );
-}
-
-function NotFoundScreen() {
-  const tr = useT();
-  return (
-    <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center p-4">
-      <div className="text-center">
-        <AlertTriangle className="w-10 h-10 text-amber-400 mx-auto mb-4" />
-        <p className="mb-4">{tr('session.notFoundShort')}</p>
-      </div>
-    </div>
-  );
-}
+import { scannerAPI } from '@/lib/api-client';
+import { ScanSession } from '@/types';
+import { CheckCircle, Package, AlertTriangle } from 'lucide-react';
+import { useT } from '@/lib/i18n';
+import { LangDirRoot } from '@/components/shared/LangDirRoot';
+import { Card } from '@/components/ui/Card';
+import { Spinner } from '@/components/ui/Spinner';
 
 export default function CompletePage() {
   const params = useParams();
@@ -122,10 +16,7 @@ export default function CompletePage() {
 
   const [session, setSession] = useState<ScanSession | null>(null);
   const [loading, setLoading] = useState(true);
-
-  // RTL flips automatically when the session language is Hebrew.
-  const language = (session?.language as Language) || 'English';
-  useLangDir(language);
+  const tr = useT();
 
   useEffect(() => {
     async function loadSession() {
@@ -141,15 +32,79 @@ export default function CompletePage() {
     loadSession();
   }, [token]);
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-canvas text-ink flex items-center justify-center">
+        <Spinner size={48} tone="brand" />
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-canvas text-ink flex items-center justify-center p-6">
+        <div className="text-center">
+          <AlertTriangle className="w-12 h-12 text-danger mx-auto mb-4" strokeWidth={2} />
+          <h1 className="text-xl font-bold mb-2">{tr('session.notFound')}</h1>
+        </div>
+      </div>
+    );
+  }
+
+  const totalWeight = session.scanned_items?.reduce((sum, item) => sum + (item.total_weight || 0), 0) || 0;
+  const totalBoxes = session.scanned_items?.length || 0;
+
   return (
-    <LanguageContext.Provider value={language}>
-      {loading ? (
-        <LoadingScreen />
-      ) : !session ? (
-        <NotFoundScreen />
-      ) : (
-        <CompleteContent session={session} />
-      )}
-    </LanguageContext.Provider>
+    <LangDirRoot language={session.language}>
+      <div className="min-h-screen bg-canvas text-ink p-6">
+        <div className="max-w-md mx-auto">
+          {/* Success Header */}
+          <div className="text-center mb-8 pt-8">
+            <div className="inline-flex items-center justify-center w-20 h-20 bg-ok rounded-full mb-4 animate-scaleIn">
+              <CheckCircle className="w-12 h-12 text-ink-inverse" />
+            </div>
+            <h1 className="text-2xl font-bold mb-2">{tr('complete.title')}</h1>
+            <p className="text-ink-muted">{tr('complete.subtitle')}</p>
+          </div>
+
+          {/* Summary Cards */}
+          <div className="grid grid-cols-2 gap-4 mb-6">
+            <Card className="text-center">
+              <div className="text-3xl font-bold text-brand">{totalBoxes}</div>
+              <div className="text-sm text-ink-muted mt-1">{tr('complete.boxesScanned')}</div>
+            </Card>
+            <Card className="text-center">
+              <div className="text-3xl font-bold text-ok">{totalWeight.toFixed(2)}</div>
+              <div className="text-sm text-ink-muted mt-1">{tr('complete.totalWeight')}</div>
+            </Card>
+          </div>
+
+          {/* Scanned Items List */}
+          {session.scanned_items && session.scanned_items.length > 0 && (
+            <Card className="mb-6">
+              <h2 className="font-semibold mb-3 flex items-center gap-2">
+                <Package className="w-5 h-5 text-ink-muted" />
+                {tr('complete.itemsLabel')}
+              </h2>
+              <div className="space-y-2">
+                {session.scanned_items.map((item, idx) => (
+                  <div key={idx} className="flex justify-between items-center py-2 border-b border-line last:border-0">
+                    <span className="text-sm">{item.item_name || tr('complete.unknownItem')}</span>
+                    <span className="text-sm text-ink-muted">
+                      {item.box_count} {tr('common.boxes')} · {(item.total_weight || 0).toFixed(2)} kg
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          {/* Instructions */}
+          <Card tone="info" className="text-center">
+            <p className="text-sm text-info-weak-ink">{tr('complete.returnToTelegram')}</p>
+          </Card>
+        </div>
+      </div>
+    </LangDirRoot>
   );
 }
