@@ -24,7 +24,7 @@ export function ScannedList({
 
   if (entries.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-gray-500 dark:text-gray-500">
+      <div className="flex flex-col items-center justify-center py-12 text-ink-muted">
         <p className="text-sm">{tr('components.scannedList.empty2')}</p>
       </div>
     );
@@ -41,14 +41,14 @@ export function ScannedList({
         return (
           <div
             key={barcode}
-            className={`flex items-center gap-3 bg-gray-800/80 dark:bg-gray-800/80 backdrop-blur-sm border border-gray-700/50 dark:border-gray-700/50 rounded-xl px-3 py-2.5 transition-all ${
+            className={`flex items-center gap-3 bg-raised border border-line rounded-xl px-3 py-2.5 transition-all ${
               i === 0 ? 'animate-slideInUp' : ''
             }`}
           >
             {/* Thumbnail */}
             {imageUrl ? (
               <div
-                className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-gray-700 cursor-pointer hover:ring-2 hover:ring-purple-500 transition-all"
+                className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-sunken cursor-pointer hover:ring-2 hover:ring-brand transition-all"
                 onClick={() => onImageClick?.(imageUrl)}
               >
                 <img
@@ -59,40 +59,40 @@ export function ScannedList({
                 />
               </div>
             ) : (
-              <div className="w-12 h-12 rounded-lg bg-gray-700 flex items-center justify-center flex-shrink-0">
-                <span className="text-gray-500 text-xs">{tr('components.scannedList.noImg')}</span>
+              <div className="w-12 h-12 rounded-lg bg-sunken flex items-center justify-center flex-shrink-0">
+                <span className="text-ink-muted text-xs">{tr('components.scannedList.noImg')}</span>
               </div>
             )}
 
             {/* Info */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-mono text-gray-400">
+                <span className="text-xs font-mono text-ink-muted">
                   #{barcode.slice(-6)}
                 </span>
                 {/* Status badge */}
                 {ocrResult ? (
-                  <Check className="w-3.5 h-3.5 text-green-400" />
+                  <Check className="w-3.5 h-3.5 text-ok" />
                 ) : isPending ? (
-                  <Loader2 className="w-3.5 h-3.5 text-yellow-400 animate-spin" />
+                  <Loader2 className="w-3.5 h-3.5 text-info animate-spin" />
                 ) : ocrFailed ? (
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                  <AlertTriangle className="w-3.5 h-3.5 text-warn" />
                 ) : null}
               </div>
 
               {ocrResult ? (
-                <p className="text-sm text-gray-200 dark:text-gray-200 truncate">
+                <p className="text-sm text-ink-body truncate">
                   {ocrResult.product_name || ocrResult.product_name_hebrew || tr('common.unknown')}
                   {ocrResult.weight_kg ? (
-                    <span className="text-blue-300 ms-1.5">{ocrResult.weight_kg} kg</span>
+                    <span className="text-brand ms-1.5">{ocrResult.weight_kg} kg</span>
                   ) : null}
                 </p>
               ) : isPending ? (
-                <p className="text-xs text-yellow-300/80">{tr('components.scannedList.analyzing')}</p>
+                <p className="text-xs text-warn">{tr('components.scannedList.analyzing')}</p>
               ) : ocrFailed ? (
-                <p className="text-xs text-amber-400">{tr('components.scannedList.ocrFailedManual')}</p>
+                <p className="text-xs text-warn">{tr('components.scannedList.ocrFailedManual')}</p>
               ) : (
-                <p className="text-xs text-gray-500">{tr('components.scannedList.awaitingImage')}</p>
+                <p className="text-xs text-ink-muted">{tr('components.scannedList.awaitingImage')}</p>
               )}
             </div>
           </div>

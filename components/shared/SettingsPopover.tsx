@@ -32,17 +32,17 @@ export function SettingsPopover() {
     <div className="relative" ref={popoverRef}>
       <button
         onClick={() => setOpen(!open)}
-        className="p-2 rounded-lg hover:bg-white/10 dark:hover:bg-white/10 transition-colors"
+        className="p-2 rounded-lg hover:bg-hover transition-colors"
         aria-label={tr('components.settings.aria')}
       >
-        <Settings className="w-5 h-5 text-gray-400" />
+        <Settings className="w-5 h-5 text-ink-muted" />
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-56 bg-gray-800 dark:bg-gray-800 border border-gray-700 dark:border-gray-700 rounded-xl shadow-2xl z-[70] overflow-hidden animate-fadeIn">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
-            <span className="text-sm font-semibold text-white">{tr('components.settings.title')}</span>
-            <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-white">
+        <div className="absolute end-0 top-full mt-2 w-56 bg-raised border border-line rounded-xl shadow-2xl z-[70] overflow-hidden animate-fadeIn">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-line">
+            <span className="text-sm font-semibold text-ink">{tr('components.settings.title')}</span>
+            <button onClick={() => setOpen(false)} className="text-ink-muted hover:text-ink">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -51,15 +51,15 @@ export function SettingsPopover() {
             {/* Sound toggle */}
             <button
               onClick={toggleSound}
-              className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg hover:bg-white/5 transition-colors"
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg hover:bg-hover transition-colors"
             >
               <div className="flex items-center gap-3">
                 {soundEnabled ? (
-                  <Volume2 className="w-4 h-4 text-green-400" />
+                  <Volume2 className="w-4 h-4 text-brand" />
                 ) : (
-                  <VolumeX className="w-4 h-4 text-gray-500" />
+                  <VolumeX className="w-4 h-4 text-ink-muted" />
                 )}
-                <span className="text-sm text-gray-200">{tr('components.settings.sound')}</span>
+                <span className="text-sm text-ink-body">{tr('components.settings.sound')}</span>
               </div>
               <TogglePill enabled={soundEnabled} />
             </button>
@@ -67,11 +67,11 @@ export function SettingsPopover() {
             {/* Vibration toggle */}
             <button
               onClick={toggleVibration}
-              className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg hover:bg-white/5 transition-colors"
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg hover:bg-hover transition-colors"
             >
               <div className="flex items-center gap-3">
-                <Vibrate className={`w-4 h-4 ${vibrationEnabled ? 'text-green-400' : 'text-gray-500'}`} />
-                <span className="text-sm text-gray-200">{tr('components.settings.vibration')}</span>
+                <Vibrate className={`w-4 h-4 ${vibrationEnabled ? 'text-brand' : 'text-ink-muted'}`} />
+                <span className="text-sm text-ink-body">{tr('components.settings.vibration')}</span>
               </div>
               <TogglePill enabled={vibrationEnabled} />
             </button>
@@ -79,11 +79,11 @@ export function SettingsPopover() {
             {/* Hardware capture trigger (volume button + Bluetooth remote) */}
             <button
               onClick={toggleHardwareTrigger}
-              className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg hover:bg-white/5 transition-colors"
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg hover:bg-hover transition-colors"
             >
               <div className="flex items-center gap-3">
-                <Aperture className={`w-4 h-4 ${hardwareTriggerEnabled ? 'text-green-400' : 'text-gray-500'}`} />
-                <span className="text-sm text-gray-200">{tr('components.settings.hardwareTrigger')}</span>
+                <Aperture className={`w-4 h-4 ${hardwareTriggerEnabled ? 'text-brand' : 'text-ink-muted'}`} />
+                <span className="text-sm text-ink-body">{tr('components.settings.hardwareTrigger')}</span>
               </div>
               <TogglePill enabled={hardwareTriggerEnabled} />
             </button>
@@ -96,7 +96,7 @@ export function SettingsPopover() {
 
 function TogglePill({ enabled }: { enabled: boolean }) {
   return (
-    <div className={`w-9 h-5 rounded-full relative transition-colors ${enabled ? 'bg-green-500' : 'bg-gray-600'}`}>
+    <div className={`w-9 h-5 rounded-full relative transition-colors ${enabled ? 'bg-brand' : 'bg-border-strong'}`}>
       <div
         className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0.5'}`}
       />

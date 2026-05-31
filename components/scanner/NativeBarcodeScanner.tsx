@@ -185,7 +185,7 @@ export function NativeBarcodeScanner({ onBarcodeDetected, onError }: NativeBarco
                 <div className="absolute bottom-4 left-0 right-0 text-center">
                     <div className="inline-block bg-black/70 px-4 py-2 rounded-full">
                         <p className="text-white text-sm font-medium">
-                            {isScanning ? '🎯 Scanning with hardware accelerator...' : 'Starting camera...'}
+                            {isScanning ? 'Scanning with hardware accelerator…' : 'Starting camera…'}
                         </p>
                     </div>
                 </div>

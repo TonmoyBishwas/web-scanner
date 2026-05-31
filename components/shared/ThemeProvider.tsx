@@ -11,9 +11,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     hydrate();
   }, [hydrate]);
 
-  // Always use dark mode
+  // Light theme only (redesign). Clear any stale 'dark' class a returning
+  // user might still carry, then assert 'light'.
   useEffect(() => {
-    document.documentElement.classList.add('dark');
+    document.documentElement.classList.remove('dark');
+    document.documentElement.classList.add('light');
   }, []);
 
   return <>{children}</>;

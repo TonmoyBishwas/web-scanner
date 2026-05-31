@@ -88,7 +88,8 @@ export const en = {
   'scanner.noCamerasTitle': 'No cameras detected',
   'scanner.noCamerasDesc': 'Your device reported no video input. If you opened this link inside WhatsApp, tap "Open in browser" (Chrome on Android, Safari on iOS) and try again.',
   'scanner.cameraErrorTitle': 'Camera error',
-  'scanner.cameraErrorHint': 'Common fixes: open the link in Chrome/Safari (not WhatsApp\'s in-app browser), check Settings → Site permissions → Camera, then tap Retry.',
+  'scanner.cameraErrorHint': 'Common fixes: open the link in Chrome/Safari (not WhatsApp\'s in-app browser), check Settings Site permissions Camera, then tap Retry.',
+
   'scanner.alreadyScanned': 'Already scanned',
   'scanner.duplicateBadge': 'Duplicate',
   'scanner.captureAnyway': 'Capture anyway',
@@ -147,13 +148,16 @@ export const en = {
   'palletVerify.invalidBoxNumber': 'Please enter a valid number of boxes (minimum 1).',
   'palletVerify.uniformInvalidCount': 'Enter a valid number ≥ 1.',
   'palletVerify.uniformExceedsCount': 'Total would exceed declared {declared} boxes — max is {max} for this item.',
-  'palletVerify.closeButton': '✕ Close',
+  'palletVerify.closeButton': 'Close',
+
   'palletVerify.loadingSession': 'Loading session…',
   'palletVerify.allDoneTitleSimple': 'All {count} pallets complete!',
   'palletVerify.allDoneTitleWithLoose': 'All {count} pallets + {looseCount} loose boxes complete!',
   'palletVerify.palletEntry': 'Pallet {n} · {count} boxes · {type}',
-  'palletVerify.printSticker': 'Print →',
-  'palletVerify.looseBoxesNote': '📦 {count} loose boxes recorded — no physical sticker (system-tracked only).',
+  'palletVerify.printSticker': 'Print',
+
+  'palletVerify.looseBoxesNote': '{count} loose boxes recorded — no physical sticker (system-tracked only).',
+
   'palletVerify.expiryNote': 'This page stays available for ~2 hours. Individual sticker pages stay available indefinitely.',
   'palletVerify.looseHeader': 'Loose Boxes · {scanned} / {declared} scanned',
   'palletVerify.docPrefix': 'Doc: {doc}',
@@ -161,32 +165,44 @@ export const en = {
   'palletVerify.savingPallet': 'Saving pallet…',
   'palletVerify.readingLabel': 'Reading label…',
   'palletVerify.reading': 'Reading…',
-  'palletVerify.viewWithIcon': '🖼 View',
-  'palletVerify.retryWithIcon': '↻ Retry',
-  'palletVerify.rescanWithIcon': '🔄 Rescan',
-  'palletVerify.confirmLooseBtn': '✅ Confirm {count} Loose Boxes',
+  'palletVerify.viewWithIcon': 'View',
+
+  'palletVerify.retryWithIcon': 'Retry',
+
+  'palletVerify.rescanWithIcon': 'Rescan',
+
+  'palletVerify.confirmLooseBtn': 'Confirm {count} Loose Boxes',
+
   'palletVerify.scanMoreLoose': 'Scan {count} more boxes',
   'palletVerify.scanAtLeast2': 'Scan at least 2 boxes',
   'palletVerify.palletDoneTitle': 'Pallet {current}/{total} done!',
   'palletVerify.lpnLabel': 'LPN: {lpn}',
-  'palletVerify.viewPrintSticker': 'View & Print Sticker →',
+  'palletVerify.viewPrintSticker': 'View & Print Sticker',
+
   'palletVerify.movingNext': 'Moving to pallet {next}…',
-  'palletVerify.howManyBoxes': '📦 How many boxes?',
+  'palletVerify.howManyBoxes': 'How many boxes?',
+
   'palletVerify.totalOnPallet': 'Total boxes on pallet {current}.',
   'palletVerify.boxCountPlaceholder': 'e.g. 10',
   'palletVerify.startScanning': 'Start Scanning',
   'palletVerify.palletHeaderShort': 'Pallet {current} of {total}',
   'palletVerify.palletHeaderWithCount': 'Pallet {current}/{total} · {count} boxes',
   'palletVerify.scan2Detect': 'Scan 2+ boxes to detect type',
-  'palletVerify.singleUniformBadge': '✅ Single · uniform weight',
-  'palletVerify.singleNonuniformBadge': '⚖️ Single · scan all boxes',
-  'palletVerify.mixBadge': '📦 Mix · scan all boxes',
+  'palletVerify.singleUniformBadge': 'Single · uniform weight',
+
+  'palletVerify.singleNonuniformBadge': 'Single · scan all boxes',
+
+  'palletVerify.mixBadge': 'Mix · scan all boxes',
+
   'palletVerify.committed': '{committed} / {total} committed',
-  'palletVerify.readyToConfirm': '✅ Ready to confirm',
+  'palletVerify.readyToConfirm': 'Ready to confirm',
+
   'palletVerify.waitingInput': '⏳ Waiting for your input below',
   'palletVerify.moreBoxesToGo': '{count} more boxes to go',
-  'palletVerify.uniformItemsHeader': '🟢 Uniform items',
-  'palletVerify.uniformLockedItem': '✓ {name} — {count} boxes locked ({weight} kg/box)',
+  'palletVerify.uniformItemsHeader': 'Uniform items',
+
+  'palletVerify.uniformLockedItem': '{name} — {count} boxes locked ({weight} kg/box)',
+
   'palletVerify.uniformPendingItem': '⏳ {name} — awaiting count below ({weight} kg/box)',
   'palletVerify.boxesUnit': '{count} boxes',
   'palletVerify.avgWeightLine': 'avg {weight} kg/box',
@@ -194,14 +210,17 @@ export const en = {
   'palletVerify.itemTypesDetected': '{count} item types detected',
   'palletVerify.confirmOrKeep': 'Confirm now or keep scanning to add more boxes',
   'palletVerify.uniformChoose': 'One product detected. What is on this pallet?',
-  'palletVerify.uniformCompleteBtn': '✅ Only this product — enter total count',
-  'palletVerify.uniformContinueMix': '➕ Other (different) products too',
+  'palletVerify.uniformCompleteBtn': 'Only this product — enter total count',
+
+  'palletVerify.uniformContinueMix': 'Other (different) products too',
+
   'palletVerify.uniformScanEach': 'Same product, weights vary — scan each box',
   'palletVerify.uniformHowMany': 'How many boxes of {item} are on this pallet?',
   'palletVerify.uniformMaxNote': 'Max {max} (each box ≈ {weight} kg)',
   'palletVerify.uniformPlaceholder': 'Enter count',
   'palletVerify.uniformSet': 'Set',
-  'palletVerify.confirmPalletBtn': '✅ Confirm Pallet {current}',
+  'palletVerify.confirmPalletBtn': 'Confirm Pallet {current}',
+
   'palletVerify.scanMoreToContinue': 'Scan {count} more boxes to continue',
   'palletVerify.boxesNeeded': '{count} more boxes needed',
   'palletVerify.palletTypeSingle': 'single',
@@ -213,8 +232,10 @@ export const en = {
   'palletVerify.deferredCountTitle': 'How many boxes on this pallet?',
   'palletVerify.deferredCountHint': 'Enter the total — including the {scanned} you already scanned.',
   'palletVerify.deferredCountTooLow': 'Total must be at least {min} (boxes already scanned).',
-  'palletVerify.deleteScan': '🗑 Delete this scan',
-  'palletVerify.editScan': '✎ Edit',
+  'palletVerify.deleteScan': 'Delete this scan',
+
+  'palletVerify.editScan': 'Edit',
+
   'palletVerify.needsReview': "Couldn't read the code — check the name/weight",
   'palletVerify.tapToFix': 'Tap to fix',
   'palletVerify.tapToZoom': 'Tap to zoom',
@@ -228,8 +249,10 @@ export const en = {
   'palletVerify.editCancel': 'Cancel',
 
   // ── AI consolidation banner ───────────────────────────────────────
-  'palletVerify.aiMergeBanner': '⚠️ Are these the same item?',
-  'palletVerify.aiMergeAccept': '✓ Merge into one',
+  'palletVerify.aiMergeBanner': 'Are these the same item?',
+
+  'palletVerify.aiMergeAccept': 'Merge into one',
+
   'palletVerify.aiMergeReject': 'Keep separate',
 
   // ── OCR retry / failed UI ─────────────────────────────────────────
@@ -387,8 +410,10 @@ export const en = {
   'lpn.statusLabel': 'Status',
   'lpn.notFound': 'Pallet record not found in database.',
   'lpn.lpnLabel': 'LPN: {lpn}',
-  'lpn.backToScanner': '← Back to scanner',
-  'lpn.back': '← Back',
+  'lpn.backToScanner': 'Back to scanner',
+
+  'lpn.back': 'Back',
+
   'lpn.printButton': 'Print sticker',
 
   // ── Components: shared / progress / issue ─────────────────────────

@@ -367,9 +367,9 @@ function IssueRender({
   // Loading
   if (phase === 'loading') {
     return (
-      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
+      <div className="min-h-screen bg-canvas text-ink flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4" />
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand mx-auto mb-4" />
           <p>{tr('issue.loadingSession')}</p>
         </div>
       </div>
@@ -379,11 +379,11 @@ function IssueRender({
   // Error
   if (phase === 'error') {
     return (
-      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center p-4">
+      <div className="min-h-screen bg-canvas text-ink flex items-center justify-center p-4">
         <div className="text-center">
-          <AlertTriangle className="w-10 h-10 text-amber-400 mx-auto mb-4" />
+          <AlertTriangle className="w-10 h-10 text-warn mx-auto mb-4" />
           <p className="mb-2 text-lg font-medium">{tr('session.errorTitle')}</p>
-          <p className="text-gray-400">{error}</p>
+          <p className="text-ink-muted">{error}</p>
         </div>
       </div>
     );
@@ -395,26 +395,26 @@ function IssueRender({
     const summaryKey =
       issuedBoxes.length === 1 ? 'issue.completeSummarySingle' : 'issue.completeSummary';
     return (
-      <div className="min-h-screen bg-gray-900 text-white p-4">
+      <div className="min-h-screen bg-canvas text-ink p-4">
         <div className="max-w-md mx-auto">
           <div className="text-center mb-8">
-            <CheckCircle className="w-16 h-16 text-green-400 mx-auto mb-4" />
+            <CheckCircle className="w-16 h-16 text-ok mx-auto mb-4" />
             <h1 className="text-2xl font-bold mb-2">{tr('issue.completeTitle')}</h1>
-            <p className="text-gray-400">
+            <p className="text-ink-muted">
               {tr(summaryKey, { count: issuedBoxes.length, weight: totalWeight.toFixed(2) })}
             </p>
           </div>
 
-          <div className="bg-gray-800 rounded-lg p-4 mb-6">
+          <div className="bg-raised border border-line rounded-lg p-4 mb-6">
             <h2 className="text-lg font-medium mb-4">{tr('issue.summaryTitle')}</h2>
             <div className="space-y-2">
               {issuedBoxes.map((box, idx) => (
                 <div
                   key={idx}
-                  className="flex justify-between items-center border-b border-gray-700 pb-2 last:border-0"
+                  className="flex justify-between items-center border-b border-line pb-2 last:border-0"
                 >
-                  <span className="text-white truncate me-2">{box.item_name}</span>
-                  <span className="text-green-400 font-medium whitespace-nowrap">
+                  <span className="text-ink truncate me-2">{box.item_name}</span>
+                  <span className="text-ok font-medium whitespace-nowrap">
                     {box.weight} kg
                   </span>
                 </div>
@@ -422,13 +422,13 @@ function IssueRender({
             </div>
           </div>
 
-          <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-4 mb-6">
-            <p className="text-sm">{tr('issue.doneNote')}</p>
+          <div className="bg-info-weak border border-info/30 rounded-lg p-4 mb-6">
+            <p className="text-sm text-info-weak-ink">{tr('issue.doneNote')}</p>
           </div>
 
           <button
             onClick={() => window.close()}
-            className="w-full bg-gray-700 py-3 rounded-lg font-medium hover:bg-gray-600 transition-colors"
+            className="w-full bg-sunken text-ink py-3 rounded-lg font-medium hover:bg-hover transition-colors"
           >
             {tr('issue.closeButton')}
           </button>
@@ -440,9 +440,9 @@ function IssueRender({
   // Completing (spinner)
   if (phase === 'completing') {
     return (
-      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
+      <div className="min-h-screen bg-canvas text-ink flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-400 mx-auto mb-4" />
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-ok mx-auto mb-4" />
           <p>{tr('issue.completing')}</p>
         </div>
       </div>
@@ -451,7 +451,7 @@ function IssueRender({
 
   // Scanning / Box Detail
   return (
-    <div className="min-h-screen bg-gray-900 text-white flex flex-col">
+    <div className="min-h-screen bg-canvas text-ink flex flex-col">
       {/* Flash overlay */}
       {flashColor && (
         <div
@@ -463,18 +463,18 @@ function IssueRender({
 
       {/* Toast */}
       {toastMessage && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg text-sm max-w-xs text-center">
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-ink text-ink-inverse px-4 py-2 rounded-lg shadow-lg text-sm max-w-xs text-center">
           {toastMessage}
         </div>
       )}
 
       {/* Header */}
-      <div className="bg-gray-800 p-4 flex justify-between items-center">
+      <div className="bg-raised border-b border-line p-4 flex justify-between items-center">
         <div>
           <h1 className="text-lg font-bold">{tr('issue.title')}</h1>
-          <p className="text-gray-400 text-sm">{tr('issue.headerSubtitle')}</p>
+          <p className="text-ink-muted text-sm">{tr('issue.headerSubtitle')}</p>
           {session?.user_info && (
-            <p className="text-xs text-green-400 font-medium mt-1">
+            <p className="text-xs text-brand font-medium mt-1">
               {tr('issue.scanningAs', { nickname: session.user_info.nickname })}
             </p>
           )}
@@ -486,8 +486,8 @@ function IssueRender({
             disabled={issuedBoxes.length === 0}
             className={`px-4 py-2 rounded-lg font-medium transition-colors ${
               issuedBoxes.length > 0
-                ? 'bg-green-600 hover:bg-green-500 text-white'
-                : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                ? 'bg-ok text-ink-inverse hover:opacity-90'
+                : 'bg-sunken text-ink-muted cursor-not-allowed'
             }`}
           >
             {tr('issue.doneButton', { count: issuedBoxes.length })}

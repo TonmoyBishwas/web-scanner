@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+import { Camera, FolderOpen, Check } from 'lucide-react';
 import type { ParsedBarcode } from '@/types';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
 import type { BoxStickerOCR } from '@/types';
@@ -478,7 +479,7 @@ export function Html5QrcodeScanner({
     return (
       <div className="flex items-center justify-center h-full bg-gray-900 text-white p-4">
         <div className="text-center max-w-md">
-          <div className="text-4xl mb-4">📷</div>
+          <Camera className="w-10 h-10 mb-4 mx-auto" />
           <p className="text-red-400 mb-4 text-sm whitespace-pre-line">{error}</p>
           <div className="text-xs text-gray-400 mb-4">
             Protocol: {window.location.protocol}
@@ -552,7 +553,7 @@ export function Html5QrcodeScanner({
             disabled={isProcessingImage}
             className="px-3 py-1 bg-blue-600 rounded text-sm hover:bg-blue-700 disabled:bg-gray-600 flex-shrink-0"
           >
-            {isProcessingImage ? '...' : '📁'}
+            {isProcessingImage ? '...' : <FolderOpen className="w-5 h-5" />}
           </button>
           <button
             onClick={handleManualCapture}
@@ -560,7 +561,7 @@ export function Html5QrcodeScanner({
             className="px-3 py-1 bg-purple-600 rounded text-sm hover:bg-purple-700 disabled:bg-gray-600 flex-shrink-0"
             title="Capture for OCR (works even without barcode detected)"
           >
-            {isCapturing ? '...' : '📷'}
+            {isCapturing ? '...' : <Camera className="w-5 h-5" />}
           </button>
         </div>
       </div>
@@ -569,7 +570,7 @@ export function Html5QrcodeScanner({
       {lastDetectedBarcode && (
         <div className="absolute bottom-2 left-2 right-2 z-10">
           <div className="bg-black/60 backdrop-blur-sm text-white px-3 py-1.5 rounded-full flex items-center justify-between text-xs">
-            <span className="text-green-400 truncate flex-1">✓ {lastDetectedBarcode.slice(-10)}</span>
+            <span className="text-green-400 truncate flex-1 inline-flex items-center gap-1"><Check className="w-4 h-4" /> {lastDetectedBarcode.slice(-10)}</span>
             <span className="text-gray-400 ml-2 flex-shrink-0">{scannedBarcodes.size} scanned</span>
           </div>
         </div>

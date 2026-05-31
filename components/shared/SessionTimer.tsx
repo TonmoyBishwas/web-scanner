@@ -30,16 +30,16 @@ export function SessionTimer({ createdAt, ttlMs = 3600000 }: SessionTimerProps) 
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
 
-  let colorClass = 'text-gray-400 dark:text-gray-400';
+  let colorClass = 'text-ink-muted';
   if (minutes < 5) {
-    colorClass = 'text-red-400';
+    colorClass = 'text-danger';
   } else if (minutes < 10) {
-    colorClass = 'text-yellow-400';
+    colorClass = 'text-warn';
   }
 
   if (remaining <= 0) {
     return (
-      <span className="flex items-center gap-1 text-xs text-red-400 font-medium">
+      <span className="flex items-center gap-1 text-xs text-danger font-medium">
         <Clock className="w-3.5 h-3.5" />
         Expired
       </span>

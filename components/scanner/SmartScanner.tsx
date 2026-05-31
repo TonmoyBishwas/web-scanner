@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { AlertTriangle, ScanLine } from 'lucide-react';
+import { AlertTriangle, ScanLine, Camera } from 'lucide-react';
 import type { ParsedBarcode, BoxStickerOCR } from '@/types';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
 import { useT } from '@/lib/i18n';
@@ -789,8 +789,8 @@ export function SmartScanner({
   // Loading state
   if (isSupported === null) {
     return (
-      <div className={`w-full bg-gray-800 rounded-lg flex items-center justify-center ${className || 'aspect-square'}`}>
-        <p className="text-gray-400">{tr('scanner.initializing')}</p>
+      <div className={`w-full bg-cam-scrim rounded-lg flex items-center justify-center ${className || 'aspect-square'}`}>
+        <p className="text-cam-ink-muted">{tr('scanner.initializing')}</p>
       </div>
     );
   }
@@ -798,10 +798,10 @@ export function SmartScanner({
   // Browser not supported
   if (!isSupported) {
     return (
-      <div className={`w-full bg-gray-800 rounded-lg flex flex-col items-center justify-center gap-3 p-6 ${className || 'aspect-square'}`}>
-        <AlertTriangle className="w-10 h-10 text-amber-400" />
-        <p className="text-white font-medium text-center">{tr('scanner.notSupportedTitle')}</p>
-        <p className="text-gray-400 text-sm text-center">
+      <div className={`w-full bg-cam-scrim rounded-lg flex flex-col items-center justify-center gap-3 p-6 ${className || 'aspect-square'}`}>
+        <AlertTriangle className="w-10 h-10 text-warn" />
+        <p className="text-cam-ink font-medium text-center">{tr('scanner.notSupportedTitle')}</p>
+        <p className="text-cam-ink-muted text-sm text-center">
           {tr('scanner.notSupportedDesc')}
         </p>
       </div>
@@ -971,11 +971,11 @@ export function SmartScanner({
               (isInCooldown || isDuplicate) ? 'bg-red-300' : 'bg-green-300 animate-pulse'
             }`}></div>
             {isInCooldown ? (
-              <span className="text-white text-xs font-bold">{cooldownTimeLeft}s</span>
+              <span className="text-cam-ink text-xs font-bold">{cooldownTimeLeft}s</span>
             ) : isDuplicate ? (
-              <span className="text-white text-xs font-bold">{tr('scanner.duplicateBadge')}</span>
+              <span className="text-cam-ink text-xs font-bold">{tr('scanner.duplicateBadge')}</span>
             ) : (
-              <ScanLine className="w-3 h-3 text-white" />
+              <ScanLine className="w-3 h-3 text-cam-ink" />
             )}
           </div>
         </div>
@@ -984,7 +984,7 @@ export function SmartScanner({
           <div className="absolute top-2 right-2 pointer-events-auto">
             <button
               onClick={switchCamera}
-              className="flex items-center gap-1.5 bg-gray-900/80 hover:bg-gray-800/80 px-3 py-2 rounded-full text-white text-xs font-medium transition-colors backdrop-blur-sm border border-gray-600/50"
+              className="flex items-center gap-1.5 bg-cam-chip hover:bg-cam-chip-hover px-3 py-2 rounded-full text-cam-ink text-xs font-medium transition-colors backdrop-blur-sm border border-cam-border"
               aria-label={tr('scanner.switchCamera')}
               title={tr('scanner.tapToSwitch')}
             >
@@ -1016,13 +1016,13 @@ export function SmartScanner({
                 disabled={captureBusy}
                 className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-semibold transition-all backdrop-blur-sm border disabled:opacity-50 ${
                   showCaptureHint
-                    ? 'bg-amber-500 text-white border-amber-300 animate-pulse shadow-lg scale-105'
-                    : 'bg-gray-900/70 text-gray-200 border-gray-600/50'
+                    ? 'bg-warn text-ink-inverse border-warn animate-pulse shadow-lg scale-105'
+                    : 'bg-cam-chip text-cam-ink border-cam-border'
                 }`}
               >
-                📷 {tr('scanner.captureAnyway')}
+                <Camera className="w-4 h-4" /> {tr('scanner.captureAnyway')}
                 {hardwareTriggerEnabled && (
-                  <span className="ms-1 text-[10px] text-green-300 font-medium">
+                  <span className="ms-1 text-[10px] text-ok font-medium">
                     {tr('scanner.hardwareTriggerOn')}
                   </span>
                 )}
