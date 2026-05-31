@@ -65,16 +65,18 @@ export function DebugLogPanel() {
 
   return (
     <>
-      {/* Floating button — sits in the upper-LEFT so it never overlaps the
-          camera-switch button (upper-right) on the scanner viewport. Uses
-          dark-glass tokens because it overlays the live camera. */}
+      {/* Floating button — pinned to the bottom-LEFT corner of the screen so it
+          never overlaps the sticky header (top) or the centred capture button
+          (bottom-centre of the camera). Subtle/translucent so it stays out of
+          the worker's way; safe-area inset keeps it above the gesture pill. */}
       <button
         onClick={() => setOpen(true)}
         aria-label="Open debug logs"
         title="Open debug logs"
-        className="fixed top-2 left-2 z-30 w-10 h-10 rounded-full bg-cam-chip hover:bg-cam-chip-hover text-cam-ink shadow-lg backdrop-blur-sm border border-cam-border flex items-center justify-center"
+        style={{ bottom: 'calc(env(safe-area-inset-bottom) + 0.75rem)' }}
+        className="fixed left-3 z-20 w-9 h-9 rounded-full bg-raised/85 hover:bg-raised text-ink-muted shadow-md backdrop-blur-sm border border-line flex items-center justify-center"
       >
-        <Bug className="w-5 h-5" />
+        <Bug className="w-4 h-4" />
       </button>
 
       {open && (

@@ -92,7 +92,8 @@ export const he: Record<TranslationKey, string> = {
   'scanner.noCamerasTitle': 'לא זוהו מצלמות',
   'scanner.noCamerasDesc': 'המכשיר דיווח שאין קלט וידאו. אם פתחת את הקישור ב-WhatsApp, הקש "פתח בדפדפן" (Chrome באנדרואיד, Safari ב-iOS) ונסה שוב.',
   'scanner.cameraErrorTitle': 'שגיאת מצלמה',
-  'scanner.cameraErrorHint': 'תיקונים נפוצים: פתח את הקישור ב-Chrome/Safari (לא בדפדפן הפנימי של WhatsApp), בדוק הגדרות → הרשאות אתר → מצלמה, ואז הקש על נסה שוב.',
+  'scanner.cameraErrorHint': 'תיקונים נפוצים: פתח את הקישור ב-Chrome/Safari (לא בדפדפן הפנימי של WhatsApp), בדוק הגדרות הרשאות אתר מצלמה, ואז הקש על נסה שוב.',
+
   'scanner.alreadyScanned': 'כבר נסרק',
   'scanner.duplicateBadge': 'כפילות',
   'scanner.captureAnyway': 'צלם בכל זאת',
@@ -151,13 +152,16 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.invalidBoxNumber': 'הזן מספר קופסאות תקין (מינימום 1).',
   'palletVerify.uniformInvalidCount': 'הזן מספר תקין ≥ 1.',
   'palletVerify.uniformExceedsCount': 'הסה״כ יחרוג מ-{declared} קופסאות שהוצהרו — המקסימום הוא {max} לפריט הזה.',
-  'palletVerify.closeButton': '✕ סגור',
+  'palletVerify.closeButton': 'סגור',
+
   'palletVerify.loadingSession': 'טוען סשן…',
   'palletVerify.allDoneTitleSimple': 'כל {count} המשטחים הושלמו!',
   'palletVerify.allDoneTitleWithLoose': 'כל {count} המשטחים + {looseCount} קופסאות בודדות הושלמו!',
   'palletVerify.palletEntry': 'משטח {n} · {count} קופסאות · {type}',
-  'palletVerify.printSticker': 'הדפס →',
-  'palletVerify.looseBoxesNote': '📦 {count} קופסאות בודדות נרשמו — ללא מדבקה פיזית (מעקב במערכת בלבד).',
+  'palletVerify.printSticker': 'הדפס',
+
+  'palletVerify.looseBoxesNote': '{count} קופסאות בודדות נרשמו — ללא מדבקה פיזית (מעקב במערכת בלבד).',
+
   'palletVerify.expiryNote': 'הדף הזה זמין למשך כ-שעתיים. דפי המדבקות הבודדים זמינים ללא הגבלה.',
   'palletVerify.looseHeader': 'קופסאות בודדות · {scanned} / {declared} נסרקו',
   'palletVerify.docPrefix': 'מסמך: {doc}',
@@ -165,32 +169,44 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.savingPallet': 'שומר משטח…',
   'palletVerify.readingLabel': 'קורא תווית…',
   'palletVerify.reading': 'קורא…',
-  'palletVerify.viewWithIcon': '🖼 הצג',
-  'palletVerify.retryWithIcon': '↻ נסה שוב',
-  'palletVerify.rescanWithIcon': '🔄 סרוק שוב',
-  'palletVerify.confirmLooseBtn': '✅ אשר {count} קופסאות בודדות',
+  'palletVerify.viewWithIcon': 'הצג',
+
+  'palletVerify.retryWithIcon': 'נסה שוב',
+
+  'palletVerify.rescanWithIcon': 'סרוק שוב',
+
+  'palletVerify.confirmLooseBtn': 'אשר {count} קופסאות בודדות',
+
   'palletVerify.scanMoreLoose': 'סרוק עוד {count} קופסאות',
   'palletVerify.scanAtLeast2': 'סרוק לפחות 2 קופסאות',
   'palletVerify.palletDoneTitle': 'משטח {current}/{total} הושלם!',
   'palletVerify.lpnLabel': 'LPN: {lpn}',
-  'palletVerify.viewPrintSticker': 'הצג והדפס מדבקה →',
+  'palletVerify.viewPrintSticker': 'הצג והדפס מדבקה',
+
   'palletVerify.movingNext': 'עובר למשטח {next}…',
-  'palletVerify.howManyBoxes': '📦 כמה קופסאות?',
+  'palletVerify.howManyBoxes': 'כמה קופסאות?',
+
   'palletVerify.totalOnPallet': 'סה״כ קופסאות על משטח {current}.',
   'palletVerify.boxCountPlaceholder': 'לדוגמה 10',
   'palletVerify.startScanning': 'התחל לסרוק',
   'palletVerify.palletHeaderShort': 'משטח {current} מתוך {total}',
   'palletVerify.palletHeaderWithCount': 'משטח {current}/{total} · {count} קופסאות',
   'palletVerify.scan2Detect': 'סרוק 2+ קופסאות כדי לזהות את הסוג',
-  'palletVerify.singleUniformBadge': '✅ פריט יחיד · משקל אחיד',
-  'palletVerify.singleNonuniformBadge': '⚖️ פריט יחיד · סרוק את כל הקופסאות',
-  'palletVerify.mixBadge': '📦 מעורב · סרוק את כל הקופסאות',
+  'palletVerify.singleUniformBadge': 'פריט יחיד · משקל אחיד',
+
+  'palletVerify.singleNonuniformBadge': 'פריט יחיד · סרוק את כל הקופסאות',
+
+  'palletVerify.mixBadge': 'מעורב · סרוק את כל הקופסאות',
+
   'palletVerify.committed': '{committed} / {total} נרשמו',
-  'palletVerify.readyToConfirm': '✅ מוכן לאישור',
+  'palletVerify.readyToConfirm': 'מוכן לאישור',
+
   'palletVerify.waitingInput': '⏳ ממתין לקלט שלך למטה',
   'palletVerify.moreBoxesToGo': 'נותרו {count} קופסאות',
-  'palletVerify.uniformItemsHeader': '🟢 פריטים אחידים',
-  'palletVerify.uniformLockedItem': '✓ {name} — {count} קופסאות ננעלו ({weight} kg לקופסה)',
+  'palletVerify.uniformItemsHeader': 'פריטים אחידים',
+
+  'palletVerify.uniformLockedItem': '{name} — {count} קופסאות ננעלו ({weight} kg לקופסה)',
+
   'palletVerify.uniformPendingItem': '⏳ {name} — ממתין לכמות למטה ({weight} kg לקופסה)',
   'palletVerify.boxesUnit': '{count} קופסאות',
   'palletVerify.avgWeightLine': 'ממוצע {weight} kg לקופסה',
@@ -198,14 +214,17 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.itemTypesDetected': 'זוהו {count} סוגי פריטים',
   'palletVerify.confirmOrKeep': 'אשר עכשיו או המשך לסרוק קופסאות נוספות',
   'palletVerify.uniformChoose': 'זוהה פריט אחד. מה יש על המשטח הזה?',
-  'palletVerify.uniformCompleteBtn': '✅ רק הפריט הזה — הזן כמות כוללת',
-  'palletVerify.uniformContinueMix': '➕ יש גם פריטים אחרים (שונים)',
+  'palletVerify.uniformCompleteBtn': 'רק הפריט הזה — הזן כמות כוללת',
+
+  'palletVerify.uniformContinueMix': 'יש גם פריטים אחרים (שונים)',
+
   'palletVerify.uniformScanEach': 'אותו פריט, משקלים שונים — סרוק כל קופסה',
   'palletVerify.uniformHowMany': 'כמה קופסאות של {item} יש על המשטח הזה?',
   'palletVerify.uniformMaxNote': 'מקסימום {max} (כל קופסה ≈ {weight} kg)',
   'palletVerify.uniformPlaceholder': 'הזן כמות',
   'palletVerify.uniformSet': 'קבע',
-  'palletVerify.confirmPalletBtn': '✅ אשר משטח {current}',
+  'palletVerify.confirmPalletBtn': 'אשר משטח {current}',
+
   'palletVerify.scanMoreToContinue': 'סרוק עוד {count} קופסאות כדי להמשיך',
   'palletVerify.boxesNeeded': 'נדרשות עוד {count} קופסאות',
   'palletVerify.palletTypeSingle': 'יחיד',
@@ -217,8 +236,10 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.deferredCountTitle': 'כמה קופסאות יש על המשטח?',
   'palletVerify.deferredCountHint': 'הזן את הסך הכל — כולל {scanned} שכבר נסרקו.',
   'palletVerify.deferredCountTooLow': 'הסך הכל חייב להיות לפחות {min} (קופסאות שכבר נסרקו).',
-  'palletVerify.deleteScan': '🗑 מחק סריקה זו',
-  'palletVerify.editScan': '✎ ערוך',
+  'palletVerify.deleteScan': 'מחק סריקה זו',
+
+  'palletVerify.editScan': 'ערוך',
+
   'palletVerify.needsReview': 'לא הצלחנו לקרוא את הקוד — בדוק שם/משקל',
   'palletVerify.tapToFix': 'הקש לתיקון',
   'palletVerify.tapToZoom': 'הקש להגדלה',
@@ -232,8 +253,10 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.editCancel': 'ביטול',
 
   // ── AI consolidation banner ───────────────────────────────────────
-  'palletVerify.aiMergeBanner': '⚠️ האם אלו אותו פריט?',
-  'palletVerify.aiMergeAccept': '✓ מזג לאחד',
+  'palletVerify.aiMergeBanner': 'האם אלו אותו פריט?',
+
+  'palletVerify.aiMergeAccept': 'מזג לאחד',
+
   'palletVerify.aiMergeReject': 'שמור בנפרד',
 
   // ── OCR retry / failed UI ─────────────────────────────────────────
@@ -391,8 +414,10 @@ export const he: Record<TranslationKey, string> = {
   'lpn.statusLabel': 'סטטוס',
   'lpn.notFound': 'רשומת המשטח לא נמצאה במסד הנתונים.',
   'lpn.lpnLabel': 'LPN: {lpn}',
-  'lpn.backToScanner': '← חזור לסורק',
-  'lpn.back': '← חזור',
+  'lpn.backToScanner': 'חזור לסורק',
+
+  'lpn.back': 'חזור',
+
   'lpn.printButton': 'הדפס מדבקה',
 
   // ── Components: shared / progress / issue ─────────────────────────

@@ -7,6 +7,17 @@ import {
   Loader2,
   Package,
   AlertCircle,
+  AlertTriangle,
+  Scale,
+  Boxes,
+  Pencil,
+  Trash2,
+  RotateCw,
+  RefreshCw,
+  Eye,
+  Printer,
+  Plus,
+  Check,
 } from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
 import { DebugLogPanel } from '@/components/shared/DebugLogPanel';
@@ -985,7 +996,7 @@ export default function PalletVerifyPage({
                     }
                     className={`w-full text-start px-3 py-2 rounded-lg border text-sm transition ${
                       active
-                        ? 'border-blue-500 bg-brand-weak text-blue-800 font-semibold'
+                        ? 'border-blue-500 bg-brand-weak text-brand-weak-ink font-semibold'
                         : 'border-line-strong text-ink-body hover:bg-hover'
                     }`}
                   >
@@ -1358,18 +1369,21 @@ export default function PalletVerifyPage({
       return <span className="text-xs text-ink-muted">{tr('palletVerify.scan2Detect')}</span>;
     if (detectedType === 'single-uniform')
       return (
-        <span className="text-xs bg-green-100 text-ok-weak-ink rounded-full px-2 py-0.5 font-medium">
+        <span className="inline-flex items-center gap-1 text-xs bg-ok-weak text-ok-weak-ink rounded-full px-2 py-0.5 font-medium">
+          <CheckCircle className="w-3.5 h-3.5 shrink-0" />
           {tr('palletVerify.singleUniformBadge')}
         </span>
       );
     if (detectedType === 'single-nonuniform')
       return (
-        <span className="text-xs bg-yellow-100 text-yellow-700 rounded-full px-2 py-0.5 font-medium">
+        <span className="inline-flex items-center gap-1 text-xs bg-warn-weak text-warn-weak-ink rounded-full px-2 py-0.5 font-medium">
+          <Scale className="w-3.5 h-3.5 shrink-0" />
           {tr('palletVerify.singleNonuniformBadge')}
         </span>
       );
     return (
-      <span className="text-xs bg-brand-weak text-brand-weak-ink rounded-full px-2 py-0.5 font-medium">
+      <span className="inline-flex items-center gap-1 text-xs bg-brand-weak text-brand-weak-ink rounded-full px-2 py-0.5 font-medium">
+        <Boxes className="w-3.5 h-3.5 shrink-0" />
         {tr('palletVerify.mixBadge')}
       </span>
     );
@@ -1393,7 +1407,7 @@ export default function PalletVerifyPage({
         ? 'bg-brand-weak border-brand/30'
         : detectedType === 'mix' || sameItem
         ? 'bg-ok-weak border-ok/30'
-        : 'bg-yellow-50 border-yellow-200';
+        : 'bg-warn-weak border-yellow-200';
 
     // Tap the card to reveal a Delete action (two-step, to avoid misclicks).
     // Exception: a needs_review box opens the edit modal directly — the worker
@@ -1410,7 +1424,7 @@ export default function PalletVerifyPage({
             ? openEdit(box)
             : setSelectedBarcode(selected ? null : box.barcode)
         }
-        className={`rounded-xl p-3 border text-sm cursor-pointer ${cardBgFinal} ${selected ? 'ring-2 ring-red-300' : ''}`}
+        className={`rounded-xl p-3 border text-sm cursor-pointer ${cardBgFinal} ${selected ? 'ring-2 ring-danger/40' : ''}`}
       >
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
@@ -1422,8 +1436,8 @@ export default function PalletVerifyPage({
             ) : box.ocr_status === 'failed' ? (
               <div>
                 <div className="flex items-center gap-1.5">
-                  <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                  <span className="text-xs text-red-500">{tr('ocr.failed')}</span>
+                  <AlertCircle className="w-3.5 h-3.5 text-danger shrink-0" />
+                  <span className="text-xs text-danger">{tr('ocr.failed')}</span>
                 </div>
                 <div className="flex flex-wrap gap-1.5 mt-1.5">
                   {box.image_data && (
@@ -1436,7 +1450,7 @@ export default function PalletVerifyPage({
                   )}
                   <button
                     onClick={(e) => { e.stopPropagation(); retryPalletOcr(box.barcode); }}
-                    className="text-[11px] px-2 py-0.5 bg-brand-weak hover:bg-blue-200 text-brand-weak-ink rounded font-medium"
+                    className="text-[11px] px-2 py-0.5 bg-brand-weak hover:opacity-90 text-brand-weak-ink rounded font-medium"
                   >
                     {tr('palletVerify.retryWithIcon')}
                   </button>
@@ -1454,7 +1468,7 @@ export default function PalletVerifyPage({
                   <p className="font-semibold text-ink truncate">{displayName}</p>
                 )}
                 <div className="flex items-center gap-2 mt-0.5">
-                  <span className="font-bold text-gray-800">
+                  <span className="font-bold text-ink">
                     {box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}
                   </span>
                   {box.expiry && (
@@ -1462,8 +1476,8 @@ export default function PalletVerifyPage({
                   )}
                 </div>
                 {box.needs_review && (
-                  <p className="text-[11px] text-warn-weak-ink mt-1 font-medium">
-                    ⚠️ {tr('palletVerify.needsReview')} · {tr('palletVerify.tapToFix')}
+                  <p className="flex items-center gap-1 text-[11px] text-warn-weak-ink mt-1 font-medium">
+                    <AlertTriangle className="w-3 h-3 shrink-0" /> {tr('palletVerify.needsReview')} · {tr('palletVerify.tapToFix')}
                   </p>
                 )}
               </>
@@ -1472,11 +1486,11 @@ export default function PalletVerifyPage({
 
           <div className="shrink-0">
             {idx === 0 ? (
-              <span className="text-xs bg-blue-200 text-blue-800 rounded px-1.5 py-0.5">#1</span>
+              <span className="text-xs bg-brand-weak text-brand-weak-ink rounded px-1.5 py-0.5">#1</span>
             ) : detectedType !== 'mix' && !sameItem ? (
-              <XCircle className="text-yellow-500 w-4 h-4" />
+              <XCircle className="text-warn w-4 h-4" />
             ) : (
-              <CheckCircle className="text-green-500 w-4 h-4" />
+              <CheckCircle className="text-ok w-4 h-4" />
             )}
           </div>
         </div>
@@ -1485,15 +1499,15 @@ export default function PalletVerifyPage({
           <div className="mt-2 flex gap-2">
             <button
               onClick={(e) => { e.stopPropagation(); openEdit(box); }}
-              className="flex-1 py-2 rounded-lg bg-brand text-ink-inverse text-xs font-semibold hover:bg-brand-hover active:bg-blue-800 transition"
+              className="flex items-center justify-center gap-1.5 flex-1 py-2 rounded-lg bg-brand text-ink-inverse text-xs font-semibold hover:bg-brand-hover active:bg-brand-active transition"
             >
-              {tr('palletVerify.editScan')}
+              <Pencil className="w-3.5 h-3.5" /> {tr('palletVerify.editScan')}
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
-              className="flex-1 py-2 rounded-lg bg-danger text-ink-inverse text-xs font-semibold hover:opacity-90 active:bg-red-800 transition"
+              className="flex items-center justify-center gap-1.5 flex-1 py-2 rounded-lg bg-danger text-ink-inverse text-xs font-semibold hover:opacity-90 active:opacity-80 transition"
             >
-              {tr('palletVerify.deleteScan')}
+              <Trash2 className="w-3.5 h-3.5" /> {tr('palletVerify.deleteScan')}
             </button>
           </div>
         )}
@@ -1506,7 +1520,7 @@ export default function PalletVerifyPage({
   if (phase === 'error') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-canvas">
-        <XCircle className="text-red-500 w-12 h-12 mb-4" />
+        <XCircle className="text-danger w-12 h-12 mb-4" />
         <p className="text-lg font-semibold text-danger-weak-ink text-center">{error}</p>
         {debugPanel}
       </div>
@@ -1516,7 +1530,7 @@ export default function PalletVerifyPage({
   if (phase === 'loading') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-canvas">
-        <Loader2 className="animate-spin text-blue-500 w-10 h-10 mb-4" />
+        <Loader2 className="animate-spin text-brand w-10 h-10 mb-4" />
         <p className="text-ink-body">{tr('palletVerify.loadingSession')}</p>
         {debugPanel}
       </div>
@@ -1530,7 +1544,7 @@ export default function PalletVerifyPage({
       <div className="min-h-screen p-6 bg-ok-weak">
         <div className="max-w-md mx-auto">
           <div className="text-center">
-            <CheckCircle className="text-green-500 w-16 h-16 mx-auto mb-4" />
+            <CheckCircle className="text-ok w-16 h-16 mx-auto mb-4" />
             <h1 className="text-2xl font-bold text-ok-weak-ink mb-2">
               {looseCount > 0
                 ? tr('palletVerify.allDoneTitleWithLoose', { count: pallet_count, looseCount })
@@ -1573,8 +1587,8 @@ export default function PalletVerifyPage({
                           })}
                         </div>
                       </div>
-                      <span className="text-ok-weak-ink text-sm font-semibold shrink-0">
-                        {tr('palletVerify.printSticker')}
+                      <span className="inline-flex items-center gap-1 text-ok-weak-ink text-sm font-semibold shrink-0">
+                        <Printer className="w-4 h-4" /> {tr('palletVerify.printSticker')}
                       </span>
                     </div>
                   </a>
@@ -1624,7 +1638,7 @@ export default function PalletVerifyPage({
             <div className="flex items-center gap-2">
               <Package className="text-orange-500 w-5 h-5" />
               <div>
-                <p className="text-sm font-bold text-gray-800">
+                <p className="text-sm font-bold text-ink">
                   {tr('palletVerify.looseHeader', { scanned, declared })}
                 </p>
                 <p className="text-xs text-ink-muted" dir="ltr">{tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}</p>
@@ -1635,7 +1649,7 @@ export default function PalletVerifyPage({
           <div className="mt-2">
             <div className="h-2 bg-sunken rounded-full overflow-hidden">
               <div
-                className={`h-full transition-all rounded-full ${declared > 0 && scanned >= declared ? 'bg-ok-weak0' : 'bg-orange-400'}`}
+                className={`h-full transition-all rounded-full ${declared > 0 && scanned >= declared ? 'bg-ok' : 'bg-orange-400'}`}
                 style={{ width: `${declared > 0 ? Math.min((scanned / declared) * 100, 100) : 0}%` }}
               />
             </div>
@@ -1719,12 +1733,12 @@ export default function PalletVerifyPage({
                           </>
                         ) : box.ocr_status === 'done' ? (
                           <>
-                            <CheckCircle className={`w-3 h-3 shrink-0 ${needsReviewRow ? 'text-amber-500' : 'text-green-500'}`} />
+                            <CheckCircle className={`w-3 h-3 shrink-0 ${needsReviewRow ? 'text-amber-500' : 'text-ok'}`} />
                             <span>{box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}</span>
                             {box.expiry && <span className="text-ink-muted" dir="ltr">· {box.expiry}</span>}
                             {needsReviewRow && (
-                              <span className="text-warn-weak-ink font-medium">
-                                ⚠️ {tr('palletVerify.tapToFix')}
+                              <span className="inline-flex items-center gap-1 text-warn-weak-ink font-medium">
+                                <AlertTriangle className="w-3 h-3 shrink-0" /> {tr('palletVerify.tapToFix')}
                               </span>
                             )}
                             {selected && !needsReviewRow && (
@@ -1746,7 +1760,7 @@ export default function PalletVerifyPage({
                           </>
                         ) : (
                           <>
-                            <AlertCircle className="w-3 h-3 text-red-300 shrink-0" />
+                            <AlertCircle className="w-3 h-3 text-danger shrink-0" />
                             <span className="text-ink-muted">{tr('ocr.failed')}</span>
                             <div className="flex gap-1 ms-auto">
                               {box.image_data && (
@@ -1759,7 +1773,7 @@ export default function PalletVerifyPage({
                               )}
                               <button
                                 onClick={(e) => { e.stopPropagation(); retryLooseOcr(box.barcode); }}
-                                className="px-1.5 py-0.5 bg-brand-weak hover:bg-blue-200 text-brand-weak-ink rounded text-[10px] font-medium"
+                                className="px-1.5 py-0.5 bg-brand-weak hover:opacity-90 text-brand-weak-ink rounded text-[10px] font-medium"
                               >
                                 {tr('ocr.retry')}
                               </button>
@@ -1803,8 +1817,8 @@ export default function PalletVerifyPage({
               : tr('palletVerify.scanAtLeast2')}
           </button>
           {hasUnresolvedLooseWarnings && (
-            <p className="text-[11px] text-warn-weak-ink text-center mt-1.5">
-              ⚠️ {tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })}
+            <p className="flex items-center justify-center gap-1 text-[11px] text-warn-weak-ink text-center mt-1.5">
+              <AlertTriangle className="w-3 h-3 shrink-0" /> {tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })}
             </p>
           )}
         </div>
@@ -1818,7 +1832,7 @@ export default function PalletVerifyPage({
   if (phase === 'pallet_done') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-ok-weak text-center">
-        <CheckCircle className="text-green-500 w-14 h-14 mb-4" />
+        <CheckCircle className="text-ok w-14 h-14 mb-4" />
         <h1 className="text-xl font-bold text-ok-weak-ink mb-1">
           {tr('palletVerify.palletDoneTitle', { current: currentPallet, total: pallet_count })}
         </h1>
@@ -1830,9 +1844,9 @@ export default function PalletVerifyPage({
             href={`${lpnUrl}?token=${encodeURIComponent(token)}${language === 'Hebrew' ? '&lang=Hebrew' : ''}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-2 inline-block bg-ok text-ink-inverse px-5 py-2 rounded-xl text-sm font-semibold hover:opacity-90 transition"
+            className="mt-2 inline-flex items-center gap-1.5 bg-ok text-ink-inverse px-5 py-2 rounded-xl text-sm font-semibold hover:opacity-90 transition"
           >
-            {tr('palletVerify.viewPrintSticker')}
+            <Printer className="w-4 h-4" /> {tr('palletVerify.viewPrintSticker')}
           </a>
         )}
         <div className="mt-6 flex items-center gap-2 text-ink-muted text-sm">
@@ -1854,7 +1868,7 @@ export default function PalletVerifyPage({
           <div className="flex items-center gap-2">
             <Package className="text-brand w-5 h-5" />
             <div>
-              <p className="text-sm font-bold text-gray-800">
+              <p className="text-sm font-bold text-ink">
                 {confirmedBoxCount > 0
                   ? tr('palletVerify.palletHeaderWithCount', { current: currentPallet, total: pallet_count, count: confirmedBoxCount })
                   : tr('palletVerify.palletHeaderShort', { current: currentPallet, total: pallet_count })}
@@ -1889,7 +1903,7 @@ export default function PalletVerifyPage({
           </div>
           <div className="h-2 bg-sunken rounded-full overflow-hidden">
             <div
-              className={`h-full transition-all rounded-full ${canConfirm ? 'bg-ok-weak0' : 'bg-blue-400'}`}
+              className={`h-full transition-all rounded-full ${canConfirm ? 'bg-ok' : 'bg-brand'}`}
               style={{
                 width: `${Math.min(
                   (committed / Math.max(confirmedBoxCount, 2)) * 100,
@@ -1902,11 +1916,11 @@ export default function PalletVerifyPage({
 
         {/* Uniform-group banner: shows locked groups + the currently-pending one. */}
         {(uniformGroups.size > 0 || pendingUniformPrompt) && (
-          <div className="mt-2 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
-            <p className="text-[11px] font-semibold text-emerald-700 mb-1">
-              {tr('palletVerify.uniformItemsHeader')}
+          <div className="mt-2 bg-ok-weak border border-ok/30 rounded-lg px-3 py-2">
+            <p className="flex items-center gap-1 text-[11px] font-semibold text-ok-weak-ink mb-1">
+              <CheckCircle className="w-3.5 h-3.5 shrink-0" /> {tr('palletVerify.uniformItemsHeader')}
             </p>
-            <ul className="text-xs text-emerald-900 space-y-0.5">
+            <ul className="text-xs text-ok-weak-ink space-y-0.5">
               {Array.from(uniformGroups.values()).map((g) => {
                 const name = g.item_name_hebrew || g.item_name || g.name_key.replace(/^(he|en|unknown):/, '');
                 return (
@@ -1945,7 +1959,7 @@ export default function PalletVerifyPage({
         {phase === 'confirming' && (
           <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
             <div className="bg-raised rounded-xl px-4 py-3 flex items-center gap-2">
-              <Loader2 className="animate-spin w-5 h-5 text-blue-500" />
+              <Loader2 className="animate-spin w-5 h-5 text-brand" />
               <span className="text-sm font-medium">{tr('palletVerify.savingPallet')}</span>
             </div>
           </div>
@@ -1957,10 +1971,10 @@ export default function PalletVerifyPage({
           product (OCR drift). Worker confirms or dismisses. */}
       {pendingMerge && (
         <div className="mx-4 mt-3 bg-warn-weak border border-warn/30 rounded-xl p-3 shadow-sm">
-          <p className="text-xs font-semibold text-amber-900 mb-1">
-            {tr('palletVerify.aiMergeBanner')}
+          <p className="flex items-center gap-1 text-xs font-semibold text-warn-weak-ink mb-1">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {tr('palletVerify.aiMergeBanner')}
           </p>
-          <ul className="text-xs text-amber-900 mb-2 space-y-0.5">
+          <ul className="text-xs text-warn-weak-ink mb-2 space-y-0.5">
             {pendingMerge.sample_names.map((nm, i) => {
               const fallbackKey = pendingMerge.from_keys[i]?.replace(/^(he|en|unknown):/, '') ?? '';
               const display = nm.he || nm.en || fallbackKey;
@@ -1976,9 +1990,9 @@ export default function PalletVerifyPage({
           <div className="flex gap-2">
             <button
               onClick={handleAcceptMerge}
-              className="flex-1 min-w-0 py-2 rounded-lg bg-warn text-ink-inverse text-xs font-semibold hover:opacity-90 active:bg-amber-800 transition"
+              className="flex items-center justify-center gap-1.5 flex-1 min-w-0 py-2 rounded-lg bg-warn text-ink-inverse text-xs font-semibold hover:opacity-90 active:opacity-80 transition"
             >
-              {tr('palletVerify.aiMergeAccept')}
+              <Check className="w-3.5 h-3.5" /> {tr('palletVerify.aiMergeAccept')}
             </button>
             <button
               onClick={handleRejectMerge}
@@ -2012,10 +2026,10 @@ export default function PalletVerifyPage({
                 return (
                   <div key={nameKey} className="bg-brand-weak border border-brand/30 rounded-xl p-3">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-semibold text-blue-900 truncate max-w-[70%]">
+                      <span className="text-sm font-semibold text-brand-weak-ink truncate max-w-[70%]">
                         {displayName}
                       </span>
-                      <span className="text-xs bg-blue-200 text-blue-800 rounded-full px-2 py-0.5 font-semibold">
+                      <span className="text-xs bg-brand-weak text-brand-weak-ink rounded-full px-2 py-0.5 font-semibold">
                         {tr('palletVerify.boxesUnit', { count: boxes.length })}
                       </span>
                     </div>
@@ -2034,12 +2048,12 @@ export default function PalletVerifyPage({
                         >
                           {box.ocr_status === 'processing' ? (
                             <>
-                              <Loader2 className="w-3 h-3 animate-spin text-blue-400 shrink-0" />
-                              <span className="text-blue-500">{tr('palletVerify.reading')}</span>
+                              <Loader2 className="w-3 h-3 animate-spin text-brand shrink-0" />
+                              <span className="text-brand">{tr('palletVerify.reading')}</span>
                             </>
                           ) : box.ocr_status === 'done' ? (
                             <>
-                              <CheckCircle className="w-3 h-3 text-green-500 shrink-0" />
+                              <CheckCircle className="w-3 h-3 text-ok shrink-0" />
                               <span>{box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}</span>
                               {box.expiry && <span className="text-ink-muted" dir="ltr">· {box.expiry}</span>}
                               {selected && (
@@ -2061,7 +2075,7 @@ export default function PalletVerifyPage({
                             </>
                           ) : (
                             <>
-                              <AlertCircle className="w-3 h-3 text-red-300 shrink-0" />
+                              <AlertCircle className="w-3 h-3 text-danger shrink-0" />
                               <span className="text-ink-muted">{tr('ocr.failed')}</span>
                               <div className="flex gap-1 ms-auto">
                                 {box.image_data && (
@@ -2074,7 +2088,7 @@ export default function PalletVerifyPage({
                                 )}
                                 <button
                                   onClick={(e) => { e.stopPropagation(); retryPalletOcr(box.barcode); }}
-                                  className="px-1.5 py-0.5 bg-brand-weak hover:bg-blue-200 text-brand-weak-ink rounded text-[10px] font-medium"
+                                  className="px-1.5 py-0.5 bg-brand-weak hover:opacity-90 text-brand-weak-ink rounded text-[10px] font-medium"
                                 >
                                   {tr('ocr.retry')}
                                 </button>
@@ -2139,16 +2153,16 @@ export default function PalletVerifyPage({
             <button
               onClick={handleCompleteAsSingle}
               disabled={phase === 'confirming'}
-              className="w-full py-3 rounded-xl font-semibold text-base bg-ok text-ink-inverse hover:opacity-90 active:bg-green-800 transition disabled:bg-sunken disabled:text-ink-muted"
+              className="flex items-center justify-center gap-1.5 w-full py-3 rounded-xl font-semibold text-base bg-ok text-ink-inverse hover:opacity-90 active:bg-ok transition disabled:bg-sunken disabled:text-ink-muted"
             >
-              {tr('palletVerify.uniformCompleteBtn')}
+              <CheckCircle className="w-4 h-4" /> {tr('palletVerify.uniformCompleteBtn')}
             </button>
             <button
               onClick={handleContinueAsMix}
               disabled={phase === 'confirming'}
-              className="w-full py-3 rounded-xl font-semibold text-base bg-raised border-2 border-blue-500 text-brand-weak-ink hover:bg-brand-weak transition"
+              className="flex items-center justify-center gap-1.5 w-full py-3 rounded-xl font-semibold text-base bg-raised border-2 border-brand text-brand-weak-ink hover:bg-brand-weak transition"
             >
-              {tr('palletVerify.uniformContinueMix')}
+              <Plus className="w-4 h-4" /> {tr('palletVerify.uniformContinueMix')}
             </button>
             <button
               onClick={handleScanEachIndividually}
@@ -2259,7 +2273,7 @@ export default function PalletVerifyPage({
               disabled={!canConfirm || phase === 'confirming'}
               className={`w-full py-3 rounded-xl font-semibold text-base transition ${
                 canConfirm && phase !== 'confirming'
-                  ? 'bg-ok text-ink-inverse hover:opacity-90 active:bg-green-800'
+                  ? 'bg-ok text-ink-inverse hover:opacity-90 active:bg-ok'
                   : 'bg-sunken text-ink-muted cursor-not-allowed'
               }`}
             >
@@ -2272,8 +2286,8 @@ export default function PalletVerifyPage({
                 : tr('palletVerify.boxesNeeded', { count: Math.max(0, confirmedBoxCount - committed) })}
             </button>
             {hasUnresolvedWarnings && (
-              <p className="text-[11px] text-warn-weak-ink text-center mt-1.5">
-                ⚠️ {tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })}
+              <p className="flex items-center justify-center gap-1 text-[11px] text-warn-weak-ink text-center mt-1.5">
+                <AlertTriangle className="w-3 h-3 shrink-0" /> {tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })}
               </p>
             )}
           </>
