@@ -100,6 +100,8 @@ export default function ScanPage({
 
   // Undo toast
   const [undoBarcode, setUndoBarcode] = useState<string | null>(null);
+  // Which scanned row is expanded to reveal its Delete control (two-step).
+  const [selectedScanBarcode, setSelectedScanBarcode] = useState<string | null>(null);
 
   // Offline
   const [offlineQueueCount, setOfflineQueueCount] = useState(0);
@@ -1051,6 +1053,9 @@ export default function ScanPage({
               ocrImageUrls={ocrImageUrls}
               pendingOCR={pendingOCR}
               onImageClick={setSelectedImage}
+              onDelete={handleUndoScan}
+              selectedBarcode={selectedScanBarcode}
+              onSelect={setSelectedScanBarcode}
             />
           </div>
         </>

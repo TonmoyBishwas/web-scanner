@@ -1409,21 +1409,17 @@ export default function PalletVerifyPage({
         ? 'bg-ok-weak border-ok/30'
         : 'bg-warn-weak border-yellow-200';
 
-    // Tap the card to reveal a Delete action (two-step, to avoid misclicks).
-    // Exception: a needs_review box opens the edit modal directly — the worker
-    // has to fix it before the pallet can be confirmed, so the warning row IS
-    // a "fix me" affordance.
+    // Tap the card to reveal Edit / Delete (two-step, to avoid misclicks). A
+    // needs_review box stays amber and still blocks Confirm until resolved, but
+    // is now tappable so a mis-captured (non-sticker) photo can be deleted
+    // instead of being forced straight into the edit modal.
     const selected = selectedBarcode === box.barcode;
     const cardBgFinal = box.needs_review
       ? 'bg-warn-weak border-warn/30'
       : cardBg;
     return (
       <div
-        onClick={() =>
-          box.needs_review
-            ? openEdit(box)
-            : setSelectedBarcode(selected ? null : box.barcode)
-        }
+        onClick={() => setSelectedBarcode(selected ? null : box.barcode)}
         className={`rounded-xl p-3 border text-sm cursor-pointer ${cardBgFinal} ${selected ? 'ring-2 ring-danger/40' : ''}`}
       >
         <div className="flex items-start justify-between gap-2">
@@ -1455,10 +1451,10 @@ export default function PalletVerifyPage({
                     {tr('palletVerify.retryWithIcon')}
                   </button>
                   <button
-                    onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); }}
-                    className="text-[11px] px-2 py-0.5 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded font-medium"
+                    onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
+                    className="text-[11px] px-2 py-0.5 bg-danger-weak text-danger border border-danger rounded font-medium inline-flex items-center gap-1"
                   >
-                    {tr('palletVerify.rescanWithIcon')}
+                    <Trash2 className="w-3 h-3" /> {tr('palletVerify.deleteScan')}
                   </button>
                 </div>
               </div>
@@ -1703,21 +1699,17 @@ export default function PalletVerifyPage({
                   )}
                   <div className="space-y-1">
                     {boxes.map((box, bi) => {
-                      // Tap a loose-box row to reveal its Delete action (two-step).
-                      // Exception: a needs_review row opens the edit modal —
-                      // the worker has to fix it before loose-phase Confirm
-                      // unlocks. openEdit is called with isLoose=true so the
-                      // save patches looseBoxes (not scannedBoxes).
+                      // Tap a loose-box row to reveal Edit / Delete (two-step). A
+                      // needs_review row stays amber and still blocks loose-phase
+                      // Confirm until resolved, but is tappable so a mis-captured
+                      // photo can be deleted. openEdit uses isLoose=true so a save
+                      // patches looseBoxes (not scannedBoxes).
                       const selected = selectedBarcode === box.barcode;
                       const needsReviewRow = !!box.needs_review;
                       return (
                       <div
                         key={box.barcode + bi}
-                        onClick={() =>
-                          needsReviewRow
-                            ? openEdit(box, true)
-                            : setSelectedBarcode(selected ? null : box.barcode)
-                        }
+                        onClick={() => setSelectedBarcode(selected ? null : box.barcode)}
                         className={`text-xs text-ink-body flex items-center gap-1.5 flex-wrap cursor-pointer rounded px-1 ${
                           needsReviewRow
                             ? 'bg-warn-weak ring-1 ring-amber-300 py-1'
@@ -1741,7 +1733,7 @@ export default function PalletVerifyPage({
                                 <AlertTriangle className="w-3 h-3 shrink-0" /> {tr('palletVerify.tapToFix')}
                               </span>
                             )}
-                            {selected && !needsReviewRow && (
+                            {selected && (
                               <span className="ms-auto flex gap-1">
                                 <button
                                   onClick={(e) => { e.stopPropagation(); openEdit(box, true); }}
@@ -1778,10 +1770,10 @@ export default function PalletVerifyPage({
                                 {tr('ocr.retry')}
                               </button>
                               <button
-                                onClick={(e) => { e.stopPropagation(); rescanLooseBox(box.barcode); }}
-                                className="px-1.5 py-0.5 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded text-[10px] font-medium"
+                                onClick={(e) => { e.stopPropagation(); rescanLooseBox(box.barcode); setSelectedBarcode(null); }}
+                                className="px-1.5 py-0.5 bg-danger-weak text-danger border border-danger rounded text-[10px] font-medium inline-flex items-center gap-0.5"
                               >
-                                {tr('ocr.rescan')}
+                                <Trash2 className="w-2.5 h-2.5" /> {tr('palletVerify.deleteScan')}
                               </button>
                             </div>
                           </>
@@ -2093,10 +2085,10 @@ export default function PalletVerifyPage({
                                   {tr('ocr.retry')}
                                 </button>
                                 <button
-                                  onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); }}
-                                  className="px-1.5 py-0.5 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded text-[10px] font-medium"
+                                  onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
+                                  className="px-1.5 py-0.5 bg-danger-weak text-danger border border-danger rounded text-[10px] font-medium inline-flex items-center gap-0.5"
                                 >
-                                  {tr('ocr.rescan')}
+                                  <Trash2 className="w-2.5 h-2.5" /> {tr('palletVerify.deleteScan')}
                                 </button>
                               </div>
                             </>
