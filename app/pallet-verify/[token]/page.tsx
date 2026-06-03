@@ -29,6 +29,14 @@ import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
 import { matchInvoiceItem } from '@/lib/invoice-match';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
+import {
+  savePalletScans,
+  loadPalletScans,
+  saveLooseScans,
+  loadLooseScans,
+  clearPalletScans,
+  clearAllScans,
+} from '@/lib/pallet-scan-cache';
 
 // Set up the in-page console-log capture once at module load. Idempotent —
 // safe even with React Strict Mode mounting twice.
@@ -101,6 +109,28 @@ interface UniformGroup {
   total_count: number;          // user-entered (or declared count for Complete-as-single)
   sample_barcodes: string[];    // the scanned-sample barcodes (2+)
 }
+
+// Shape persisted to localStorage so a reload restores in-progress scans.
+// `image_data` (base64) is stripped from boxes before saving to stay under the
+// localStorage quota — the OCR fields are what matter on restore.
+interface PalletScanSnapshot {
+  v: 1;
+  scannedBoxes: BoxScan[];
+  uniformGroups: [string, UniformGroup][];
+  acceptedMerges: [string, string][];
+  confirmedBoxCount: number;
+  boxCountInput: string;
+  forcedMix: boolean;
+  detectedType: DetectedType;
+}
+interface LooseScanSnapshot {
+  v: 1;
+  looseBoxes: BoxScan[];
+}
+const stripImage = (b: BoxScan): BoxScan => {
+  const { image_data: _img, ...rest } = b;
+  return rest;
+};
 
 // Only ever the single-vs-mix choice now (shown after >=4 OCR'd boxes of one
 // product at the same weight). The per-item mandatory_count mode was removed:
@@ -240,6 +270,10 @@ export default function PalletVerifyPage({
   } | null>(null);
   // Validation error for the deferred pallet box-count input.
   const [palletCountError, setPalletCountError] = useState<string | null>(null);
+  // Force-create confirm: when the worker scanned FEWER boxes than they
+  // declared (likely a miscount) and taps "Create LPN anyway", this opens a
+  // warning modal before the pallet is confirmed with the actual scanned count.
+  const [pendingForceConfirm, setPendingForceConfirm] = useState(false);
 
   // ── AI consolidation: debounced call after scans settle ──
   //
@@ -342,6 +376,32 @@ export default function PalletVerifyPage({
 
   // ── Load session ──
 
+  // Persist in-progress scans to localStorage so a reload never loses them.
+  // The phase guard makes this naturally safe vs the restore-on-mount below:
+  // while phase is 'loading' nothing is written, so the loader restores first
+  // and only then (phase → 'scanning') do we start mirroring to storage.
+  useEffect(() => {
+    if (phase === 'scanning') {
+      const snap: PalletScanSnapshot = {
+        v: 1,
+        scannedBoxes: scannedBoxes.map(stripImage),
+        uniformGroups: Array.from(uniformGroups.entries()),
+        acceptedMerges: Array.from(acceptedMerges.entries()),
+        confirmedBoxCount,
+        boxCountInput,
+        forcedMix,
+        detectedType,
+      };
+      savePalletScans(token, currentPallet, snap);
+    } else if (phase === 'loose_scanning') {
+      const snap: LooseScanSnapshot = { v: 1, looseBoxes: looseBoxes.map(stripImage) };
+      saveLooseScans(token, snap);
+    }
+  }, [
+    token, currentPallet, phase, scannedBoxes, looseBoxes, uniformGroups,
+    acceptedMerges, confirmedBoxCount, boxCountInput, forcedMix, detectedType,
+  ]);
+
   useEffect(() => {
     async function load() {
       try {
@@ -353,6 +413,7 @@ export default function PalletVerifyPage({
         }
         const data: MultiPalletSession = await res.json();
         if (data.status === 'completed') {
+          clearAllScans(token);
           setSession(data);
           setPhase('all_done');
           return;
@@ -362,12 +423,31 @@ export default function PalletVerifyPage({
         // All pallets confirmed but loose boxes still pending → restore loose phase
         // (e.g. user refreshed the tab between pallet 2/2 confirm and scanning loose boxes)
         if (data.current_pallet > data.pallet_count && (data.loose_box_count || 0) > 0) {
+          const cachedLoose = loadLooseScans<LooseScanSnapshot>(token);
+          if (cachedLoose?.looseBoxes?.length) {
+            setLooseBoxes(cachedLoose.looseBoxes);
+            cachedLoose.looseBoxes.forEach((b) => b.barcode && looseProcessedRef.current.add(b.barcode));
+          }
           setPhase('loose_scanning');
           return;
         }
 
         setCurrentPallet(data.current_pallet);
-        if (data.current_box_count && data.current_box_count > 0) {
+        // Restore in-progress scans for this pallet from localStorage (survives
+        // reload). The server only knows the pallet index + declared count;
+        // the individual boxes live only here.
+        const cached = loadPalletScans<PalletScanSnapshot>(token, data.current_pallet);
+        if (cached?.scannedBoxes?.length) {
+          setScannedBoxes(cached.scannedBoxes);
+          setUniformGroups(new Map(cached.uniformGroups || []));
+          setAcceptedMerges(new Map(cached.acceptedMerges || []));
+          if (cached.confirmedBoxCount > 0) setConfirmedBoxCount(cached.confirmedBoxCount);
+          if (cached.boxCountInput) setBoxCountInput(cached.boxCountInput);
+          setForcedMix(!!cached.forcedMix);
+          if (cached.detectedType) setDetectedType(cached.detectedType);
+          // Repopulate the dedup set so a re-scan of a restored sticker is caught.
+          cached.scannedBoxes.forEach((b) => b.barcode && processedRef.current.add(b.barcode));
+        } else if (data.current_box_count && data.current_box_count > 0) {
           // Resumed session — count was set in a previous tab/refresh.
           setConfirmedBoxCount(data.current_box_count);
           setBoxCountInput(String(data.current_box_count));
@@ -1066,6 +1146,7 @@ export default function PalletVerifyPage({
         setPhase('loose_scanning');
         return;
       }
+      clearAllScans(token);
       setPhase('all_done');
     } catch {
       setError(tr('palletVerify.networkError'));
@@ -1195,6 +1276,9 @@ export default function PalletVerifyPage({
       );
 
       if (data.all_done) {
+        // Every pallet is committed server-side now — clear their caches. The
+        // loose phase (if any) writes its own fresh snapshot as boxes are scanned.
+        clearAllScans(token);
         if (session && session.loose_box_count > 0) {
           setPhase('loose_scanning');
         } else {
@@ -1207,6 +1291,9 @@ export default function PalletVerifyPage({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token, current_box_count: 0 }),
         }).catch(() => {});
+        // The pallet just confirmed is committed server-side — drop its cache
+        // so a later reload doesn't resurrect it onto the next pallet.
+        clearPalletScans(token, currentPallet);
         setTimeout(() => {
           setCurrentPallet(data.next_pallet);
           setBoxCountInput('');
@@ -1263,6 +1350,17 @@ export default function PalletVerifyPage({
     !pendingSingleGroup &&
     confirmedBoxCount > 0 &&
     committed >= confirmedBoxCount &&
+    !hasUnresolvedWarnings;
+  // Force-create: the worker entered a count but scanned FEWER than declared
+  // (likely a miscount). Allow creating the LPN with the actual scanned count,
+  // behind a warning. OCR `needs_review` boxes still block (no bad data), and a
+  // 2-box minimum still applies.
+  const canForceConfirm =
+    !pendingUniformPrompt &&
+    !pendingSingleGroup &&
+    confirmedBoxCount > 0 &&
+    committed >= 2 &&
+    committed < confirmedBoxCount &&
     !hasUnresolvedWarnings;
 
   // Group scanned boxes by normalized OCR'd Hebrew name (with worker-accepted
@@ -2096,23 +2194,35 @@ export default function PalletVerifyPage({
           </div>
         ) : (
           <>
-            <button
-              onClick={handleConfirmPallet}
-              disabled={!canConfirm || phase === 'confirming'}
-              className={`w-full py-3 rounded-xl font-semibold text-base transition ${
-                canConfirm && phase !== 'confirming'
-                  ? 'bg-ok text-ink-inverse hover:opacity-90 active:bg-ok'
-                  : 'bg-sunken text-ink-muted cursor-not-allowed'
-              }`}
-            >
-              {canConfirm
-                ? tr('palletVerify.confirmPalletBtn', { current: currentPallet })
-                : hasUnresolvedWarnings
-                ? tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })
-                : committed < 2
-                ? tr('palletVerify.scanMoreToContinue', { count: 2 - committed })
-                : tr('palletVerify.boxesNeeded', { count: Math.max(0, confirmedBoxCount - committed) })}
-            </button>
+            {!canConfirm && canForceConfirm ? (
+              // Scanned fewer than declared (and no OCR warnings): let the worker
+              // force the LPN, but warn first via a confirm modal.
+              <button
+                onClick={() => setPendingForceConfirm(true)}
+                disabled={phase === 'confirming'}
+                className="flex items-center justify-center gap-1.5 w-full py-3 rounded-xl font-semibold text-base bg-warn text-ink-inverse hover:opacity-90 transition disabled:bg-sunken disabled:text-ink-muted"
+              >
+                <AlertTriangle className="w-4 h-4" /> {tr('palletVerify.forceCreateBtn')}
+              </button>
+            ) : (
+              <button
+                onClick={handleConfirmPallet}
+                disabled={!canConfirm || phase === 'confirming'}
+                className={`w-full py-3 rounded-xl font-semibold text-base transition ${
+                  canConfirm && phase !== 'confirming'
+                    ? 'bg-ok text-ink-inverse hover:opacity-90 active:bg-ok'
+                    : 'bg-sunken text-ink-muted cursor-not-allowed'
+                }`}
+              >
+                {canConfirm
+                  ? tr('palletVerify.confirmPalletBtn', { current: currentPallet })
+                  : hasUnresolvedWarnings
+                  ? tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })
+                  : committed < 2
+                  ? tr('palletVerify.scanMoreToContinue', { count: 2 - committed })
+                  : tr('palletVerify.boxesNeeded', { count: Math.max(0, confirmedBoxCount - committed) })}
+              </button>
+            )}
             {confirmedBoxCount === 0 && !forcedMix && !pendingSingleGroup && doneCount < 4 && doneCount >= 1 && !anyProcessing && (
               <button
                 onClick={() => setForcedMix(true)}
@@ -2131,6 +2241,33 @@ export default function PalletVerifyPage({
       </div>
       {imageModal}
       {editModal}
+      {pendingForceConfirm && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-raised rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-xl">
+            <div className="flex items-center gap-2 text-warn-weak-ink">
+              <AlertTriangle className="w-5 h-5 shrink-0" />
+              <h2 className="text-base font-bold text-ink">{tr('palletVerify.forceConfirmTitle')}</h2>
+            </div>
+            <p className="text-sm text-ink-body">
+              {tr('palletVerify.forceConfirmWarning', { committed, declared: confirmedBoxCount })}
+            </p>
+            <div className="space-y-2">
+              <button
+                onClick={() => { setPendingForceConfirm(false); handleConfirmPallet(); }}
+                className="w-full py-3 rounded-xl font-semibold text-base bg-warn text-ink-inverse hover:opacity-90 transition"
+              >
+                {tr('palletVerify.forceConfirmYes')}
+              </button>
+              <button
+                onClick={() => setPendingForceConfirm(false)}
+                className="w-full py-3 rounded-xl font-semibold text-base bg-raised border-2 border-line text-ink-body hover:bg-sunken transition"
+              >
+                {tr('palletVerify.forceConfirmNo')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {debugPanel}
     </div>
   );
