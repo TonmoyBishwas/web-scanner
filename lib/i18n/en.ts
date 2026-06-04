@@ -219,6 +219,11 @@ export const en = {
 
   'palletVerify.scanMoreToContinue': 'Scan {count} more boxes to continue',
   'palletVerify.boxesNeeded': '{count} more boxes needed',
+  'palletVerify.forceCreateBtn': 'Create LPN anyway',
+  'palletVerify.forceConfirmTitle': 'Create LPN without scanning all?',
+  'palletVerify.forceConfirmWarning': 'You’ve scanned {committed} of {declared} boxes. The pallet will be created with {committed} box(es). Create the LPN and continue?',
+  'palletVerify.forceConfirmYes': 'Create anyway',
+  'palletVerify.forceConfirmNo': 'Go back & scan',
   'palletVerify.palletTypeSingle': 'single',
   'palletVerify.palletTypeMix': 'mix',
   'palletVerify.scanToStart': 'Scan boxes on this pallet',

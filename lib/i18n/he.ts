@@ -223,6 +223,11 @@ export const he: Record<TranslationKey, string> = {
 
   'palletVerify.scanMoreToContinue': 'סרוק עוד {count} קופסאות כדי להמשיך',
   'palletVerify.boxesNeeded': 'נדרשות עוד {count} קופסאות',
+  'palletVerify.forceCreateBtn': 'צור LPN בכל זאת',
+  'palletVerify.forceConfirmTitle': 'ליצור LPN בלי לסרוק הכל?',
+  'palletVerify.forceConfirmWarning': 'סרקת {committed} מתוך {declared} קופסאות. המשטח ייווצר עם {committed} קופסאות. ליצור את ה-LPN ולהמשיך?',
+  'palletVerify.forceConfirmYes': 'צור בכל זאת',
+  'palletVerify.forceConfirmNo': 'חזור וסרוק',
   'palletVerify.palletTypeSingle': 'יחיד',
   'palletVerify.palletTypeMix': 'מעורב',
   'palletVerify.scanToStart': 'סרוק קופסאות על המשטח הזה',
