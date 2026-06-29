@@ -4,6 +4,12 @@ import { t } from '@/lib/i18n/server';
 import type { Language } from '@/types';
 import { LPN_STICKER_MARKER } from '@/lib/lpn-constants';
 import { computeLpnSignature } from '@/lib/lpn-signature';
+import { supabase } from '@/lib/supabase';
+
+// Sticker data is read from Supabase with ISR: revalidate at most once per
+// 60s so a freshly-created pallet appears within the window (replaces the
+// former fetch-level `next: { revalidate: 60 }`).
+export const revalidate = 60;
 
 interface PalletRecord {
   lpn: string;
@@ -19,41 +25,28 @@ interface PalletRecord {
 }
 
 async function fetchPalletRecord(lpn: string): Promise<PalletRecord | null> {
-  const PALLETS_TABLE_ID = process.env.AIRTABLE_PALLETS_TABLE_ID;
-  const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN;
-  const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
-
-  if (!PALLETS_TABLE_ID || !AIRTABLE_TOKEN || !AIRTABLE_BASE_ID) {
-    return null;
-  }
-
   try {
-    const formula = encodeURIComponent(`{LPN}="${lpn}"`);
-    const url = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${PALLETS_TABLE_ID}?filterByFormula=${formula}&maxRecords=1`;
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-      next: { revalidate: 60 },
-    });
+    const { data, error } = await supabase
+      .from('pallets')
+      .select(
+        'lpn, item_name, item_code, document_number, box_count, ocr_box_weight_kg, calculated_total_weight_kg, scale_weight_kg, status, created_at'
+      )
+      .eq('lpn', lpn)
+      .maybeSingle();
 
-    if (!res.ok) return null;
-    const data = await res.json();
-
-    if (!data.records || data.records.length === 0) return null;
-
-    const fields = data.records[0].fields;
-    const createdTime = data.records[0].createdTime;
+    if (error || !data) return null;
 
     return {
-      lpn: fields['LPN'] || lpn,
-      item_name: fields['Item Name'] || '',
-      item_code: fields['Item Code'] || '',
-      document_number: fields['Document Number'] || '',
-      box_count: fields['Box Count'] || 0,
-      ocr_box_weight: fields['OCR Box Weight (kg)'] || 0,
-      calc_weight: fields['Calculated Total Weight (kg)'] || 0,
-      scale_weight: fields['Scale Weight (kg)'] || 0,
-      status: fields['Status'] || 'Unknown',
-      created_at: createdTime || new Date().toISOString(),
+      lpn: data.lpn || lpn,
+      item_name: data.item_name || '',
+      item_code: data.item_code || '',
+      document_number: data.document_number || '',
+      box_count: data.box_count || 0,
+      ocr_box_weight: data.ocr_box_weight_kg || 0,
+      calc_weight: data.calculated_total_weight_kg || 0,
+      scale_weight: data.scale_weight_kg || 0,
+      status: data.status || 'Unknown',
+      created_at: data.created_at || new Date().toISOString(),
     };
   } catch {
     return null;

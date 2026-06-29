@@ -6,7 +6,7 @@ import {
   createIssueTransaction,
   issueBox,
   updateInventoryQuantity,
-} from '@/lib/airtable';
+} from '@/lib/supabase';
 import { t } from '@/lib/i18n/server';
 import type { IssuedBox, ScanSession, Language } from '@/types';
 

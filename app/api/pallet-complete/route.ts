@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedisClient, sessionStorage } from '@/lib/redis';
+import { supabase } from '@/lib/supabase';
 import type { PalletSession, PalletVerificationResult } from '@/types';
 
 const PALLET_SESSION_TTL = 7200;
@@ -21,59 +22,41 @@ function generateLPN(documentNumber: string, palletNumber: number): string {
   return `LPN-${date}-${docShort}-P${palletNumber}`;
 }
 
-async function savePalletToAirtable(
+function toChatIdBigint(chatId: unknown): number | null {
+  if (chatId === null || chatId === undefined || chatId === '') return null;
+  const s = String(chatId).trim();
+  if (!/^-?\d+$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function savePalletToSupabase(
   lpn: string,
   session: PalletSession,
   firstBox: { sku: string; item_name: string; item_name_hebrew?: string; weight: number },
   verifiedScanCount: number
 ): Promise<void> {
-  const PALLETS_TABLE_ID = process.env.AIRTABLE_PALLETS_TABLE_ID;
-  const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN;
-  const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
-
-  if (!PALLETS_TABLE_ID || !AIRTABLE_TOKEN || !AIRTABLE_BASE_ID) {
-    console.warn('[pallet-complete] Airtable Pallets table not configured — skipping');
-    return;
-  }
-
   const calcWeight = firstBox.weight * session.expected_box_count;
 
-  const url = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${PALLETS_TABLE_ID}`;
-  const body = {
-    records: [
-      {
-        fields: {
-          LPN: lpn,
-          'Item Code': firstBox.sku,
-          'Item Name': firstBox.item_name || firstBox.item_name_hebrew || '',
-          'Document Number': session.invoice_document_number,
-          'Box Count': session.expected_box_count,
-          'OCR Box Weight (kg)': firstBox.weight,
-          'Calculated Total Weight (kg)': calcWeight,
-          'Scale Weight (kg)': session.scale_weight,
-          'Verified Scan Count': verifiedScanCount,
-          Status: 'Verified',
-          'Chat ID': session.chat_id,
-        },
-      },
-    ],
-  };
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${AIRTABLE_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
+  const { error } = await supabase.from('pallets').insert({
+    lpn,
+    item_code: firstBox.sku,
+    item_name: firstBox.item_name || firstBox.item_name_hebrew || '',
+    document_number: session.invoice_document_number,
+    box_count: session.expected_box_count,
+    ocr_box_weight_kg: firstBox.weight,
+    calculated_total_weight_kg: calcWeight,
+    scale_weight_kg: session.scale_weight,
+    verified_scan_count: verifiedScanCount,
+    status: 'Verified',
+    chat_id: toChatIdBigint(session.chat_id),
   });
 
-  if (!res.ok) {
-    const text = await res.text();
-    console.error('[pallet-complete] Airtable error:', text);
+  if (error) {
     // Non-fatal: log but don't throw
+    console.error('[pallet-complete] Supabase pallet insert error:', error.message);
   } else {
-    console.log('[pallet-complete] Pallet saved to Airtable:', lpn);
+    console.log('[pallet-complete] Pallet saved to Supabase:', lpn);
   }
 }
 
@@ -126,11 +109,11 @@ export async function POST(request: NextRequest) {
       const lpn = generateLPN(session.invoice_document_number, session.pallet_number);
       const calcWeight = firstBox.weight * session.expected_box_count;
 
-      // Save to Airtable (non-blocking error handling)
+      // Save to Supabase (non-blocking error handling)
       try {
-        await savePalletToAirtable(lpn, session, firstBox, session.scanned_boxes.length);
+        await savePalletToSupabase(lpn, session, firstBox, session.scanned_boxes.length);
       } catch (atErr) {
-        console.error('[pallet-complete] Airtable save failed (non-fatal):', atErr);
+        console.error('[pallet-complete] Supabase save failed (non-fatal):', atErr);
       }
 
       // Mark session as completed
