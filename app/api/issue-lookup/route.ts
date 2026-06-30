@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sessionStorage } from '@/lib/redis';
-import { findBoxByBarcode, getInventoryRecord } from '@/lib/airtable';
+import { findBoxByBarcode, getInventoryRecord } from '@/lib/supabase';
 import { t } from '@/lib/i18n/server';
 import type { BoxLookupResult, ScanSession, Language } from '@/types';
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRedisClient } from '@/lib/redis';
+import { getRedisClient, sessionStorage } from '@/lib/redis';
 import { t } from '@/lib/i18n/server';
 import type { MultiPalletSession, MultiPalletBoxScan, Language } from '@/types';
 import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
@@ -120,13 +120,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: t(undefined, 'errors.missingToken') }, { status: 400 });
     }
 
+    let errorResult: { status: number; body: Record<string, unknown> } | null = null;
+    let okResult: Record<string, unknown> | null = null;
+
+    // Lock the session for the full read-modify-write so concurrent
+    // pallet-completes can't clobber `current_pallet` / `completed_pallets`.
+    await sessionStorage.withLock(token, async () => {
     const session = await getSession(token);
     if (!session) {
-      return NextResponse.json({ success: false, error: t(undefined, 'errors.sessionNotFound') }, { status: 404 });
+      errorResult = { status: 404, body: { success: false, error: t(undefined, 'errors.sessionNotFound') } };
+      return;
     }
     const lang = session.language as Language | undefined;
     if (session.status === 'completed') {
-      return NextResponse.json({ success: false, error: t(lang, 'errors.sessionAlreadyCompleted') }, { status: 400 });
+      errorResult = { status: 400, body: { success: false, error: t(lang, 'errors.sessionAlreadyCompleted') } };
+      return;
     }
 
     const palletNumber = session.current_pallet;
@@ -293,14 +301,21 @@ export async function POST(request: NextRequest) {
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
 
-    return NextResponse.json({
+    okResult = {
       success: true,
       lpn,
       lpn_url: `${appUrl}/pallet/${lpn}`,
       pallet_number: palletNumber,
       next_pallet: allPalletsDone ? null : newCurrentPallet,
       all_done: allPalletsDone,
+    };
     });
+
+    if (errorResult) {
+      const e = errorResult as { status: number; body: Record<string, unknown> };
+      return NextResponse.json(e.body, { status: e.status });
+    }
+    return NextResponse.json(okResult);
   } catch (error) {
     console.error('[multi-pallet-complete] POST error:', error);
     return NextResponse.json({ success: false, error: t(undefined, 'errors.serverError') }, { status: 500 });
