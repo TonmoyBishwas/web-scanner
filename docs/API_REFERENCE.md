@@ -2,7 +2,9 @@
 
 Base URL: `/api`
 
-All routes are Next.js App Router route handlers. All mutations (POST routes that modify Redis session) use `withLock(token, ...)` from `lib/redis.ts` to prevent race conditions.
+All routes are Next.js App Router route handlers. All mutations (POST routes that modify a session or write persistent records) use `withLock(token, ...)` from `lib/redis.ts` to prevent race conditions. As of the 2026-06-30 Supabase migration, locking was extended to the previously-unlocked `multi-pallet-complete`, `multi-pallet-loose-complete`, and `manual-entry` routes; `withLock` is now a Postgres `locks` table (`acquire_lock` / `release_lock` RPCs), same 10s TTL + 20×250ms retry as the old Redis lock.
+
+> **Data layer (2026-06-30)**: Airtable + Upstash Redis were replaced by **Supabase / Postgres**. Sessions live in the `scan_sessions` table (`token` PK, `kind` enum carton|pallet|multi_pallet, `data` jsonb, `expires_at`), accessed through the unchanged exports in `lib/redis.ts`. Persistent records (`box_inventory`, `stock_batches`, `transactions`, `pallets`) are accessed via `lib/supabase.ts`. **All cross-boundary record ids below — `record_id`, `box_record_id`, `batch_id`, `transaction_id`, `receipt_id` — are now Postgres uuids, not Airtable `rec…` ids.** The `rec…` examples in this doc are historical; treat them as uuids. The scanner now writes Supabase directly (issue-confirm + pallet-complete) and is no longer read-only.
 
 ## Authentication
 All routes require a valid session `token` in the request body or query params. Token is a UUID v4 generated when the bot creates a session.
@@ -14,7 +16,7 @@ All routes require a valid session `token` in the request body or query params. 
 ### 1. Create / Get Carton Session
 **Endpoint**: `POST /api/session` (create) | `GET /api/session?token=` (get)
 
-Creates or fetches a carton scanning session (Redis key: `session:{token}`, TTL 1h).
+Creates or fetches a carton scanning session (`scan_sessions` row, `kind = 'carton'`, TTL 1h → extended to 24h on finalize).
 
 **POST Request Body:**
 ```json
@@ -73,7 +75,7 @@ Records a barcode scan. Deduplicates client-side and server-side.
 ### 3. Trigger Box OCR
 **Endpoint**: `POST /api/ocr`
 
-Sends box sticker image to the bot's `/webhook/process-box-ocr` endpoint for Gemini OCR. Returns immediately; OCR result written back to Redis session asynchronously.
+Sends box sticker image to the bot's `/webhook/process-box-ocr` endpoint for Gemini OCR. Returns immediately; OCR result written back to the `scan_sessions` row (Supabase) asynchronously.
 
 **Request Body:**
 ```json
@@ -170,18 +172,18 @@ Looks up a box by barcode. Validates it is `Available`, not already issued in th
 }
 ```
 
-**Success Response:**
+**Success Response:** (`record_id` / `batch_id` are Postgres uuids)
 ```json
 {
   "found": true,
   "box": {
-    "record_id": "recXXX",
+    "record_id": "uuid",
     "barcode": "...",
     "sku": "7290...",
     "weight": 12.5,
     "expiry": "311226",
     "status": "Available",
-    "batch_id": "recBatchXXX",
+    "batch_id": "uuid",
     "item_name": "Chicken Breast",
     "supplier": "Poultry Corp",
     "invoice_number": "INV-001",
@@ -209,15 +211,15 @@ Looks up a box by barcode. Validates it is `Available`, not already issued in th
 ### 9. Confirm Box Issue
 **Endpoint**: `POST /api/issue-confirm`
 
-Marks a box as issued in Airtable (Status → Issued, creates OUT transaction, decrements Stock Batches). Adds to `session.issued_boxes` in Redis.
+Marks a box as issued in Supabase (Status → Issued, creates OUT transaction, decrements stock_batches), under `withLock`. Adds to `session.issued_boxes` in the `scan_sessions` row.
 
-**Request Body:**
+**Request Body:** (`box_record_id` / `batch_id` are Postgres uuids)
 ```json
 {
   "token": "uuid",
   "barcode": "full-barcode-string",
-  "box_record_id": "recXXX",
-  "batch_id": "recBatchXXX",
+  "box_record_id": "uuid",
+  "batch_id": "uuid",
   "item_name": "Chicken Breast",
   "item_name_hebrew": "חזה עוף",
   "supplier": "Poultry Corp",
@@ -226,7 +228,7 @@ Marks a box as issued in Airtable (Status → Issued, creates OUT transaction, d
 }
 ```
 
-**Response:** `{ "success": true, "transaction_id": "recTxXXX" }`
+**Response:** `{ "success": true, "transaction_id": "uuid" }`
 
 ---
 
@@ -248,7 +250,7 @@ Bot receives summary with `issued_items[]` and sends the worker a confirmation m
 ### 11. Create / Get Multi-Pallet Session
 **Endpoint**: `POST /api/multi-pallet-session` (create) | `GET /api/multi-pallet-session?token=` (get)
 
-Creates or fetches a multi-pallet scanning session (Redis key: `pallet:multi:{token}`, TTL 2h).
+Creates or fetches a multi-pallet scanning session (`scan_sessions` row, `kind = 'multi_pallet'`, TTL 2h).
 
 **POST Request Body:**
 ```json
@@ -262,7 +264,7 @@ Creates or fetches a multi-pallet scanning session (Redis key: `pallet:multi:{to
   "invoice_document_number": "INV-001",
   "pallet_type": "single",
   "mix_items": [],
-  "receipt_id": "recDeliveryXXX",
+  "receipt_id": "uuid",
   "ocr_data": [
     {
       "item_code": "7290...",
@@ -355,7 +357,7 @@ Manually assigns an OCR-unresolved box to a specific item on a mix pallet.
 ### 16. Complete Pallet Verification
 **Endpoint**: `POST /api/multi-pallet-complete`
 
-Finalises one pallet within a multi-pallet session: generates LPN, advances `session.current_pallet`, fires `POST /webhook/pallet-complete` to the bot.
+Finalises one pallet within a multi-pallet session: generates LPN, advances `session.current_pallet`, fires `POST /webhook/pallet-complete` to the bot. Now runs under `withLock` (added in the Supabase migration). The sibling `POST /api/pallet-complete` route additionally inserts the pallet into the Supabase `pallets` table via `savePalletToSupabase`.
 
 **Request Body:**
 ```json
@@ -434,7 +436,7 @@ Finalises one pallet within a multi-pallet session: generates LPN, advances `ses
 }
 ```
 
-- `all_done: true` (top-level response field) when this was the last pallet. The Redis session `status` only flips to `'completed'` once all pallets **and** loose boxes are done; while loose boxes are pending it stays `'active'` so a tab refresh can restore the loose-scanning phase.
+- `all_done: true` (top-level response field) when this was the last pallet. The session `status` (in `scan_sessions.data`) only flips to `'completed'` once all pallets **and** loose boxes are done; while loose boxes are pending it stays `'active'` so a tab refresh can restore the loose-scanning phase.
 - Bot creates: Pallet row, Pallet Items rows (Expected Box Count from `items[].box_count`), Box Inventory rows (one per `scanned_boxes` entry), Stock Batches records, IN_PALLET Transaction, updates Delivery Items received qty.
 
 ---
@@ -461,10 +463,10 @@ Submits all scanned loose boxes to the bot after the loose scanning phase is don
 }
 ```
 
-**Steps performed:**
-1. Load session from Redis, validate `status === 'active'`
+**Steps performed:** (entire handler now runs under `withLock`)
+1. Load session from Supabase (`scan_sessions`, `kind = 'multi_pallet'`), validate `status === 'active'`
 2. Fire-and-forget `POST {BOT_URL}/webhook/loose-boxes-complete` with `{chat_id, document_number, receipt_id, scanned_boxes}`
-3. Mark session `status = 'completed'` in Redis
+3. Mark session `status = 'completed'` in Supabase
 
 **Response:** `{ "success": true }`
 
@@ -481,15 +483,32 @@ Some older single-pallet routes may still exist (`/api/pallet-session`, `/api/pa
 
 ---
 
-## Redis Key Patterns
+## Session Storage (`scan_sessions` table)
 
-| Key | TTL | Purpose |
-|-----|-----|---------|
-| `session:{token}` | 1h | Carton scan session (RECEIVE or ISSUE) |
-| `pallet:{token}` | 2h | Legacy single pallet verification session |
-| `pallet:multi:{token}` | 2h | Multi-pallet session (current, includes `loose_box_count`) |
-| `lock:{token}` | 10s | Distributed lock for mutations |
+Backed by Supabase / Postgres since 2026-06-30 (was Upstash Redis). Single `scan_sessions` table keyed by `token`; the old Redis namespaces map to the `kind` column. TTL is enforced lazily on read (`expires_at > now()`).
+
+| Old Redis key | `kind` | TTL | Purpose |
+|---------------|--------|-----|---------|
+| `session:{token}` | `carton` | 1h (→ 24h on finalize) | Carton scan session (RECEIVE or ISSUE) |
+| `pallet:{token}` | `pallet` | 2h | Legacy single pallet verification session |
+| `pallet:multi:{token}` | `multi_pallet` | 2h | Multi-pallet session (current, includes `loose_box_count`) |
+
+Distributed locks now live in a Postgres `locks` table (`acquire_lock` / `release_lock` RPCs), 10s TTL — same semantics as the old `lock:{token}` Redis key.
+
+## Environment Variables
+
+| Var | Purpose |
+|-----|---------|
+| `SUPABASE_URL` | Supabase project URL (e.g. `https://vkeqzvwnqkuuwurgjjkd.supabase.co`) |
+| `SUPABASE_SERVICE_ROLE_KEY` | `sb_secret_…` service-role key (server-side only; bypasses RLS) |
+| `TELEGRAM_BOT_WEBHOOK_URL` | Bot webhook base URL (Railway) |
+| `NEXT_PUBLIC_APP_URL` | Public scanner URL |
+| `CLOUDINARY_*` | Image upload proxy credentials |
+| `OPENROUTER_API_KEY` | LLM invoice matching |
+| `LPN_SECRET` | Shared HMAC secret for LPN sticker QR signatures |
+
+Removed in the migration: `KV_REST_API_URL`, `KV_REST_API_TOKEN`, and all `AIRTABLE_*` vars.
 
 ---
 
-**Last Updated**: 2026-04-30 | Branch: `pallet-flow`
+**Last Updated**: 2026-06-30 (Supabase/Postgres data-layer migration) | Working branch: `preview` | Production branch: `main`
