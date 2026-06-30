@@ -5,16 +5,17 @@ The Web Scanner is a Next.js 16 application designed to provide a high-performan
 
 ## Branch & Deployment
 
-- **Active branch**: `pallet-flow` (off `main`)
-- **Vercel deploys from**: `pallet-flow`
-- Production URL served from Vercel (automatic on push to `pallet-flow`)
+- **Working branch**: `preview` (off `pallet-flow`)
+- **Vercel PRODUCTION branch**: `main` (production domain `web-scanner-psi.vercel.app`)
+- Pushing `pallet-flow` or `preview` produces a non-production **preview** deployment only. To ship to production the code must reach `main` (the team's tree-identical "graph mirror" merge into `main`), or a ready build must be promoted to production in the Vercel dashboard.
+- **Redeploy IS required after changing Vercel env vars.**
 
 ## Tech Stack
 - **Framework**: Next.js 16 (App Router)
 - **Language**: TypeScript
 - **Styling**: Tailwind CSS (via `globals.css`)
 - **State Management**: React Hooks (`useState`, `useReducer`, `useRef`) + URL State
-- **Database/Cache**: Redis (Upstash) for session management
+- **Database**: Supabase / Postgres via `@supabase/supabase-js` (service-role key, server-side only). Holds both the persistent records (box_inventory, stock_batches, transactions, pallets) and the scan sessions + distributed locks. Migrated 2026-06-30 from Airtable + Upstash Redis.
 - **Scanning Library**: Native BarcodeDetector API (hardware-accelerated); fallback: html5-qrcode (@zxing/browser)
 - **Image Storage**: Cloudinary (via API proxy)
 
@@ -140,8 +141,8 @@ The UI for resolving OCR ambiguities (missing weight, missing product name).
 ### Issue (Outbound)
 | Route | Purpose |
 |-------|---------|
-| `POST /api/issue-lookup` | Find box by barcode; validate pallet restriction |
-| `POST /api/issue-confirm` | Mark box Issued + create OUT transaction in Airtable |
+| `POST /api/issue-lookup` | Find box by barcode; validate pallet restriction (reads Supabase) |
+| `POST /api/issue-confirm` | Mark box Issued + create OUT transaction in Supabase (under `withLock`) |
 | `POST /api/issue-complete` | Finalize issue session → webhook to bot |
 
 ### Pallet Verify (Inbound — pallets + loose boxes)
@@ -153,19 +154,22 @@ The UI for resolving OCR ambiguities (missing weight, missing product name).
 | `POST /api/multi-pallet-ocr` | Synchronous box sticker OCR (calls bot `/webhook/process-box-ocr`, returns OCR result) |
 | `POST /api/pallet-manual` | Manual box entry for pallet |
 | `POST /api/pallet-assign` | Manually assign box to mix pallet item |
-| `POST /api/pallet-complete` | Generate LPN, call bot `/webhook/pallet-complete` |
-| `POST /api/multi-pallet-loose-complete` | Submit loose box scans → call bot `/webhook/loose-boxes-complete` |
+| `POST /api/pallet-complete` | Generate LPN, insert pallet into Supabase (`savePalletToSupabase`), call bot `/webhook/pallet-complete` |
+| `POST /api/multi-pallet-loose-complete` | Submit loose box scans → call bot `/webhook/loose-boxes-complete` (now under `withLock`) |
 
-## Redis Key Patterns
+## Session Storage (Supabase / Postgres)
 
-| Key | TTL | Purpose |
-|-----|-----|---------|
-| `session:{token}` | 1h | Carton scan session |
-| `pallet:{token}` | 2h | Pallet verification session |
-| `pallet:multi:{token}` | 2h | Multi-pallet session (includes `loose_box_count`) |
-| `lock:{token}` | 10s | Distributed lock for all mutations |
+Sessions live in the Postgres `scan_sessions` table (`token` PK, `kind` enum, `data` jsonb, `expires_at`). The former Redis key namespaces map to `kind` values; TTL is enforced lazily on read (`expires_at > now()`), reproducing Redis `EX`.
 
-All mutation routes use `withLock(token, callback)` from `lib/redis.ts`. Lock TTL is 10s; max 20 retries × 250ms = 5s timeout.
+| Old Redis key | `scan_sessions.kind` | TTL | Purpose |
+|---------------|----------------------|-----|---------|
+| `session:{token}` | `carton` | 1h (→ 24h on finalize) | Carton scan session |
+| `pallet:{token}` | `pallet` | 2h | Legacy single-pallet verification session |
+| `pallet:multi:{token}` | `multi_pallet` | 2h | Multi-pallet session (includes `loose_box_count`) |
+
+`lib/redis.ts` keeps the same filename and exports (`sessionStorage`, `getRedisClient`, `palletKey`, `sessionKey`) but is now Supabase-backed, so route imports from `@/lib/redis` are unchanged. `lib/supabase.ts` is the lazily-constructed service-role client (build-safe Proxy) that re-implements every former `lib/airtable.ts` export with identical names + return shapes (`findBoxByBarcode`, `getInventoryRecord`, `issueBox`, `revertBoxIssue`, `createIssueTransaction`, `updateInventoryQuantity`); `lib/airtable.ts` was deleted.
+
+**Distributed lock**: a Postgres `locks` table driven by the `acquire_lock` / `release_lock` SQL functions. `withLock(token, callback)` (on `sessionStorage`) calls `supabase.rpc('acquire_lock', …)` with a 10s TTL, max 20 retries × 250ms = 5s timeout, and a locker-id-guarded release — reproducing the old Redis `SET NX EX 10`. Locking was also added to the previously-unlocked `multi-pallet-complete`, `multi-pallet-loose-complete`, and `manual-entry` routes.
 
 ## Workflow Data Flows
 
@@ -186,7 +190,7 @@ All mutation routes use `withLock(token, callback)` from `lib/redis.ts`. Lock TT
    Optional: pallet_record_id for LPN-restricted sessions
 2. Worker opens /issue/[token]
 3. Scan box → POST /api/issue-lookup → shows box details
-4. Worker confirms → POST /api/issue-confirm → Airtable write (immediate)
+4. Worker confirms → POST /api/issue-confirm → Supabase write (immediate, under withLock)
 5. Repeat for more boxes
 6. Worker taps Done → POST /api/issue-complete → POST /webhook/scan-complete (bot, ISSUE type)
 7. Bot sends summary message + undo button
@@ -262,7 +266,7 @@ Phase transitions:
 - `loose_scanning` → `loose_confirming` (all loose boxes scanned, confirm tapped)
 - `loose_confirming` → `all_done` (loose-complete call succeeded)
 
-> The session's Redis `status` only flips to `completed` once **both** all pallets and all loose boxes are done. While loose boxes are pending the status stays `active` so a tab refresh restores `loose_scanning`.
+> The session's `status` (in `scan_sessions.data`) only flips to `completed` once **both** all pallets and all loose boxes are done. While loose boxes are pending the status stays `active` so a tab refresh restores `loose_scanning`.
 
 ## Uniform-pair detection (mix pallets)
 
@@ -303,20 +307,20 @@ The same three buttons appear in all three OCR-failure render sites: the single-
 
 After every pallet is confirmed (and any loose boxes finalised), `phase === 'all_done'` renders a list of every confirmed pallet as a tappable card showing `LPN`, pallet number, declared box count, and `pallet_type`. Each card is `<a href="/pallet/{lpn}?token={session_token}" target="_blank">` so it opens in a new tab without disturbing the scanner. Loose-box count is displayed in a separate orange info card noting that no physical sticker is needed for loose pallets.
 
-The list reads from `session.completed_pallets`. `handleConfirmPallet` mirrors each successful API confirm into local React state (the API persists to Redis but the page never refetches), so by the time the worker reaches `all_done` every pallet they confirmed in this session is in the list — even on a fresh-mount session that had completed_pallets prefilled from a mid-flow refresh.
+The list reads from `session.completed_pallets`. `handleConfirmPallet` mirrors each successful API confirm into local React state (the API persists the session to Supabase but the page never refetches), so by the time the worker reaches `all_done` every pallet they confirmed in this session is in the list — even on a fresh-mount session that had completed_pallets prefilled from a mid-flow refresh.
 
 ## Pallet sticker page (`/pallet/[lpn]`)
 
-Server component reads `searchParams.token`. If present, the "← Back" button routes to `/pallet-verify/{token}` (returning the worker to their active scanner session) instead of the homepage `/`. All sticker links generated by the scanner already include `?token=…` for this round-trip. Direct visits from WhatsApp's bot messages have no token and fall back to `/`.
+Server component that reads the pallet from Supabase (`from('pallets')`) and uses route-level ISR (`export const revalidate = 60`) instead of the former per-fetch `next: { revalidate: 60 }`. It also reads `searchParams.token`. If present, the "← Back" button routes to `/pallet-verify/{token}` (returning the worker to their active scanner session) instead of the homepage `/`. All sticker links generated by the scanner already include `?token=…` for this round-trip. Direct visits from WhatsApp's bot messages have no token and fall back to `/`.
 
 ## Important Implementation Notes
 
-- **`Box SKU` ≠ `item_code`**: `Box SKU` in Airtable stores the full barcode string. Never use it as a product identifier. Use the `Pallet Item` record link for filtering in pallet context.
+- **`box_sku` ≠ `item_code`**: the `box_sku` column (surfaced to legacy code as the `Box SKU` field by `lib/supabase.ts`) stores the full barcode string. Never use it as a product identifier. Use the `Pallet Item` link for filtering in pallet context.
 - **Barcodes are IDs only**: `parseIsraeliBarcode()` intentionally returns `weight: 0`. Weight/item data comes exclusively from OCR. Never assume barcode encodes product details.
 - **Pallet OCR item matching**: Hebrew-first matching using first significant Hebrew word (≥3 chars). Never use barcode string for item matching.
 - **Loose box OCR**: Uses same `/api/multi-pallet-ocr` (synchronous) as pallet box OCR. Each loose box fires OCR immediately on scan.
-- **Uniform weight override**: If Airtable has `Uniform Weight = true` but actual Box Inventory rows show weight variance >0.5kg, the bot overrides to non-uniform at outbound time.
+- **Uniform weight override**: If the stored data has `Uniform Weight = true` but actual Box Inventory rows show weight variance >0.5kg, the bot overrides to non-uniform at outbound time.
 - **Synthetic Box Inventory rows**: For uniform pallets, inbound stores only 2 sample rows. Outbound creates synthetic rows for the shortfall before marking as Issued.
 - **Loose pallet LPN**: `LOOSE-{YYYYMMDD}-{docShort}` — no physical sticker printed, system tracking only.
 
-**Last Updated**: 2026-04-30 | Branch: `pallet-flow`
+**Last Updated**: 2026-06-30 (Supabase/Postgres data-layer migration) | Working branch: `preview` | Production branch: `main`
