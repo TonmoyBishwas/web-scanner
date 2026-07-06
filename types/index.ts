@@ -300,6 +300,20 @@ export interface MultiPalletSession {
   created_at: string;
   /** User's preferred language. Set by the bot when creating the session. */
   language?: Language;
+  /**
+   * 'meat' (default) or 'non_meat'. A non-meat session (weight-based Type A)
+   * mints an `NM-`-prefixed LPN and echoes `nonmeat_meta` back to the bot so
+   * the received stock lands in the non-meat ledger.
+   */
+  category?: 'meat' | 'non_meat';
+  nonmeat_meta?: {
+    supplier_he?: string;
+    supplier_en?: string;
+    invoice_number?: string;
+    invoice_date?: string;
+    invoice_url?: string | null;
+    session_id?: string;
+  } | null;
 }
 
 // ─── UI State Types ────────────────────────────────────────────────────────────
