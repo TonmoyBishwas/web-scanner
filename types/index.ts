@@ -288,6 +288,11 @@ export interface MultiPalletSession {
     item_name_english: string;
     item_name_hebrew: string;
     quantity_kg: number;
+    /** Weight-based non-meat (Type A) only: invoice carton count and per-carton
+     *  weight. The scanner scans one box per item and computes the total as
+     *  unit_weight_kg × cartons. Absent/0 for meat and count-based non-meat. */
+    box_count?: number;
+    unit_weight_kg?: number;
   }>;
   receipt_id?: string;
   completed_pallets: Array<{
@@ -314,6 +319,13 @@ export interface MultiPalletSession {
     invoice_url?: string | null;
     session_id?: string;
   } | null;
+  /**
+   * Type A only: cartons of each invoice item already committed across earlier
+   * pallets, keyed by `item_code` (or `he:<normalized hebrew name>` when no
+   * code). Drives the per-pallet count pre-fill (remaining = invoice count −
+   * committed) so an item split across pallets is never double-counted.
+   */
+  nonmeat_committed?: Record<string, number>;
 }
 
 // ─── UI State Types ────────────────────────────────────────────────────────────
