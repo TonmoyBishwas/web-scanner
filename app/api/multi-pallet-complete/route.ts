@@ -25,10 +25,13 @@ async function getSession(token: string): Promise<MultiPalletSession | null> {
   return typeof raw === 'string' ? JSON.parse(raw) : (raw as MultiPalletSession);
 }
 
-function generateLPN(documentNumber: string, palletNumber: number): string {
+function generateLPN(documentNumber: string, palletNumber: number, category?: string): string {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const docShort = documentNumber.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || 'DOC';
-  return `LPN-${date}-${docShort}-P${palletNumber}`;
+  // Weight-based non-meat pallets get an NM- prefix so the bot's outbound
+  // gateway routes them to the non-meat ledger.
+  const prefix = category === 'non_meat' ? 'NM-' : '';
+  return `${prefix}LPN-${date}-${docShort}-P${palletNumber}`;
 }
 
 /**
@@ -138,7 +141,7 @@ export async function POST(request: NextRequest) {
     }
 
     const palletNumber = session.current_pallet;
-    const lpn = generateLPN(session.document_number, palletNumber);
+    const lpn = generateLPN(session.document_number, palletNumber, session.category);
 
     // Worker-accepted AI merges (originalKey → canonicalKey).
     const mergeMap = new Map<string, string>(Object.entries(merge_map ?? {}));
@@ -206,6 +209,8 @@ export async function POST(request: NextRequest) {
         pallet_number: palletNumber,
         lpn,
         pallet_type: 'mix',
+        category: session.category ?? 'meat',
+        nonmeat_meta: session.nonmeat_meta ?? null,
         scale_weight: 0,
         document_number: session.document_number,
         verified_scan_count: scanned_boxes.length,
@@ -249,6 +254,8 @@ export async function POST(request: NextRequest) {
         pallet_number: palletNumber,
         lpn,
         pallet_type: 'single',
+        category: session.category ?? 'meat',
+        nonmeat_meta: session.nonmeat_meta ?? null,
         scale_weight: 0,
         document_number: session.document_number,
         verified_scan_count: itemBoxes.length,
