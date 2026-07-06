@@ -4,6 +4,7 @@ import { t } from '@/lib/i18n/server';
 import type { MultiPalletSession, MultiPalletBoxScan, Language } from '@/types';
 import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
 import { matchInvoiceItem } from '@/lib/invoice-match';
+import { nonMeatItemKey } from '@/lib/nonmeat-key';
 
 const SESSION_TTL = 7200;
 // "Same weight" means the printed weights are EXACTLY equal — a fixed-weight
@@ -111,12 +112,15 @@ type UniformGroupOverride = {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { token, scanned_boxes, box_count, uniform_groups, merge_map } = body as {
+    const { token, scanned_boxes, box_count, uniform_groups, merge_map, nonmeat_items } = body as {
       token: string;
       scanned_boxes: MultiPalletBoxScan[];
       box_count: number;
       uniform_groups?: UniformGroupOverride[];
       merge_map?: Record<string, string>;
+      // Weight-based non-meat (Type A): one entry per invoice item scanned on
+      // this pallet. Totals are computed server-side from session.ocr_data.
+      nonmeat_items?: Array<{ item_key: string; box_count: number; sample_barcode?: string }>;
     };
 
     if (!token) {
@@ -141,6 +145,130 @@ export async function POST(request: NextRequest) {
     }
 
     const palletNumber = session.current_pallet;
+
+    // ── Weight-based non-meat (Type A): invoice-authoritative math ──────────
+    // The worker scanned one box per item on this pallet; the total for each
+    // item is invoice unit-weight × the per-pallet carton count. We never trust
+    // scanned weights here — everything comes from session.ocr_data.
+    if (session.category === 'non_meat') {
+      const nmLpn = generateLPN(session.document_number, palletNumber, 'non_meat');
+      const byKey = new Map<string, MultiPalletSession['ocr_data'][number]>();
+      for (const line of session.ocr_data || []) byKey.set(nonMeatItemKey(line), line);
+
+      const items = (nonmeat_items || [])
+        .map((ni) => {
+          const line = byKey.get(ni.item_key);
+          const cartons = Math.max(0, Math.floor(Number(ni.box_count) || 0));
+          if (!line || cartons <= 0) return null;
+          const unit =
+            line.unit_weight_kg && line.unit_weight_kg > 0
+              ? line.unit_weight_kg
+              : line.box_count && line.quantity_kg
+                ? line.quantity_kg / line.box_count
+                : 0;
+          const unitRounded = Math.round(unit * 1000) / 1000;
+          return {
+            item_code: line.item_code || '',
+            item_name: line.item_name_english || '',
+            item_name_english: line.item_name_english || '',
+            item_name_hebrew: line.item_name_hebrew || '',
+            name_key: ni.item_key,
+            box_count: cartons,
+            calculated_total_weight: Math.round(unit * cartons * 1000) / 1000,
+            ocr_box_weight: unitRounded,
+            uniform_weight: true,
+            sample_barcode: ni.sample_barcode || '',
+          };
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null);
+
+      if (items.length === 0) {
+        errorResult = { status: 400, body: { success: false, error: t(lang, 'errors.serverError') } };
+        return;
+      }
+
+      const nmScannedBoxes = items.map((it) => ({
+        barcode: it.sample_barcode,
+        sku: '',
+        weight: it.ocr_box_weight,
+        expiry: '',
+        item_name: it.item_name,
+        item_name_hebrew: it.item_name_hebrew,
+      }));
+
+      const nmPayload: Record<string, unknown> = {
+        chat_id: session.chat_id,
+        pallet_number: palletNumber,
+        lpn: nmLpn,
+        category: 'non_meat',
+        nonmeat_meta: session.nonmeat_meta ?? null,
+        scale_weight: 0,
+        document_number: session.document_number,
+        verified_scan_count: items.length,
+        scanned_boxes: nmScannedBoxes,
+      };
+      if (items.length > 1) {
+        nmPayload.pallet_type = 'mix';
+        nmPayload.items = items;
+      } else {
+        const only = items[0];
+        nmPayload.pallet_type = 'single';
+        nmPayload.item_code = only.item_code;
+        nmPayload.item_name = only.item_name;
+        nmPayload.item_name_hebrew = only.item_name_hebrew;
+        nmPayload.box_count = only.box_count;
+        nmPayload.ocr_box_weight = only.ocr_box_weight;
+        nmPayload.calculated_total_weight = only.calculated_total_weight;
+      }
+
+      const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
+      if (botUrl) {
+        fetch(`${botUrl}/webhook/pallet-complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(nmPayload),
+        }).catch((err) => console.error('[multi-pallet-complete] Bot webhook (non_meat) failed:', err));
+      }
+
+      // Accumulate committed cartons per item so a later pallet pre-fills the
+      // correct remaining and never double-counts a split item.
+      const committed: Record<string, number> = { ...(session.nonmeat_committed || {}) };
+      for (const it of items) committed[it.name_key] = (committed[it.name_key] || 0) + it.box_count;
+
+      const totalCartons = items.reduce((s, it) => s + it.box_count, 0);
+      const nmNextPallet = palletNumber + 1;
+      const nmAllDone = nmNextPallet > session.pallet_count; // loose is 0 for Type A
+
+      const nmUpdated: MultiPalletSession = {
+        ...session,
+        current_pallet: nmNextPallet,
+        status: nmAllDone ? 'completed' : 'active',
+        nonmeat_committed: committed,
+        completed_pallets: [
+          ...session.completed_pallets,
+          {
+            pallet_number: palletNumber,
+            lpn: nmLpn,
+            pallet_type: items.length > 1 ? 'mix' : 'single',
+            box_count: totalCartons,
+          },
+        ],
+      };
+      const redisNm = getRedisClient();
+      await redisNm.set(sessionKey(token), JSON.stringify(nmUpdated), { ex: SESSION_TTL });
+
+      const nmAppUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
+      okResult = {
+        success: true,
+        lpn: nmLpn,
+        lpn_url: `${nmAppUrl}/pallet/${nmLpn}`,
+        pallet_number: palletNumber,
+        next_pallet: nmAllDone ? null : nmNextPallet,
+        all_done: nmAllDone,
+      };
+      return;
+    }
+
     const lpn = generateLPN(session.document_number, palletNumber, session.category);
 
     // Worker-accepted AI merges (originalKey → canonicalKey).

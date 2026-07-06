@@ -20,6 +20,7 @@ import {
   Check,
 } from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
+import { NonMeatTypeAFlow } from './NonMeatTypeAFlow';
 import { DebugLogPanel } from '@/components/shared/DebugLogPanel';
 import { SettingsPopover } from '@/components/shared/SettingsPopover';
 import { installDebugLogCapture } from '@/lib/debug-log';
@@ -1541,6 +1542,13 @@ export default function PalletVerifyPage({
         {debugPanel}
       </div>
     );
+  }
+
+  // Weight-based non-meat (Type A) runs a completely different scanner UX:
+  // one box per invoice item per pallet, count pre-filled from the invoice.
+  // Hand off to the self-contained flow; the meat path below is untouched.
+  if (session?.category === 'non_meat') {
+    return <NonMeatTypeAFlow token={token} initialSession={session} />;
   }
 
   if (phase === 'all_done') {

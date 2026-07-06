@@ -42,6 +42,7 @@ export async function POST(request: NextRequest) {
       language: language === 'Hebrew' ? 'Hebrew' : 'English',
       category: category === 'non_meat' ? 'non_meat' : 'meat',
       nonmeat_meta: nonmeat_meta || null,
+      nonmeat_committed: {},
     };
 
     const redis = getRedisClient();

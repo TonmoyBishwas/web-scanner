@@ -503,6 +503,32 @@ export const en = {
   'components.issueResolution.weightPlaceholder': 'e.g., 10.150',
   'components.issueResolution.expiryLabel': 'Expiry Date (optional)',
   'components.issueResolution.resolveBtn': 'Resolve Issue',
+
+  // ── Non-meat Type A (weight) — scan one box per item per pallet ──────
+  'nonmeatTypeA.badge': 'Non-meat · weight',
+  'nonmeatTypeA.palletHeader': 'Pallet {current} of {total}',
+  'nonmeatTypeA.instruction': 'Scan one box per item on this pallet — the invoice does the math.',
+  'nonmeatTypeA.capturedTitle': 'On this pallet',
+  'nonmeatTypeA.scanHint': 'Point the camera at a box sticker.',
+  'nonmeatTypeA.perCarton': '{weight} kg/carton',
+  'nonmeatTypeA.remainingLeft': '{count} left on invoice',
+  'nonmeatTypeA.remove': 'Remove',
+  'nonmeatTypeA.cartonsQ': 'Cartons here',
+  'nonmeatTypeA.subtotal': '= {total} kg',
+  'nonmeatTypeA.weightMismatch': 'Scanned {scanned} kg ≠ invoice {invoice} kg — check the item.',
+  'nonmeatTypeA.needItem': 'Scan at least one item to finish.',
+  'nonmeatTypeA.finish': 'Finish pallet {current}',
+  'nonmeatTypeA.saving': 'Saving pallet…',
+  'nonmeatTypeA.pickTitle': 'Which item is this?',
+  'nonmeatTypeA.pickHint': "Couldn't match the label. Tap the item you scanned.",
+  'nonmeatTypeA.alreadyOnPallet': 'Already on this pallet',
+  'nonmeatTypeA.itemDone': 'Done',
+  'nonmeatTypeA.palletDone': 'Pallet {current}/{total} done!',
+  'nonmeatTypeA.lpn': 'LPN: {lpn}',
+  'nonmeatTypeA.viewSticker': 'View & Print Sticker',
+  'nonmeatTypeA.nextPallet': 'Scan pallet {next}',
+  'nonmeatTypeA.allDone': 'All {count} pallets complete!',
+  'nonmeatTypeA.allDoneHint': 'The stickers below are ready to print.',
 } as const;
 
 export type TranslationKey = keyof typeof en;
