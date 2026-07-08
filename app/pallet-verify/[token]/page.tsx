@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
 import { NonMeatTypeAFlow } from './NonMeatTypeAFlow';
+import { MeatManualCountFlow, type PalletCompleteResult } from './MeatManualCountFlow';
 import { DebugLogPanel } from '@/components/shared/DebugLogPanel';
 import { SettingsPopover } from '@/components/shared/SettingsPopover';
 import { installDebugLogCapture } from '@/lib/debug-log';
@@ -162,6 +163,10 @@ export default function PalletVerifyPage({
   const [phase, setPhase] = useState<Phase>('loading');
   const [session, setSession] = useState<MultiPalletSession | null>(null);
   const [currentPallet, setCurrentPallet] = useState(1);
+  // Damaged-sticker manual-count mode for the CURRENT pallet (meat feature).
+  // When true, the scanner is replaced by MeatManualCountFlow so the worker
+  // can declare per-item box counts without scanning. Reset on pallet advance.
+  const [manualMode, setManualMode] = useState(false);
   const [boxCountInput, setBoxCountInput] = useState('');
   const [confirmedBoxCount, setConfirmedBoxCount] = useState(0);
   const [scannedBoxes, setScannedBoxes] = useState<BoxScan[]>([]);
@@ -1208,6 +1213,73 @@ export default function PalletVerifyPage({
 
   // ── Confirm pallet ──
 
+  // Shared post-success advance: mirror what the API persisted, then either
+  // finish (all_done / loose phase) or roll to the next pallet after a 4s
+  // confirmation pause. Used by BOTH the normal confirm and the damaged-sticker
+  // manual-count flow so the two paths stay in lockstep.
+  function applyCompletion(
+    data: PalletCompleteResult,
+    palletTypeLabel: 'single' | 'mix',
+    boxCount: number,
+  ) {
+    setLpn(data.lpn || '');
+    setLpnUrl(data.lpn_url || '');
+    setSession((prev) =>
+      prev
+        ? {
+            ...prev,
+            current_pallet: data.next_pallet ?? prev.current_pallet,
+            completed_pallets: [
+              ...prev.completed_pallets,
+              {
+                pallet_number: data.pallet_number ?? prev.current_pallet,
+                lpn: data.lpn ?? '',
+                pallet_type: palletTypeLabel,
+                box_count: boxCount,
+              },
+            ],
+          }
+        : prev,
+    );
+
+    if (data.all_done) {
+      clearAllScans(token);
+      if (session && session.loose_box_count > 0) {
+        setPhase('loose_scanning');
+      } else {
+        setPhase('all_done');
+      }
+    } else {
+      setPhase('pallet_done');
+      fetch('/api/multi-pallet-session', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, current_box_count: 0 }),
+      }).catch(() => {});
+      clearPalletScans(token, currentPallet);
+      setTimeout(() => {
+        setCurrentPallet(typeof data.next_pallet === 'number' ? data.next_pallet : currentPallet + 1);
+        setBoxCountInput('');
+        setConfirmedBoxCount(0);
+        setScannedBoxes([]);
+        processedRef.current.clear();
+        setDetectedType('unknown');
+        setUniformGroups(new Map());
+        setPendingUniformPrompt(null);
+        setForcedMix(false);
+        setSelectedBarcode(null);
+        setEditForm(null);
+        setPendingSingleGroup(null);
+        setPalletCountError(null);
+        setAcceptedMerges(new Map());
+        setRejectedMergePairs(new Set());
+        setPendingMerge(null);
+        setManualMode(false); // damaged mode is per-pallet — reset for the next
+        setPhase('scanning');
+      }, 4000);
+    }
+  }
+
   async function handleConfirmPallet() {
     if (scannedBoxes.length < 2) return;
     setPhase('confirming');
@@ -1247,79 +1319,12 @@ export default function PalletVerifyPage({
         return;
       }
 
-      setLpn(data.lpn || '');
-      setLpnUrl(data.lpn_url || '');
-
-      // Mirror what the API just persisted into React's session state so the
-      // all_done view (which reads session.completed_pallets) sees every
-      // confirmed pallet — without needing a refetch after each confirm.
       // Per the user's config model: any non-uniform weights even on a single
       // item-name → 'mix' (scenario 2 / "Mix (a)"). Only same-name AND
-      // same-weight counts as single.
+      // same-weight counts as single. Advance via the shared helper.
       const palletTypeLabel: 'single' | 'mix' =
         detectedType === 'single-uniform' ? 'single' : 'mix';
-      setSession((prev) =>
-        prev
-          ? {
-              ...prev,
-              current_pallet: data.next_pallet ?? prev.current_pallet,
-              completed_pallets: [
-                ...prev.completed_pallets,
-                {
-                  pallet_number: data.pallet_number,
-                  lpn: data.lpn,
-                  pallet_type: palletTypeLabel,
-                  box_count: confirmedBoxCount,
-                },
-              ],
-            }
-          : prev,
-      );
-
-      if (data.all_done) {
-        // Every pallet is committed server-side now — clear their caches. The
-        // loose phase (if any) writes its own fresh snapshot as boxes are scanned.
-        clearAllScans(token);
-        if (session && session.loose_box_count > 0) {
-          setPhase('loose_scanning');
-        } else {
-          setPhase('all_done');
-        }
-      } else {
-        setPhase('pallet_done');
-        fetch('/api/multi-pallet-session', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token, current_box_count: 0 }),
-        }).catch(() => {});
-        // The pallet just confirmed is committed server-side — drop its cache
-        // so a later reload doesn't resurrect it onto the next pallet.
-        clearPalletScans(token, currentPallet);
-        setTimeout(() => {
-          setCurrentPallet(data.next_pallet);
-          setBoxCountInput('');
-          setConfirmedBoxCount(0);
-          setScannedBoxes([]);
-          processedRef.current.clear();
-          setDetectedType('unknown');
-          // Reset per-pallet uniform-detection state.
-          setUniformGroups(new Map());
-          setPendingUniformPrompt(null);
-          setForcedMix(false);
-          setSelectedBarcode(null);
-          setEditForm(null);
-          setPendingSingleGroup(null);
-          setPalletCountError(null);
-          // AI consolidation is per-pallet — merges accepted on pallet 1
-          // shouldn't carry over to pallet 2.
-          setAcceptedMerges(new Map());
-          setRejectedMergePairs(new Set());
-          setPendingMerge(null);
-          // New deferred-count flow: stay in 'scanning'. The footer
-          // surfaces the count input again after 2 OCR-completed scans.
-          setPhase('scanning');
-        }, 4000);
-      }
+      applyCompletion(data, palletTypeLabel, confirmedBoxCount);
     } catch {
       setError(tr('palletVerify.networkError'));
       setPhase('scanning');
@@ -1346,23 +1351,29 @@ export default function PalletVerifyPage({
   const anyProcessing = scannedBoxes.some((b) => b.ocr_status === 'processing');
   const unresolvedWarnings = scannedBoxes.filter((b) => b.needs_review).length;
   const hasUnresolvedWarnings = unresolvedWarnings > 0;
+  // Meat short-shipment feature: unreadable boxes NO LONGER hard-block. They
+  // become a soft warning routed to "Create LPN anyway" so a worker is never
+  // stuck on a pallet. When the feature is off, the old behaviour holds
+  // (warnings block until each box is fixed or deleted).
+  const softWarnings = !!session?.meat_discrepancy;
+  const warningsBlock = hasUnresolvedWarnings && !softWarnings;
   const canConfirm =
     !pendingUniformPrompt &&
     !pendingSingleGroup &&
     confirmedBoxCount > 0 &&
     committed >= confirmedBoxCount &&
     !hasUnresolvedWarnings;
-  // Force-create: the worker entered a count but scanned FEWER than declared
-  // (likely a miscount). Allow creating the LPN with the actual scanned count,
-  // behind a warning. OCR `needs_review` boxes still block (no bad data), and a
-  // 2-box minimum still applies.
+  // Force-create: the worker committed FEWER than declared (a miscount) OR
+  // there are unreadable boxes we're allowed to wave through (feature on).
+  // Creates the LPN with the committed count behind a warning modal; unreadable
+  // boxes are recorded unverified. A 2-box minimum still applies.
   const canForceConfirm =
     !pendingUniformPrompt &&
     !pendingSingleGroup &&
     confirmedBoxCount > 0 &&
     committed >= 2 &&
-    committed < confirmedBoxCount &&
-    !hasUnresolvedWarnings;
+    !warningsBlock &&
+    (committed < confirmedBoxCount || (hasUnresolvedWarnings && softWarnings));
 
   // Group scanned boxes by normalized OCR'd Hebrew name (with worker-accepted
   // AI merges applied). Barcode digits are intentionally NOT used — they're
@@ -1549,6 +1560,22 @@ export default function PalletVerifyPage({
   // Hand off to the self-contained flow; the meat path below is untouched.
   if (session?.category === 'non_meat') {
     return <NonMeatTypeAFlow token={token} initialSession={session} />;
+  }
+
+  // Damaged-sticker manual-count mode: replace the scanner for the CURRENT
+  // pallet with a per-item declared-count form (never blocks). Only while
+  // actively scanning — once a pallet is confirmed the parent phases
+  // (pallet_done / all_done / loose_scanning) take over rendering.
+  if (manualMode && session && phase === 'scanning') {
+    return (
+      <MeatManualCountFlow
+        token={token}
+        session={session}
+        lang={language}
+        onComplete={applyCompletion}
+        onCancel={() => setManualMode(false)}
+      />
+    );
   }
 
   if (phase === 'all_done') {
@@ -2241,10 +2268,21 @@ export default function PalletVerifyPage({
             )}
             {hasUnresolvedWarnings && (
               <p className="flex items-center justify-center gap-1 text-[11px] text-warn-weak-ink text-center mt-1.5">
-                <AlertTriangle className="w-3 h-3 shrink-0" /> {tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })}
+                <AlertTriangle className="w-3 h-3 shrink-0" />{' '}
+                {softWarnings
+                  ? tr('palletVerify.unreadableSoftNote', { count: unresolvedWarnings })
+                  : tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })}
               </p>
             )}
           </>
+        )}
+        {softWarnings && !manualMode && phase === 'scanning' && (
+          <button
+            onClick={() => setManualMode(true)}
+            className="w-full mt-2 text-xs text-warn-weak-ink hover:text-warn font-medium underline"
+          >
+            {tr('palletVerify.stickersDamaged')}
+          </button>
         )}
       </div>
       {imageModal}

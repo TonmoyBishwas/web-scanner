@@ -529,6 +529,21 @@ export const en = {
   'nonmeatTypeA.nextPallet': 'Scan pallet {next}',
   'nonmeatTypeA.allDone': 'All {count} pallets complete!',
   'nonmeatTypeA.allDoneHint': 'The stickers below are ready to print.',
+
+  // Meat damaged-sticker / short-shipment feature
+  'palletVerify.stickersDamaged': 'Stickers damaged? Enter counts instead',
+  'palletVerify.unreadableSoftNote': "{count} box(es) couldn't be read — you can still create the LPN (they'll be marked unverified).",
+  'meatManual.title': 'Stickers damaged — enter counts',
+  'meatManual.pallet': 'Pallet {current} of {total}',
+  'meatManual.instruction': 'Enter how many boxes of each item are on THIS pallet. Leave 0 if the item is not here.',
+  'meatManual.invoiceBoxes': 'Invoice: {count} boxes',
+  'meatManual.remaining': '{count} left',
+  'meatManual.totalBoxes': '{count} boxes on this pallet',
+  'meatManual.finish': 'Finish pallet {current}',
+  'meatManual.cancel': 'Back to scanning',
+  'meatManual.needCount': 'Enter at least one box to finish.',
+  'meatManual.failed': 'Could not save. Please try again.',
+  'meatManual.noItems': 'No invoice items found for this delivery.',
 } as const;
 
 export type TranslationKey = keyof typeof en;
