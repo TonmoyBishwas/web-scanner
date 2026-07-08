@@ -533,4 +533,19 @@ export const he: Record<TranslationKey, string> = {
   'nonmeatTypeA.nextPallet': 'סרוק משטח {next}',
   'nonmeatTypeA.allDone': 'כל {count} המשטחים הושלמו!',
   'nonmeatTypeA.allDoneHint': 'המדבקות מוכנות להדפסה.',
+
+  // מדבקות פגומות / חוסר במשלוח (בשר)
+  'palletVerify.stickersDamaged': 'מדבקות פגומות? הזן כמויות במקום',
+  'palletVerify.unreadableSoftNote': '{count} ארגזים לא ניתנים לקריאה — ניתן עדיין ליצור LPN (יסומנו כלא מאומתים).',
+  'meatManual.title': 'מדבקות פגומות — הזנת כמויות',
+  'meatManual.pallet': 'משטח {current} מתוך {total}',
+  'meatManual.instruction': 'הזן כמה ארגזים מכל פריט נמצאים על המשטח הזה. השאר 0 אם הפריט לא כאן.',
+  'meatManual.invoiceBoxes': 'חשבונית: {count} ארגזים',
+  'meatManual.remaining': 'נותרו {count}',
+  'meatManual.totalBoxes': '{count} ארגזים במשטח זה',
+  'meatManual.finish': 'סיים משטח {current}',
+  'meatManual.cancel': 'חזרה לסריקה',
+  'meatManual.needCount': 'הזן לפחות ארגז אחד כדי לסיים.',
+  'meatManual.failed': 'השמירה נכשלה. נסה שוב.',
+  'meatManual.noItems': 'לא נמצאו פריטי חשבונית עבור משלוח זה.',
 };

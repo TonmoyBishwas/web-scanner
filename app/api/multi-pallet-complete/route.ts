@@ -112,7 +112,8 @@ type UniformGroupOverride = {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { token, scanned_boxes, box_count, uniform_groups, merge_map, nonmeat_items } = body as {
+    const { token, scanned_boxes, box_count, uniform_groups, merge_map, nonmeat_items,
+      manual_declared, manual_items } = body as {
       token: string;
       scanned_boxes: MultiPalletBoxScan[];
       box_count: number;
@@ -121,6 +122,10 @@ export async function POST(request: NextRequest) {
       // Weight-based non-meat (Type A): one entry per invoice item scanned on
       // this pallet. Totals are computed server-side from session.ocr_data.
       nonmeat_items?: Array<{ item_key: string; box_count: number; sample_barcode?: string }>;
+      // Meat damaged-sticker mode: worker declared per-item box counts instead
+      // of scanning every box. Totals use the invoice per-box weight.
+      manual_declared?: boolean;
+      manual_items?: Array<{ item_key: string; box_count: number; sample_barcode?: string }>;
     };
 
     if (!token) {
@@ -265,6 +270,122 @@ export async function POST(request: NextRequest) {
         pallet_number: palletNumber,
         next_pallet: nmAllDone ? null : nmNextPallet,
         all_done: nmAllDone,
+      };
+      return;
+    }
+
+    // ── Meat damaged-sticker mode: worker DECLARED per-item box counts ──────
+    // Stickers were unreadable, so instead of scanning every box the worker
+    // entered how many boxes of each invoice item are on this pallet. Totals
+    // use the invoice per-box weight (quantity_kg / box_count) — no per-box
+    // scan is required, so the pallet can always complete. The bot writes the
+    // meat ledger but marks the lines unverified (sticker_damaged=true).
+    if (manual_declared) {
+      const mLpn = generateLPN(session.document_number, palletNumber); // meat prefix
+      const byKey = new Map<string, MultiPalletSession['ocr_data'][number]>();
+      for (const line of session.ocr_data || []) byKey.set(nonMeatItemKey(line), line);
+
+      const items = (manual_items || [])
+        .map((mi) => {
+          const line = byKey.get(mi.item_key);
+          const cartons = Math.max(0, Math.floor(Number(mi.box_count) || 0));
+          if (!line || cartons <= 0) return null;
+          const unit = line.box_count && line.quantity_kg ? line.quantity_kg / line.box_count : 0;
+          const unitRounded = Math.round(unit * 1000) / 1000;
+          return {
+            item_code: line.item_code || '',
+            item_name: line.item_name_english || '',
+            item_name_english: line.item_name_english || '',
+            item_name_hebrew: line.item_name_hebrew || '',
+            name_key: mi.item_key,
+            box_count: cartons,
+            calculated_total_weight: Math.round(unit * cartons * 1000) / 1000,
+            ocr_box_weight: unitRounded,
+            uniform_weight: true,
+            sticker_damaged: true,
+            sample_barcode: mi.sample_barcode || '',
+          };
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null);
+
+      if (items.length === 0) {
+        errorResult = { status: 400, body: { success: false, error: t(lang, 'errors.serverError') } };
+        return;
+      }
+
+      // Only items with a scanned sample box become traceable box_inventory rows.
+      const mScannedBoxes = items
+        .filter((it) => it.sample_barcode)
+        .map((it) => ({
+          barcode: it.sample_barcode,
+          sku: '',
+          name_key: it.name_key,
+          weight: it.ocr_box_weight,
+          expiry: '',
+          item_name: it.item_name,
+          item_name_hebrew: it.item_name_hebrew,
+        }));
+
+      const mPayload: Record<string, unknown> = {
+        chat_id: session.chat_id,
+        pallet_number: palletNumber,
+        lpn: mLpn,
+        category: 'meat',
+        manual_declared: true,
+        pallet_type: items.length > 1 ? 'mix' : 'single',
+        scale_weight: 0,
+        document_number: session.document_number,
+        verified_scan_count: mScannedBoxes.length,
+        items,
+        scanned_boxes: mScannedBoxes,
+      };
+
+      const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
+      if (botUrl) {
+        fetch(`${botUrl}/webhook/pallet-complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(mPayload),
+        }).catch((err) => console.error('[multi-pallet-complete] Bot webhook (manual) failed:', err));
+      }
+
+      // Accumulate declared boxes per item so a later pallet pre-fills the
+      // correct remaining and never double-counts a split item.
+      const committed: Record<string, number> = { ...(session.meat_committed || {}) };
+      for (const it of items) committed[it.name_key] = (committed[it.name_key] || 0) + it.box_count;
+
+      const totalBoxes = items.reduce((s, it) => s + it.box_count, 0);
+      const mNextPallet = palletNumber + 1;
+      const mAllPalletsDone = mNextPallet > session.pallet_count;
+      const mLoosePending = mAllPalletsDone && (session.loose_box_count || 0) > 0;
+      const mFullyDone = mAllPalletsDone && !mLoosePending;
+
+      const mUpdated: MultiPalletSession = {
+        ...session,
+        current_pallet: mNextPallet,
+        status: mFullyDone ? 'completed' : 'active',
+        meat_committed: committed,
+        completed_pallets: [
+          ...session.completed_pallets,
+          {
+            pallet_number: palletNumber,
+            lpn: mLpn,
+            pallet_type: items.length > 1 ? 'mix' : 'single',
+            box_count: totalBoxes,
+          },
+        ],
+      };
+      const redisM = getRedisClient();
+      await redisM.set(sessionKey(token), JSON.stringify(mUpdated), { ex: SESSION_TTL });
+
+      const mAppUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
+      okResult = {
+        success: true,
+        lpn: mLpn,
+        lpn_url: `${mAppUrl}/pallet/${mLpn}`,
+        pallet_number: palletNumber,
+        next_pallet: mAllPalletsDone ? null : mNextPallet,
+        all_done: mAllPalletsDone,
       };
       return;
     }

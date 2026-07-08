@@ -326,6 +326,22 @@ export interface MultiPalletSession {
    * committed) so an item split across pallets is never double-counted.
    */
   nonmeat_committed?: Record<string, number>;
+  /**
+   * Meat short-shipment / damaged-sticker feature switch (bot config
+   * MEAT_DISCREPANCY_ENABLED). When true the meat scanner enables the
+   * "Stickers damaged — enter counts" declared-count mode and stops
+   * hard-blocking on unreadable boxes. Off/undefined → the meat flow renders
+   * exactly as before, so in-flight sessions keep the old behaviour.
+   */
+  meat_discrepancy?: boolean;
+  /**
+   * Meat equivalent of `nonmeat_committed`: boxes of each invoice item already
+   * committed via the damaged-sticker declared-count mode on earlier pallets,
+   * keyed by `nonMeatItemKey` (item_code or `he:<normalized>`). Drives the
+   * per-pallet "remaining" pre-fill in the manual-count flow. Only manual
+   * (damaged) pallets contribute — normally-scanned pallets do not.
+   */
+  meat_committed?: Record<string, number>;
 }
 
 // ─── UI State Types ────────────────────────────────────────────────────────────
