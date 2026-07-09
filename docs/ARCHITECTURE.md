@@ -17,7 +17,7 @@ The Web Scanner is a Next.js 16 application designed to provide a high-performan
 - **State Management**: React Hooks (`useState`, `useReducer`, `useRef`) + URL State
 - **Database**: Supabase / Postgres via `@supabase/supabase-js` (service-role key, server-side only). Holds both the persistent records (box_inventory, stock_batches, transactions, pallets) and the scan sessions + distributed locks. Migrated 2026-06-30 from Airtable + Upstash Redis.
 - **Scanning Library**: Native BarcodeDetector API (hardware-accelerated); fallback: html5-qrcode (@zxing/browser)
-- **Image Storage**: Cloudinary (via API proxy)
+- **Image Storage**: Supabase Storage — public bucket `warehouse-images` (via the `/api/cloudinary/upload` proxy route; Cloudinary removed 2026-07-09)
 
 ## Core Components
 
@@ -108,7 +108,7 @@ When the 3rd read is confirmed (barcode accepted), a full-screen green overlay (
 
 ### 3. `components/progress/IssueResolution.tsx`
 The UI for resolving OCR ambiguities (missing weight, missing product name).
-- Displays the crop of the label (saved in Cloudinary).
+- Displays the crop of the label (saved in Supabase Storage).
 - Provides a dropdown of products from the current invoice.
 - Allows manual weight entry (with smart defaulting).
 
@@ -136,7 +136,7 @@ The UI for resolving OCR ambiguities (missing weight, missing product name).
 | `POST /api/resolve` | Save manual OCR corrections |
 | `POST /api/manual-entry` | Manual box entry fallback |
 | `POST /api/complete` | Finalize session → webhook to bot |
-| `POST /api/cloudinary/upload` | Image upload proxy |
+| `POST /api/cloudinary/upload` | Image upload proxy → Supabase Storage (`warehouse-images`) |
 
 ### Issue (Outbound)
 | Route | Purpose |

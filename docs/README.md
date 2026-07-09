@@ -18,7 +18,7 @@ This directory contains detailed documentation for the Web Scanner component of 
     Required in `.env.local`:
     - `REDIS_URL` & `REDIS_TOKEN`: Upstash Redis connection.
     - `TELEGRAM_BOT_WEBHOOK_URL`: URL of the Python bot (e.g., `https://bot-production.up.railway.app`).
-    - `CLOUDINARY_*`: Credentials for image upload.
+    - `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`: also back image uploads to Supabase Storage (bucket `warehouse-images`). Cloudinary was removed.
 
 3.  **Run Development Server**:
     ```bash

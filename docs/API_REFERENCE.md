@@ -147,13 +147,16 @@ Finalizes the session, re-aggregates scans, and triggers `POST /webhook/scan-com
 ---
 
 ### 7. Image Upload Proxy
-**Endpoint**: `POST /api/cloudinary/upload`
+**Endpoint**: `POST /api/cloudinary/upload` (path kept for compatibility; now writes to **Supabase Storage**)
 
-Proxies image uploads to Cloudinary (avoids exposing API secret to browser).
+Server-side upload to the public Supabase Storage bucket `warehouse-images`
+(keeps the service-role key off the browser). Used by the scanner box-scan flow
+and by the bot (invoice + LPN sticker).
 
-**Request Body:** `multipart/form-data` with `file` field
+**Request Body (JSON):** `{ image | image_base64 | image_url, barcode, document_number?, image_type? }`
+where `image_type` ∈ `box` (default) | `invoice` | `lpn_sticker`.
 
-**Response:** `{ "url": "https://res.cloudinary.com/...", "public_id": "warehouse_scans/..." }`
+**Response:** `{ "success": true, "secure_url": "https://<ref>.supabase.co/storage/v1/object/public/warehouse-images/...", "public_id": "<object key>", "folder": "...", "created_at": "..." }`
 
 ---
 
@@ -503,7 +506,7 @@ Distributed locks now live in a Postgres `locks` table (`acquire_lock` / `releas
 | `SUPABASE_SERVICE_ROLE_KEY` | `sb_secret_…` service-role key (server-side only; bypasses RLS) |
 | `TELEGRAM_BOT_WEBHOOK_URL` | Bot webhook base URL (Railway) |
 | `NEXT_PUBLIC_APP_URL` | Public scanner URL |
-| `CLOUDINARY_*` | Image upload proxy credentials |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Also back image uploads to Storage (bucket `warehouse-images`) — Cloudinary removed |
 | `OPENROUTER_API_KEY` | LLM invoice matching |
 | `LPN_SECRET` | Shared HMAC secret for LPN sticker QR signatures |
 
