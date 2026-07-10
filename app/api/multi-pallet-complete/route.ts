@@ -85,6 +85,23 @@ function findInvoiceItemCode(
 }
 
 /**
+ * Resolve which supplier invoice a scanned box/item belongs to. On a normal
+ * delivery every line shares `session.document_number`; on a multi-invoice
+ * delivery (two same-supplier invoices merged onto one physical pallet) each
+ * invoice line carries its own `document_number`, so a box that name-matches
+ * that line gets stamped with the correct invoice. Falls back to the (single or
+ * combined) session document number when nothing matches.
+ */
+function findInvoiceDoc(
+  sampleNameHebrew: string,
+  sampleNameEnglish: string,
+  invoiceItems: MultiPalletSession['ocr_data'] | undefined,
+  fallback: string,
+): string {
+  return matchInvoiceItem(sampleNameHebrew, sampleNameEnglish, invoiceItems)?.document_number || fallback;
+}
+
+/**
  * POST /api/multi-pallet-complete
  * Finalise one pallet within a multi-pallet session.
  *
@@ -450,6 +467,9 @@ export async function POST(request: NextRequest) {
           calculated_total_weight: calcWeight,
           uniform_weight: isUniform,
           sample_barcode: sample?.barcode || '',
+          // Multi-invoice delivery: which invoice this item came from (for
+          // display/audit); per-box provenance is carried on scanned_boxes below.
+          document_number: findInvoiceDoc(itemNameHebrew, itemNameEnglish, session.ocr_data, session.document_number),
         };
       });
 
@@ -475,6 +495,9 @@ export async function POST(request: NextRequest) {
           expiry: b.expiry,
           item_name: b.item_name,
           item_name_hebrew: b.item_name_hebrew,
+          // Multi-invoice delivery: stamp each box with ITS invoice number so
+          // the bot writes the right box_inventory.invoice_number per box.
+          document_number: findInvoiceDoc(b.item_name_hebrew || '', b.item_name || '', session.ocr_data, session.document_number),
         })),
       };
     } else {
@@ -522,6 +545,9 @@ export async function POST(request: NextRequest) {
           expiry: b.expiry,
           item_name: b.item_name,
           item_name_hebrew: b.item_name_hebrew,
+          // Multi-invoice delivery: the box's own invoice number (a single-item
+          // pallet in a merged delivery still belongs to one specific invoice).
+          document_number: findInvoiceDoc(b.item_name_hebrew || '', b.item_name || '', session.ocr_data, session.document_number),
         })),
       };
     }
