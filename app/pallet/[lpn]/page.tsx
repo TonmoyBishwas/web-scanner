@@ -6,10 +6,15 @@ import { LPN_STICKER_MARKER } from '@/lib/lpn-constants';
 import { computeLpnSignature } from '@/lib/lpn-signature';
 import { supabase } from '@/lib/supabase';
 
-// Sticker data is read from Supabase with ISR: revalidate at most once per
-// 60s so a freshly-created pallet appears within the window (replaces the
-// former fetch-level `next: { revalidate: 60 }`).
-export const revalidate = 60;
+// NEVER cache this page. `supabase-js` reads through `fetch`, so any segment
+// `revalidate` also caches the Supabase response in the Data Cache. The bot
+// INSERTs the pallets row with lifecycle fields only and backfills the display
+// columns (item/boxes/kg/doc) a moment later, so a read landing in that window
+// returns an all-zero row — and a cached zero row gets printed onto a physical
+// label. Each sticker is opened a handful of times, so there is nothing to gain
+// from caching and a wrong warehouse label to lose.
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 interface PalletRecord {
   lpn: string;
