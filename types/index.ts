@@ -293,6 +293,11 @@ export interface MultiPalletSession {
      *  unit_weight_kg × cartons. Absent/0 for meat and count-based non-meat. */
     box_count?: number;
     unit_weight_kg?: number;
+    /** The specific supplier invoice this line came from. Present on a
+     *  multi-invoice delivery (two same-supplier invoices merged onto one
+     *  physical pallet); equals `document_number` for a normal delivery. Lets
+     *  the pallet-complete webhook stamp each box with its true invoice number. */
+    document_number?: string;
   }>;
   receipt_id?: string;
   completed_pallets: Array<{

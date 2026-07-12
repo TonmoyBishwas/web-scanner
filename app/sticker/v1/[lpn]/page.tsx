@@ -8,3 +8,9 @@
  * render logic.
  */
 export { default, generateMetadata } from '../../../pallet/[lpn]/page';
+
+// Route segment config is NOT inherited through a re-export — it must be
+// declared on each segment. Keep this in lockstep with `/pallet/[lpn]`:
+// sticker data is never served from a cache (see that file for why).
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;

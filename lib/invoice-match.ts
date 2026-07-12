@@ -22,6 +22,8 @@ export interface InvoiceItem {
   item_name_hebrew: string;
   item_name_english: string;
   quantity_kg?: number;
+  /** Source supplier invoice for this line (multi-invoice delivery). */
+  document_number?: string;
 }
 
 // Two clearly-different products rarely exceed ~0.8 normalized similarity;
