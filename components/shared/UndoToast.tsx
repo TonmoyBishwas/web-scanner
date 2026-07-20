@@ -40,18 +40,18 @@ export function UndoToast({ barcode, onUndo, onDismiss, durationMs = 5000 }: Und
 
   return (
     <div
-      className={`fixed bottom-20 left-4 right-4 z-[60] flex items-center gap-3 bg-raised border border-line rounded-xl px-4 py-3 shadow-2xl transition-all duration-300 ${
-        exiting ? 'translate-y-4 opacity-0' : 'translate-y-0 opacity-100 animate-slideInUp'
+      className={`fixed bottom-20 left-4 right-4 z-[60] flex items-center gap-3 bg-hover border border-line-strong rounded-[14px] px-4 py-3 shadow-2xl transition-all duration-300 ${
+        exiting ? 'translate-y-4 opacity-0' : 'translate-y-0 opacity-100 animate-toastIn'
       }`}
     >
       <div className="flex-1 min-w-0">
-        <p className="text-sm text-ink-body truncate" dir="ltr">
+        <p className="text-sm font-semibold text-ink truncate font-mono" dir="ltr">
           {tr('scanner.scanned')}: {tr('scan.boxLabelShort', { id: barcode.slice(-6) })}
         </p>
       </div>
       <button
         onClick={handleUndo}
-        className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover rounded-lg text-sm font-medium text-ink-inverse transition-colors shrink-0"
+        className="flex items-center gap-1.5 px-3 py-2 bg-brand hover:bg-brand-hover active:bg-brand-active rounded-lg text-sm font-bold text-ink-inverse transition-colors shrink-0"
       >
         <Undo2 className="w-3.5 h-3.5" />
         {tr('issue.undo')}

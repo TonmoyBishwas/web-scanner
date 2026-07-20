@@ -22,7 +22,7 @@ export function Toggle({
   const sw = (
     <span
       className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-        enabled ? 'bg-brand' : 'bg-border-strong'
+        enabled ? 'bg-brand' : 'bg-line-strong'
       }`}
     >
       <span
@@ -56,7 +56,7 @@ export function Toggle({
       className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-start transition-colors hover:bg-hover ${className}`}
     >
       {Icon && <Icon size={20} className="shrink-0 text-ink-muted" />}
-      {label && <span className="flex-1 text-sm font-medium text-ink">{label}</span>}
+      {label && <span className="flex-1 text-sm font-semibold text-ink">{label}</span>}
       {sw}
     </button>
   );

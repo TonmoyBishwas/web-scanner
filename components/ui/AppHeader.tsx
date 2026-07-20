@@ -21,15 +21,15 @@ export function AppHeader({
 }) {
   return (
     <header
-      className={`safe-top sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-raised px-4 py-3 ${className}`}
+      className={`safe-top sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-header px-4 py-3 ${className}`}
     >
       {left}
       <div className="min-w-0 flex-1">
-        <h1 className="truncate text-lg font-semibold leading-tight text-ink">
+        <h1 className="truncate text-base font-extrabold leading-tight text-ink">
           {title}
         </h1>
         {subtitle && (
-          <p className="truncate text-sm text-ink-muted">{subtitle}</p>
+          <p className="truncate text-xs font-semibold text-ink-muted">{subtitle}</p>
         )}
       </div>
       {right && <div className="flex shrink-0 items-center gap-1">{right}</div>}

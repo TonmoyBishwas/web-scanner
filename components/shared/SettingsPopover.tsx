@@ -41,7 +41,7 @@ export function SettingsPopover() {
       {open && (
         <div className="absolute end-0 top-full mt-2 w-56 bg-raised border border-line rounded-xl shadow-2xl z-[70] overflow-hidden animate-fadeIn">
           <div className="flex items-center justify-between px-4 py-3 border-b border-line">
-            <span className="text-sm font-semibold text-ink">{tr('components.settings.title')}</span>
+            <span className="text-sm font-extrabold text-ink">{tr('components.settings.title')}</span>
             <button onClick={() => setOpen(false)} className="text-ink-muted hover:text-ink">
               <X className="w-4 h-4" />
             </button>
@@ -96,7 +96,7 @@ export function SettingsPopover() {
 
 function TogglePill({ enabled }: { enabled: boolean }) {
   return (
-    <div className={`w-9 h-5 rounded-full relative transition-colors ${enabled ? 'bg-brand' : 'bg-border-strong'}`}>
+    <div className={`w-9 h-5 rounded-full relative transition-colors ${enabled ? 'bg-brand' : 'bg-line-strong'}`}>
       <div
         className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0.5'}`}
       />

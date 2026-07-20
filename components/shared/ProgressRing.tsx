@@ -44,11 +44,11 @@ export function ProgressRing({ current, total, size = 52 }: ProgressRingProps) {
         />
       </svg>
       {/* Center text */}
-      <div className={`absolute inset-0 flex flex-col items-center justify-center ${isComplete ? 'animate-pulseGlow' : ''}`}>
-        <span className={`text-xs font-bold leading-none ${isComplete ? 'text-ok' : 'text-ink'}`}>
+      <div className={`absolute inset-0 flex flex-col items-center justify-center ${isComplete ? 'animate-pulseGlow' : ''}`} dir="ltr">
+        <span className={`text-xs font-mono font-bold leading-none ${isComplete ? 'text-ok' : 'text-ink'}`}>
           {current}
         </span>
-        <span className="text-[9px] text-ink-muted leading-none">
+        <span className="text-[9px] font-mono text-ink-muted leading-none">
           /{total}
         </span>
       </div>

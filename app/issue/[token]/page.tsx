@@ -381,8 +381,8 @@ function IssueRender({
     return (
       <div className="min-h-screen bg-canvas text-ink flex items-center justify-center p-4">
         <div className="text-center">
-          <AlertTriangle className="w-10 h-10 text-warn mx-auto mb-4" />
-          <p className="mb-2 text-lg font-medium">{tr('session.errorTitle')}</p>
+          <AlertTriangle className="w-10 h-10 text-danger mx-auto mb-4" />
+          <p className="mb-2 text-lg font-extrabold">{tr('session.errorTitle')}</p>
           <p className="text-ink-muted">{error}</p>
         </div>
       </div>
@@ -398,15 +398,15 @@ function IssueRender({
       <div className="min-h-screen bg-canvas text-ink p-4">
         <div className="max-w-md mx-auto">
           <div className="text-center mb-8">
-            <CheckCircle className="w-16 h-16 text-ok mx-auto mb-4" />
-            <h1 className="text-2xl font-bold mb-2">{tr('issue.completeTitle')}</h1>
+            <CheckCircle className="w-16 h-16 text-ok mx-auto mb-4 animate-donePop" />
+            <h1 className="text-2xl font-extrabold mb-2">{tr('issue.completeTitle')}</h1>
             <p className="text-ink-muted">
               {tr(summaryKey, { count: issuedBoxes.length, weight: totalWeight.toFixed(2) })}
             </p>
           </div>
 
-          <div className="bg-raised border border-line rounded-lg p-4 mb-6">
-            <h2 className="text-lg font-medium mb-4">{tr('issue.summaryTitle')}</h2>
+          <div className="bg-raised border border-line rounded-[14px] p-4 mb-6">
+            <h2 className="text-lg font-extrabold mb-4">{tr('issue.summaryTitle')}</h2>
             <div className="space-y-2">
               {issuedBoxes.map((box, idx) => (
                 <div
@@ -414,7 +414,7 @@ function IssueRender({
                   className="flex justify-between items-center border-b border-line pb-2 last:border-0"
                 >
                   <span className="text-ink truncate me-2">{box.item_name}</span>
-                  <span className="text-ok font-medium whitespace-nowrap">
+                  <span className="text-info-weak-ink font-mono font-bold whitespace-nowrap" dir="ltr">
                     {box.weight} kg
                   </span>
                 </div>
@@ -422,13 +422,13 @@ function IssueRender({
             </div>
           </div>
 
-          <div className="bg-info-weak border border-info/30 rounded-lg p-4 mb-6">
+          <div className="bg-info-weak border border-info/30 rounded-[14px] p-4 mb-6">
             <p className="text-sm text-info-weak-ink">{tr('issue.doneNote')}</p>
           </div>
 
           <button
             onClick={() => window.close()}
-            className="w-full bg-sunken text-ink py-3 rounded-lg font-medium hover:bg-hover transition-colors"
+            className="w-full h-12 bg-tile border border-line-strong text-ink rounded-xl font-bold hover:bg-hover transition-colors"
           >
             {tr('issue.closeButton')}
           </button>
@@ -442,7 +442,7 @@ function IssueRender({
     return (
       <div className="min-h-screen bg-canvas text-ink flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-ok mx-auto mb-4" />
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-info mx-auto mb-4" />
           <p>{tr('issue.completing')}</p>
         </div>
       </div>
@@ -456,25 +456,25 @@ function IssueRender({
       {flashColor && (
         <div
           className={`fixed inset-0 z-40 pointer-events-none transition-opacity duration-300 ${
-            flashColor === 'green' ? 'bg-green-500/20' : 'bg-red-500/20'
+            flashColor === 'green' ? 'bg-ok/20' : 'bg-danger/20'
           }`}
         />
       )}
 
       {/* Toast */}
       {toastMessage && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-ink text-ink-inverse px-4 py-2 rounded-lg shadow-lg text-sm max-w-xs text-center">
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-tile border border-line-strong text-ink px-4 py-2.5 rounded-full shadow-lg text-sm font-semibold max-w-xs text-center animate-toastIn">
           {toastMessage}
         </div>
       )}
 
       {/* Header */}
-      <div className="bg-raised border-b border-line p-4 flex justify-between items-center">
+      <div className="bg-header border-b border-line p-4 safe-top flex justify-between items-center">
         <div>
-          <h1 className="text-lg font-bold">{tr('issue.title')}</h1>
+          <h1 className="text-lg font-extrabold">{tr('issue.title')}</h1>
           <p className="text-ink-muted text-sm">{tr('issue.headerSubtitle')}</p>
           {session?.user_info && (
-            <p className="text-xs text-brand font-medium mt-1">
+            <p className="text-xs text-brand-weak-ink font-semibold mt-1">
               {tr('issue.scanningAs', { nickname: session.user_info.nickname })}
             </p>
           )}
@@ -484,9 +484,9 @@ function IssueRender({
           <button
             onClick={handleComplete}
             disabled={issuedBoxes.length === 0}
-            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+            className={`h-12 px-5 rounded-full font-extrabold transition-colors ${
               issuedBoxes.length > 0
-                ? 'bg-ok text-ink-inverse hover:opacity-90'
+                ? 'bg-brand text-ink-inverse hover:bg-brand-hover active:bg-brand-active'
                 : 'bg-sunken text-ink-muted cursor-not-allowed'
             }`}
           >

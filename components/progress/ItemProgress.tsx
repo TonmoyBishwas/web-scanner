@@ -26,10 +26,10 @@ export function ItemProgress({ items, scanned, ocrResults = new Map(), ocrPendin
   return (
     <div className="space-y-4">
       {/* Overall Progress */}
-      <div className="bg-raised border border-line rounded-lg p-4">
+      <div className="bg-raised border border-line rounded-[14px] p-4">
         <div className="flex justify-between items-center mb-2">
-          <span className="text-sm font-medium">{tr('components.itemProgress.overall')}</span>
-          <span className="text-sm text-ink-muted">
+          <span className="text-sm font-bold text-ink">{tr('components.itemProgress.overall')}</span>
+          <span className="text-sm font-mono text-ink-muted" dir="ltr">
             {totalWeightScanned.toFixed(2)} kg / {totalWeightExpected.toFixed(2)} kg
           </span>
         </div>
@@ -46,7 +46,7 @@ export function ItemProgress({ items, scanned, ocrResults = new Map(), ocrPendin
 
       {/* Per-Item Progress */}
       <div className="space-y-2">
-        <h3 className="text-sm font-medium">{tr('components.itemProgress.itemsTitle')}</h3>
+        <h3 className="eyebrow uppercase">{tr('components.itemProgress.itemsTitle')}</h3>
         {items.map((item) => {
           const scannedData = scannedMap.get(item.item_index);
           const scannedWeight = scannedData?.scanned_weight || 0;
@@ -56,11 +56,11 @@ export function ItemProgress({ items, scanned, ocrResults = new Map(), ocrPendin
           const isComplete = scannedWeight >= item.quantity_kg;
 
           return (
-            <div key={item.item_index} className="bg-raised border border-line rounded-lg p-3">
+            <div key={item.item_index} className="bg-raised border border-line rounded-[14px] p-3">
               <div className="flex justify-between items-start mb-2">
                 <div className="flex-1">
-                  <p className="text-sm font-medium">{item.item_name_english}</p>
-                  <p className="text-xs text-ink-muted">{item.item_code}</p>
+                  <p className="text-sm font-bold text-ink">{item.item_name_english}</p>
+                  <p className="text-xs font-mono text-ink-muted" dir="ltr">{item.item_code}</p>
                 </div>
                 {isComplete && (
                   <Check className="w-5 h-5 text-ok" />
@@ -75,7 +75,7 @@ export function ItemProgress({ items, scanned, ocrResults = new Map(), ocrPendin
                     expected: item.quantity_kg,
                   })}
                 </span>
-                <span className="text-xs text-ink-muted">
+                <span className="text-xs font-mono text-ink-muted" dir="ltr">
                   {itemProgress.toFixed(0)}%
                 </span>
               </div>
@@ -110,17 +110,17 @@ export function OCRStatusIndicator({
   }
 
   return (
-    <div className="bg-raised border border-line rounded-lg p-3 mb-4">
+    <div className="bg-raised border border-line rounded-[14px] p-3 mb-4">
       <div className="flex justify-between items-center">
-        <span className="text-sm font-medium">{tr('components.itemProgress.productData')}</span>
+        <span className="text-sm font-bold text-ink">{tr('components.itemProgress.productData')}</span>
         <div className="flex gap-4 text-xs">
           {ocrPending.size > 0 && (
-            <span className="flex items-center gap-1 text-warn">
+            <span className="flex items-center gap-1 text-warn-weak-ink">
               <Clock className="w-3 h-3" /> {tr('components.itemProgress.processingN', { count: ocrPending.size })}
             </span>
           )}
           {ocrResults.size > 0 && (
-            <span className="flex items-center gap-1 text-ok">
+            <span className="flex items-center gap-1 text-ok-weak-ink">
               <Check className="w-3 h-3" /> {tr('components.itemProgress.enriched', { count: ocrResults.size })}
             </span>
           )}

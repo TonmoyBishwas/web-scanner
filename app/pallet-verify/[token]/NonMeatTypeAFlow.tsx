@@ -341,8 +341,10 @@ export function NonMeatTypeAFlow({
   if (phase === 'all_done') {
     body = (
       <div className="p-6 text-center space-y-4">
-        <CheckCircle className="w-16 h-16 text-ok mx-auto" />
-        <h1 className="text-xl font-bold">
+        <div className="w-20 h-20 rounded-full bg-ok-weak flex items-center justify-center mx-auto animate-donePop">
+          <CheckCircle className="w-10 h-10 text-ok" />
+        </div>
+        <h1 className="text-xl font-extrabold text-ok-weak-ink">
           {tr('nonmeatTypeA.allDone', { count: palletCount })}
         </h1>
         <p className="text-sm text-muted">{tr('nonmeatTypeA.allDoneHint')}</p>
@@ -353,10 +355,10 @@ export function NonMeatTypeAFlow({
               href={`/pallet/${p.lpn}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-between bg-raised rounded-xl px-4 py-3 border border-line"
+              className="flex items-center justify-between bg-raised rounded-[14px] px-4 py-3 border border-line hover:border-ok/50 transition"
             >
-              <span className="font-mono text-sm">{p.lpn}</span>
-              <span className="inline-flex items-center gap-1 text-brand text-sm font-medium">
+              <span className="font-mono text-sm font-bold text-ink" dir="ltr">{p.lpn}</span>
+              <span className="inline-flex items-center gap-1 text-brand-weak-ink text-sm font-bold">
                 <Printer className="w-4 h-4" /> {tr('nonmeatTypeA.viewSticker')}
               </span>
             </a>
@@ -367,22 +369,24 @@ export function NonMeatTypeAFlow({
   } else if (phase === 'pallet_done' && lastLpn) {
     body = (
       <div className="p-6 text-center space-y-4">
-        <CheckCircle className="w-16 h-16 text-ok mx-auto" />
-        <h1 className="text-xl font-bold">
+        <div className="w-20 h-20 rounded-full bg-ok-weak flex items-center justify-center mx-auto animate-donePop">
+          <CheckCircle className="w-10 h-10 text-ok" />
+        </div>
+        <h1 className="text-xl font-extrabold text-ok-weak-ink">
           {tr('nonmeatTypeA.palletDone', { current: currentPallet, total: palletCount })}
         </h1>
-        <p className="font-mono text-sm text-muted">{tr('nonmeatTypeA.lpn', { lpn: lastLpn.lpn })}</p>
+        <p className="font-mono text-sm font-bold text-ink" dir="ltr">{tr('nonmeatTypeA.lpn', { lpn: lastLpn.lpn })}</p>
         <a
           href={lastLpn.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 bg-raised border border-line rounded-xl px-4 py-3 font-medium"
+          className="inline-flex items-center gap-2 bg-tile border border-line-strong rounded-xl px-4 py-3 font-bold text-ink"
         >
           <Printer className="w-4 h-4" /> {tr('nonmeatTypeA.viewSticker')}
         </a>
         <button
           onClick={goNextPallet}
-          className="w-full bg-brand text-white rounded-xl py-3.5 font-semibold"
+          className="w-full bg-brand text-ink-inverse rounded-xl py-3.5 font-extrabold hover:bg-brand-hover transition"
         >
           {tr('nonmeatTypeA.nextPallet', { next: currentPallet + 1 })}
         </button>
@@ -395,16 +399,16 @@ export function NonMeatTypeAFlow({
         <div className="px-4 pt-4">
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-lg font-bold">
+              <div className="text-lg font-extrabold text-ink">
                 {tr('nonmeatTypeA.palletHeader', { current: currentPallet, total: palletCount })}
               </div>
               {session.document_number && (
-                <div className="text-xs text-muted">
+                <div className="text-xs font-mono text-muted" dir="ltr">
                   {tr('palletVerify.docPrefix', { doc: session.document_number })}
                 </div>
               )}
             </div>
-            <span className="inline-flex items-center gap-1 text-xs font-semibold bg-brand-weak text-brand rounded-full px-2.5 py-1">
+            <span className="inline-flex items-center gap-1 text-xs font-bold bg-brand-weak text-brand-weak-ink rounded-full px-2.5 py-1">
               <Scale className="w-3.5 h-3.5" /> {tr('nonmeatTypeA.badge')}
             </span>
           </div>
@@ -424,10 +428,10 @@ export function NonMeatTypeAFlow({
             ocrResults={new Map()}
           />
           {(reading || phase === 'saving') && (
-            <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-              <div className="bg-raised rounded-xl px-4 py-3 flex items-center gap-2">
+            <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+              <div className="bg-raised border border-line rounded-xl px-4 py-3 flex items-center gap-2">
                 <Loader2 className="animate-spin w-5 h-5 text-brand" />
-                <span className="text-sm font-medium">
+                <span className="text-sm font-medium text-ink">
                   {phase === 'saving' ? tr('nonmeatTypeA.saving') : tr('palletVerify.readingLabel')}
                 </span>
               </div>
@@ -436,14 +440,14 @@ export function NonMeatTypeAFlow({
         </div>
 
         {error && (
-          <div className="mx-4 mt-3 bg-err-weak border border-err/30 text-err rounded-xl px-3 py-2 text-sm">
+          <div className="mx-4 mt-3 bg-danger-weak border border-danger/40 text-danger-weak-ink rounded-xl px-3 py-2 text-sm">
             {error}
           </div>
         )}
 
         {/* Captured items on this pallet */}
         <div className="px-4 py-3 space-y-2">
-          <div className="text-xs font-semibold text-muted uppercase tracking-wide">
+          <div className="eyebrow">
             {tr('nonmeatTypeA.capturedTitle')}
           </div>
           {captures.length === 0 && (
@@ -456,10 +460,10 @@ export function NonMeatTypeAFlow({
               Math.abs(c.scanned_weight - c.unit_weight_kg) / c.unit_weight_kg > WEIGHT_MISMATCH_RATIO;
             const subtotal = Math.round(c.unit_weight_kg * c.count * 1000) / 1000;
             return (
-              <div key={c.item_key} className="bg-raised rounded-xl border border-line p-3">
+              <div key={c.item_key} className="bg-raised rounded-[14px] border border-line p-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <div className="font-medium truncate">{c.name_he || c.name_en || c.item_code}</div>
+                    <div className="font-bold text-ink truncate">{c.name_he || c.name_en || c.item_code}</div>
                     <div className="text-xs text-muted">
                       {tr('nonmeatTypeA.perCarton', { weight: c.unit_weight_kg })} ·{' '}
                       {tr('nonmeatTypeA.remainingLeft', { count: c.remaining })}
@@ -467,7 +471,7 @@ export function NonMeatTypeAFlow({
                   </div>
                   <button
                     onClick={() => removeCapture(c)}
-                    className="text-muted hover:text-err p-1"
+                    className="text-muted hover:text-danger p-1"
                     aria-label={tr('nonmeatTypeA.remove')}
                   >
                     <Trash2 className="w-4 h-4" />
@@ -482,12 +486,12 @@ export function NonMeatTypeAFlow({
                     max={c.remaining}
                     value={c.count}
                     onChange={(e) => setCount(c.item_key, Number(e.target.value))}
-                    className="w-20 bg-sunken rounded-lg px-2 py-1.5 text-center font-semibold"
+                    className="w-20 bg-sunken border border-line-strong rounded-lg px-2 py-1.5 text-center font-bold font-mono text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
                   />
                   <span className="text-sm text-muted">{tr('nonmeatTypeA.subtotal', { total: subtotal })}</span>
                 </div>
                 {mismatch && (
-                  <div className="mt-2 flex items-center gap-1 text-xs text-warn">
+                  <div className="mt-2 flex items-center gap-1 text-xs text-warn-weak-ink">
                     <AlertTriangle className="w-3.5 h-3.5" />
                     {tr('nonmeatTypeA.weightMismatch', {
                       scanned: c.scanned_weight,
@@ -501,11 +505,11 @@ export function NonMeatTypeAFlow({
         </div>
 
         {/* Footer */}
-        <div className="sticky bottom-0 bg-app/95 backdrop-blur border-t border-line px-4 py-3">
+        <div className="sticky bottom-0 bg-header/95 backdrop-blur border-t border-line px-4 py-3 safe-bottom">
           {canFinish ? (
             <div className="flex items-center justify-between mb-2 text-sm">
               <span className="text-muted">{tr('nonmeatTypeA.capturedTitle')}</span>
-              <span className="font-semibold">{Math.round(totalKg * 1000) / 1000} {tr('common.kg')}</span>
+              <span className="font-bold font-mono text-ink" dir="ltr">{Math.round(totalKg * 1000) / 1000} {tr('common.kg')}</span>
             </div>
           ) : (
             <p className="text-xs text-muted mb-2">{tr('nonmeatTypeA.needItem')}</p>
@@ -513,7 +517,7 @@ export function NonMeatTypeAFlow({
           <button
             onClick={finishPallet}
             disabled={!canFinish || phase === 'saving'}
-            className="w-full bg-brand text-white rounded-xl py-3.5 font-semibold disabled:opacity-40 inline-flex items-center justify-center gap-2"
+            className="w-full bg-brand text-ink-inverse rounded-xl py-3.5 font-extrabold disabled:opacity-40 hover:bg-brand-hover transition inline-flex items-center justify-center gap-2"
           >
             <Check className="w-5 h-5" />
             {tr('nonmeatTypeA.finish', { current: currentPallet })}
@@ -530,10 +534,11 @@ export function NonMeatTypeAFlow({
 
         {/* Item picker — shown when OCR didn't confidently match a line */}
         {pendingPick && (
-          <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center">
-            <div className="bg-app w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl p-4 space-y-3">
+          <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center">
+            <div className="bg-raised border-t border-line sm:border w-full sm:max-w-md rounded-t-[20px] sm:rounded-2xl p-4 pt-2 space-y-3 shadow-[0_-18px_44px_rgba(0,0,0,0.72)]">
+              <div className="w-9 h-1 rounded-full bg-line-strong mx-auto sm:hidden" />
               <div className="flex items-center justify-between">
-                <h2 className="font-bold flex items-center gap-2">
+                <h2 className="font-extrabold text-ink flex items-center gap-2">
                   <Package className="w-5 h-5 text-brand" /> {tr('nonmeatTypeA.pickTitle')}
                 </h2>
                 <button onClick={cancelPick} className="text-muted p-1" aria-label={tr('common.cancel')}>
@@ -555,9 +560,9 @@ export function NonMeatTypeAFlow({
                         addCapture(it, pendingPick);
                         setPendingPick(null);
                       }}
-                      className="w-full text-start bg-raised border border-line rounded-xl px-3 py-2.5 disabled:opacity-40 flex items-center justify-between"
+                      className="w-full text-start bg-tile border border-line-strong rounded-xl px-3 py-2.5 disabled:opacity-40 hover:bg-hover transition flex items-center justify-between"
                     >
-                      <span className="min-w-0 truncate">
+                      <span className="min-w-0 truncate text-ink">
                         {it.item_name_hebrew || it.item_name_english || it.item_code}
                       </span>
                       <span className="text-xs text-muted whitespace-nowrap ms-2">

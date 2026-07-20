@@ -18,34 +18,36 @@ function CompleteContent({ session }: { session: ScanSession }) {
     <div className="min-h-screen bg-canvas text-ink p-4">
       <div className="max-w-md mx-auto">
         {/* Success Header */}
-        <div className="text-center mb-8">
-          <CheckCircle className="w-16 h-16 text-ok mx-auto mb-4" />
-          <h1 className="text-2xl font-bold mb-2">{tr('complete.title')}</h1>
+        <div className="text-center mb-8 animate-fadeUp">
+          <div className="w-16 h-16 rounded-full bg-ok-weak flex items-center justify-center mx-auto mb-4 animate-donePop">
+            <CheckCircle className="w-9 h-9 text-ok" />
+          </div>
+          <h1 className="text-2xl font-extrabold mb-2">{tr('complete.title')}</h1>
           <p className="text-ink-muted">{tr('complete.returnToWhatsApp')}</p>
         </div>
 
         {/* Summary */}
-        <div className="bg-raised border border-line rounded-2xl p-4 mb-6">
-          <h2 className="text-lg font-medium mb-4">{tr('complete.summary')}</h2>
+        <div className="bg-raised border border-line rounded-[14px] p-4 mb-6">
+          <h2 className="eyebrow mb-4">{tr('complete.summary')}</h2>
           <div className="space-y-2">
-            <div className="flex justify-between">
-              <span className="text-ink-muted">{tr('complete.totalScanned')}</span>
-              <span className="font-medium">{totalScans}</span>
+            <div className="flex justify-between items-center border-b border-line/60 pb-2">
+              <span className="text-sm text-ink-body">{tr('complete.totalScanned')}</span>
+              <span className="font-mono font-bold text-ink" dir="ltr">{totalScans}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-ink-muted">{tr('complete.totalWeightLabel')}</span>
-              <span className="font-medium">{totalWeight.toFixed(2)} kg</span>
+            <div className="flex justify-between items-center border-b border-line/60 pb-2">
+              <span className="text-sm text-ink-body">{tr('complete.totalWeightLabel')}</span>
+              <span className="font-mono font-bold text-ink" dir="ltr">{totalWeight.toFixed(2)} kg</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-ink-muted">{tr('complete.itemsLabel')}</span>
-              <span className="font-medium">{scannedItems.length}</span>
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-ink-body">{tr('complete.itemsLabel')}</span>
+              <span className="font-mono font-bold text-ink" dir="ltr">{scannedItems.length}</span>
             </div>
           </div>
         </div>
 
         {/* Items List */}
-        <div className="bg-raised border border-line rounded-2xl p-4 mb-6">
-          <h2 className="text-lg font-medium mb-4">{tr('complete.scannedItemsTitle')}</h2>
+        <div className="bg-raised border border-line rounded-[14px] p-4 mb-6">
+          <h2 className="eyebrow mb-4">{tr('complete.scannedItemsTitle')}</h2>
           <div className="space-y-3">
             {scannedItems.map((item) => {
               const percentage = (item.scanned_weight / item.expected_weight) * 100;
@@ -54,12 +56,12 @@ function CompleteContent({ session }: { session: ScanSession }) {
               return (
                 <div key={item.item_index} className="border-b border-line pb-3 last:border-0">
                   <div className="flex justify-between items-start mb-1">
-                    <span className="font-medium">{item.item_name}</span>
+                    <span className="font-extrabold text-ink">{item.item_name}</span>
                     {isComplete && <Check className="w-4 h-4 text-ok" />}
                   </div>
                   <div className="text-sm text-ink-muted space-y-1">
                     <p>{tr('complete.boxesUnit', { count: item.scanned_count })}</p>
-                    <p>
+                    <p className="font-mono" dir="ltr">
                       {item.scanned_weight.toFixed(2)} / {item.expected_weight.toFixed(2)} kg
                       {' '}({percentage.toFixed(0)}%)
                     </p>
@@ -71,7 +73,7 @@ function CompleteContent({ session }: { session: ScanSession }) {
         </div>
 
         {/* Instructions */}
-        <div className="bg-info-weak border border-info/30 rounded-2xl p-4">
+        <div className="bg-info-weak border border-info/30 rounded-[14px] p-4">
           <p className="text-sm text-info-weak-ink">
             <strong>{tr('complete.nextSteps')}</strong><br />
             1. {tr('complete.step1')}<br />
@@ -83,7 +85,7 @@ function CompleteContent({ session }: { session: ScanSession }) {
         {/* Close Button */}
         <button
           onClick={() => window.close()}
-          className="w-full mt-6 bg-sunken text-ink py-3 rounded-xl font-medium hover:bg-hover transition-colors"
+          className="w-full mt-6 h-12 bg-tile border border-line-strong text-ink rounded-xl font-bold hover:bg-hover transition-colors"
         >
           {tr('complete.closeButton')}
         </button>
@@ -97,7 +99,7 @@ function LoadingScreen() {
   return (
     <div className="min-h-screen bg-canvas text-ink flex items-center justify-center">
       <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand mx-auto mb-4"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-4 border-line border-t-brand mx-auto mb-4"></div>
         <p>{tr('common.loading')}</p>
       </div>
     </div>

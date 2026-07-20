@@ -89,7 +89,7 @@ export function ScannedList({
               {/* Info */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-ink-muted">
+                  <span className="text-xs font-mono text-ink-muted" dir="ltr">
                     #{barcode.slice(-6)}
                   </span>
                   {/* Status badge */}
@@ -106,13 +106,13 @@ export function ScannedList({
                   <p className="text-sm text-ink-body truncate">
                     {ocrResult.product_name || ocrResult.product_name_hebrew || tr('common.unknown')}
                     {ocrResult.weight_kg ? (
-                      <span className="text-brand ms-1.5">{ocrResult.weight_kg} kg</span>
+                      <span className="text-brand-weak-ink font-mono font-bold ms-1.5" dir="ltr">{ocrResult.weight_kg} kg</span>
                     ) : null}
                   </p>
                 ) : isPending ? (
-                  <p className="text-xs text-warn">{tr('components.scannedList.analyzing')}</p>
+                  <p className="text-xs text-warn-weak-ink">{tr('components.scannedList.analyzing')}</p>
                 ) : ocrFailed ? (
-                  <p className="text-xs text-warn">{tr('components.scannedList.ocrFailedManual')}</p>
+                  <p className="text-xs text-warn-weak-ink">{tr('components.scannedList.ocrFailedManual')}</p>
                 ) : (
                   <p className="text-xs text-ink-muted">{tr('components.scannedList.awaitingImage')}</p>
                 )}
@@ -129,7 +129,7 @@ export function ScannedList({
                     onDelete?.(barcode);
                     onSelect?.(null);
                   }}
-                  className="w-full px-3 py-2 rounded-lg bg-danger-weak text-danger text-sm font-medium border border-danger flex items-center justify-center gap-1.5"
+                  className="w-full px-3 py-2 rounded-lg bg-danger-weak text-danger-weak-ink text-sm font-bold border border-danger/50 flex items-center justify-center gap-1.5"
                 >
                   <Trash2 className="w-3.5 h-3.5" /> {tr('palletVerify.deleteScan')}
                 </button>

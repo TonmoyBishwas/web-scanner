@@ -13,29 +13,29 @@ export function IssuedBoxList({ issuedBoxes }: IssuedBoxListProps) {
 
   if (issuedBoxes.length === 0) {
     return (
-      <div className="bg-raised border border-line rounded-lg p-4 text-center text-ink-muted">
+      <div className="bg-raised border border-line rounded-[14px] p-4 text-center text-ink-muted">
         {tr('components.issuedBoxList.emptyHint')}
       </div>
     );
   }
 
   return (
-    <div className="bg-raised border border-line rounded-lg p-4">
+    <div className="bg-raised border border-line rounded-[14px] p-4">
       <div className="flex justify-between items-center mb-3">
-        <h3 className="text-ink font-medium">
+        <h3 className="text-ink font-bold">
           {tr('components.issuedBoxList.issuedHeader', { count: issuedBoxes.length })}
         </h3>
-        <span className="text-ok font-bold">{totalWeight.toFixed(2)} kg</span>
+        <span className="text-ok-weak-ink font-extrabold font-mono" dir="ltr">{totalWeight.toFixed(2)} kg</span>
       </div>
 
       <div className="space-y-2 max-h-48 overflow-y-auto">
         {issuedBoxes.map((box, idx) => (
           <div
             key={box.barcode + idx}
-            className="flex justify-between items-center bg-sunken rounded px-3 py-2 text-sm"
+            className="flex justify-between items-center bg-sunken rounded-lg px-3 py-2 text-sm"
           >
-            <span className="text-ink truncate me-2">{box.item_name}</span>
-            <span className="text-ok font-medium whitespace-nowrap">
+            <span className="text-ink font-semibold truncate me-2">{box.item_name}</span>
+            <span className="text-ok-weak-ink font-bold font-mono whitespace-nowrap" dir="ltr">
               {box.weight} kg
             </span>
           </div>
