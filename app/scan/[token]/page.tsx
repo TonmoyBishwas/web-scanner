@@ -1071,7 +1071,7 @@ export default function ScanPage({
         {canForceConfirm && phase === 'scanning' && (
           <button
             onClick={() => setShowForceConfirm(true)}
-            className="w-full h-12 bg-warn hover:bg-warn/90 rounded-xl text-sm font-extrabold text-ink-inverse transition-colors flex items-center justify-center gap-2"
+            className="w-full h-12 bg-warn hover:bg-warn/90 rounded-xl text-sm font-extrabold text-canvas transition-colors flex items-center justify-center gap-2"
           >
             <Zap className="w-4 h-4" />
             {tr('scan.forceConfirmButton', { count: boxesExpected - scannedBarcodes.size })}
@@ -1435,7 +1435,7 @@ function ForceConfirmModal({
         <button
           onClick={handleSubmitAll}
           disabled={!allFilled || submitting}
-          className="w-full h-12 bg-warn hover:bg-warn/90 text-ink-inverse disabled:bg-line-strong disabled:text-ink-muted disabled:cursor-not-allowed rounded-xl text-sm font-extrabold transition-colors"
+          className="w-full h-12 bg-warn hover:bg-warn/90 text-canvas disabled:bg-line-strong disabled:text-ink-muted disabled:cursor-not-allowed rounded-xl text-sm font-extrabold transition-colors"
         >
           {submitting ? tr('scan.submitting') : tr('scan.submitManualEntries', { count: remaining })}
         </button>

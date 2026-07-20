@@ -89,12 +89,12 @@ export function DebugLogPanel() {
               </span>
               <span className="text-xs text-ink-muted">({logs.length})</span>
               {copyState === 'copied' && (
-                <span className="text-[11px] bg-ok text-ink-inverse px-2 py-0.5 rounded-full font-semibold">
+                <span className="text-[11px] bg-ok text-canvas px-2 py-0.5 rounded-full font-semibold">
                   Copied
                 </span>
               )}
               {copyState === 'failed' && (
-                <span className="text-[11px] bg-warn text-ink-inverse px-2 py-0.5 rounded-full font-semibold">
+                <span className="text-[11px] bg-warn text-canvas px-2 py-0.5 rounded-full font-semibold">
                   Long-press text below to copy
                 </span>
               )}

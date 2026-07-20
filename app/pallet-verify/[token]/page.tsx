@@ -1059,7 +1059,7 @@ export default function PalletVerifyPage({
         </button>
         <button
           onClick={handleSaveEdit}
-          className="flex-1 py-3 rounded-xl bg-ok text-ink-inverse font-extrabold text-sm hover:opacity-90 transition"
+          className="flex-1 py-3 rounded-xl bg-ok text-canvas font-extrabold text-sm hover:opacity-90 transition"
         >
           {tr('palletVerify.editSave')}
         </button>
@@ -1848,7 +1848,7 @@ export default function PalletVerifyPage({
             disabled={!canConfirmLoose || phase === 'loose_confirming'}
             className={`w-full py-3 rounded-xl font-extrabold text-base transition ${
               canConfirmLoose && phase !== 'loose_confirming'
-                ? 'bg-warn text-ink-inverse hover:opacity-90 active:opacity-80'
+                ? 'bg-warn text-canvas hover:opacity-90 active:opacity-80'
                 : 'bg-sunken text-ink-muted cursor-not-allowed'
             }`}
           >
@@ -1890,7 +1890,7 @@ export default function PalletVerifyPage({
             href={`${lpnUrl}?token=${encodeURIComponent(token)}${language === 'Hebrew' ? '&lang=Hebrew' : ''}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-2 inline-flex items-center gap-1.5 bg-ok text-ink-inverse px-5 py-2 rounded-xl text-sm font-extrabold hover:opacity-90 transition"
+            className="mt-2 inline-flex items-center gap-1.5 bg-ok text-canvas px-5 py-2 rounded-xl text-sm font-extrabold hover:opacity-90 transition"
           >
             <Printer className="w-4 h-4" /> {tr('palletVerify.viewPrintSticker')}
           </a>
@@ -2026,7 +2026,7 @@ export default function PalletVerifyPage({
           <div className="flex gap-2">
             <button
               onClick={handleAcceptMerge}
-              className="flex items-center justify-center gap-1.5 flex-1 min-w-0 py-2 rounded-lg bg-warn text-ink-inverse text-xs font-semibold hover:opacity-90 active:opacity-80 transition"
+              className="flex items-center justify-center gap-1.5 flex-1 min-w-0 py-2 rounded-lg bg-warn text-canvas text-xs font-semibold hover:opacity-90 active:opacity-80 transition"
             >
               <Check className="w-3.5 h-3.5" /> {tr('palletVerify.aiMergeAccept')}
             </button>
@@ -2182,7 +2182,7 @@ export default function PalletVerifyPage({
             <button
               onClick={handleCompleteAsSingle}
               disabled={phase === 'confirming'}
-              className="flex items-center justify-center gap-1.5 w-full py-3 rounded-xl font-extrabold text-base bg-ok text-ink-inverse hover:opacity-90 active:bg-ok transition disabled:bg-sunken disabled:text-ink-muted"
+              className="flex items-center justify-center gap-1.5 w-full py-3 rounded-xl font-extrabold text-base bg-ok text-canvas hover:opacity-90 active:bg-ok transition disabled:bg-sunken disabled:text-ink-muted"
             >
               <CheckCircle className="w-4 h-4" /> {tr('palletVerify.uniformCompleteBtn')}
             </button>
@@ -2244,7 +2244,7 @@ export default function PalletVerifyPage({
               <button
                 onClick={() => setPendingForceConfirm(true)}
                 disabled={phase === 'confirming'}
-                className="flex items-center justify-center gap-1.5 w-full py-3 rounded-xl font-extrabold text-base bg-warn text-ink-inverse hover:opacity-90 transition disabled:bg-sunken disabled:text-ink-muted"
+                className="flex items-center justify-center gap-1.5 w-full py-3 rounded-xl font-extrabold text-base bg-warn text-canvas hover:opacity-90 transition disabled:bg-sunken disabled:text-ink-muted"
               >
                 <AlertTriangle className="w-4 h-4" /> {tr('palletVerify.forceCreateBtn')}
               </button>
@@ -2254,7 +2254,7 @@ export default function PalletVerifyPage({
                 disabled={!canConfirm || phase === 'confirming'}
                 className={`w-full py-3 rounded-xl font-extrabold text-base transition ${
                   canConfirm && phase !== 'confirming'
-                    ? 'bg-ok text-ink-inverse hover:opacity-90 active:bg-ok'
+                    ? 'bg-ok text-canvas hover:opacity-90 active:bg-ok'
                     : 'bg-sunken text-ink-muted cursor-not-allowed'
                 }`}
               >
@@ -2310,7 +2310,7 @@ export default function PalletVerifyPage({
             <div className="space-y-2">
               <button
                 onClick={() => { setPendingForceConfirm(false); handleConfirmPallet(); }}
-                className="w-full py-3 rounded-xl font-extrabold text-base bg-warn text-ink-inverse hover:opacity-90 transition"
+                className="w-full py-3 rounded-xl font-extrabold text-base bg-warn text-canvas hover:opacity-90 transition"
               >
                 {tr('palletVerify.forceConfirmYes')}
               </button>

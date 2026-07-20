@@ -52,7 +52,7 @@ export function BoxDetailModal({
           <button
             onClick={onConfirm}
             disabled={isLoading}
-            className="flex-1 h-12 rounded-xl bg-ok text-ink-inverse font-extrabold hover:opacity-90 disabled:opacity-50 transition-opacity"
+            className="flex-1 h-12 rounded-xl bg-ok text-canvas font-extrabold hover:opacity-90 disabled:opacity-50 transition-opacity"
           >
             {isLoading ? (
               <span className="flex items-center justify-center gap-2">

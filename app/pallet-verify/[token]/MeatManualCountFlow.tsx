@@ -207,7 +207,7 @@ export function MeatManualCountFlow({
           <button
             onClick={finish}
             disabled={!canFinish}
-            className="w-full py-3.5 rounded-xl font-extrabold text-base bg-ok text-ink-inverse disabled:bg-sunken disabled:text-ink-muted inline-flex items-center justify-center gap-2"
+            className="w-full py-3.5 rounded-xl font-extrabold text-base bg-ok text-canvas disabled:bg-sunken disabled:text-ink-muted inline-flex items-center justify-center gap-2"
           >
             {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
             {tr('meatManual.finish', { current: session.current_pallet })}

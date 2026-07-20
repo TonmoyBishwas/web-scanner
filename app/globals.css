@@ -233,11 +233,6 @@ body {
   100% { transform: scale(1); opacity: 1; }
 }
 
-@keyframes glowPulse {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
-}
-
 /* Custom utility classes for animations (Tailwind v4 compatible) */
 @utility animate-slideInUp {
   animation: slideInUp 0.3s ease-out;
