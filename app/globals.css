@@ -1,60 +1,64 @@
 @import "tailwindcss";
 
 /* ──────────────────────────────────────────────────────────────────────────
-   Design tokens — light theme, teal brand. Single source of truth.
-   The app is light-only (no dark media variant). The only "dark" surface is
-   chrome that overlays the live camera video (the --cam-* set), which is
-   constant and theme-independent so it stays legible over arbitrary imagery.
+   Design tokens — dark industrial terminal, RTL-first (WMS RTL Redesign).
+   Canonical values from the "WMS Receiving Terminal" prototype (Gen-1),
+   token naming from the Gen-2 "WMS Field" design system.
+   Dark-only by design ("dark-only · RTL · AA on dark"). The sticker/print
+   pages opt out locally — they are physical labels and stay white.
+   The --cam-* set is chrome over the live <video>: constant, theme-independent.
    ────────────────────────────────────────────────────────────────────────── */
 :root {
   /* Surfaces */
-  --surface-canvas: #f7f8f8; /* app background — bright near-white, faint cool gray */
-  --surface-raised: #ffffff; /* cards, headers, list rows, modals */
-  --surface-sunken: #eef1f1; /* inset wells, track backgrounds, skeletons */
-  --surface-hover:  #e7ebeb; /* row/button hover on light */
+  --surface-canvas: #090d10; /* app background */
+  --surface-raised: #101c22; /* cards, sheets, list rows, modals */
+  --surface-sunken: #0c141a; /* inset wells, stat tiles, track backgrounds */
+  --surface-hover:  #16242c; /* row/button hover on dark */
+  --surface-header: #0a0f14; /* header / footer / drawer chrome */
+  --surface-tile:   #101821; /* small tiles, keypad keys, menu buttons */
 
   /* Borders */
-  --border-subtle: #e2e6e6; /* hairlines, card borders, dividers */
-  --border-strong: #c9cfcf; /* input borders, emphasized separators */
+  --border-subtle: #1e2a35; /* hairlines, card borders, dividers */
+  --border-strong: #2a3a47; /* input borders, buttons, emphasized separators */
 
   /* Ink (text) */
-  --ink-strong:  #14201f; /* primary text — near-black, slight teal cast */
-  --ink-body:    #36433f; /* secondary/body text */
-  --ink-muted:   #6a7672; /* captions, labels, placeholders (AA on canvas) */
-  --ink-inverse: #ffffff; /* text on teal / on dark glass */
+  --ink-strong:  #eef4f7; /* primary text/icons */
+  --ink-body:    #b8c6cd; /* secondary/body text */
+  --ink-muted:   #9fb2c2; /* captions, labels, placeholders */
+  --ink-inverse: #ffffff; /* text on brand / strongest values & numerals */
 
-  /* Brand (teal) */
-  --brand:          #0e9888;
-  --brand-hover:    #0b7e72;
-  --brand-active:   #095f56;
-  --brand-weak:     #dcf1ed; /* tinted backgrounds, selected chips */
-  --brand-weak-ink: #075a50; /* text/icon on brand-weak */
-  --brand-ring:     rgba(14, 152, 136, 0.4);
+  /* Brand (terminal blue) */
+  --brand:          #13a4ec;
+  --brand-hover:    #0e86c2;
+  --brand-active:   #0b6da0;
+  --brand-weak:     rgba(19, 164, 236, 0.14); /* tinted backgrounds, selected chips */
+  --brand-weak-ink: #7cc9f2;                  /* text/icon on brand-weak */
+  --brand-ring:     rgba(19, 164, 236, 0.4);
 
   /* Status — success / done (green) */
-  --ok:          #1a8f4c;
-  --ok-weak:     #dbf1e2;
-  --ok-weak-ink: #136638;
+  --ok:          #22c55e;
+  --ok-weak:     rgba(34, 197, 94, 0.15);
+  --ok-weak-ink: #7ee2a8;
 
-  /* Status — warning / needs-fix (amber, dark enough for AA text on white) */
-  --warn:          #b5740a;
-  --warn-weak:     #fbefd6;
-  --warn-weak-ink: #8a5703;
+  /* Status — warning / gap / needs-fix (amber) */
+  --warn:          #f59e0b;
+  --warn-weak:     rgba(245, 158, 11, 0.15);
+  --warn-weak-ink: #fbc45c;
 
   /* Status — danger (red) */
-  --danger:          #c42b2b;
-  --danger-weak:     #fbe0e0;
-  --danger-weak-ink: #97201f;
+  --danger:          #ef4444;
+  --danger-weak:     rgba(239, 68, 68, 0.16);
+  --danger-weak-ink: #f8a3a3;
 
-  /* Status — processing / info (cool blue, distinct from brand) */
-  --info:          #2563b5;
-  --info-weak:     #e1ecfb;
-  --info-weak-ink: #1b4a8a;
+  /* Status — processing / issued / info (violet, per the Gen-2 status chain) */
+  --info:          #a78bfa;
+  --info-weak:     rgba(167, 139, 250, 0.14);
+  --info-weak-ink: #c9b8fc;
 
   /* Camera-overlay glass — used ONLY over the live <video>; constant values */
-  --cam-scrim:     rgba(8, 12, 12, 0.82);  /* full-screen diagnostic overlay */
-  --cam-chip:      rgba(17, 24, 24, 0.72);  /* status chips / switch button bg */
-  --cam-chip-hover: rgba(30, 38, 38, 0.78);
+  --cam-scrim:     rgba(5, 8, 10, 0.84);   /* full-screen diagnostic overlay */
+  --cam-chip:      rgba(12, 20, 26, 0.74);  /* status chips / switch button bg */
+  --cam-chip-hover: rgba(22, 36, 44, 0.8);
   --cam-ink:       #f4f7f6;                  /* text on glass */
   --cam-ink-muted: #b9c2c0;
   --cam-border:    rgba(255, 255, 255, 0.18);
@@ -66,6 +70,8 @@
   --color-raised: var(--surface-raised);
   --color-sunken: var(--surface-sunken);
   --color-hover: var(--surface-hover);
+  --color-header: var(--surface-header);
+  --color-tile: var(--surface-tile);
 
   --color-line: var(--border-subtle);
   --color-line-strong: var(--border-strong);
@@ -104,6 +110,14 @@
   --color-cam-ink-muted: var(--cam-ink-muted);
   --color-cam-border: var(--cam-border);
 
+  /* Aliases (legacy vocabulary used by some flows — same tokens) */
+  --color-app: var(--surface-canvas);
+  --color-fg: var(--ink-strong);
+  --color-muted: var(--ink-muted);
+  --color-err: var(--danger);
+  --color-err-weak: var(--danger-weak);
+  --color-err-weak-ink: var(--danger-weak-ink);
+
   --font-sans: var(--font-app-sans);
   --font-mono: var(--font-app-mono);
 }
@@ -112,6 +126,14 @@ body {
   background: var(--surface-canvas);
   color: var(--ink-strong);
   font-family: var(--font-app-sans), system-ui, sans-serif;
+  word-spacing: 0.03em; /* Gen-2 Rubik body rule */
+}
+
+/* AA-visible focus for keyboard / accessibility (IS 5568) */
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 /* ── Mobile / Android helpers ─────────────────────────────────────────────── */
@@ -130,7 +152,23 @@ body {
   min-width: 48px;
 }
 
-/* ── Keyframe animations (unchanged) ──────────────────────────────────────── */
+/* Horizontal scroller with hidden scrollbar (design: scrollbars hidden). */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Section eyebrow label (brand-tinted, letterspaced) */
+@utility eyebrow {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: var(--brand-weak-ink);
+}
+
+/* ── Keyframe animations ──────────────────────────────────────────────────── */
 @keyframes slideInUp {
   from {
     transform: translateY(16px);
@@ -172,6 +210,34 @@ body {
   100% { opacity: 0; }
 }
 
+/* Design-spec keyframes (Terminal / Gen-2) */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes shim {
+  0% { opacity: 0.45; }
+  50% { opacity: 0.9; }
+  100% { opacity: 0.45; }
+}
+
+@keyframes donePop {
+  0% { transform: scale(0.6); opacity: 0; }
+  60% { transform: scale(1.08); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes glowPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
 /* Custom utility classes for animations (Tailwind v4 compatible) */
 @utility animate-slideInUp {
   animation: slideInUp 0.3s ease-out;
@@ -187,4 +253,20 @@ body {
 
 @utility animate-pulseGlow {
   animation: pulseGlow 2s ease-in-out infinite;
+}
+
+@utility animate-fadeUp {
+  animation: fadeUp 0.24s ease-out;
+}
+
+@utility animate-toastIn {
+  animation: toastIn 0.2s ease-out;
+}
+
+@utility animate-shim {
+  animation: shim 1.4s ease-in-out infinite;
+}
+
+@utility animate-donePop {
+  animation: donePop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }

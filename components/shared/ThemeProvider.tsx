@@ -11,11 +11,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     hydrate();
   }, [hydrate]);
 
-  // Light theme only (redesign). Clear any stale 'dark' class a returning
-  // user might still carry, then assert 'light'.
+  // Dark terminal theme only (RTL redesign). Clear any stale 'light' class a
+  // returning user might still carry, then assert 'dark'.
   useEffect(() => {
-    document.documentElement.classList.remove('dark');
-    document.documentElement.classList.add('light');
+    document.documentElement.classList.remove('light');
+    document.documentElement.classList.add('dark');
   }, []);
 
   return <>{children}</>;

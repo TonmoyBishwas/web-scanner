@@ -10,7 +10,8 @@ import { ThemeProvider } from "@/components/shared/ThemeProvider";
 const appSans = Rubik({
   variable: "--font-app-sans",
   subsets: ["latin", "hebrew"],
-  weight: ["400", "500", "600", "700"],
+  // 800/900 power the terminal design's heavy titles / hero numerals.
+  weight: ["400", "500", "600", "700", "800", "900"],
   display: "swap",
 });
 
@@ -18,7 +19,7 @@ const appSans = Rubik({
 const appMono = IBM_Plex_Mono({
   variable: "--font-app-mono",
   subsets: ["latin"],
-  weight: ["400", "500", "600"],
+  weight: ["400", "500", "600", "700"],
   display: "swap",
 });
 
@@ -43,7 +44,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="light">
+    <html lang="en" className="dark">
       <body
         className={`${appSans.variable} ${appMono.variable} antialiased`}
       >
