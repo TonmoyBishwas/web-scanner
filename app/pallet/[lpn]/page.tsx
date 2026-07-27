@@ -116,14 +116,15 @@ export default async function PalletStickerPage({
     <div
       lang={language === 'Hebrew' ? 'he' : 'en'}
       dir={dir}
-      className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4"
+      id="pallet-page"
+      className="min-h-screen bg-canvas print:bg-white flex flex-col items-center justify-center p-4"
     >
       {/* Print button (hidden when printing) */}
       <div className="no-print mb-6 flex gap-3">
         <PrintButton />
         <a
           href={backHref}
-          className="bg-gray-200 text-gray-700 px-6 py-2.5 rounded-lg font-semibold hover:bg-gray-300 transition text-sm"
+          className="inline-flex items-center h-12 px-6 bg-tile border border-line-strong text-ink rounded-xl font-bold hover:bg-hover transition text-sm"
         >
           {backLabel}
         </a>
@@ -228,8 +229,12 @@ export default async function PalletStickerPage({
       <style>{`
         @media print {
           .no-print { display: none !important; }
-          body { background: white; }
-          #pallet-sticker { width: 90mm; margin: 0 auto; page-break-inside: avoid; }
+          /* The on-screen chrome is dark; the printed label must stay white
+             ink-on-paper. Force white on body AND the page wrapper so the
+             dark canvas background can never bleed onto the physical label. */
+          html, body { background: white !important; }
+          #pallet-page { background: white !important; }
+          #pallet-sticker { width: 90mm; margin: 0 auto; page-break-inside: avoid; background: white !important; }
         }
       `}</style>
     </div>

@@ -22,17 +22,21 @@ export function InvoiceDrawer({ open, onClose, items, scannedItems, ocrResults, 
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 z-[55] bg-black/50 backdrop-blur-sm animate-fadeIn"
+        className="fixed inset-0 z-[55] bg-black/60 backdrop-blur-sm animate-fadeIn"
         onClick={onClose}
       />
       {/* Drawer */}
-      <div className="fixed bottom-0 left-0 right-0 z-[56] bg-raised border-t-2 border-brand rounded-t-2xl shadow-2xl animate-slideInUp"
+      <div className="fixed bottom-0 left-0 right-0 z-[56] bg-raised border-t border-line-strong rounded-t-[20px] shadow-2xl animate-slideInUp"
         style={{ maxHeight: '70vh' }}
       >
+        {/* Drag-handle pill */}
+        <div className="flex justify-center pt-2.5">
+          <div className="w-9 h-1 rounded-full bg-line-strong" />
+        </div>
         <div className="flex justify-between items-center px-4 py-3 border-b border-line">
           <div className="flex items-center gap-2">
             <FileText className="w-4 h-4 text-brand" />
-            <span className="text-ink font-bold text-sm">{tr('components.invoiceDrawer.overviewTitle')}</span>
+            <span className="text-ink font-extrabold text-sm">{tr('components.invoiceDrawer.overviewTitle')}</span>
           </div>
           <button
             onClick={onClose}
@@ -41,7 +45,7 @@ export function InvoiceDrawer({ open, onClose, items, scannedItems, ocrResults, 
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="overflow-y-auto p-4" style={{ maxHeight: 'calc(70vh - 50px)' }}>
+        <div className="overflow-y-auto p-4" style={{ maxHeight: 'calc(70vh - 64px)' }}>
           <ItemProgress
             items={items}
             scanned={scannedItems}

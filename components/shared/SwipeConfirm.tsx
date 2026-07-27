@@ -17,7 +17,7 @@ export function SwipeConfirm({ onConfirm, label = 'Slide to Confirm', disabled =
   const startXRef = useRef(0);
   const trackWidthRef = useRef(0);
 
-  const THUMB_SIZE = 52;
+  const THUMB_SIZE = 48;
   const THRESHOLD = 0.8;
 
   const getMaxDrag = () => {
@@ -59,9 +59,9 @@ export function SwipeConfirm({ onConfirm, label = 'Slide to Confirm', disabled =
   return (
     <div
       ref={trackRef}
-      className={`relative w-full h-14 rounded-xl overflow-hidden select-none ${
+      className={`relative w-full h-12 rounded-[14px] overflow-hidden select-none border ${
         disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'
-      } ${confirmed ? 'bg-green-600' : 'bg-gray-700 dark:bg-gray-700'}`}
+      } ${confirmed ? 'bg-brand border-brand' : 'bg-sunken border-line-strong'}`}
       onTouchStart={e => handleStart(e.touches[0].clientX)}
       onTouchMove={e => handleMove(e.touches[0].clientX)}
       onTouchEnd={handleEnd}
@@ -72,20 +72,20 @@ export function SwipeConfirm({ onConfirm, label = 'Slide to Confirm', disabled =
     >
       {/* Track fill */}
       <div
-        className="absolute inset-y-0 left-0 bg-green-600/30 transition-none"
+        className="absolute inset-y-0 left-0 bg-brand-weak transition-none"
         style={{ width: dragX + THUMB_SIZE }}
       />
 
       {/* Label */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
         <span
-          className="text-sm font-semibold text-white transition-opacity"
+          className="text-xs font-semibold text-ink-muted transition-opacity"
           style={{ opacity: confirmed ? 0 : Math.max(0, 1 - progress * 2) }}
         >
           {label}
         </span>
         {confirmed && (
-          <Check className="w-6 h-6 text-white animate-scaleIn" />
+          <Check className="w-6 h-6 text-ink-inverse animate-scaleIn" />
         )}
       </div>
 
@@ -94,25 +94,25 @@ export function SwipeConfirm({ onConfirm, label = 'Slide to Confirm', disabled =
         <div className="absolute inset-0 flex items-center justify-end pr-4 pointer-events-none"
           style={{ opacity: Math.max(0, 1 - progress * 3) }}
         >
-          <ChevronRight className="w-5 h-5 text-white/30" />
-          <ChevronRight className="w-5 h-5 text-white/20 -ml-3" />
-          <ChevronRight className="w-5 h-5 text-white/10 -ml-3" />
+          <ChevronRight className="w-5 h-5 text-ink-muted/50" />
+          <ChevronRight className="w-5 h-5 text-ink-muted/35 -ml-3" />
+          <ChevronRight className="w-5 h-5 text-ink-muted/20 -ml-3" />
         </div>
       )}
 
       {/* Draggable thumb */}
       {!confirmed && (
         <div
-          className={`absolute top-1 bottom-1 rounded-lg flex items-center justify-center bg-white shadow-lg transition-shadow ${
+          className={`absolute top-0.5 bottom-0.5 rounded-xl flex items-center justify-center bg-brand shadow-lg transition-shadow ${
             isDragging ? 'shadow-xl' : ''
           }`}
           style={{
-            width: THUMB_SIZE - 8,
-            left: dragX + 4,
+            width: THUMB_SIZE - 4,
+            left: dragX + 2,
             transition: isDragging ? 'none' : 'left 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
           }}
         >
-          <ChevronRight className="w-5 h-5 text-gray-700" />
+          <ChevronRight className="w-5 h-5 text-ink-inverse" />
         </div>
       )}
     </div>

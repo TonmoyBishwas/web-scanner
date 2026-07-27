@@ -29,11 +29,11 @@ export function StatusBadge({
   size?: 'sm' | 'md';
   className?: string;
 }) {
-  const sz = size === 'sm' ? 'text-[11px] px-1.5 py-0.5' : 'text-xs px-2 py-0.5';
+  const sz = size === 'sm' ? 'text-[10px] px-2 py-0.5' : 'text-[11px] px-2.5 py-1';
   const iconSz = size === 'sm' ? 12 : 14;
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full font-semibold ${sz} ${toneClass[tone]} ${className}`}
+      className={`inline-flex items-center gap-1 rounded-full font-bold ${sz} ${toneClass[tone]} ${className}`}
     >
       {Icon && <Icon size={iconSz} strokeWidth={2.5} className="shrink-0" />}
       {children}

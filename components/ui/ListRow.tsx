@@ -32,12 +32,12 @@ export function ListRow({
   tone?: Tone;
   className?: string;
 }) {
-  const base = `flex items-center gap-3 rounded-xl border px-3 py-2.5 ${toneClass[tone]} ${className}`;
+  const base = `flex items-center gap-3 rounded-[13px] border px-3 py-2.5 ${toneClass[tone]} ${className}`;
   const inner = (
     <>
       {leading && <div className="shrink-0">{leading}</div>}
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-ink">{title}</div>
+        <div className="truncate text-sm font-bold text-ink">{title}</div>
         {subtitle && (
           <div className="truncate text-xs text-ink-muted">{subtitle}</div>
         )}

@@ -32,14 +32,14 @@ export function SessionTimer({ createdAt, ttlMs = 3600000 }: SessionTimerProps) 
 
   let colorClass = 'text-ink-muted';
   if (minutes < 5) {
-    colorClass = 'text-danger';
+    colorClass = 'text-danger-weak-ink';
   } else if (minutes < 10) {
-    colorClass = 'text-warn';
+    colorClass = 'text-warn-weak-ink';
   }
 
   if (remaining <= 0) {
     return (
-      <span className="flex items-center gap-1 text-xs text-danger font-medium">
+      <span className="flex items-center gap-1 text-xs text-danger-weak-ink font-semibold">
         <Clock className="w-3.5 h-3.5" />
         Expired
       </span>
@@ -47,7 +47,7 @@ export function SessionTimer({ createdAt, ttlMs = 3600000 }: SessionTimerProps) 
   }
 
   return (
-    <span className={`flex items-center gap-1 text-xs font-mono font-medium ${colorClass}`}>
+    <span dir="ltr" className={`flex items-center gap-1 text-xs font-mono font-semibold ${colorClass}`}>
       <Clock className="w-3.5 h-3.5" />
       {String(minutes).padStart(2, '0')}:{String(seconds).padStart(2, '0')}
     </span>

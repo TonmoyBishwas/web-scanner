@@ -12,7 +12,7 @@ const toneClass: Record<Tone, string> = {
 };
 
 /**
- * Card — the one surface primitive. Default is a white raised panel with a
+ * Card — the one surface primitive. Default is a dark raised panel with a
  * hairline border; `tone` tints it for alert/status contexts. Presentational
  * only; pass already-translated content.
  */
@@ -29,7 +29,7 @@ export function Card({
 }) {
   const Comp = as ?? 'div';
   return (
-    <Comp className={`rounded-2xl border p-4 ${toneClass[tone]} ${className}`}>
+    <Comp className={`rounded-[14px] border p-3.5 ${toneClass[tone]} ${className}`}>
       {children}
     </Comp>
   );

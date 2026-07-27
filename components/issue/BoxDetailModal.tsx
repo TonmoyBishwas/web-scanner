@@ -21,19 +21,23 @@ export function BoxDetailModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60">
-      <div className="w-full max-w-md bg-raised rounded-t-2xl p-6">
-        <h2 className="text-xl font-bold text-ink mb-4">{tr('components.boxDetail.issueThisBoxQ')}</h2>
+      <div className="w-full max-w-md bg-raised border-t border-line-strong rounded-t-[20px] p-6 pt-3 safe-bottom animate-slideInUp">
+        {/* Drag-handle pill */}
+        <div className="flex justify-center mb-3">
+          <div className="w-9 h-1 rounded-full bg-line-strong" />
+        </div>
+        <h2 className="text-xl font-extrabold text-ink mb-4">{tr('components.boxDetail.issueThisBoxQ')}</h2>
 
-        <div className="space-y-3 mb-6">
+        <div className="mb-6">
           <DetailRow label={tr('components.boxDetail.itemName')} value={box.item_name} />
-          <DetailRow label={tr('components.boxDetail.sku')} value={box.sku} />
-          <DetailRow label={tr('components.boxDetail.weight')} value={`${box.weight} kg`} highlight />
-          <DetailRow label={tr('components.boxDetail.expiry')} value={box.expiry || na} />
+          <DetailRow label={tr('components.boxDetail.sku')} value={box.sku} mono />
+          <DetailRow label={tr('components.boxDetail.weight')} value={`${box.weight} kg`} highlight mono />
+          <DetailRow label={tr('components.boxDetail.expiry')} value={box.expiry || na} mono />
           <DetailRow label={tr('components.boxDetail.supplier')} value={box.supplier} />
-          <DetailRow label={tr('components.boxDetail.invoice')} value={box.invoice_number || na} />
-          <DetailRow label={tr('components.boxDetail.received')} value={box.received_date || na} />
+          <DetailRow label={tr('components.boxDetail.invoice')} value={box.invoice_number || na} mono />
+          <DetailRow label={tr('components.boxDetail.received')} value={box.received_date || na} mono />
           {box.production_date && (
-            <DetailRow label={tr('components.boxDetail.production')} value={box.production_date} />
+            <DetailRow label={tr('components.boxDetail.production')} value={box.production_date} mono />
           )}
         </div>
 
@@ -41,14 +45,14 @@ export function BoxDetailModal({
           <button
             onClick={onCancel}
             disabled={isLoading}
-            className="flex-1 py-3 rounded-lg bg-sunken text-ink font-medium hover:bg-hover disabled:opacity-50 transition-colors"
+            className="flex-1 h-12 rounded-xl bg-tile border border-line-strong text-ink font-bold hover:bg-hover disabled:opacity-50 transition-colors"
           >
             {tr('common.cancel')}
           </button>
           <button
             onClick={onConfirm}
             disabled={isLoading}
-            className="flex-1 py-3 rounded-lg bg-ok text-ink-inverse font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
+            className="flex-1 h-12 rounded-xl bg-ok text-canvas font-extrabold hover:opacity-90 disabled:opacity-50 transition-opacity"
           >
             {isLoading ? (
               <span className="flex items-center justify-center gap-2">
@@ -69,16 +73,21 @@ function DetailRow({
   label,
   value,
   highlight,
+  mono,
 }: {
   label: string;
   value: string;
   highlight?: boolean;
+  mono?: boolean;
 }) {
   return (
-    <div className="flex justify-between items-center">
-      <span className="text-ink-muted text-sm">{label}</span>
+    <div className="flex justify-between items-center gap-3 py-2 border-b border-line last:border-b-0">
+      <span className="text-ink-muted text-sm font-semibold">{label}</span>
       <span
-        className={`font-medium ${highlight ? 'text-ok text-lg' : 'text-ink'}`}
+        dir={mono ? 'ltr' : undefined}
+        className={`${mono ? 'font-mono' : ''} ${
+          highlight ? 'text-ok-weak-ink text-lg font-extrabold' : 'text-ink font-bold'
+        } text-end break-all`}
       >
         {value}
       </span>

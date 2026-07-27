@@ -26,7 +26,7 @@ export function PhotoGallery({ images, ocrResults, onClose }: PhotoGalleryProps)
         <div className="flex items-center justify-between px-4 py-3 border-b border-line">
           <div className="flex items-center gap-2">
             <ImageIcon className="w-5 h-5 text-brand" />
-            <span className="text-ink font-bold">
+            <span className="text-ink font-extrabold">
               {tr('components.photoGallery.galleryTitle', { count: entries.length })}
             </span>
           </div>
@@ -59,7 +59,7 @@ export function PhotoGallery({ images, ocrResults, onClose }: PhotoGalleryProps)
                   </div>
                   {/* OCR data overlay */}
                   <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-2">
-                    <p className="text-[10px] font-mono text-white/60">
+                    <p className="text-[10px] font-mono text-white/60" dir="ltr">
                       #{barcode.slice(-6)}
                     </p>
                     {ocr ? (
@@ -68,7 +68,7 @@ export function PhotoGallery({ images, ocrResults, onClose }: PhotoGalleryProps)
                           {ocr.product_name || ocr.product_name_hebrew || tr('common.unknown')}
                         </p>
                         {ocr.weight_kg && (
-                          <p className="text-[10px] text-white/80">
+                          <p className="text-[10px] font-mono text-white/80" dir="ltr">
                             {ocr.weight_kg} kg
                           </p>
                         )}

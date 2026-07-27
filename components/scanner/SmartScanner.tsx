@@ -789,7 +789,7 @@ export function SmartScanner({
   // Loading state
   if (isSupported === null) {
     return (
-      <div className={`w-full bg-cam-scrim rounded-lg flex items-center justify-center ${className || 'aspect-square'}`}>
+      <div className={`w-full bg-cam-scrim rounded-xl flex items-center justify-center ${className || 'aspect-square'}`}>
         <p className="text-cam-ink-muted">{tr('scanner.initializing')}</p>
       </div>
     );
@@ -798,7 +798,7 @@ export function SmartScanner({
   // Browser not supported
   if (!isSupported) {
     return (
-      <div className={`w-full bg-cam-scrim rounded-lg flex flex-col items-center justify-center gap-3 p-6 ${className || 'aspect-square'}`}>
+      <div className={`w-full bg-cam-scrim rounded-xl flex flex-col items-center justify-center gap-3 p-6 ${className || 'aspect-square'}`}>
         <AlertTriangle className="w-10 h-10 text-warn" />
         <p className="text-cam-ink font-medium text-center">{tr('scanner.notSupportedTitle')}</p>
         <p className="text-cam-ink-muted text-sm text-center">
@@ -810,7 +810,7 @@ export function SmartScanner({
 
   // Native scanner
   return (
-    <div className={`relative w-full bg-black rounded-lg overflow-hidden ${className || 'aspect-square'}`}>
+    <div className={`relative w-full bg-black rounded-xl overflow-hidden ${className || 'aspect-square'}`}>
       <video
         ref={videoRef}
         className="absolute inset-0 w-full h-full object-cover"
@@ -838,7 +838,7 @@ export function SmartScanner({
       {/* Camera flash overlay */}
       {flashColor && (
         <div
-          className={`absolute inset-0 pointer-events-none ${flashColor === 'green' ? 'bg-green-400/70' : 'bg-red-500/70'
+          className={`absolute inset-0 pointer-events-none ${flashColor === 'green' ? 'bg-ok/70' : 'bg-danger/70'
             }`}
           style={{
             animation: 'cameraFlash 0.2s ease-out',
@@ -849,19 +849,19 @@ export function SmartScanner({
 
       {/* Diagnostic overlay — visible camera state for debugging silent failures */}
       {diag.state !== 'ready' && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 text-white p-6 text-center">
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-cam-scrim text-cam-ink p-6 text-center">
           {diag.state === 'init' && (
             <>
-              <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-white mb-4" />
-              <p className="text-base font-medium">{tr('scanner.requestingPermission')}</p>
-              <p className="text-xs text-gray-400 mt-2">{tr('scanner.permissionHint')}</p>
+              <div className="animate-spin rounded-full h-10 w-10 border-2 border-line-strong border-t-brand mb-4" />
+              <p className="text-base font-bold">{tr('scanner.requestingPermission')}</p>
+              <p className="text-xs text-cam-ink-muted mt-2">{tr('scanner.permissionHint')}</p>
             </>
           )}
           {diag.state === 'no_cameras' && (
             <>
-              <AlertTriangle className="w-10 h-10 text-amber-400 mb-3" />
-              <p className="text-base font-semibold">{tr('scanner.noCamerasTitle')}</p>
-              <p className="text-xs text-gray-300 mt-2 max-w-xs">
+              <AlertTriangle className="w-10 h-10 text-warn mb-3" />
+              <p className="text-base font-extrabold">{tr('scanner.noCamerasTitle')}</p>
+              <p className="text-xs text-cam-ink-muted mt-2 max-w-xs">
                 {tr('scanner.noCamerasDesc')}
               </p>
               <button
@@ -869,7 +869,7 @@ export function SmartScanner({
                   setDiag({ state: 'init' });
                   enumerateCameras();
                 }}
-                className="mt-4 bg-white text-gray-900 px-5 py-2 rounded-lg text-sm font-semibold"
+                className="mt-4 tap-target bg-brand hover:bg-brand-hover active:bg-brand-active text-ink-inverse px-5 py-2 rounded-xl text-sm font-extrabold"
               >
                 {tr('common.retry')}
               </button>
@@ -877,12 +877,12 @@ export function SmartScanner({
           )}
           {diag.state === 'error' && (
             <>
-              <AlertTriangle className="w-10 h-10 text-red-400 mb-3" />
-              <p className="text-base font-semibold">{tr('scanner.cameraErrorTitle')}</p>
-              <p className="text-xs text-red-200 mt-2 break-words max-w-xs font-mono" dir="ltr">
+              <AlertTriangle className="w-10 h-10 text-danger mb-3" />
+              <p className="text-base font-extrabold">{tr('scanner.cameraErrorTitle')}</p>
+              <p className="text-xs text-danger-weak-ink mt-2 break-words max-w-xs font-mono" dir="ltr">
                 {diag.message}
               </p>
-              <p className="text-xs text-gray-400 mt-3 max-w-xs">
+              <p className="text-xs text-cam-ink-muted mt-3 max-w-xs">
                 {tr('scanner.cameraErrorHint')}
               </p>
               <button
@@ -890,7 +890,7 @@ export function SmartScanner({
                   setDiag({ state: 'init' });
                   enumerateCameras();
                 }}
-                className="mt-4 bg-white text-gray-900 px-5 py-2 rounded-lg text-sm font-semibold"
+                className="mt-4 tap-target bg-brand hover:bg-brand-hover active:bg-brand-active text-ink-inverse px-5 py-2 rounded-xl text-sm font-extrabold"
               >
                 {tr('common.retry')}
               </button>
@@ -908,9 +908,9 @@ export function SmartScanner({
             {/* === COOLDOWN STATE === */}
             {isInCooldown && (
               <>
-                <div className="absolute inset-0 border-[3px] border-red-500 rounded" />
+                <div className="absolute inset-0 border-[3px] border-danger rounded-xl" />
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-6xl font-bold text-red-400">
+                  <span className="text-6xl font-mono font-extrabold text-danger-weak-ink" dir="ltr">
                     {cooldownTimeLeft}
                   </span>
                 </div>
@@ -920,9 +920,9 @@ export function SmartScanner({
             {/* === DUPLICATE STATE === */}
             {!isInCooldown && isDuplicate && (
               <>
-                <div className="absolute inset-0 border-[3px] border-red-500 rounded" />
+                <div className="absolute inset-0 border-[3px] border-danger rounded-xl" />
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="text-base font-semibold text-red-400">{tr('scanner.alreadyScanned')}</span>
+                  <span className="text-base font-bold text-danger-weak-ink">{tr('scanner.alreadyScanned')}</span>
                 </div>
               </>
             )}
@@ -931,7 +931,7 @@ export function SmartScanner({
             {!isInCooldown && !isDuplicate && (
               <>
                 {/* Dim green base border (shows unfilled portion) */}
-                <div className="absolute inset-0 border-[3px] border-green-400/25 rounded" />
+                <div className="absolute inset-0 border-[3px] border-ok/25 rounded-xl" />
 
                 {/* SVG trail overlay */}
                 <svg
@@ -942,9 +942,9 @@ export function SmartScanner({
                   <rect
                     x="1.5" y="1.5"
                     width="237" height="237"
-                    rx="4"
+                    rx="10"
                     fill="none"
-                    stroke="rgb(74, 222, 128)"
+                    stroke="var(--ok)"
                     strokeWidth="3"
                     pathLength="1"
                     strokeDasharray="1"
@@ -964,14 +964,14 @@ export function SmartScanner({
         </div>
         {/* Active scanner indicator */}
         <div className="absolute top-2 left-2">
-          <div className={`flex items-center gap-1 px-2 py-1 rounded-full ${
-            (isInCooldown || isDuplicate) ? 'bg-red-600/80' : 'bg-green-600/80'
+          <div className={`flex items-center gap-1 px-2 py-1 rounded-full backdrop-blur-sm border border-cam-border ${
+            (isInCooldown || isDuplicate) ? 'bg-danger/80' : 'bg-ok/80'
           }`}>
             <div className={`w-2 h-2 rounded-full ${
-              (isInCooldown || isDuplicate) ? 'bg-red-300' : 'bg-green-300 animate-pulse'
+              (isInCooldown || isDuplicate) ? 'bg-danger-weak-ink' : 'bg-ok-weak-ink animate-pulse'
             }`}></div>
             {isInCooldown ? (
-              <span className="text-cam-ink text-xs font-bold">{cooldownTimeLeft}s</span>
+              <span className="text-cam-ink text-xs font-mono font-bold" dir="ltr">{cooldownTimeLeft}s</span>
             ) : isDuplicate ? (
               <span className="text-cam-ink text-xs font-bold">{tr('scanner.duplicateBadge')}</span>
             ) : (
@@ -1005,7 +1005,7 @@ export function SmartScanner({
           <>
             {showCaptureHint && (
               <div className="absolute bottom-16 inset-x-0 flex justify-center px-4 pointer-events-none">
-                <span className="text-xs text-amber-100 bg-black/60 px-3 py-1 rounded-full text-center max-w-[260px]">
+                <span className="text-xs font-semibold text-warn-weak-ink bg-cam-chip border border-cam-border backdrop-blur-sm px-3 py-1 rounded-full text-center max-w-[260px]">
                   {tr('scanner.captureHint')}
                 </span>
               </div>
@@ -1014,15 +1014,15 @@ export function SmartScanner({
               <button
                 onClick={handleManualCaptureClick}
                 disabled={captureBusy}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-semibold transition-all backdrop-blur-sm border disabled:opacity-50 ${
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-bold transition-all backdrop-blur-sm border disabled:opacity-50 ${
                   showCaptureHint
-                    ? 'bg-warn text-ink-inverse border-warn animate-pulse shadow-lg scale-105'
+                    ? 'bg-warn text-canvas border-warn animate-pulse shadow-lg scale-105'
                     : 'bg-cam-chip text-cam-ink border-cam-border'
                 }`}
               >
                 <Camera className="w-4 h-4" /> {tr('scanner.captureAnyway')}
                 {hardwareTriggerEnabled && (
-                  <span className="ms-1 text-[10px] text-ok font-medium">
+                  <span className={`ms-1 text-[10px] font-semibold ${showCaptureHint ? 'text-canvas/80' : 'text-ok-weak-ink'}`}>
                     {tr('scanner.hardwareTriggerOn')}
                   </span>
                 )}

@@ -136,7 +136,7 @@ export function MeatManualCountFlow({
           </button>
           <div className="flex items-center gap-2">
             <AlertTriangle className="w-5 h-5 text-warn" />
-            <h1 className="text-lg font-bold">{tr('meatManual.title')}</h1>
+            <h1 className="text-lg font-extrabold text-ink">{tr('meatManual.title')}</h1>
           </div>
           <div className="text-xs text-ink-muted mt-0.5">
             {tr('meatManual.pallet', { current: session.current_pallet, total: session.pallet_count })}
@@ -146,7 +146,7 @@ export function MeatManualCountFlow({
         </div>
 
         {error && (
-          <div className="mx-4 mt-3 bg-danger-weak border border-danger text-danger rounded-xl px-3 py-2 text-sm">
+          <div className="mx-4 mt-3 bg-danger-weak border border-danger/40 text-danger-weak-ink rounded-xl px-3 py-2 text-sm">
             {error}
           </div>
         )}
@@ -156,9 +156,9 @@ export function MeatManualCountFlow({
             <div className="text-sm text-ink-muted py-4">{tr('meatManual.noItems')}</div>
           )}
           {rows.map((r) => (
-            <div key={r.item_key} className="bg-raised rounded-xl border border-line p-3">
+            <div key={r.item_key} className="bg-raised rounded-[14px] border border-line p-3">
               <div className="min-w-0">
-                <div className="font-medium truncate">{r.name}</div>
+                <div className="font-bold text-ink truncate">{r.name}</div>
                 <div className="text-xs text-ink-muted">
                   {r.capped
                     ? `${tr('meatManual.invoiceBoxes', { count: r.invoice_boxes })} · ${tr('meatManual.remaining', { count: r.remaining })}`
@@ -169,10 +169,10 @@ export function MeatManualCountFlow({
                 <button
                   onClick={() => setCount(r.item_key, r.count - 1)}
                   disabled={r.count <= 0}
-                  className="w-9 h-9 rounded-lg bg-sunken text-ink-body disabled:opacity-40 flex items-center justify-center"
+                  className="w-11 h-11 rounded-xl bg-hover border border-line-strong text-ink disabled:opacity-40 flex items-center justify-center"
                   aria-label="decrease"
                 >
-                  <Minus className="w-4 h-4" />
+                  <Minus className="w-5 h-5" />
                 </button>
                 <input
                   type="number"
@@ -180,23 +180,24 @@ export function MeatManualCountFlow({
                   min={0}
                   max={r.capped ? r.remaining : undefined}
                   value={r.count}
+                  dir="ltr"
                   onChange={(e) => setCount(r.item_key, Number(e.target.value))}
-                  className="w-20 text-center text-lg font-bold text-ink bg-sunken rounded-lg py-1.5 outline-none focus:ring-2 focus:ring-blue-300"
+                  className="w-20 text-center text-xl font-bold font-mono text-ink bg-sunken border border-line-strong rounded-xl py-2 outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
                 />
                 <button
                   onClick={() => setCount(r.item_key, r.count + 1)}
                   disabled={r.capped && r.count >= r.remaining}
-                  className="w-9 h-9 rounded-lg bg-sunken text-ink-body disabled:opacity-40 flex items-center justify-center"
+                  className="w-11 h-11 rounded-xl bg-brand-weak border border-brand/40 text-brand-weak-ink disabled:opacity-40 flex items-center justify-center"
                   aria-label="increase"
                 >
-                  <Plus className="w-4 h-4" />
+                  <Plus className="w-5 h-5" />
                 </button>
               </div>
             </div>
           ))}
         </div>
 
-        <div className="sticky bottom-0 bg-raised border-t border-line px-4 py-3">
+        <div className="sticky bottom-0 bg-header border-t border-line px-4 py-3 safe-bottom">
           <div className="flex items-center justify-between mb-2 text-sm">
             <span className="text-ink-muted">{tr('meatManual.totalBoxes', { count: totalBoxes })}</span>
           </div>
@@ -206,7 +207,7 @@ export function MeatManualCountFlow({
           <button
             onClick={finish}
             disabled={!canFinish}
-            className="w-full py-3.5 rounded-xl font-semibold text-base bg-ok text-ink-inverse disabled:bg-sunken disabled:text-ink-muted inline-flex items-center justify-center gap-2"
+            className="w-full py-3.5 rounded-xl font-extrabold text-base bg-ok text-canvas disabled:bg-sunken disabled:text-ink-muted inline-flex items-center justify-center gap-2"
           >
             {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
             {tr('meatManual.finish', { current: session.current_pallet })}
