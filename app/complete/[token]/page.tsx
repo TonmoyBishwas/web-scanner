@@ -1,18 +1,49 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { scannerAPI } from '@/lib/api';
-import { CheckCircle, AlertTriangle, Check } from 'lucide-react';
+import { CheckCircle, AlertTriangle, Check, Share2 } from 'lucide-react';
 import { useLangDir, useT, LanguageContext } from '@/lib/i18n';
 import type { Language, ScanSession } from '@/types';
 
 function CompleteContent({ session }: { session: ScanSession }) {
   const tr = useT();
+  const [shareToast, setShareToast] = useState(false);
+  const shareToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const scannedItems = Object.values(session.scanned_items || {});
   const totalScans = session.scanned_barcodes?.length || 0;
   const totalWeight = scannedItems.reduce((sum, item) => sum + item.scanned_weight, 0);
+
+  async function handleShare() {
+    const lines = [
+      `${tr('complete.summary')} — ${tr('complete.title')}`,
+      `${tr('complete.totalScanned')}: ${totalScans}`,
+      `${tr('complete.totalWeightLabel')}: ${totalWeight.toFixed(2)} kg`,
+      ...scannedItems.map(
+        item => `• ${item.item_name}: ${tr('complete.boxesUnit', { count: item.scanned_count })}, ${item.scanned_weight.toFixed(2)} kg`
+      ),
+    ];
+    const text = lines.join('\n');
+    if (navigator.share) {
+      try {
+        await navigator.share({ text });
+        return;
+      } catch (e) {
+        // user dismissed the sheet — done; anything else → clipboard fallback
+        if ((e as DOMException)?.name === 'AbortError') return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setShareToast(true);
+      if (shareToastTimer.current) clearTimeout(shareToastTimer.current);
+      shareToastTimer.current = setTimeout(() => setShareToast(false), 2400);
+    } catch {
+      // clipboard unavailable — nothing sensible to do
+    }
+  }
 
   return (
     <div className="min-h-screen bg-canvas text-ink p-4">
@@ -82,13 +113,27 @@ function CompleteContent({ session }: { session: ScanSession }) {
           </p>
         </div>
 
-        {/* Close Button */}
+        {/* Share + Close */}
+        <button
+          onClick={handleShare}
+          className="w-full mt-6 h-12 bg-brand-weak border border-brand/40 text-brand-weak-ink rounded-xl font-bold hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+        >
+          <Share2 className="w-4 h-4" /> {tr('complete.shareButton')}
+        </button>
         <button
           onClick={() => window.close()}
-          className="w-full mt-6 h-12 bg-tile border border-line-strong text-ink rounded-xl font-bold hover:bg-hover transition-colors"
+          className="w-full mt-2 h-12 bg-tile border border-line-strong text-ink rounded-xl font-bold hover:bg-hover transition-colors"
         >
           {tr('complete.closeButton')}
         </button>
+
+        {/* Copied toast (clipboard fallback feedback) */}
+        {shareToast && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-[#0d171d] border border-line-strong rounded-xl px-4 py-2.5 shadow-lg animate-toastIn">
+            <Check className="w-4 h-4 text-ok" />
+            <span className="text-sm font-bold text-ink">{tr('complete.shareCopied')}</span>
+          </div>
+        )}
       </div>
     </div>
   );

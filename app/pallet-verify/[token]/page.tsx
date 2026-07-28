@@ -18,8 +18,12 @@ import {
   Printer,
   Plus,
   Check,
+  Lock,
+  Tag,
+  Send,
 } from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
+import { SwipeConfirm } from '@/components/shared/SwipeConfirm';
 import { NonMeatTypeAFlow } from './NonMeatTypeAFlow';
 import { MeatManualCountFlow, type PalletCompleteResult } from './MeatManualCountFlow';
 import { DebugLogPanel } from '@/components/shared/DebugLogPanel';
@@ -280,6 +284,9 @@ export default function PalletVerifyPage({
   // declared (likely a miscount) and taps "Create LPN anyway", this opens a
   // warning modal before the pallet is confirmed with the actual scanned count.
   const [pendingForceConfirm, setPendingForceConfirm] = useState(false);
+  // "Locked" toast for design tools that have no backend yet (labels / send task).
+  const [lockedToastVisible, setLockedToastVisible] = useState(false);
+  const lockedToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── AI consolidation: debounced call after scans settle ──
   //
@@ -1843,23 +1850,26 @@ export default function PalletVerifyPage({
         {/* Footer */}
         <div className="p-4 bg-header border-t border-line sticky bottom-0 safe-bottom">
           {error && <p className="text-danger-weak-ink text-sm text-center mb-2">{error}</p>}
-          <button
-            onClick={handleConfirmLooseBoxes}
-            disabled={!canConfirmLoose || phase === 'loose_confirming'}
-            className={`w-full py-3 rounded-xl font-extrabold text-base transition ${
-              canConfirmLoose && phase !== 'loose_confirming'
-                ? 'bg-warn text-canvas hover:opacity-90 active:opacity-80'
-                : 'bg-sunken text-ink-muted cursor-not-allowed'
-            }`}
-          >
-            {canConfirmLoose
-              ? tr('palletVerify.confirmLooseBtn', { count: scanned })
-              : hasUnresolvedLooseWarnings
-              ? tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })
-              : declared > 0
-              ? tr('palletVerify.scanMoreLoose', { count: Math.max(0, declared - scanned) })
-              : tr('palletVerify.scanAtLeast2')}
-          </button>
+          {canConfirmLoose && phase !== 'loose_confirming' ? (
+            <SwipeConfirm
+              variant="warn"
+              onConfirm={handleConfirmLooseBoxes}
+              label={tr('palletVerify.swipeConfirmLoose', { count: scanned })}
+            />
+          ) : (
+            <button
+              disabled
+              className="w-full py-3 rounded-xl font-extrabold text-base bg-sunken text-ink-muted cursor-not-allowed"
+            >
+              {canConfirmLoose
+                ? tr('palletVerify.confirmLooseBtn', { count: scanned })
+                : hasUnresolvedLooseWarnings
+                ? tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })
+                : declared > 0
+                ? tr('palletVerify.scanMoreLoose', { count: Math.max(0, declared - scanned) })
+                : tr('palletVerify.scanAtLeast2')}
+            </button>
+          )}
           {hasUnresolvedLooseWarnings && (
             <p className="flex items-center justify-center gap-1 text-[11px] text-warn-weak-ink text-center mt-1.5">
               <AlertTriangle className="w-3 h-3 shrink-0" /> {tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })}
@@ -2248,15 +2258,17 @@ export default function PalletVerifyPage({
               >
                 <AlertTriangle className="w-4 h-4" /> {tr('palletVerify.forceCreateBtn')}
               </button>
+            ) : canConfirm && phase !== 'confirming' ? (
+              // Terminal design: swipe slider guards the pallet confirm
+              // against accidental taps. Same handler as the old button.
+              <SwipeConfirm
+                onConfirm={handleConfirmPallet}
+                label={tr('palletVerify.swipeConfirmPallet', { current: currentPallet })}
+              />
             ) : (
               <button
-                onClick={handleConfirmPallet}
-                disabled={!canConfirm || phase === 'confirming'}
-                className={`w-full py-3 rounded-xl font-extrabold text-base transition ${
-                  canConfirm && phase !== 'confirming'
-                    ? 'bg-ok text-canvas hover:opacity-90 active:bg-ok'
-                    : 'bg-sunken text-ink-muted cursor-not-allowed'
-                }`}
+                disabled
+                className="w-full py-3 rounded-xl font-extrabold text-base bg-sunken text-ink-muted cursor-not-allowed"
               >
                 {canConfirm
                   ? tr('palletVerify.confirmPalletBtn', { current: currentPallet })
@@ -2293,34 +2305,82 @@ export default function PalletVerifyPage({
             {tr('palletVerify.stickersDamaged')}
           </button>
         )}
+
+        {/* Terminal-design tools that need backend we don't have yet —
+            rendered locked (design's own lock-chip pattern), no-op on tap. */}
+        <div className="flex items-center justify-center gap-2 mt-3">
+          <button
+            onClick={() => {
+              setLockedToastVisible(true);
+              if (lockedToastTimer.current) clearTimeout(lockedToastTimer.current);
+              lockedToastTimer.current = setTimeout(() => setLockedToastVisible(false), 2400);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1a2530] border border-[#3a4a57] opacity-60 text-[11px] font-bold text-ink-muted"
+          >
+            <Lock className="w-3 h-3 text-[#f6b45a]" /> <Tag className="w-3 h-3" /> {tr('palletVerify.toolLabels')}
+          </button>
+          <button
+            onClick={() => {
+              setLockedToastVisible(true);
+              if (lockedToastTimer.current) clearTimeout(lockedToastTimer.current);
+              lockedToastTimer.current = setTimeout(() => setLockedToastVisible(false), 2400);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1a2530] border border-[#3a4a57] opacity-60 text-[11px] font-bold text-ink-muted"
+          >
+            <Lock className="w-3 h-3 text-[#f6b45a]" /> <Send className="w-3 h-3" /> {tr('palletVerify.toolAssign')}
+          </button>
+        </div>
+        {lockedToastVisible && (
+          <p className="text-[11px] text-warn-weak-ink text-center mt-1.5 animate-fadeIn">
+            {tr('palletVerify.featureLocked')}
+          </p>
+        )}
       </div>
       {imageModal}
       {editModal}
       {pendingForceConfirm && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-end justify-center">
-          <div className="bg-raised rounded-t-[20px] border-t border-line max-w-md w-full p-5 pb-6 space-y-4 shadow-[0_-18px_44px_rgba(0,0,0,0.72)] safe-bottom">
-            <div className="w-9 h-1 rounded-full bg-line-strong mx-auto" />
-            <div className="flex items-center gap-2 text-warn-weak-ink">
-              <AlertTriangle className="w-5 h-5 shrink-0" />
-              <h2 className="text-base font-extrabold text-ink">{tr('palletVerify.forceConfirmTitle')}</h2>
+        // Terminal design "פער מול התעודה" — amber discrepancy card with
+        // scanned/expected/shortfall tiles + swipe-to-confirm. Same handler
+        // wiring as the old force-confirm buttons.
+        <div className="fixed inset-0 z-50 bg-[rgba(5,8,10,0.74)] backdrop-blur-[3px] flex items-center justify-center p-[22px]">
+          <div className="w-full max-w-[330px] bg-[#1a1408] border border-[rgba(245,158,11,0.5)] rounded-[20px] px-5 py-[22px] shadow-[0_26px_64px_rgba(0,0,0,0.72)] animate-fadeUp">
+            <div className="flex justify-center mb-[13px]">
+              <div className="w-16 h-16 rounded-full bg-[rgba(245,158,11,0.16)] flex items-center justify-center">
+                <AlertTriangle className="w-[34px] h-[34px] text-[#fbbf5c]" />
+              </div>
             </div>
-            <p className="text-sm text-ink-body">
+            <h2 className="text-center text-[19px] font-black text-ink-inverse">{tr('palletVerify.discrepancyTitle')}</h2>
+            <p className="text-center text-xs font-semibold text-[#d8c9a0] mt-1">{tr('palletVerify.discrepancySubtitle')}</p>
+            <div className="flex gap-2 mt-4">
+              <div className="flex-1 bg-[#120d04] border border-[rgba(245,158,11,0.28)] rounded-[11px] px-1.5 py-2.5 text-center">
+                <div className="font-mono font-black text-base text-ink-inverse" dir="ltr">{committed}</div>
+                <div className="text-[8.5px] font-bold text-[#d8c9a0] mt-0.5">{tr('palletVerify.discrepancyScanned')}</div>
+              </div>
+              <div className="flex-1 bg-[#120d04] border border-[rgba(245,158,11,0.28)] rounded-[11px] px-1.5 py-2.5 text-center">
+                <div className="font-mono font-black text-base text-ink-inverse" dir="ltr">{confirmedBoxCount}</div>
+                <div className="text-[8.5px] font-bold text-[#d8c9a0] mt-0.5">{tr('palletVerify.discrepancyExpected')}</div>
+              </div>
+              <div className="flex-1 bg-[#120d04] border border-[rgba(245,158,11,0.28)] rounded-[11px] px-1.5 py-2.5 text-center">
+                <div className="font-mono font-black text-base text-[#fbbf5c]" dir="ltr">{Math.max(0, confirmedBoxCount - committed)}</div>
+                <div className="text-[8.5px] font-bold text-[#d8c9a0] mt-0.5">{tr('palletVerify.discrepancyShortfall')}</div>
+              </div>
+            </div>
+            <p className="text-center text-[11px] text-[#d8c9a0]/80 mt-3">
               {tr('palletVerify.forceConfirmWarning', { committed, declared: confirmedBoxCount })}
             </p>
-            <div className="space-y-2">
-              <button
-                onClick={() => { setPendingForceConfirm(false); handleConfirmPallet(); }}
-                className="w-full py-3 rounded-xl font-extrabold text-base bg-warn text-canvas hover:opacity-90 transition"
-              >
-                {tr('palletVerify.forceConfirmYes')}
-              </button>
-              <button
-                onClick={() => setPendingForceConfirm(false)}
-                className="w-full py-3 rounded-xl font-bold text-base bg-tile border border-line-strong text-ink hover:bg-hover transition"
-              >
-                {tr('palletVerify.forceConfirmNo')}
-              </button>
+            <div className="mt-4">
+              <SwipeConfirm
+                variant="warn"
+                label={tr('palletVerify.discrepancySwipe')}
+                onConfirm={() => { setPendingForceConfirm(false); handleConfirmPallet(); }}
+              />
             </div>
+            <button
+              onClick={() => setPendingForceConfirm(false)}
+              className="w-full mt-2 py-2 text-ink-muted text-xs font-extrabold hover:text-ink-body transition"
+            >
+              {tr('common.cancel')}
+            </button>
           </div>
         </div>
       )}
