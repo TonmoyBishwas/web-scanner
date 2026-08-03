@@ -48,31 +48,30 @@ function CompleteContent({ session }: { session: ScanSession }) {
   return (
     <div className="min-h-screen bg-canvas text-ink p-4">
       <div className="max-w-md mx-auto">
-        {/* Success Header */}
-        <div className="text-center mb-8 animate-fadeUp">
-          <div className="w-16 h-16 rounded-full bg-ok-weak flex items-center justify-center mx-auto mb-4 animate-donePop">
-            <CheckCircle className="w-9 h-9 text-ok" />
+        {/* Success Header — terminal done-card style */}
+        <div className="text-center mb-6 animate-fadeUp">
+          <div className="w-16 h-16 rounded-full bg-ok-weak flex items-center justify-center mx-auto mb-[13px] animate-donePop">
+            <CheckCircle className="w-9 h-9 text-[#4ade80]" />
           </div>
-          <h1 className="text-2xl font-extrabold mb-2">{tr('complete.title')}</h1>
-          <p className="text-ink-muted">{tr('complete.returnToWhatsApp')}</p>
+          <h1 className="text-[19px] font-black text-ink-inverse mb-1">{tr('complete.title')}</h1>
+          <p className="text-[12px] font-semibold text-ink-muted">{tr('complete.returnToWhatsApp')}</p>
         </div>
 
-        {/* Summary */}
-        <div className="bg-raised border border-line rounded-[14px] p-4 mb-6">
-          <h2 className="eyebrow mb-4">{tr('complete.summary')}</h2>
-          <div className="space-y-2">
-            <div className="flex justify-between items-center border-b border-line/60 pb-2">
-              <span className="text-sm text-ink-body">{tr('complete.totalScanned')}</span>
-              <span className="font-mono font-bold text-ink" dir="ltr">{totalScans}</span>
+        {/* Summary — design stat tiles */}
+        <div className="flex gap-2 mb-6">
+          <div className="flex-1 bg-sunken border border-line rounded-[11px] px-[6px] py-[10px] text-center">
+            <div className="text-[16px] font-black text-ink-inverse font-mono" dir="ltr">{totalScans}</div>
+            <div className="text-[9px] font-bold text-ink-muted mt-[2px]">{tr('complete.totalScanned')}</div>
+          </div>
+          <div className="flex-[1.3] bg-sunken border border-line rounded-[11px] px-[6px] py-[10px] text-center">
+            <div className="text-[16px] font-black text-ink-inverse font-mono" dir="ltr">
+              {totalWeight.toFixed(1)}<span className="text-[9px] font-sans font-extrabold text-ink-muted"> kg</span>
             </div>
-            <div className="flex justify-between items-center border-b border-line/60 pb-2">
-              <span className="text-sm text-ink-body">{tr('complete.totalWeightLabel')}</span>
-              <span className="font-mono font-bold text-ink" dir="ltr">{totalWeight.toFixed(2)} kg</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-ink-body">{tr('complete.itemsLabel')}</span>
-              <span className="font-mono font-bold text-ink" dir="ltr">{scannedItems.length}</span>
-            </div>
+            <div className="text-[9px] font-bold text-ink-muted mt-[2px]">{tr('complete.totalWeightLabel')}</div>
+          </div>
+          <div className="flex-1 bg-sunken border border-line rounded-[11px] px-[6px] py-[10px] text-center">
+            <div className="text-[16px] font-black text-ink-inverse font-mono" dir="ltr">{scannedItems.length}</div>
+            <div className="text-[9px] font-bold text-ink-muted mt-[2px]">{tr('complete.itemsLabel')}</div>
           </div>
         </div>
 
@@ -129,9 +128,9 @@ function CompleteContent({ session }: { session: ScanSession }) {
 
         {/* Copied toast (clipboard fallback feedback) */}
         {shareToast && (
-          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-[#0d171d] border border-line-strong rounded-xl px-4 py-2.5 shadow-lg animate-toastIn">
+          <div className="fixed bottom-[26px] left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-overlay-card border border-line-strong rounded-[12px] px-[15px] py-[10px] shadow-[0_14px_34px_rgba(0,0,0,.6)] animate-doneRise">
             <Check className="w-4 h-4 text-ok" />
-            <span className="text-sm font-bold text-ink">{tr('complete.shareCopied')}</span>
+            <span className="text-[12px] font-extrabold text-ink">{tr('complete.shareCopied')}</span>
           </div>
         )}
       </div>

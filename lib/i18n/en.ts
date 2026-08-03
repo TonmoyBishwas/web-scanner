@@ -564,6 +564,8 @@ export const en = {
   'terminal.scanningNow': 'Scanning now',
   'terminal.progressLabel': 'Receiving · Pallet {n} of {total}',
   'terminal.progressLabelLoose': 'Receiving · loose boxes',
+  'terminal.progressLabelCartons': 'Receiving · cartons',
+  'terminal.progressLabelIssue': 'Issuing · boxes',
   'terminal.progressLabelDone': 'Pallet {n} completed ✓',
   'terminal.progressLabelAllDone': 'All pallets received ✓',
   'terminal.cartonsCounter': '{count} / {total} cartons',

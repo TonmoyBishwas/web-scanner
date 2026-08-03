@@ -293,7 +293,7 @@ export default function PalletVerifyPage({
   const sheetRef = useRef<BottomSheetHandle>(null);
   const looseSheetRef = useRef<BottomSheetHandle>(null);
   const drawer = useDrawerHost();
-  const { toast, showToast, showLockToast } = useLockToast();
+  const { toast, showToast, showLockToast } = useLockToast(tr('terminal.lockedToast'));
   const [activeExpanded, setActiveExpanded] = useState(false);
   const [pendingNextPallet, setPendingNextPallet] = useState<number | null>(null);
 

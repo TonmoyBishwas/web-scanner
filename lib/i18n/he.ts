@@ -568,6 +568,8 @@ export const he: Record<TranslationKey, string> = {
   'terminal.scanningNow': 'נסרק כרגע',
   'terminal.progressLabel': 'קליטה · משטח {n} מתוך {total}',
   'terminal.progressLabelLoose': 'קליטה · קרטונים בודדים',
+  'terminal.progressLabelCartons': 'קליטה · קרטונים',
+  'terminal.progressLabelIssue': 'ניפוק · קרטונים',
   'terminal.progressLabelDone': 'משטח {n} הושלם ✓',
   'terminal.progressLabelAllDone': 'כל המשטחים נקלטו ✓',
   'terminal.cartonsCounter': '{count} / {total} קרטונים',

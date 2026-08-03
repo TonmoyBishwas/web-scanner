@@ -43,11 +43,14 @@ export function useToast(): {
 }
 
 // Preset: locked-feature feedback — amber lock + "נעול · לא זמין עדיין".
-export function useLockToast() {
+// ⚠ Pages that render their own LanguageContext.Provider must pass the
+// already-translated message (`lockedMessage`) — the hook itself runs ABOVE
+// that provider, so its useT() fallback would resolve to English there.
+export function useLockToast(lockedMessage?: string) {
   const { toast, showToast } = useToast();
   const tr = useT();
   const showLockToast = useCallback(() => {
-    showToast(tr('terminal.lockedToast'), 'lock', '#f6b45a');
-  }, [showToast, tr]);
+    showToast(lockedMessage ?? tr('terminal.lockedToast'), 'lock', '#f6b45a');
+  }, [showToast, tr, lockedMessage]);
   return { toast, showToast, showLockToast };
 }

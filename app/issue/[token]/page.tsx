@@ -14,7 +14,13 @@ import type {
   IssuedBox,
 } from '@/types';
 import { useLangDir, useT, LanguageContext, t } from '@/lib/i18n';
-import { SettingsPopover } from '@/components/shared/SettingsPopover';
+import { DesignHeader } from '@/components/terminal/DesignHeader';
+import { ProgressHeader } from '@/components/terminal/ProgressHeader';
+import { BottomSheet } from '@/components/terminal/BottomSheet';
+import { ToolDock, type ToolChip } from '@/components/terminal/ToolDock';
+import { PalletIcon } from '@/components/terminal/MI';
+import { Toast, useLockToast } from '@/components/terminal/Toast';
+import { useDrawerHost } from '@/components/terminal/DrawerHost';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
 
@@ -363,6 +369,10 @@ function IssueRender({
   handleCancelDetail,
 }: IssueRenderProps) {
   const tr = useT();
+  // Terminal chrome — IssueRender lives under LanguageContext.Provider, so
+  // the context-translating hooks resolve the session language correctly.
+  const drawer = useDrawerHost();
+  const { toast: infoToast, showToast: showInfoToast, showLockToast } = useLockToast();
 
   // Loading
   if (phase === 'loading') {
@@ -449,9 +459,37 @@ function IssueRender({
     );
   }
 
-  // Scanning / Box Detail
+  // Scanning / Box Detail — terminal main screen
+  const shareIssued = async () => {
+    const lines = issuedBoxes.map((b, i) => `${i + 1}. ${b.item_name} · ${b.weight} kg`);
+    const text = [tr('issue.summaryTitle'), ...lines].join('\n');
+    try {
+      if (navigator.share) { await navigator.share({ text }); return; }
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      showInfoToast(tr('terminal.shareCopied'));
+    } catch { /* no fallback left */ }
+  };
+
+  const issueDockChips: ToolChip[] = [
+    { id: 'create', icon: 'add', label: tr('terminal.toolCreateCarton'), tint: 'blue', iconColor: '#33b1f0', locked: true },
+    { id: 'labels', icon: 'label', label: tr('terminal.toolLabels'), tint: 'neutral', locked: true },
+    { id: 'warehouses', icon: 'warehouse', label: tr('terminal.toolWarehouses'), tint: 'neutral', locked: true },
+    { id: 'pallets', icon: <PalletIcon />, label: tr('terminal.toolPallets'), tint: 'neutral', locked: true },
+    { id: 'delete', icon: 'delete_sweep', label: tr('terminal.toolDelete'), tint: 'red', locked: true },
+    { id: 'share', icon: 'ios_share', label: tr('terminal.toolShare'), tint: 'blue', onPress: shareIssued },
+    { id: 'assign', icon: 'send', flip: true, label: tr('terminal.toolAssign'), tint: 'green', locked: true },
+    {
+      id: 'gap', icon: 'report_problem', label: tr('terminal.toolGap'), tint: 'amber', iconColor: '#fbbf5c',
+      onPress: () => showInfoToast(tr('terminal.gapNotApplicable'), 'report_problem', '#fbbf5c'),
+    },
+  ];
+
   return (
-    <div className="min-h-screen bg-canvas text-ink flex flex-col">
+    <div className="h-dvh bg-canvas text-ink flex flex-col overflow-hidden">
       {/* Flash overlay */}
       {flashColor && (
         <div
@@ -461,53 +499,64 @@ function IssueRender({
         />
       )}
 
-      {/* Toast */}
+      {/* Toast (lookup feedback) */}
       {toastMessage && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-tile border border-line-strong text-ink px-4 py-2.5 rounded-full shadow-lg text-sm font-semibold max-w-xs text-center animate-toastIn">
           {toastMessage}
         </div>
       )}
 
-      {/* Header */}
-      <div className="bg-header border-b border-line p-4 safe-top flex justify-between items-center">
-        <div>
-          <h1 className="text-lg font-extrabold">{tr('issue.title')}</h1>
-          <p className="text-ink-muted text-sm">{tr('issue.headerSubtitle')}</p>
-          {session?.user_info && (
-            <p className="text-xs text-brand-weak-ink font-semibold mt-1">
-              {tr('issue.scanningAs', { nickname: session.user_info.nickname })}
-            </p>
-          )}
+      <DesignHeader
+        title={tr('issue.title')}
+        subtitle={
+          session?.user_info
+            ? tr('issue.scanningAs', { nickname: session.user_info.nickname })
+            : tr('issue.headerSubtitle')
+        }
+        onMenu={drawer.open}
+      />
+      <ProgressHeader
+        label={tr('terminal.progressLabelIssue')}
+        count={issuedBoxes.length}
+        total={0}
+        unitLabel={tr('terminal.statCartons')}
+        tone={issuedBoxes.length > 0 ? 'done' : 'brand'}
+      />
+
+      {/* Camera + floating sheet */}
+      <div className="flex-1 min-h-0 relative bg-black">
+        <div className="absolute inset-0">
+          <SmartScanner
+            frame="corner"
+            className="h-full"
+            onBarcodeDetected={handleBarcodeDetected}
+            scannedBarcodes={scannedBarcodes}
+            ocrResults={ocrResults}
+          />
         </div>
-        <div className="flex items-center gap-1">
-          <SettingsPopover />
-          <button
-            onClick={handleComplete}
-            disabled={issuedBoxes.length === 0}
-            className={`h-12 px-5 rounded-full font-extrabold transition-colors ${
-              issuedBoxes.length > 0
-                ? 'bg-brand text-ink-inverse hover:bg-brand-hover active:bg-brand-active'
-                : 'bg-sunken text-ink-muted cursor-not-allowed'
-            }`}
-          >
-            {tr('issue.doneButton', { count: issuedBoxes.length })}
-          </button>
-        </div>
+
+        <BottomSheet
+          toolbar={<ToolDock chips={issueDockChips} onLockedPress={showLockToast} />}
+          footer={
+            <button
+              onClick={handleComplete}
+              disabled={issuedBoxes.length === 0}
+              className={`w-full h-12 rounded-[13px] font-black text-[14px] transition-colors ${
+                issuedBoxes.length > 0
+                  ? 'bg-brand text-ink-inverse'
+                  : 'bg-sunken text-ink-muted cursor-not-allowed'
+              }`}
+            >
+              {tr('issue.doneButton', { count: issuedBoxes.length })}
+            </button>
+          }
+        >
+          <IssuedBoxList issuedBoxes={issuedBoxes} />
+        </BottomSheet>
       </div>
 
-      {/* Scanner */}
-      <div className="flex-1 relative">
-        <SmartScanner
-          onBarcodeDetected={handleBarcodeDetected}
-          scannedBarcodes={scannedBarcodes}
-          ocrResults={ocrResults}
-        />
-      </div>
-
-      {/* Issued boxes list */}
-      <div className="p-4">
-        <IssuedBoxList issuedBoxes={issuedBoxes} />
-      </div>
+      <Toast toast={infoToast} />
+      {drawer.node}
 
       {/* Box detail modal */}
       {phase === 'box_detail' && currentBox && (

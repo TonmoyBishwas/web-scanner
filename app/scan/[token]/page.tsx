@@ -5,32 +5,30 @@ import { SmartScanner } from '@/components/scanner/SmartScanner';
 import { ScannedList } from '@/components/progress/ScannedList';
 import { IssueResolution } from '@/components/progress/IssueResolution';
 import { ImageModal } from '@/components/shared/ImageModal';
-import { SettingsPopover } from '@/components/shared/SettingsPopover';
 import { SessionTimer } from '@/components/shared/SessionTimer';
 import { UndoToast } from '@/components/shared/UndoToast';
 import { InvoiceDrawer } from '@/components/shared/InvoiceDrawer';
-import { ProgressRing } from '@/components/shared/ProgressRing';
 import { OfflineBanner } from '@/components/shared/OfflineBanner';
 import { SwipeConfirm } from '@/components/shared/SwipeConfirm';
 import { PhotoGallery } from '@/components/shared/PhotoGallery';
+import { DesignHeader } from '@/components/terminal/DesignHeader';
+import { ProgressHeader } from '@/components/terminal/ProgressHeader';
+import { BottomSheet } from '@/components/terminal/BottomSheet';
+import { ToolDock, type ToolChip } from '@/components/terminal/ToolDock';
+import { PalletIcon } from '@/components/terminal/MI';
+import { Toast, useLockToast } from '@/components/terminal/Toast';
+import { useDrawerHost } from '@/components/terminal/DrawerHost';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
 import { queueScan, getQueue, replayQueue } from '@/lib/offline-queue';
 import {
-  Package,
   XCircle,
   CheckCircle,
-  Cpu,
-  Search,
-  Clock,
   Bug,
   ClipboardList,
   Check,
   X,
   Zap,
-  AlertTriangle,
-  FileText,
-  Image as ImageIcon,
 } from 'lucide-react';
 import type {
   Language,
@@ -92,6 +90,12 @@ export default function ScanPage({
   // Force confirm
   const [showForceConfirm, setShowForceConfirm] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  // Terminal chrome: side drawer host (session timer lives in its footer —
+  // the design header has no room for it) + lock/info toast.
+  const drawer = useDrawerHost(
+    session?.created_at ? <SessionTimer createdAt={session.created_at} /> : undefined,
+  );
+  const { toast: infoToast, showToast: showInfoToast, showLockToast } = useLockToast(tr('terminal.lockedToast'));
   const [manualEntries, setManualEntries] = useState<ManualEntryData[]>([]);
 
   // UI drawers & panels
@@ -942,79 +946,125 @@ export default function ScanPage({
     );
   }
 
-  // ── Main Scanner UI ───────────────────────────────────────────
+  // ── Main Scanner UI (terminal design) ─────────────────────────
   const isReadyToConfirm = phase === 'ready_confirm' ||
     (scannedBarcodes.size >= boxesExpected && pendingOCR.size === 0 && allIssuesResolved);
 
   const canForceConfirm = scannedBarcodes.size < boxesExpected && scannedBarcodes.size > 0;
 
+  // Share the scan list as text (WhatsApp sheet / clipboard fallback).
+  async function handleShareScan() {
+    const lines: string[] = [tr('scan.docPrefix', { doc: session?.document_number || '—' })];
+    let i = 1;
+    for (const [barcode] of scannedBarcodes) {
+      const ocr = ocrResults.get(barcode);
+      const nm = ocr?.product_name_hebrew || ocr?.product_name || '';
+      lines.push(`${i++}. ${nm ? `${nm} · ` : ''}${barcode}${ocr?.weight_kg ? ` · ${ocr.weight_kg} kg` : ''}`);
+    }
+    const text = lines.join('\n');
+    try {
+      if (navigator.share) {
+        await navigator.share({ text });
+        return;
+      }
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      showInfoToast(tr('terminal.shareCopied'));
+    } catch { /* nothing else to fall back to */ }
+  }
+
+  // Terminal tool dock: real actions (document, photos, share, gap, debug)
+  // + locked chips for features with no backend.
+  const scanDockChips: ToolChip[] = [
+    {
+      id: 'invoice', icon: 'description', label: tr('terminal.toolInvoice'), tint: 'blue', iconColor: '#33b1f0',
+      onPress: () => setShowInvoiceDrawer(true),
+    },
+    ...(ocrImageUrls.size > 0
+      ? [{
+          id: 'photos', icon: 'photo_library', label: tr('scan.photosButton', { count: ocrImageUrls.size }),
+          tint: 'neutral' as const, onPress: () => setShowPhotoGallery(true),
+        }]
+      : []),
+    { id: 'labels', icon: 'label', label: tr('terminal.toolLabels'), tint: 'neutral', locked: true },
+    { id: 'warehouses', icon: 'warehouse', label: tr('terminal.toolWarehouses'), tint: 'neutral', locked: true },
+    { id: 'pallets', icon: <PalletIcon />, label: tr('terminal.toolPallets'), tint: 'neutral', locked: true },
+    {
+      id: 'delete', icon: 'delete_sweep', label: tr('terminal.toolDelete'), tint: 'red',
+      onPress: () => showInfoToast(tr('terminal.deleteHint'), 'delete_sweep', '#ef8a8a'),
+    },
+    { id: 'share', icon: 'ios_share', label: tr('terminal.toolShare'), tint: 'blue', onPress: handleShareScan },
+    { id: 'assign', icon: 'send', flip: true, label: tr('terminal.toolAssign'), tint: 'green', locked: true },
+    {
+      id: 'gap', icon: 'report_problem', label: tr('terminal.toolGap'), tint: 'amber', iconColor: '#fbbf5c',
+      onPress: () =>
+        canForceConfirm && phase === 'scanning'
+          ? setShowForceConfirm(true)
+          : showInfoToast(tr('terminal.gapNotApplicable'), 'report_problem', '#fbbf5c'),
+    },
+    ...(errorLog.length > 0
+      ? [{
+          id: 'debug', icon: 'bug_report', label: tr('scan.debugButton', { count: errorLog.length }),
+          tint: 'red' as const, onPress: () => setShowDebugPanel(!showDebugPanel),
+        }]
+      : []),
+  ];
+
+  const scanFooter = (
+    <>
+      {canForceConfirm && phase === 'scanning' && (
+        <button
+          onClick={() => setShowForceConfirm(true)}
+          className="w-full h-12 bg-warn rounded-[13px] text-sm font-black text-canvas flex items-center justify-center gap-2 mb-2"
+        >
+          <Zap className="w-4 h-4" />
+          {tr('scan.forceConfirmButton', { count: boxesExpected - scannedBarcodes.size })}
+        </button>
+      )}
+      {isReadyToConfirm && (
+        <SwipeConfirm
+          onConfirm={handleConfirm}
+          label={tr('scan.slideToConfirm')}
+        />
+      )}
+      {scannedBarcodes.size > 0 && phase === 'scanning' && (
+        <p className="text-center text-xs text-ink-muted mt-2">
+          {pendingOCR.size > 0
+            ? tr('scan.boxesSummaryWithOcr', { count: scannedBarcodes.size, pending: pendingOCR.size })
+            : tr('scan.boxesSummary', { count: scannedBarcodes.size })}
+        </p>
+      )}
+    </>
+  );
+
   return (
    <LanguageContext.Provider value={language}>
-    <div className="min-h-screen bg-canvas text-ink flex flex-col">
+    <div className="h-dvh bg-canvas text-ink flex flex-col overflow-hidden">
       {/* ── Offline Banner ──────────────────────────────────── */}
       <OfflineBanner queueCount={offlineQueueCount} isSyncing={isSyncing} />
 
-      {/* ── Header ──────────────────────────────────────────── */}
-      <div className="sticky top-0 z-50 bg-header/95 backdrop-blur-md border-b border-line px-4 py-3 safe-top">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <ProgressRing current={scannedBarcodes.size} total={boxesExpected} />
-            <div>
-              <h1 className="text-sm font-extrabold">
-                <span dir="ltr" className="font-mono inline-block">
-                  <span
-                    className={`font-black ${scannedBarcodes.size >= boxesExpected ? 'text-ok' : 'text-ink'} transition-transform duration-300`}
-                    style={counterBounce ? { transform: 'scale(1.3)', display: 'inline-block' } : {}}
-                  >
-                    {scannedBarcodes.size}
-                  </span>
-                  <span className="text-ink-muted mx-1">/</span>
-                  <span className="text-ink-muted">{boxesExpected}</span>
-                </span>
-                <span className="text-xs text-ink-muted font-semibold ms-1.5">{tr('scan.boxesUnit')}</span>
-              </h1>
-              <div className="flex items-center gap-2 flex-wrap">
-                {session?.document_number && (
-                  <p className="text-xs text-ink-muted font-mono" dir="ltr">
-                    {tr('scan.docPrefix', { doc: session.document_number })}
-                  </p>
-                )}
-                {session?.user_info && (
-                  <>
-                    {session?.document_number && <span className="text-xs text-ink-muted">•</span>}
-                    <p className="text-xs text-ok font-medium">
-                      {tr('scan.scanningAs', { nickname: session.user_info.nickname })}
-                    </p>
-                  </>
-                )}
-                {session?.created_at && (
-                  <SessionTimer createdAt={session.created_at} />
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Right side: status + settings */}
-          <div className="flex items-center gap-2">
-            {pendingOCR.size > 0 && (
-              <span className="flex items-center gap-1.5 text-[10px] font-bold text-warn-weak-ink bg-warn-weak border border-warn/30 rounded-full px-2.5 py-1">
-                <div className="w-2 h-2 bg-warn rounded-full animate-pulse"></div>
-                {tr('scan.ocrPending', { count: pendingOCR.size })}
-              </span>
-            )}
-            <SettingsPopover />
-          </div>
-        </div>
-
-        {/* Progress bar (secondary) */}
-        <div className="mt-2 bg-sunken rounded-full h-1">
-          <div
-            className={`h-1 rounded-full transition-all duration-500 ${scannedBarcodes.size >= boxesExpected ? 'bg-ok' : 'bg-brand'}`}
-            aria-label={tr('scan.progressAria')}
-            style={{ width: `${boxesExpected > 0 ? Math.min(100, (scannedBarcodes.size / boxesExpected) * 100) : 0}%` }}
-          ></div>
-        </div>
-      </div>
+      {/* ── Header (terminal design) ─────────────────────────── */}
+      <DesignHeader
+        title={tr('scan.docPrefix', { doc: session?.document_number || '—' })}
+        subtitle={session?.user_info ? tr('scan.scanningAs', { nickname: session.user_info.nickname }) : undefined}
+        onMenu={drawer.open}
+        right={pendingOCR.size > 0 ? (
+          <span className="flex items-center gap-1.5 text-[10px] font-bold text-warn-weak-ink bg-warn-weak border border-warn/30 rounded-full px-2.5 py-1 me-1">
+            <span className="w-2 h-2 bg-warn rounded-full animate-pulse" />
+            {tr('scan.ocrPending', { count: pendingOCR.size })}
+          </span>
+        ) : undefined}
+      />
+      <ProgressHeader
+        label={tr('terminal.progressLabelCartons')}
+        count={scannedBarcodes.size}
+        total={boxesExpected}
+        unitLabel={tr('terminal.statCartons')}
+        tone={scannedBarcodes.size >= boxesExpected && boxesExpected > 0 ? 'done' : 'brand'}
+      />
 
       {/* ── Issue Resolution Phase ────────────────────────────── */}
       {phase === 'issues' && session && (
@@ -1031,12 +1081,13 @@ export default function ScanPage({
         </div>
       )}
 
-      {/* ── Scanning / Ready Confirm Phases ────────────────────── */}
+      {/* ── Scanning / Ready Confirm: camera + floating sheet ──── */}
       {(phase === 'scanning' || phase === 'ready_confirm') && (
-        <>
-          {/* Scanner camera (TOP) - fixed height ~50vh */}
-          <div className="shrink-0">
+        <div className="flex-1 min-h-0 relative bg-black">
+          <div className="absolute inset-0">
             <SmartScanner
+              frame="corner"
+              className="h-full"
               onBarcodeDetected={handleBarcodeDetected}
               onManualCapture={handleManualCapture}
               scannedBarcodes={scannedBarcodes}
@@ -1045,12 +1096,13 @@ export default function ScanPage({
               onDuplicateFlash={(triggerFn) => {
                 redFlashTriggerRef.current = triggerFn;
               }}
-              className="h-[50vh]"
             />
           </div>
 
-          {/* Scanned list (BOTTOM) - scrollable */}
-          <div className="flex-1 overflow-y-auto min-h-0">
+          <BottomSheet
+            toolbar={<ToolDock chips={scanDockChips} onLockedPress={showLockToast} />}
+            footer={scanFooter}
+          >
             <ScannedList
               scannedBarcodes={scannedBarcodes}
               ocrResults={ocrResults}
@@ -1061,83 +1113,12 @@ export default function ScanPage({
               selectedBarcode={selectedScanBarcode}
               onSelect={setSelectedScanBarcode}
             />
-          </div>
-        </>
+          </BottomSheet>
+        </div>
       )}
 
-      {/* ── Footer: Action Buttons ────────────────────────────── */}
-      <div className="sticky bottom-0 bg-header/95 backdrop-blur-md border-t border-line p-4 space-y-2 safe-bottom">
-        {/* Force Confirm button */}
-        {canForceConfirm && phase === 'scanning' && (
-          <button
-            onClick={() => setShowForceConfirm(true)}
-            className="w-full h-12 bg-warn hover:bg-warn/90 rounded-xl text-sm font-extrabold text-canvas transition-colors flex items-center justify-center gap-2"
-          >
-            <Zap className="w-4 h-4" />
-            {tr('scan.forceConfirmButton', { count: boxesExpected - scannedBarcodes.size })}
-          </button>
-        )}
-
-        {/* Swipe to confirm (when ready) */}
-        {isReadyToConfirm && (
-          <SwipeConfirm
-            onConfirm={handleConfirm}
-            label={tr('scan.slideToConfirm')}
-          />
-        )}
-
-        {/* Scanned barcodes summary */}
-        {scannedBarcodes.size > 0 && phase === 'scanning' && (
-          <p className="text-center text-xs text-ink-muted">
-            {pendingOCR.size > 0
-              ? tr('scan.boxesSummaryWithOcr', { count: scannedBarcodes.size, pending: pendingOCR.size })
-              : tr('scan.boxesSummary', { count: scannedBarcodes.size })}
-          </p>
-        )}
-
-        {/* Tool buttons row */}
-        {(session || errorLog.length > 0 || ocrImageUrls.size > 0) && (phase === 'scanning' || phase === 'ready_confirm') && (
-          <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-line">
-            {/* Left side: Invoice & Photos */}
-            <div className="flex items-center gap-2">
-              {session && (
-                <button
-                  onClick={() => setShowInvoiceDrawer(true)}
-                  className="flex items-center gap-1.5 px-3 py-2 min-h-11 bg-brand-weak hover:bg-hover border border-brand/40 rounded-xl text-brand-weak-ink text-xs font-bold transition-colors"
-                  aria-label={tr('scan.viewInvoice')}
-                >
-                  <FileText className="w-4 h-4" />
-                  <span>{tr('scan.invoiceButton')}</span>
-                </button>
-              )}
-              {ocrImageUrls.size > 0 && (
-                <button
-                  onClick={() => setShowPhotoGallery(true)}
-                  className="flex items-center gap-1.5 px-3 py-2 min-h-11 bg-info-weak hover:bg-hover border border-info/40 rounded-xl text-info-weak-ink text-xs font-bold transition-colors"
-                  aria-label={tr('scan.viewPhotos')}
-                >
-                  <ImageIcon className="w-4 h-4" />
-                  <span>{tr('scan.photosButton', { count: ocrImageUrls.size })}</span>
-                </button>
-              )}
-            </div>
-
-            {/* Right side: Debug */}
-            {errorLog.length > 0 && (
-              <button
-                onClick={() => setShowDebugPanel(!showDebugPanel)}
-                className="flex items-center gap-1.5 px-3 py-2 min-h-11 bg-danger-weak hover:bg-hover border border-danger/40 rounded-xl text-danger-weak-ink text-xs font-bold transition-colors"
-                aria-label={tr('scan.debugLogAria')}
-              >
-                <Bug className="w-4 h-4" />
-                <span>{tr('scan.debugButton', { count: errorLog.length })}</span>
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* FABs moved to footer - cleaner layout */}
+      <Toast toast={infoToast} />
+      {drawer.node}
 
       {/* ── Invoice Drawer ────────────────────────────────────── */}
       {session && (
@@ -1149,80 +1130,6 @@ export default function ScanPage({
           ocrResults={ocrResults}
           ocrPending={pendingOCR}
         />
-      )}
-
-      {/* OCR drawer removed - redundant with scanned list */}
-      {false && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-raised rounded-t-[20px] border-t border-line-strong shadow-2xl animate-slideInUp" style={{ maxHeight: '55vh' }}>
-          <div className="flex justify-between items-center p-3 border-b border-line bg-header">
-            <div className="flex items-center gap-2">
-              <Cpu className="w-4 h-4 text-info-weak-ink" />
-              <span className="text-ink font-extrabold text-sm">{tr('ocr.aiResults')}</span>
-              <span className="text-info-weak-ink text-xs ms-1">
-                {tr('scan.ocrResultsCount', { done: ocrResults.size, total: ocrImageUrls.size })}
-              </span>
-            </div>
-            <button
-              onClick={() => {}}
-              className="text-ink-muted hover:text-ink p-1"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-          <div className="overflow-y-auto p-3 space-y-3" style={{ maxHeight: 'calc(55vh - 50px)' }}>
-            {Array.from(ocrImageUrls.entries()).map(([barcode, imageUrl]) => {
-              const result = ocrResults.get(barcode);
-              const isPending = pendingOCR.has(barcode);
-              return (
-                <div key={barcode} className="bg-sunken rounded-xl border border-line overflow-hidden">
-                  <div className="flex gap-3 p-3">
-                    <div
-                      className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-raised cursor-pointer hover:ring-2 hover:ring-brand transition-all relative group"
-                      onClick={() => setSelectedImage(imageUrl)}
-                    >
-                      <img
-                        src={imageUrl}
-                        alt={`Box ${barcode.slice(-6)}`}
-                        className="w-full h-full object-cover"
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                      />
-                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                        <Search className="w-4 h-4 text-ink" />
-                      </div>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-info-weak-ink text-xs font-mono" dir="ltr">{tr('scan.boxLabelShort', { id: barcode.slice(-6) })}</span>
-                        {result ? (
-                          <span className="flex items-center gap-1 text-ok-weak-ink text-xs font-bold px-1.5 py-0.5 bg-ok-weak rounded-full">
-                            <Check className="w-3 h-3" /> {tr('scan.ocrDoneBadge')}
-                          </span>
-                        ) : isPending ? (
-                          <span className="flex items-center gap-1 text-warn-weak-ink text-xs font-bold px-1.5 py-0.5 bg-warn-weak rounded-full animate-pulse">
-                            <Clock className="w-3 h-3" /> {tr('scan.ocrAnalyzingBadge')}
-                          </span>
-                        ) : null}
-                      </div>
-                      {result ? (
-                        <div className="space-y-0.5">
-                          <div className="text-ok-weak-ink text-sm font-semibold truncate">
-                            {result.product_name || tr('scan.productUnclear')}
-                          </div>
-                          <div className="text-ink-body text-xs font-mono" dir="ltr">
-                            {result.weight_kg ? `${result.weight_kg} kg` : tr('ocr.noWeight')}
-                            {result.expiry_date ? ` \u00B7 Exp: ${result.expiry_date}` : ''}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="text-warn-weak-ink text-xs">{tr('ocr.geminiAnalyzing')}</div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
       )}
 
       {/* ── Debug Panel (Bottom Drawer) ──────────────────────── */}

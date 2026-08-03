@@ -47,37 +47,61 @@ function SettingsScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-/**
- * Hosts the side drawer + its nav destinations for the scanner pages:
- * מסמכים (locked, dimmed sample), מחסנים (locked stub), הגדרות (real toggles).
- * Usage: const drawer = useDrawerHost(footer?); render {drawer.node};
- * open with drawer.open().
- */
-export function useDrawerHost(footer?: ReactNode): { open: () => void; node: ReactNode } {
+// All translation lives HERE — this component renders as a descendant of the
+// page's LanguageContext.Provider, so useT() resolves the session language.
+// (The useDrawerHost hook itself runs above that provider and must not
+// translate anything.)
+function DrawerHostView({
+  drawerOpen, screen, onCloseDrawer, onGo, onCloseScreen, footer,
+}: {
+  drawerOpen: boolean;
+  screen: Screen;
+  onCloseDrawer: () => void;
+  onGo: (s: Screen) => void;
+  onCloseScreen: () => void;
+  footer?: ReactNode;
+}) {
   const tr = useT();
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [screen, setScreen] = useState<Screen>(null);
-
-  const go = (s: Screen) => { setDrawerOpen(false); setScreen(s); };
-
-  const node = (
+  return (
     <>
       <SideDrawer
         open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
+        onClose={onCloseDrawer}
         items={[
-          { id: 'docs', icon: 'description', label: tr('terminal.menuDocs'), onPress: () => go('docs') },
-          { id: 'warehouses', icon: 'warehouse', label: tr('terminal.menuWarehouses'), onPress: () => go('warehouses') },
-          { id: 'settings', icon: 'settings', label: tr('terminal.menuSettings'), onPress: () => go('settings') },
+          { id: 'docs', icon: 'description', label: tr('terminal.menuDocs'), onPress: () => onGo('docs') },
+          { id: 'warehouses', icon: 'warehouse', label: tr('terminal.menuWarehouses'), onPress: () => onGo('warehouses') },
+          { id: 'settings', icon: 'settings', label: tr('terminal.menuSettings'), onPress: () => onGo('settings') },
         ]}
         footer={footer}
       />
-      {screen === 'docs' && <DocsScreenLocked onBack={() => setScreen(null)} />}
+      {screen === 'docs' && <DocsScreenLocked onBack={onCloseScreen} />}
       {screen === 'warehouses' && (
-        <LockedScreen title={tr('terminal.menuWarehouses')} onBack={() => setScreen(null)} stubIcon="warehouse" />
+        <LockedScreen title={tr('terminal.menuWarehouses')} onBack={onCloseScreen} stubIcon="warehouse" />
       )}
-      {screen === 'settings' && <SettingsScreen onBack={() => setScreen(null)} />}
+      {screen === 'settings' && <SettingsScreen onBack={onCloseScreen} />}
     </>
+  );
+}
+
+/**
+ * Hosts the side drawer + its nav destinations for the scanner pages:
+ * מסמכים (locked, dimmed sample), מחסנים (locked stub), הגדרות (real toggles).
+ * Usage: const drawer = useDrawerHost(footer?); render {drawer.node} INSIDE
+ * the page's LanguageContext.Provider; open with drawer.open().
+ */
+export function useDrawerHost(footer?: ReactNode): { open: () => void; node: ReactNode } {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [screen, setScreen] = useState<Screen>(null);
+
+  const node = (
+    <DrawerHostView
+      drawerOpen={drawerOpen}
+      screen={screen}
+      onCloseDrawer={() => setDrawerOpen(false)}
+      onGo={(s) => { setDrawerOpen(false); setScreen(s); }}
+      onCloseScreen={() => setScreen(null)}
+      footer={footer}
+    />
   );
 
   return { open: () => setDrawerOpen(true), node };
