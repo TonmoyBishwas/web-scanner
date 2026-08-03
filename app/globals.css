@@ -62,6 +62,20 @@
   --cam-ink:       #f4f7f6;                  /* text on glass */
   --cam-ink-muted: #b9c2c0;
   --cam-border:    rgba(255, 255, 255, 0.18);
+
+  /* Terminal rebuild additions (WMS Receiving Terminal prototype) */
+  --paper:           #f4f1ea; /* cream label / invoice-thumbnail paper */
+  --paper-line:      #d8d2c4; /* rules on paper */
+  --paper-line-soft: #e2ddd0;
+  --paper-ink:       #1a1a1a;
+  --search-bg:     #243a50;   /* the docs-screen search field */
+  --search-border: #4d6d8a;
+  --search-ink:    #9fb8cf;
+  --tool-tile:     #243444;   /* neutral tool-dock icon tile */
+  --amber-card:    #1a1408;   /* discrepancy / warn dark surfaces */
+  --amber-well:    #120d04;
+  --overlay-card:  #0d171d;   /* done-overlay / toast card surface */
+  --sheet-grad: linear-gradient(180deg, #101c22, #0b1218);
 }
 
 /* Map tokens → Tailwind v4 utilities (bg-canvas, text-ink, bg-brand, …) */
@@ -109,6 +123,18 @@
   --color-cam-ink: var(--cam-ink);
   --color-cam-ink-muted: var(--cam-ink-muted);
   --color-cam-border: var(--cam-border);
+
+  --color-paper: var(--paper);
+  --color-paper-line: var(--paper-line);
+  --color-paper-line-soft: var(--paper-line-soft);
+  --color-paper-ink: var(--paper-ink);
+  --color-search-bg: var(--search-bg);
+  --color-search-border: var(--search-border);
+  --color-search-ink: var(--search-ink);
+  --color-tool-tile: var(--tool-tile);
+  --color-amber-card: var(--amber-card);
+  --color-amber-well: var(--amber-well);
+  --color-overlay-card: var(--overlay-card);
 
   /* Aliases (legacy vocabulary used by some flows — same tokens) */
   --color-app: var(--surface-canvas);
@@ -166,6 +192,23 @@ body {
   font-weight: 800;
   letter-spacing: 1px;
   color: var(--brand-weak-ink);
+}
+
+/* Material Icons Round base (ligature rendering; pair with <MI name="..."/>) */
+@utility mi {
+  font-family: var(--font-app-icons);
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  font-feature-settings: "liga";
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
 }
 
 /* ── Keyframe animations ──────────────────────────────────────────────────── */
@@ -233,6 +276,22 @@ body {
   100% { transform: scale(1); opacity: 1; }
 }
 
+/* Terminal rebuild: modal/toast entrance (design "doneRise") */
+@keyframes doneRise {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Terminal rebuild: pulsing blue rings on OCR field markers */
+@keyframes markerPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px rgba(19, 164, 236, 0.18), 0 0 10px rgba(19, 164, 236, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(19, 164, 236, 0.08), 0 0 16px rgba(19, 164, 236, 0.55);
+  }
+}
+
 /* Custom utility classes for animations (Tailwind v4 compatible) */
 @utility animate-slideInUp {
   animation: slideInUp 0.3s ease-out;
@@ -264,4 +323,12 @@ body {
 
 @utility animate-donePop {
   animation: donePop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@utility animate-doneRise {
+  animation: doneRise 0.3s ease-out;
+}
+
+@utility animate-markerPulse {
+  animation: markerPulse 1.6s ease-in-out infinite;
 }
