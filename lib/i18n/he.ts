@@ -636,4 +636,5 @@ export const he: Record<TranslationKey, string> = {
   // Share
   'terminal.shareCopied': 'הסיכום הועתק',
   'terminal.deleteHint': 'הקש על שורה כדי למחוק אותה',
+  'terminal.gapNotApplicable': 'אין פער לדווח כרגע',
 };

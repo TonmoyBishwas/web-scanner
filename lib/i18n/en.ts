@@ -632,6 +632,7 @@ export const en = {
   // Share
   'terminal.shareCopied': 'Summary copied',
   'terminal.deleteHint': 'Tap a row to delete it',
+  'terminal.gapNotApplicable': 'No gap to report right now',
 } as const;
 
 export type TranslationKey = keyof typeof en;

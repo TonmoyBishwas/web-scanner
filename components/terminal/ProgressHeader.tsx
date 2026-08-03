@@ -11,7 +11,9 @@ interface ProgressHeaderProps {
 
 // Design progress row: label + mono counter + 6px gradient bar on #0a0f14.
 export function ProgressHeader({ label, count, total, unitLabel, tone = 'brand' }: ProgressHeaderProps) {
-  const pct = total > 0 ? Math.min(100, (count / total) * 100) : 0;
+  // total <= 0 = declared count not known yet: show a soft indeterminate fill
+  // that grows with each scan instead of a misleading "N / 0".
+  const pct = total > 0 ? Math.min(100, (count / total) * 100) : Math.min(60, count * 8);
   const barBg =
     tone === 'done'
       ? 'linear-gradient(90deg,#16a34a,#22c55e)'
@@ -25,7 +27,8 @@ export function ProgressHeader({ label, count, total, unitLabel, tone = 'brand' 
       <div className="flex justify-between items-center mb-[6px]">
         <span className="text-[9px] font-bold text-[#e8eef2] tracking-[.5px]">{label}</span>
         <span className="font-mono font-black text-[11px] text-ink-inverse" dir="ltr">
-          <span style={{ color: countColor }}>{count}</span> / {total} <bdi className="font-sans">{unitLabel}</bdi>
+          <span style={{ color: countColor }}>{count}</span>
+          {total > 0 && <> / {total}</>} <bdi className="font-sans">{unitLabel}</bdi>
         </span>
       </div>
       <div className="h-[6px] bg-[#12202a] rounded-full overflow-hidden">

@@ -5,29 +5,27 @@ import {
   CheckCircle,
   XCircle,
   Loader2,
-  Package,
-  AlertCircle,
   AlertTriangle,
   Scale,
   Boxes,
-  Pencil,
-  Trash2,
-  RotateCw,
-  RefreshCw,
-  Eye,
-  Printer,
-  Plus,
   Check,
-  Lock,
-  Tag,
-  Send,
 } from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
 import { SwipeConfirm } from '@/components/shared/SwipeConfirm';
 import { NonMeatTypeAFlow } from './NonMeatTypeAFlow';
 import { MeatManualCountFlow, type PalletCompleteResult } from './MeatManualCountFlow';
 import { DebugLogPanel } from '@/components/shared/DebugLogPanel';
-import { SettingsPopover } from '@/components/shared/SettingsPopover';
+import { MI, PalletIcon } from '@/components/terminal/MI';
+import { DesignHeader } from '@/components/terminal/DesignHeader';
+import { ProgressHeader } from '@/components/terminal/ProgressHeader';
+import { BottomSheet, type BottomSheetHandle } from '@/components/terminal/BottomSheet';
+import { ToolDock, type ToolChip } from '@/components/terminal/ToolDock';
+import { ActiveScanCard } from '@/components/terminal/ActiveScanCard';
+import { HistoryRow } from '@/components/terminal/HistoryRow';
+import { EditPanel } from '@/components/terminal/EditPanel';
+import { DoneOverlay } from '@/components/terminal/DoneOverlay';
+import { Toast, useLockToast } from '@/components/terminal/Toast';
+import { useDrawerHost } from '@/components/terminal/DrawerHost';
 import { installDebugLogCapture } from '@/lib/debug-log';
 import { LanguageContext, useLangDir, t } from '@/lib/i18n';
 import type { Language, MultiPalletSession, MultiPalletBoxScan, ParsedBarcode } from '@/types';
@@ -205,6 +203,12 @@ export default function PalletVerifyPage({
     (key: Parameters<typeof t>[1], vars?: Parameters<typeof t>[2]) => t(language, key, vars),
     [language],
   );
+  // The terminal components (ToolDock, drawer, edit panel, toast…) translate
+  // via useT(), which reads LanguageContext — every phase return below must
+  // be wrapped so Hebrew sessions don't fall back to the English default.
+  const withLang = (node: React.ReactElement) => (
+    <LanguageContext.Provider value={language}>{node}</LanguageContext.Provider>
+  );
   const looseProcessedRef = useRef<Set<string>>(new Set());
   // Modal: full-size view of a captured frame (used after OCR failures so the
   // worker can confirm whether the photo is bad or worth retrying).
@@ -284,9 +288,14 @@ export default function PalletVerifyPage({
   // declared (likely a miscount) and taps "Create LPN anyway", this opens a
   // warning modal before the pallet is confirmed with the actual scanned count.
   const [pendingForceConfirm, setPendingForceConfirm] = useState(false);
-  // "Locked" toast for design tools that have no backend yet (labels / send task).
-  const [lockedToastVisible, setLockedToastVisible] = useState(false);
-  const lockedToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Terminal chrome: bottom-sheet handle, side drawer host, lock/info toast,
+  // active-card expand state, and the swipe-gated next-pallet number.
+  const sheetRef = useRef<BottomSheetHandle>(null);
+  const looseSheetRef = useRef<BottomSheetHandle>(null);
+  const drawer = useDrawerHost();
+  const { toast, showToast, showLockToast } = useLockToast();
+  const [activeExpanded, setActiveExpanded] = useState(false);
+  const [pendingNextPallet, setPendingNextPallet] = useState<number | null>(null);
 
   // ── AI consolidation: debounced call after scans settle ──
   //
@@ -828,6 +837,9 @@ export default function PalletVerifyPage({
       image_data: box.image_data,
       isLoose,
     });
+    // The design edit panel lives inside the bottom sheet — grow it so the
+    // whole panel (field boxes + keypad) is visible.
+    (isLoose ? looseSheetRef : sheetRef).current?.snapTo(2);
   }
 
   // Apply the edit: update the box, then re-group exactly like rescanPalletBox —
@@ -907,6 +919,57 @@ export default function PalletVerifyPage({
     return nonUniformIndividuals + lockedTotal;
   }
 
+  // Share the current scan list as text (WhatsApp share sheet on Android;
+  // clipboard fallback) — the dock's real שיתוף action.
+  async function handleShareSummary() {
+    const src = phase === 'loose_scanning' || phase === 'loose_confirming' ? looseBoxes : scannedBoxes;
+    const lines: string[] = [
+      tr('palletVerify.docPrefix', { doc: session?.document_number || '—' }),
+    ];
+    src.forEach((b, i) => {
+      const nm = b.item_name_hebrew || b.item_name || '—';
+      lines.push(
+        `${i + 1}. ${nm}${b.weight > 0 ? ` · ${b.weight.toFixed(3)} kg` : ''}${b.barcode ? ` · ${b.barcode}` : ''}`,
+      );
+    });
+    const text = lines.join('\n');
+    try {
+      if (navigator.share) {
+        await navigator.share({ text });
+        return;
+      }
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return;
+      // fall through to clipboard
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(tr('terminal.shareCopied'));
+    } catch {
+      /* nothing else to fall back to */
+    }
+  }
+
+  // Terminal tool dock: locked chips (no backend) + the real actions.
+  function buildDockChips(opts: { gap: () => void }): ToolChip[] {
+    return [
+      { id: 'create', icon: 'add', label: tr('terminal.toolCreateCarton'), tint: 'blue', iconColor: '#33b1f0', locked: true },
+      { id: 'labels', icon: 'label', label: tr('terminal.toolLabels'), tint: 'neutral', locked: true },
+      { id: 'warehouses', icon: 'warehouse', label: tr('terminal.toolWarehouses'), tint: 'neutral', locked: true },
+      { id: 'pallets', icon: <PalletIcon />, label: tr('terminal.toolPallets'), tint: 'neutral', locked: true },
+      {
+        id: 'delete', icon: 'delete_sweep', label: tr('terminal.toolDelete'), tint: 'red',
+        onPress: () => showToast(tr('terminal.deleteHint'), 'delete_sweep', '#ef8a8a'),
+      },
+      { id: 'share', icon: 'ios_share', label: tr('terminal.toolShare'), tint: 'blue', onPress: handleShareSummary },
+      { id: 'assign', icon: 'send', flip: true, label: tr('terminal.toolAssign'), tint: 'green', locked: true },
+      {
+        id: 'gap', icon: 'report_problem', label: tr('terminal.toolGap'), tint: 'amber', iconColor: '#fbbf5c',
+        onPress: opts.gap,
+      },
+    ];
+  }
+
   // Always-visible bug-report widget. Tap the floating 🐛 button to see
   // captured console logs and copy them out — no Chrome DevTools needed.
   const debugPanel = <DebugLogPanel />;
@@ -937,141 +1000,37 @@ export default function PalletVerifyPage({
     </div>
   ) : null;
 
-  // Edit-a-scan view: a FULL-SCREEN sheet so the worker can see the captured
-  // sticker large AND fix the item / weight / expiry in the same view. The
-  // sticker sits at the top of a scrollable body; tapping it opens the pinch-
-  // zoom overlay (z-[60], above this sheet). Save/Cancel stay pinned at the
-  // bottom so they're always reachable regardless of how far the worker scrolls.
-  const editModal = editForm ? (
-    <div className="fixed inset-0 z-50 flex flex-col bg-raised rounded-t-[20px] border-t border-line">
-      {/* Drag pill */}
-      <div className="pt-2 shrink-0">
-        <div className="w-9 h-1 rounded-full bg-line-strong mx-auto" />
-      </div>
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-line shrink-0">
-        <h2 className="text-base font-extrabold text-ink">{tr('palletVerify.editTitle')}</h2>
-        <button
-          onClick={() => setEditForm(null)}
-          aria-label={tr('palletVerify.editCancel')}
-          className="text-ink-muted hover:text-ink-body text-3xl leading-none px-2 -mr-2"
-        >
-          &times;
-        </button>
-      </div>
-
-      {/* Scrollable body */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Captured sticker preview — large. The whole point of this view is to
-            let the worker fix the OCR by reading the actual photo. Tap to open
-            the pinch-zoom overlay for an even closer look. */}
-        {editForm.image_data && (
-          <button
-            type="button"
-            onClick={() => setViewingImage(editForm.image_data!)}
-            className="block w-full"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={editForm.image_data}
-              alt={tr('palletVerify.viewWithIcon')}
-              className="w-full max-h-[45vh] object-contain rounded-xl bg-canvas border border-line"
-            />
-            <p className="text-[11px] text-ink-muted mt-1 text-center">
-              {tr('palletVerify.tapToZoom')}
-            </p>
-          </button>
-        )}
-
-        {(session?.ocr_data?.length ?? 0) > 0 && (
-          <div>
-            <label className="block text-xs font-medium text-ink-body mb-1">
-              {tr('palletVerify.editPickItem')}
-            </label>
-            <div className="space-y-1.5">
-              {(session?.ocr_data ?? []).map((it) => {
-                const active = editForm.name_he === it.item_name_hebrew && !!it.item_name_hebrew;
-                return (
-                  <button
-                    key={it.item_code + it.item_name_hebrew}
-                    onClick={() =>
-                      setEditForm({ ...editForm, name_he: it.item_name_hebrew, name_en: it.item_name_english })
-                    }
-                    className={`w-full text-start px-3 py-2 rounded-lg border text-sm transition ${
-                      active
-                        ? 'border-brand bg-brand-weak text-brand-weak-ink font-semibold'
-                        : 'border-line-strong text-ink-body hover:bg-hover'
-                    }`}
-                  >
-                    {it.item_name_hebrew || it.item_name_english}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        <div>
-          <label className="block text-xs font-medium text-ink-body mb-1">
-            {tr('palletVerify.editTypeManually')}
-          </label>
-          <input
-            type="text"
-            dir="rtl"
-            value={editForm.name_he}
-            onChange={(e) => setEditForm({ ...editForm, name_he: e.target.value })}
-            className="w-full text-base text-ink bg-sunken border-2 border-line-strong rounded-xl py-2 px-3 outline-none focus:border-brand focus:ring-4 focus:ring-brand/20"
-          />
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-ink-body mb-1">
-            {tr('palletVerify.editWeight')}
-          </label>
-          <input
-            type="number"
-            inputMode="decimal"
-            step="0.001"
-            min={0}
-            dir="ltr"
-            value={editForm.weight}
-            onChange={(e) => setEditForm({ ...editForm, weight: e.target.value })}
-            className="w-full text-center text-xl font-extrabold font-mono text-ink bg-sunken border-2 border-line-strong rounded-xl py-2 px-3 outline-none focus:border-brand focus:ring-4 focus:ring-brand/20"
-          />
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-ink-body mb-1">
-            {tr('palletVerify.editExpiry')}
-          </label>
-          <input
-            type="text"
-            inputMode="numeric"
-            dir="ltr"
-            placeholder="DD/MM/YYYY"
-            value={editForm.expiry}
-            onChange={(e) => setEditForm({ ...editForm, expiry: e.target.value })}
-            className="w-full text-center text-base font-mono text-ink bg-sunken border-2 border-line-strong rounded-xl py-2 px-3 outline-none focus:border-brand focus:ring-4 focus:ring-brand/20"
-          />
-        </div>
-      </div>
-
-      {/* Sticky action bar */}
-      <div className="flex gap-3 p-4 border-t border-line shrink-0">
-        <button
-          onClick={() => setEditForm(null)}
-          className="flex-1 py-3 rounded-xl bg-sunken text-ink-body font-semibold text-sm hover:bg-hover transition"
-        >
-          {tr('palletVerify.editCancel')}
-        </button>
-        <button
-          onClick={handleSaveEdit}
-          className="flex-1 py-3 rounded-xl bg-ok text-canvas font-extrabold text-sm hover:opacity-90 transition"
-        >
-          {tr('palletVerify.editSave')}
-        </button>
-      </div>
-    </div>
+  // Edit-a-scan: the terminal design's in-sheet edit panel (field boxes +
+  // numeric keypad + calendar). Rendered INSIDE the bottom sheet in place of
+  // the active card + history while editForm is set. Same editForm state and
+  // handleSaveEdit wiring as the old full-screen modal.
+  const editPanelNode = editForm ? (
+    <EditPanel
+      cartonNumber={(() => {
+        const list = editForm.isLoose ? looseBoxes : scannedBoxes;
+        const i = list.findIndex((b) => b.barcode === editForm.barcode);
+        return i >= 0 ? i + 1 : '—';
+      })()}
+      name={editForm.name_he}
+      weight={editForm.weight}
+      expiry={editForm.expiry}
+      barcode={editForm.barcode}
+      itemChips={(session?.ocr_data ?? [])
+        .filter((it) => it.item_name_hebrew || it.item_name_english)
+        .map((it) => ({
+          label: it.item_name_hebrew || it.item_name_english,
+          active: editForm.name_he === it.item_name_hebrew && !!it.item_name_hebrew,
+          onPick: () =>
+            setEditForm({ ...editForm, name_he: it.item_name_hebrew, name_en: it.item_name_english }),
+        }))}
+      imageData={editForm.image_data}
+      onViewImage={editForm.image_data ? () => setViewingImage(editForm.image_data!) : undefined}
+      onNameChange={(v) => setEditForm({ ...editForm, name_he: v })}
+      onWeightChange={(v) => setEditForm({ ...editForm, weight: v })}
+      onExpiryChange={(v) => setEditForm({ ...editForm, expiry: v })}
+      onSave={handleSaveEdit}
+      onCancel={() => setEditForm(null)}
+    />
   ) : null;
 
   function runLooseOcr(lookupKey: string, imageData: string, manual = false) {
@@ -1269,27 +1228,36 @@ export default function PalletVerifyPage({
         body: JSON.stringify({ token, current_box_count: 0 }),
       }).catch(() => {});
       clearPalletScans(token, currentPallet);
-      setTimeout(() => {
-        setCurrentPallet(typeof data.next_pallet === 'number' ? data.next_pallet : currentPallet + 1);
-        setBoxCountInput('');
-        setConfirmedBoxCount(0);
-        setScannedBoxes([]);
-        processedRef.current.clear();
-        setDetectedType('unknown');
-        setUniformGroups(new Map());
-        setPendingUniformPrompt(null);
-        setForcedMix(false);
-        setSelectedBarcode(null);
-        setEditForm(null);
-        setPendingSingleGroup(null);
-        setPalletCountError(null);
-        setAcceptedMerges(new Map());
-        setRejectedMergePairs(new Set());
-        setPendingMerge(null);
-        setManualMode(false); // damaged mode is per-pallet — reset for the next
-        setPhase('scanning');
-      }, 4000);
+      // Terminal design: the worker swipes "קליטת משטח הבא" on the done
+      // overlay to advance (replaces the old 4s auto-advance timer — gives
+      // time to print the sticker first).
+      setPendingNextPallet(typeof data.next_pallet === 'number' ? data.next_pallet : currentPallet + 1);
     }
+  }
+
+  // Reset all per-pallet state and start scanning the next pallet. Fired by
+  // the swipe on the pallet_done overlay.
+  function advanceToNextPallet() {
+    setCurrentPallet(pendingNextPallet ?? currentPallet + 1);
+    setPendingNextPallet(null);
+    setBoxCountInput('');
+    setConfirmedBoxCount(0);
+    setScannedBoxes([]);
+    processedRef.current.clear();
+    setDetectedType('unknown');
+    setUniformGroups(new Map());
+    setPendingUniformPrompt(null);
+    setForcedMix(false);
+    setSelectedBarcode(null);
+    setEditForm(null);
+    setPendingSingleGroup(null);
+    setPalletCountError(null);
+    setAcceptedMerges(new Map());
+    setRejectedMergePairs(new Set());
+    setPendingMerge(null);
+    setManualMode(false); // damaged mode is per-pallet — reset for the next
+    setActiveExpanded(false);
+    setPhase('scanning');
   }
 
   async function handleConfirmPallet() {
@@ -1423,130 +1391,6 @@ export default function PalletVerifyPage({
     );
   }
 
-  // ── Box card ──
-
-  function BoxCard({ box, idx }: { box: BoxScan; idx: number }) {
-    // "Same-item" colour cue derived from the OCR'd name (with worker-accepted
-    // merges applied), not barcode digits.
-    const firstBox = scannedBoxes[0];
-    const firstKey = firstBox
-      ? acceptedMerges.get(groupKeyForBox(firstBox)) ?? groupKeyForBox(firstBox)
-      : '';
-    const thisKey = acceptedMerges.get(groupKeyForBox(box)) ?? groupKeyForBox(box);
-    const sameItem = thisKey === firstKey;
-    const displayName = box.item_name_hebrew || box.item_name;
-
-    const cardBg =
-      idx === 0
-        ? 'bg-brand-weak border-brand/30'
-        : detectedType === 'mix' || sameItem
-        ? 'bg-ok-weak border-ok/30'
-        : 'bg-warn-weak border-warn/30';
-
-    // Tap the card to reveal Edit / Delete (two-step, to avoid misclicks). A
-    // needs_review box stays amber and still blocks Confirm until resolved, but
-    // is now tappable so a mis-captured (non-sticker) photo can be deleted
-    // instead of being forced straight into the edit modal.
-    const selected = selectedBarcode === box.barcode;
-    const cardBgFinal = box.needs_review
-      ? 'bg-warn-weak border-warn/30'
-      : cardBg;
-    return (
-      <div
-        onClick={() => setSelectedBarcode(selected ? null : box.barcode)}
-        className={`rounded-xl p-3 border text-sm cursor-pointer ${cardBgFinal} ${selected ? 'ring-2 ring-danger/40' : ''}`}
-      >
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex-1 min-w-0">
-            {box.ocr_status === 'processing' ? (
-              <div className="flex items-center gap-1.5 text-brand">
-                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                <span className="text-xs">{tr('palletVerify.readingLabel')}</span>
-              </div>
-            ) : box.ocr_status === 'failed' ? (
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <AlertCircle className="w-3.5 h-3.5 text-danger shrink-0" />
-                  <span className="text-xs text-danger">{tr('ocr.failed')}</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5 mt-1.5">
-                  {box.image_data && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setViewingImage(box.image_data!); }}
-                      className="text-[11px] px-2 py-0.5 bg-sunken hover:bg-hover text-ink-body rounded font-medium"
-                    >
-                      {tr('palletVerify.viewWithIcon')}
-                    </button>
-                  )}
-                  <button
-                    onClick={(e) => { e.stopPropagation(); retryPalletOcr(box.barcode); }}
-                    className="text-[11px] px-2 py-0.5 bg-brand-weak hover:opacity-90 text-brand-weak-ink rounded font-medium"
-                  >
-                    {tr('palletVerify.retryWithIcon')}
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
-                    className="text-[11px] px-2 py-0.5 bg-danger-weak text-danger border border-danger rounded font-medium inline-flex items-center gap-1"
-                  >
-                    <Trash2 className="w-3 h-3" /> {tr('palletVerify.deleteScan')}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <>
-                {displayName && (
-                  <p className="font-semibold text-ink truncate">{displayName}</p>
-                )}
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="font-mono font-bold text-ink" dir="ltr">
-                    {box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}
-                  </span>
-                  {box.expiry && (
-                    <span className="text-xs font-mono text-ink-muted" dir="ltr">exp {box.expiry}</span>
-                  )}
-                </div>
-                {box.needs_review && (
-                  <p className="flex items-center gap-1 text-[11px] text-warn-weak-ink mt-1 font-medium">
-                    <AlertTriangle className="w-3 h-3 shrink-0" /> {tr('palletVerify.needsReview')} · {tr('palletVerify.tapToFix')}
-                  </p>
-                )}
-              </>
-            )}
-          </div>
-
-          <div className="shrink-0">
-            {idx === 0 ? (
-              <span className="text-xs font-mono font-bold bg-brand-weak text-brand-weak-ink rounded-full px-2 py-0.5" dir="ltr">#1</span>
-            ) : detectedType !== 'mix' && !sameItem ? (
-              <XCircle className="text-warn w-4 h-4" />
-            ) : (
-              <CheckCircle className="text-ok w-4 h-4" />
-            )}
-          </div>
-        </div>
-
-        {selected && box.ocr_status !== 'failed' && (
-          <div className="mt-2 flex gap-2">
-            <button
-              onClick={(e) => { e.stopPropagation(); openEdit(box); }}
-              className="flex items-center justify-center gap-1.5 flex-1 py-2 rounded-lg bg-brand text-ink-inverse text-xs font-semibold hover:bg-brand-hover active:bg-brand-active transition"
-            >
-              <Pencil className="w-3.5 h-3.5" /> {tr('palletVerify.editScan')}
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
-              className="flex items-center justify-center gap-1.5 flex-1 py-2 rounded-lg bg-danger text-ink-inverse text-xs font-semibold hover:opacity-90 active:opacity-80 transition"
-            >
-              <Trash2 className="w-3.5 h-3.5" /> {tr('palletVerify.deleteScan')}
-            </button>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // ── Screens ──
-
   if (phase === 'error') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-canvas">
@@ -1593,75 +1437,87 @@ export default function PalletVerifyPage({
   if (phase === 'all_done') {
     const looseCount = session?.loose_box_count || 0;
     const completed = session?.completed_pallets || [];
-    return (
-      <div className="min-h-screen p-6 bg-canvas">
-        <div className="max-w-md mx-auto">
-          <div className="text-center">
-            <div className="w-20 h-20 rounded-full bg-ok-weak flex items-center justify-center mx-auto mb-4 animate-donePop">
-              <CheckCircle className="text-ok w-10 h-10" />
+    const totalBoxes = completed.reduce((s, p) => s + (p.box_count || 0), 0);
+    const langSuffix = language === 'Hebrew' ? '&lang=Hebrew' : '';
+    // Terminal design "כל המשטחים נקלטו" card: stats, real per-pallet sticker
+    // links (the design's primary "ניפוק מדבקות" action), and the ERP-finalize
+    // button rendered LOCKED (no scanner→Priority integration exists).
+    return withLang(
+      <div className="h-dvh relative bg-canvas overflow-hidden">
+        <div className="absolute inset-0 z-[70] bg-[rgba(5,8,10,.74)] backdrop-blur-[3px] flex items-center justify-center p-[22px]">
+          <div className="w-full max-w-[330px] max-h-[90dvh] overflow-y-auto no-scrollbar bg-overlay-card border border-[#1e3a2e] rounded-[20px] px-5 py-[22px] shadow-[0_26px_64px_rgba(0,0,0,.72)] animate-doneRise">
+            <div className="flex justify-center mb-[13px]">
+              <div className="w-[66px] h-[66px] rounded-full bg-ok-weak flex items-center justify-center animate-donePop">
+                <MI name="check_circle" size={38} style={{ color: '#4ade80' }} />
+              </div>
             </div>
-            <h1 className="text-2xl font-extrabold text-ok-weak-ink mb-2">
-              {looseCount > 0
-                ? tr('palletVerify.allDoneTitleWithLoose', { count: pallet_count, looseCount })
-                : tr('palletVerify.allDoneTitleSimple', { count: pallet_count })}
-            </h1>
-            <p className="text-sm text-ink-muted mb-6">
-              {tr('pallet.stickers.tapHint')}
-            </p>
-          </div>
+            <div className="text-center text-[19px] font-black text-ink-inverse">
+              {tr('terminal.allDoneTitle')}
+            </div>
+            <div className="text-center text-[12px] font-semibold text-ink-muted mt-1" >
+              {tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}
+            </div>
+            <div className="flex gap-2 mt-4">
+              <div className="flex-1 bg-sunken border border-line rounded-[11px] px-[6px] py-[10px] text-center">
+                <div className="text-[16px] font-black text-ink-inverse">{pallet_count}</div>
+                <div className="text-[9px] font-bold text-ink-muted mt-[2px]">{tr('terminal.toolPallets')}</div>
+              </div>
+              <div className="flex-1 bg-sunken border border-line rounded-[11px] px-[6px] py-[10px] text-center">
+                <div className="text-[16px] font-black text-ink-inverse">{totalBoxes || '—'}</div>
+                <div className="text-[9px] font-bold text-ink-muted mt-[2px]">{tr('terminal.statCartons')}</div>
+              </div>
+            </div>
 
-          {completed.length > 0 && (
-            <div className="space-y-2 mb-6">
-              <h2 className="eyebrow px-1">
-                {tr('pallet.stickers.title')}
-              </h2>
-              {completed.map((p) => {
-                const typeLabel =
-                  p.pallet_type === 'mix'
-                    ? tr('palletVerify.palletTypeMix')
-                    : tr('palletVerify.palletTypeSingle');
-                const langSuffix = language === 'Hebrew' ? '&lang=Hebrew' : '';
-                return (
+            {/* Real: per-pallet sticker links (design list-row style) */}
+            {completed.length > 0 && (
+              <div className="mt-4 flex flex-col gap-2">
+                <div className="text-[9px] font-extrabold text-[#cbd5e1] tracking-[2px]">
+                  {tr('pallet.stickers.title')}
+                </div>
+                {completed.map((p) => (
                   <a
                     key={p.lpn}
                     href={`/pallet/${encodeURIComponent(p.lpn)}?token=${encodeURIComponent(token)}${langSuffix}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block bg-raised border border-line rounded-[14px] p-3 hover:border-ok/50 transition"
+                    className="flex items-center gap-[10px] bg-[rgba(10,15,20,.5)] border border-line rounded-[13px] px-[13px] py-[11px]"
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="font-mono text-sm font-bold text-ink truncate" dir="ltr">
-                          {p.lpn}
-                        </div>
-                        <div className="text-xs text-ink-muted mt-0.5">
-                          {tr('palletVerify.palletEntry', {
-                            n: p.pallet_number,
-                            count: p.box_count,
-                            type: typeLabel,
-                          })}
-                        </div>
-                      </div>
-                      <span className="inline-flex items-center gap-1 text-ok-weak-ink text-sm font-semibold shrink-0">
-                        <Printer className="w-4 h-4" /> {tr('palletVerify.printSticker')}
-                      </span>
-                    </div>
+                    <span className="flex-none w-8 h-8 rounded-[9px] bg-tile border border-line flex items-center justify-center font-mono font-black text-[13px] text-[#e8eef2]">
+                      {p.pallet_number}
+                    </span>
+                    <span className="flex-1 min-w-0 font-mono text-[11px] font-bold text-ink truncate" dir="ltr">
+                      {p.lpn}
+                    </span>
+                    <span className="flex-none inline-flex items-center gap-1 text-brand-weak-ink text-[11px] font-extrabold">
+                      <MI name="print" size={16} /> {tr('palletVerify.printSticker')}
+                    </span>
                   </a>
-                );
-              })}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
 
-          {looseCount > 0 && (
-            <div className="bg-warn-weak border border-warn/30 rounded-xl p-3 text-sm text-warn-weak-ink mb-6">
-              {tr('palletVerify.looseBoxesNote', { count: looseCount })}
-            </div>
-          )}
+            {looseCount > 0 && (
+              <div className="mt-3 bg-warn-weak border border-warn/30 rounded-[11px] p-3 text-[11px] font-semibold text-warn-weak-ink">
+                {tr('palletVerify.looseBoxesNote', { count: looseCount })}
+              </div>
+            )}
 
-          <p className="text-xs text-ink-muted text-center">
-            {tr('palletVerify.expiryNote')}
-          </p>
+            {/* Locked: ERP finalize (design's "סגירה ושליחה לפריוריטי") */}
+            <button
+              onClick={showLockToast}
+              className="flex items-center justify-center gap-[7px] w-full mt-4 border border-[#35516a] text-[#e8eef2] text-[12px] font-extrabold rounded-[11px] py-[11px] opacity-60"
+            >
+              <MI name="lock" size={15} style={{ color: '#f6b45a' }} />
+              <MI name="cloud_sync" size={17} className="text-brand-weak-ink" />
+              {tr('terminal.sendToPriority')}
+            </button>
+
+            <p className="text-[10px] text-ink-muted text-center mt-3">
+              {tr('palletVerify.expiryNote')}
+            </p>
+          </div>
         </div>
+        <Toast toast={toast} />
         {debugPanel}
       </div>
     );
@@ -1679,688 +1535,644 @@ export default function PalletVerifyPage({
       scanned >= Math.min(2, declared) &&
       (declared === 0 || scanned >= declared) &&
       !hasUnresolvedLooseWarnings;
-    // Loose boxes: group by OCR'd name, same as the pallet path. Barcode is
-    // dedup-only and never used as a grouping key.
-    const looseGroupedMap = groupBoxesByName(looseBoxes);
-    const looseGroupedItems: Record<string, BoxScan[]> = {};
-    for (const [k, v] of looseGroupedMap.entries()) looseGroupedItems[k] = v;
 
-    return (
-      <div className="min-h-screen flex flex-col bg-canvas">
-        {/* Header */}
-        <div className="bg-header border-b border-line px-4 py-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Package className="text-warn w-5 h-5" />
-              <div>
-                <p className="text-sm font-extrabold text-ink">
-                  {tr('palletVerify.looseHeader', { scanned, declared })}
-                </p>
-                <p className="text-xs font-mono text-ink-muted" dir="ltr">{tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}</p>
-              </div>
-            </div>
-            <SettingsPopover />
-          </div>
-          <div className="mt-2">
-            <div className="h-2 bg-sunken rounded-full overflow-hidden">
-              <div
-                className={`h-full transition-all rounded-full ${declared > 0 && scanned >= declared ? 'bg-ok' : 'bg-warn'}`}
-                style={{ width: `${declared > 0 ? Math.min((scanned / declared) * 100, 100) : 0}%` }}
-              />
-            </div>
-          </div>
-        </div>
+    // Terminal layout: newest scan becomes the active card, the rest are
+    // history rows (flat, newest first — the design's list shape).
+    const looseNewestFirst = [...looseBoxes].reverse();
+    const looseActive = looseNewestFirst[0];
+    const looseRest = looseNewestFirst.slice(1);
 
-        {/* Scanner — explicit key forces a fresh mount so the internal
-            scanContinuously() closure picks up handleLooseBarcodeDetected
-            instead of the stale pallet-phase handler. */}
-        <div className="relative">
-          <SmartScanner
-            key="loose-scanner"
-            onBarcodeDetected={handleLooseBarcodeDetected}
-            onManualCapture={handleLooseManualCapture}
-            onDuplicateFlash={(fn) => { looseDupFlashRef.current = fn; }}
-            scannedBarcodes={new Map()}
-            ocrResults={new Map()}
-          />
-          {phase === 'loose_confirming' && (
-            <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
-              <div className="bg-raised border border-line rounded-xl px-4 py-3 flex items-center gap-2">
-                <Loader2 className="animate-spin w-5 h-5 text-warn" />
-                <span className="text-sm font-medium text-ink">{tr('palletVerify.savingLoose')}</span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Scanned loose boxes */}
-        {looseBoxes.length > 0 && (
-          <div className="px-4 py-3 flex-1 overflow-y-auto space-y-2">
-            {Object.entries(looseGroupedItems).map(([nameKey, boxes]) => {
-              const displayName =
-                boxes.find((b) => b.item_name_hebrew)?.item_name_hebrew ||
-                boxes.find((b) => b.item_name)?.item_name ||
-                nameKey.replace(/^(he|en|unknown):/, '');
-              const doneWeights = boxes.filter((b) => b.weight > 0).map((b) => b.weight);
-              const totalWeight = doneWeights.reduce((s, w) => s + w, 0);
-              return (
-                <div key={nameKey} className="bg-warn-weak border border-warn/30 rounded-[14px] p-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-bold text-warn-weak-ink truncate max-w-[70%]">
-                      {displayName}
-                    </span>
-                    <span className="text-xs font-bold bg-warn/20 text-warn-weak-ink rounded-full px-2 py-0.5">
-                      {tr('palletVerify.boxesUnit', { count: boxes.length })}
-                    </span>
-                  </div>
-                  {totalWeight > 0 && (
-                    <p className="text-xs text-ink-muted mb-1">{tr('palletVerify.totalWeightLine', { weight: totalWeight.toFixed(3) })}</p>
-                  )}
-                  <div className="space-y-1">
-                    {boxes.map((box, bi) => {
-                      // Tap a loose-box row to reveal Edit / Delete (two-step). A
-                      // needs_review row stays amber and still blocks loose-phase
-                      // Confirm until resolved, but is tappable so a mis-captured
-                      // photo can be deleted. openEdit uses isLoose=true so a save
-                      // patches looseBoxes (not scannedBoxes).
-                      const selected = selectedBarcode === box.barcode;
-                      const needsReviewRow = !!box.needs_review;
-                      return (
-                      <div
-                        key={box.barcode + bi}
-                        onClick={() => setSelectedBarcode(selected ? null : box.barcode)}
-                        className={`text-xs text-ink-body flex items-center gap-1.5 flex-wrap cursor-pointer rounded px-1 ${
-                          needsReviewRow
-                            ? 'bg-warn-weak ring-1 ring-warn/40 py-1'
-                            : selected
-                            ? 'bg-danger-weak ring-1 ring-danger/30'
-                            : ''
-                        }`}
-                      >
-                        {box.ocr_status === 'processing' ? (
-                          <>
-                            <Loader2 className="w-3 h-3 animate-spin text-warn shrink-0" />
-                            <span className="text-warn-weak-ink">{tr('palletVerify.reading')}</span>
-                          </>
-                        ) : box.ocr_status === 'done' ? (
-                          <>
-                            <CheckCircle className={`w-3 h-3 shrink-0 ${needsReviewRow ? 'text-warn' : 'text-ok'}`} />
-                            <span className="font-mono" dir="ltr">{box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}</span>
-                            {box.expiry && <span className="text-ink-muted font-mono" dir="ltr">· {box.expiry}</span>}
-                            {needsReviewRow && (
-                              <span className="inline-flex items-center gap-1 text-warn-weak-ink font-medium">
-                                <AlertTriangle className="w-3 h-3 shrink-0" /> {tr('palletVerify.tapToFix')}
-                              </span>
-                            )}
-                            {selected && (
-                              <span className="ms-auto flex gap-1">
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); openEdit(box, true); }}
-                                  className="px-1.5 py-0.5 bg-brand text-ink-inverse rounded text-[10px] font-semibold hover:bg-brand-hover"
-                                >
-                                  {tr('palletVerify.editScan')}
-                                </button>
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); rescanLooseBox(box.barcode); setSelectedBarcode(null); }}
-                                  className="px-1.5 py-0.5 bg-danger text-ink-inverse rounded text-[10px] font-semibold hover:opacity-90"
-                                >
-                                  {tr('palletVerify.deleteScan')}
-                                </button>
-                              </span>
-                            )}
-                          </>
-                        ) : (
-                          <>
-                            <AlertCircle className="w-3 h-3 text-danger shrink-0" />
-                            <span className="text-ink-muted">{tr('ocr.failed')}</span>
-                            <div className="flex gap-1 ms-auto">
-                              {box.image_data && (
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); setViewingImage(box.image_data!); }}
-                                  className="px-1.5 py-0.5 bg-sunken hover:bg-hover text-ink-body rounded text-[10px] font-medium"
-                                >
-                                  {tr('ocr.view')}
-                                </button>
-                              )}
-                              <button
-                                onClick={(e) => { e.stopPropagation(); retryLooseOcr(box.barcode); }}
-                                className="px-1.5 py-0.5 bg-brand-weak hover:opacity-90 text-brand-weak-ink rounded text-[10px] font-medium"
-                              >
-                                {tr('ocr.retry')}
-                              </button>
-                              <button
-                                onClick={(e) => { e.stopPropagation(); rescanLooseBox(box.barcode); setSelectedBarcode(null); }}
-                                className="px-1.5 py-0.5 bg-danger-weak text-danger border border-danger rounded text-[10px] font-medium inline-flex items-center gap-0.5"
-                              >
-                                <Trash2 className="w-2.5 h-2.5" /> {tr('palletVerify.deleteScan')}
-                              </button>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Footer */}
-        <div className="p-4 bg-header border-t border-line sticky bottom-0 safe-bottom">
-          {error && <p className="text-danger-weak-ink text-sm text-center mb-2">{error}</p>}
-          {canConfirmLoose && phase !== 'loose_confirming' ? (
-            <SwipeConfirm
-              variant="warn"
-              onConfirm={handleConfirmLooseBoxes}
-              label={tr('palletVerify.swipeConfirmLoose', { count: scanned })}
-            />
-          ) : (
+    // Two-step row actions (tap row → tap action), same handlers as before.
+    const looseRowTrailing = (box: BoxScan) => {
+      if (selectedBarcode !== box.barcode) return undefined;
+      if (box.ocr_status === 'failed') {
+        return (
+          <span className="flex gap-1">
+            {box.image_data && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setViewingImage(box.image_data!); }}
+                className="px-2 py-1 bg-sunken text-ink-body rounded-[8px] text-[10px] font-semibold"
+              >
+                {tr('ocr.view')}
+              </button>
+            )}
             <button
-              disabled
-              className="w-full py-3 rounded-xl font-extrabold text-base bg-sunken text-ink-muted cursor-not-allowed"
+              onClick={(e) => { e.stopPropagation(); retryLooseOcr(box.barcode); }}
+              className="px-2 py-1 bg-brand-weak text-brand-weak-ink rounded-[8px] text-[10px] font-semibold"
             >
-              {canConfirmLoose
-                ? tr('palletVerify.confirmLooseBtn', { count: scanned })
-                : hasUnresolvedLooseWarnings
-                ? tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })
-                : declared > 0
-                ? tr('palletVerify.scanMoreLoose', { count: Math.max(0, declared - scanned) })
-                : tr('palletVerify.scanAtLeast2')}
+              {tr('ocr.retry')}
             </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); rescanLooseBox(box.barcode); setSelectedBarcode(null); }}
+              className="px-2 py-1 bg-danger text-ink-inverse rounded-[8px] text-[10px] font-semibold"
+            >
+              {tr('palletVerify.deleteScan')}
+            </button>
+          </span>
+        );
+      }
+      return (
+        <span className="flex gap-1">
+          <button
+            onClick={(e) => { e.stopPropagation(); openEdit(box, true); }}
+            className="px-2 py-1 bg-brand text-ink-inverse rounded-[8px] text-[10px] font-semibold"
+          >
+            {tr('palletVerify.editScan')}
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); rescanLooseBox(box.barcode); setSelectedBarcode(null); }}
+            className="px-2 py-1 bg-danger text-ink-inverse rounded-[8px] text-[10px] font-semibold"
+          >
+            {tr('palletVerify.deleteScan')}
+          </button>
+        </span>
+      );
+    };
+
+    const looseFooter = (
+      <>
+        {error && <p className="text-danger-weak-ink text-sm text-center mb-2">{error}</p>}
+        {canConfirmLoose && phase !== 'loose_confirming' ? (
+          <SwipeConfirm
+            variant="warn"
+            onConfirm={handleConfirmLooseBoxes}
+            label={tr('palletVerify.swipeConfirmLoose', { count: scanned })}
+          />
+        ) : (
+          <button
+            disabled
+            className="w-full py-3 rounded-[13px] font-extrabold text-base bg-sunken text-ink-muted cursor-not-allowed"
+          >
+            {canConfirmLoose
+              ? tr('palletVerify.confirmLooseBtn', { count: scanned })
+              : hasUnresolvedLooseWarnings
+              ? tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })
+              : declared > 0
+              ? tr('palletVerify.scanMoreLoose', { count: Math.max(0, declared - scanned) })
+              : tr('palletVerify.scanAtLeast2')}
+          </button>
+        )}
+        {hasUnresolvedLooseWarnings && (
+          <p className="flex items-center justify-center gap-1 text-[11px] text-warn-weak-ink text-center mt-1.5">
+            <AlertTriangle className="w-3 h-3 shrink-0" /> {tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })}
+          </p>
+        )}
+      </>
+    );
+
+    return withLang(
+      <div className="h-dvh flex flex-col bg-canvas overflow-hidden">
+        <DesignHeader
+          title={tr('palletVerify.looseHeader', { scanned, declared })}
+          subtitle={tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}
+          onMenu={drawer.open}
+        />
+        <ProgressHeader
+          label={tr('terminal.progressLabelLoose')}
+          count={scanned}
+          total={declared}
+          unitLabel={tr('terminal.statCartons')}
+          tone={declared > 0 && scanned >= declared ? 'done' : 'warn'}
+        />
+
+        {/* Camera area with the floating bottom sheet over it */}
+        <div className="flex-1 min-h-0 relative bg-black">
+          <div className="absolute inset-0">
+            {/* Scanner — explicit key forces a fresh mount so the internal
+                scanContinuously() closure picks up handleLooseBarcodeDetected
+                instead of the stale pallet-phase handler. */}
+            <SmartScanner
+              key="loose-scanner"
+              frame="corner"
+              className="h-full"
+              onBarcodeDetected={handleLooseBarcodeDetected}
+              onManualCapture={handleLooseManualCapture}
+              onDuplicateFlash={(fn) => { looseDupFlashRef.current = fn; }}
+              scannedBarcodes={new Map()}
+              ocrResults={new Map()}
+            />
+          </div>
+          {phase === 'loose_confirming' && (
+            <div className="absolute inset-0 z-40 bg-black/60 flex items-center justify-center">
+              <div className="bg-overlay-card border border-line rounded-[13px] px-4 py-3 flex items-center gap-2 animate-doneRise">
+                <Loader2 className="animate-spin w-5 h-5 text-warn" />
+                <span className="text-sm font-bold text-ink">{tr('palletVerify.savingLoose')}</span>
+              </div>
+            </div>
           )}
-          {hasUnresolvedLooseWarnings && (
-            <p className="flex items-center justify-center gap-1 text-[11px] text-warn-weak-ink text-center mt-1.5">
-              <AlertTriangle className="w-3 h-3 shrink-0" /> {tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })}
-            </p>
-          )}
+
+          <BottomSheet
+            ref={looseSheetRef}
+            toolbar={
+              <ToolDock
+                chips={buildDockChips({
+                  gap: () => showToast(tr('terminal.gapNotApplicable'), 'report_problem', '#fbbf5c'),
+                })}
+                onLockedPress={showLockToast}
+              />
+            }
+            footer={editForm?.isLoose ? undefined : looseFooter}
+          >
+            {editForm?.isLoose ? (
+              editPanelNode
+            ) : (
+              <>
+                {looseActive && (
+                  <ActiveScanCard
+                    tone="warn"
+                    index={looseBoxes.length}
+                    name={looseActive.item_name_hebrew || looseActive.item_name || '—'}
+                    value={looseActive.weight > 0 ? looseActive.weight.toFixed(2) : '—'}
+                    unit={tr('common.kg')}
+                    barcode={looseActive.barcode}
+                    expiry={looseActive.expiry || undefined}
+                    status={
+                      looseActive.ocr_status === 'processing'
+                        ? 'reading'
+                        : looseActive.ocr_status === 'failed'
+                        ? 'failed'
+                        : 'done'
+                    }
+                    expanded={activeExpanded}
+                    onToggleExpand={() => setActiveExpanded((v) => !v)}
+                    onEdit={() => openEdit(looseActive, true)}
+                  />
+                )}
+                {looseRest.map((box, i) => (
+                  <HistoryRow
+                    key={box.barcode + i}
+                    index={looseBoxes.length - 1 - i}
+                    name={box.item_name_hebrew || box.item_name || '—'}
+                    barcode={box.barcode}
+                    weight={box.weight > 0 ? box.weight.toFixed(2) : undefined}
+                    unitLabel={tr('common.kg')}
+                    status={
+                      box.ocr_status === 'processing'
+                        ? 'pending'
+                        : box.ocr_status === 'failed' || box.needs_review
+                        ? box.ocr_status === 'failed' ? 'failed' : 'pending'
+                        : 'done'
+                    }
+                    onClick={() => setSelectedBarcode(selectedBarcode === box.barcode ? null : box.barcode)}
+                    trailing={looseRowTrailing(box)}
+                  />
+                ))}
+              </>
+            )}
+          </BottomSheet>
         </div>
+
+        <Toast toast={toast} />
+        {drawer.node}
         {imageModal}
-        {editModal}
         {debugPanel}
       </div>
     );
   }
 
   if (phase === 'pallet_done') {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-canvas text-center">
-        <div className="w-20 h-20 rounded-full bg-ok-weak flex items-center justify-center mb-4 animate-donePop">
-          <CheckCircle className="text-ok w-10 h-10" />
-        </div>
-        <h1 className="text-xl font-extrabold text-ok-weak-ink mb-1">
-          {tr('palletVerify.palletDoneTitle', { current: currentPallet, total: pallet_count })}
-        </h1>
-        <p className="text-ink-body mb-1">
-          <span className="font-mono font-bold" dir="ltr">{tr('palletVerify.lpnLabel', { lpn })}</span>
-        </p>
-        {lpnUrl && (
-          <a
-            href={`${lpnUrl}?token=${encodeURIComponent(token)}${language === 'Hebrew' ? '&lang=Hebrew' : ''}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-2 inline-flex items-center gap-1.5 bg-ok text-canvas px-5 py-2 rounded-xl text-sm font-extrabold hover:opacity-90 transition"
-          >
-            <Printer className="w-4 h-4" /> {tr('palletVerify.viewPrintSticker')}
-          </a>
-        )}
-        <div className="mt-6 flex items-center gap-2 text-ink-muted text-sm">
-          <Loader2 className="animate-spin w-4 h-4" />
-          <span>{tr('palletVerify.movingNext', { next: currentPallet + 1 })}</span>
-        </div>
+    // Terminal design done overlay: stats + swipe "קליטת משטח הבא" (replaces
+    // the old 4s auto-advance) + real sticker deep-link for THIS pallet.
+    const doneBoxCount =
+      session?.completed_pallets?.[session.completed_pallets.length - 1]?.box_count || committed;
+    const doneWeight = scannedBoxes.reduce((s, b) => s + (b.weight > 0 ? b.weight : 0), 0);
+    return withLang(
+      <div className="h-dvh relative bg-canvas overflow-hidden">
+        <DoneOverlay
+          title={tr('terminal.palletDoneTitle', { n: currentPallet })}
+          subtitle={lpn ? `LPN ${lpn}` : undefined}
+          stats={[
+            { value: <span dir="ltr">{currentPallet}/{pallet_count}</span>, label: tr('terminal.statPallet') },
+            { value: doneBoxCount, label: tr('terminal.statCartons') },
+            {
+              value: doneWeight > 0
+                ? <>{doneWeight.toFixed(1)}<span className="text-[9px] font-extrabold text-ink-muted"> {tr('common.kg')}</span></>
+                : '—',
+              label: tr('terminal.statWeight'),
+              wide: true,
+            },
+          ]}
+        >
+          <div className="mt-4">
+            <SwipeConfirm
+              onConfirm={advanceToNextPallet}
+              label={tr('terminal.swipeNextPallet')}
+            />
+          </div>
+          {lpnUrl && (
+            <a
+              href={`${lpnUrl}?token=${encodeURIComponent(token)}${language === 'Hebrew' ? '&lang=Hebrew' : ''}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-[7px] w-full mt-[9px] border border-[#35516a] text-[#e8eef2] text-[12px] font-extrabold rounded-[11px] py-[11px]"
+            >
+              <MI name="print" size={17} className="text-brand-weak-ink" /> {tr('terminal.issuePalletLabels')}
+            </a>
+          )}
+        </DoneOverlay>
         {debugPanel}
       </div>
     );
   }
 
-  // ── Scanning / confirming ──
+  // ── Scanning / confirming — the terminal main screen ──
 
-  return (
-    <div className="min-h-screen flex flex-col bg-canvas">
-      {/* Header */}
-      <div className="bg-header border-b border-line px-4 py-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Package className="text-brand w-5 h-5" />
-            <div>
-              <p className="text-sm font-extrabold text-ink">
-                {confirmedBoxCount > 0
-                  ? tr('palletVerify.palletHeaderWithCount', { current: currentPallet, total: pallet_count, count: confirmedBoxCount })
-                  : tr('palletVerify.palletHeaderShort', { current: currentPallet, total: pallet_count })}
-              </p>
-              <p className="text-xs font-mono text-ink-muted" dir="ltr">{tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-1">
-            <TypeBadge />
-            <SettingsPopover />
-          </div>
-        </div>
+  // Newest scan = the blue active card; the rest = flat history rows
+  // (newest first, the design's list shape). Grouping still drives the
+  // uniform/mix logic — only the presentation is flat.
+  const newestFirst = [...scannedBoxes].reverse();
+  const activeBox = newestFirst[0];
+  const restBoxes = newestFirst.slice(1);
 
-        <div className="mt-2">
-          <div className="flex justify-between text-xs text-ink-muted mb-1">
-            <span className="font-mono font-bold">
-              {confirmedBoxCount > 0
-                ? tr('palletVerify.committed', { committed, total: confirmedBoxCount })
-                : tr('palletVerify.scannedSoFar', { count: committed })}
-            </span>
-            <span className={canConfirm ? 'text-ok-weak-ink font-semibold' : 'text-ink-muted'}>
-              {canConfirm
-                ? tr('palletVerify.readyToConfirm')
-                : pendingUniformPrompt
-                ? tr('palletVerify.waitingInput')
-                : confirmedBoxCount === 0
-                ? (committed < 2
-                    ? tr('palletVerify.scanToStart')
-                    : tr('palletVerify.setTotalBelow'))
-                : tr('palletVerify.moreBoxesToGo', { count: Math.max(0, confirmedBoxCount - committed) })}
-            </span>
-          </div>
-          <div className="h-2 bg-sunken rounded-full overflow-hidden">
-            <div
-              className={`h-full transition-all rounded-full ${canConfirm ? 'bg-ok' : 'bg-brand'}`}
-              style={{
-                width: `${Math.min(
-                  (committed / Math.max(confirmedBoxCount, 2)) * 100,
-                  100
-                )}%`,
-              }}
-            />
-          </div>
-        </div>
+  // Two-step row actions (tap row → tap action), same handlers as before.
+  const palletRowTrailing = (box: BoxScan) => {
+    if (selectedBarcode !== box.barcode) return undefined;
+    if (box.ocr_status === 'failed') {
+      return (
+        <span className="flex gap-1">
+          {box.image_data && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setViewingImage(box.image_data!); }}
+              className="px-2 py-1 bg-sunken text-ink-body rounded-[8px] text-[10px] font-semibold"
+            >
+              {tr('ocr.view')}
+            </button>
+          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); retryPalletOcr(box.barcode); }}
+            className="px-2 py-1 bg-brand-weak text-brand-weak-ink rounded-[8px] text-[10px] font-semibold"
+          >
+            {tr('ocr.retry')}
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
+            className="px-2 py-1 bg-danger text-ink-inverse rounded-[8px] text-[10px] font-semibold"
+          >
+            {tr('palletVerify.deleteScan')}
+          </button>
+        </span>
+      );
+    }
+    return (
+      <span className="flex gap-1">
+        <button
+          onClick={(e) => { e.stopPropagation(); openEdit(box); }}
+          className="px-2 py-1 bg-brand text-ink-inverse rounded-[8px] text-[10px] font-semibold"
+        >
+          {tr('palletVerify.editScan')}
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
+          className="px-2 py-1 bg-danger text-ink-inverse rounded-[8px] text-[10px] font-semibold"
+        >
+          {tr('palletVerify.deleteScan')}
+        </button>
+      </span>
+    );
+  };
 
-        {/* Uniform-group banner: shows locked single-item groups. The
-            single-vs-mix choice is asked in the footer, not listed here. */}
-        {uniformGroups.size > 0 && (
-          <div className="mt-2 bg-ok-weak border border-ok/30 rounded-lg px-3 py-2">
-            <p className="flex items-center gap-1 text-[11px] font-semibold text-ok-weak-ink mb-1">
-              <CheckCircle className="w-3.5 h-3.5 shrink-0" /> {tr('palletVerify.uniformItemsHeader')}
-            </p>
-            <ul className="text-xs text-ok-weak-ink space-y-0.5">
-              {Array.from(uniformGroups.values()).map((g) => {
-                const name = g.item_name_hebrew || g.item_name || g.name_key.replace(/^(he|en|unknown):/, '');
-                return (
-                  <li key={g.name_key}>
-                    {tr('palletVerify.uniformLockedItem', { name, count: g.total_count, weight: g.avg_weight })}
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        )}
-      </div>
+  // Guidance line from the old header — where does the worker stand now.
+  const statusText = canConfirm
+    ? tr('palletVerify.readyToConfirm')
+    : pendingUniformPrompt
+    ? tr('palletVerify.waitingInput')
+    : confirmedBoxCount === 0
+    ? (committed < 2 ? tr('palletVerify.scanToStart') : tr('palletVerify.setTotalBelow'))
+    : tr('palletVerify.moreBoxesToGo', { count: Math.max(0, confirmedBoxCount - committed) });
 
-      {/* Scanner — keyed per pallet so each new pallet gets a fresh
-          scanner instance (clears the internal cooldown/dedup refs). */}
-      <div className="relative">
-        <SmartScanner
-          key={`pallet-scanner-${currentPallet}`}
-          onBarcodeDetected={handleBarcodeDetected}
-          onManualCapture={handleManualCapture}
-          onDuplicateFlash={(fn) => { dupFlashRef.current = fn; }}
-          scannedBarcodes={new Map()}
-          ocrResults={new Map()}
-        />
-        {phase === 'confirming' && (
-          <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
-            <div className="bg-raised border border-line rounded-xl px-4 py-3 flex items-center gap-2">
-              <Loader2 className="animate-spin w-5 h-5 text-brand" />
-              <span className="text-sm font-medium text-ink">{tr('palletVerify.savingPallet')}</span>
-            </div>
-          </div>
-        )}
-      </div>
+  // Footer — priority-ordered modes:
+  // (1) single_or_mix uniform prompt (Complete / Continue),
+  // (2) deferred pallet box-count input,
+  // (3) standard confirm (swipe) / force-confirm / disabled reason.
+  const mainFooter = (
+    <>
+      {error && <p className="text-danger-weak-ink text-sm text-center mb-2">{error}</p>}
+      {!canConfirm && (
+        <p className="text-[10px] font-bold text-ink-muted text-center mb-2">{statusText}</p>
+      )}
 
-      {/* AI consolidation banner — appears when /api/consolidate-items
-          suggests two of the on-pallet groups are actually the same
-          product (OCR drift). Worker confirms or dismisses. */}
-      {pendingMerge && (
-        <div className="mx-4 mt-3 bg-warn-weak border-[1.5px] border-warn/55 rounded-2xl p-3 shadow-[0_0_0_4px_rgba(245,158,11,0.06),0_14px_34px_rgba(0,0,0,0.5)]">
-          <p className="flex items-center gap-1 text-xs font-semibold text-warn-weak-ink mb-1">
-            <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {tr('palletVerify.aiMergeBanner')}
+      {pendingUniformPrompt?.mode === 'single_or_mix' ? (
+        <div className="space-y-2">
+          <p className="text-xs text-ink-body text-center mb-1">
+            {tr('palletVerify.uniformChoose')}
           </p>
-          <ul className="text-xs text-warn-weak-ink mb-2 space-y-0.5">
-            {pendingMerge.sample_names.map((nm, i) => {
-              const fallbackKey = pendingMerge.from_keys[i]?.replace(/^(he|en|unknown):/, '') ?? '';
-              const display = nm.he || nm.en || fallbackKey;
-              const count = pendingMerge.box_counts[i] ?? 0;
-              return (
-                <li key={pendingMerge.from_keys[i] ?? i} className="flex items-baseline gap-1">
-                  <span className="font-semibold">{display}</span>
-                  <span className="text-warn-weak-ink">×{count}</span>
-                </li>
-              );
-            })}
-          </ul>
+          <button
+            onClick={handleCompleteAsSingle}
+            disabled={phase === 'confirming'}
+            className="flex items-center justify-center gap-[6px] w-full py-3 rounded-[13px] font-black text-[14px] bg-ok text-canvas disabled:bg-sunken disabled:text-ink-muted"
+          >
+            <MI name="check_circle" size={18} /> {tr('palletVerify.uniformCompleteBtn')}
+          </button>
+          <button
+            onClick={handleContinueAsMix}
+            disabled={phase === 'confirming'}
+            className="flex items-center justify-center gap-[6px] w-full py-3 rounded-[13px] font-extrabold text-[13px] bg-tile border-2 border-brand text-brand-weak-ink"
+          >
+            <MI name="add" size={18} /> {tr('palletVerify.uniformContinueMix')}
+          </button>
+        </div>
+      ) : (confirmedBoxCount === 0 && !anyProcessing && (doneCount >= 4 || forcedMix || !!pendingSingleGroup)) ? (
+        <div className="space-y-2">
+          <label className="block text-xs text-ink-body font-medium">
+            {tr('palletVerify.deferredCountTitle')}
+          </label>
+          <p className="text-[11px] text-ink-muted">
+            {tr('palletVerify.deferredCountHint', { scanned: scannedBoxes.length })}
+          </p>
           <div className="flex gap-2">
+            <input
+              type="number"
+              inputMode="numeric"
+              min={Math.max(2, scannedBoxes.length)}
+              value={boxCountInput}
+              onChange={(e) => {
+                setBoxCountInput(e.target.value);
+                setPalletCountError(null);
+              }}
+              onKeyDown={(e) => e.key === 'Enter' && handlePalletCountSubmit()}
+              placeholder={tr('palletVerify.boxCountPlaceholder')}
+              className="flex-1 min-w-0 text-center text-xl font-black font-mono text-ink bg-sunken border-2 border-line-strong rounded-[12px] py-2 px-3 transition outline-none focus:border-brand focus:ring-4 focus:ring-brand/20 placeholder:text-ink-muted placeholder:font-medium placeholder:text-base placeholder:font-sans"
+              autoFocus
+            />
             <button
-              onClick={handleAcceptMerge}
-              className="flex items-center justify-center gap-1.5 flex-1 min-w-0 py-2 rounded-lg bg-warn text-canvas text-xs font-semibold hover:opacity-90 active:opacity-80 transition"
+              onClick={handlePalletCountSubmit}
+              className="shrink-0 px-5 py-2 rounded-[12px] bg-brand text-ink-inverse font-black text-sm"
             >
-              <Check className="w-3.5 h-3.5" /> {tr('palletVerify.aiMergeAccept')}
-            </button>
-            <button
-              onClick={handleRejectMerge}
-              className="shrink-0 px-4 py-2 rounded-lg bg-raised border-2 border-warn/30 text-warn-weak-ink text-xs font-semibold hover:bg-warn-weak transition"
-            >
-              {tr('palletVerify.aiMergeReject')}
+              {tr('palletVerify.uniformSet')}
             </button>
           </div>
+          {palletCountError && (
+            <p className="text-danger-weak-ink text-xs">{palletCountError}</p>
+          )}
+          {pendingSingleGroup && (
+            <button
+              onClick={handleCancelSingleConfirm}
+              className="w-full text-xs text-ink-muted underline pt-1"
+            >
+              {tr('palletVerify.cancelSingle')}
+            </button>
+          )}
         </div>
-      )}
-
-      {/* Scanned boxes */}
-      {scannedBoxes.length > 0 && (
-        <div className="px-4 py-3 flex-1 overflow-y-auto">
-          {detectedType === 'mix' ? (
-            <div className="space-y-2">
-              {Object.entries(groupedItems).map(([nameKey, boxes]) => {
-                const displayName =
-                  boxes.find((b) => b.item_name_hebrew)?.item_name_hebrew ||
-                  boxes.find((b) => b.item_name)?.item_name ||
-                  // Stripping the `he:` / `en:` prefix here is purely cosmetic
-                  // — the prefix is helpful for debugging the React key but
-                  // would look noisy in the UI.
-                  nameKey.replace(/^(he|en|unknown):/, '');
-                const doneWeights = boxes.filter((b) => b.weight > 0).map((b) => b.weight);
-                const avgWeight =
-                  doneWeights.length > 0
-                    ? doneWeights.reduce((s, w) => s + w, 0) / doneWeights.length
-                    : 0;
-
-                return (
-                  <div key={nameKey} className="bg-brand-weak border border-brand/30 rounded-xl p-3">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-semibold text-brand-weak-ink truncate max-w-[70%]">
-                        {displayName}
-                      </span>
-                      <span className="text-xs bg-brand-weak text-brand-weak-ink rounded-full px-2 py-0.5 font-semibold">
-                        {tr('palletVerify.boxesUnit', { count: boxes.length })}
-                      </span>
-                    </div>
-                    {avgWeight > 0 && (
-                      <p className="text-xs text-ink-muted mb-1">{tr('palletVerify.avgWeightLine', { weight: avgWeight.toFixed(3) })}</p>
-                    )}
-                    <div className="space-y-1">
-                      {boxes.map((box, bi) => {
-                        // Tap a box row to reveal its Delete action (two-step).
-                        const selected = selectedBarcode === box.barcode;
-                        return (
-                        <div
-                          key={box.barcode + bi}
-                          onClick={() => setSelectedBarcode(selected ? null : box.barcode)}
-                          className={`text-xs text-ink-body flex items-center gap-1.5 flex-wrap cursor-pointer rounded px-1 ${selected ? 'bg-danger-weak ring-1 ring-danger/30' : ''}`}
-                        >
-                          {box.ocr_status === 'processing' ? (
-                            <>
-                              <Loader2 className="w-3 h-3 animate-spin text-brand shrink-0" />
-                              <span className="text-brand">{tr('palletVerify.reading')}</span>
-                            </>
-                          ) : box.ocr_status === 'done' ? (
-                            <>
-                              <CheckCircle className="w-3 h-3 text-ok shrink-0" />
-                              <span className="font-mono" dir="ltr">{box.weight > 0 ? `${box.weight.toFixed(3)} kg` : '—'}</span>
-                              {box.expiry && <span className="text-ink-muted font-mono" dir="ltr">· {box.expiry}</span>}
-                              {selected && (
-                                <span className="ms-auto flex gap-1">
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); openEdit(box); }}
-                                    className="px-1.5 py-0.5 bg-brand text-ink-inverse rounded text-[10px] font-semibold hover:bg-brand-hover"
-                                  >
-                                    {tr('palletVerify.editScan')}
-                                  </button>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
-                                    className="px-1.5 py-0.5 bg-danger text-ink-inverse rounded text-[10px] font-semibold hover:opacity-90"
-                                  >
-                                    {tr('palletVerify.deleteScan')}
-                                  </button>
-                                </span>
-                              )}
-                            </>
-                          ) : (
-                            <>
-                              <AlertCircle className="w-3 h-3 text-danger shrink-0" />
-                              <span className="text-ink-muted">{tr('ocr.failed')}</span>
-                              <div className="flex gap-1 ms-auto">
-                                {box.image_data && (
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); setViewingImage(box.image_data!); }}
-                                    className="px-1.5 py-0.5 bg-sunken hover:bg-hover text-ink-body rounded text-[10px] font-medium"
-                                  >
-                                    {tr('ocr.view')}
-                                  </button>
-                                )}
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); retryPalletOcr(box.barcode); }}
-                                  className="px-1.5 py-0.5 bg-brand-weak hover:opacity-90 text-brand-weak-ink rounded text-[10px] font-medium"
-                                >
-                                  {tr('ocr.retry')}
-                                </button>
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
-                                  className="px-1.5 py-0.5 bg-danger-weak text-danger border border-danger rounded text-[10px] font-medium inline-flex items-center gap-0.5"
-                                >
-                                  <Trash2 className="w-2.5 h-2.5" /> {tr('palletVerify.deleteScan')}
-                                </button>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-              <p className="text-xs text-ink-muted text-center mt-1">
-                {tr('palletVerify.itemTypesDetected', { count: Object.keys(groupedItems).length })}
-              </p>
-            </div>
+      ) : (
+        <>
+          {!canConfirm && canForceConfirm ? (
+            <button
+              onClick={() => setPendingForceConfirm(true)}
+              disabled={phase === 'confirming'}
+              className="flex items-center justify-center gap-[6px] w-full py-3 rounded-[13px] font-black text-[14px] bg-warn text-canvas disabled:bg-sunken disabled:text-ink-muted"
+            >
+              <MI name="report_problem" size={18} /> {tr('palletVerify.forceCreateBtn')}
+            </button>
+          ) : canConfirm && phase !== 'confirming' ? (
+            <SwipeConfirm
+              onConfirm={handleConfirmPallet}
+              label={tr('palletVerify.swipeConfirmPallet', { current: currentPallet })}
+            />
           ) : (
-            <div className="space-y-2">
-              {scannedBoxes.map((box, idx) => (
-                <BoxCard key={box.barcode + idx} box={box} idx={idx} />
-              ))}
-            </div>
+            <button
+              disabled
+              className="w-full py-3 rounded-[13px] font-extrabold text-base bg-sunken text-ink-muted cursor-not-allowed"
+            >
+              {canConfirm
+                ? tr('palletVerify.confirmPalletBtn', { current: currentPallet })
+                : hasUnresolvedWarnings
+                ? tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })
+                : committed < 2
+                ? tr('palletVerify.scanMoreToContinue', { count: 2 - committed })
+                : tr('palletVerify.boxesNeeded', { count: Math.max(0, confirmedBoxCount - committed) })}
+            </button>
           )}
-
-          {canConfirm && (
-            <p className="text-xs text-ink-muted text-center mt-3">
-              {tr('palletVerify.confirmOrKeep')}
+          {confirmedBoxCount === 0 && !forcedMix && !pendingSingleGroup && doneCount < 4 && doneCount >= 1 && !anyProcessing && (
+            <button
+              onClick={() => setForcedMix(true)}
+              className="w-full text-xs text-ink-muted underline pt-2"
+            >
+              {tr('palletVerify.fewerThan4')}
+            </button>
+          )}
+          {hasUnresolvedWarnings && (
+            <p className="flex items-center justify-center gap-1 text-[11px] text-warn-weak-ink text-center mt-1.5">
+              <AlertTriangle className="w-3 h-3 shrink-0" />{' '}
+              {softWarnings
+                ? tr('palletVerify.unreadableSoftNote', { count: unresolvedWarnings })
+                : tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })}
             </p>
           )}
-        </div>
+        </>
       )}
+      {softWarnings && !manualMode && phase === 'scanning' && (
+        <button
+          onClick={() => setManualMode(true)}
+          className="w-full mt-2 text-xs text-warn-weak-ink font-medium underline"
+        >
+          {tr('palletVerify.stickersDamaged')}
+        </button>
+      )}
+    </>
+  );
 
-      {/* Footer — priority-ordered modes:
-          (1) single_or_mix uniform prompt (Complete / Continue) — shown
-              after >=4 OCR'd boxes of one product at the same weight,
-          (2) deferred pallet box-count input (surfaces after >=4
-              OCR-completed scans, OR once the worker picks "Single-item"
-              in mode 1, OR once they confirm the pallet is mix),
-          (3) standard Confirm Pallet button.                         */}
-      <div className="p-4 bg-header border-t border-line sticky bottom-0 safe-bottom">
-        {error && <p className="text-danger-weak-ink text-sm text-center mb-2">{error}</p>}
+  return withLang(
+    <div className="h-dvh flex flex-col bg-canvas overflow-hidden">
+      <DesignHeader
+        title={
+          confirmedBoxCount > 0
+            ? tr('palletVerify.palletHeaderWithCount', { current: currentPallet, total: pallet_count, count: confirmedBoxCount })
+            : tr('palletVerify.palletHeaderShort', { current: currentPallet, total: pallet_count })
+        }
+        subtitle={tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}
+        onMenu={drawer.open}
+        right={<span className="pe-1"><TypeBadge /></span>}
+      />
+      <ProgressHeader
+        label={tr('terminal.progressLabel', { n: currentPallet, total: pallet_count })}
+        count={committed}
+        total={confirmedBoxCount}
+        unitLabel={tr('terminal.statCartons')}
+        tone={canConfirm ? 'done' : 'brand'}
+      />
 
-        {pendingUniformPrompt?.mode === 'single_or_mix' ? (
-          <div className="space-y-2">
-            <p className="text-xs text-ink-body text-center mb-1">
-              {tr('palletVerify.uniformChoose')}
-            </p>
-            <button
-              onClick={handleCompleteAsSingle}
-              disabled={phase === 'confirming'}
-              className="flex items-center justify-center gap-1.5 w-full py-3 rounded-xl font-extrabold text-base bg-ok text-canvas hover:opacity-90 active:bg-ok transition disabled:bg-sunken disabled:text-ink-muted"
-            >
-              <CheckCircle className="w-4 h-4" /> {tr('palletVerify.uniformCompleteBtn')}
-            </button>
-            <button
-              onClick={handleContinueAsMix}
-              disabled={phase === 'confirming'}
-              className="flex items-center justify-center gap-1.5 w-full py-3 rounded-xl font-bold text-base bg-tile border-2 border-brand text-brand-weak-ink hover:bg-brand-weak transition"
-            >
-              <Plus className="w-4 h-4" /> {tr('palletVerify.uniformContinueMix')}
-            </button>
-          </div>
-        ) : (confirmedBoxCount === 0 && !anyProcessing && (doneCount >= 4 || forcedMix || !!pendingSingleGroup)) ? (
-          <div className="space-y-2">
-            <label className="block text-xs text-ink-body font-medium">
-              {tr('palletVerify.deferredCountTitle')}
-            </label>
-            <p className="text-[11px] text-ink-muted">
-              {tr('palletVerify.deferredCountHint', { scanned: scannedBoxes.length })}
-            </p>
-            <div className="flex gap-2">
-              <input
-                type="number"
-                inputMode="numeric"
-                min={Math.max(2, scannedBoxes.length)}
-                value={boxCountInput}
-                onChange={(e) => {
-                  setBoxCountInput(e.target.value);
-                  setPalletCountError(null);
-                }}
-                onKeyDown={(e) => e.key === 'Enter' && handlePalletCountSubmit()}
-                placeholder={tr('palletVerify.boxCountPlaceholder')}
-                className="flex-1 min-w-0 text-center text-xl font-extrabold font-mono text-ink bg-sunken border-2 border-line-strong rounded-xl py-2 px-3 transition outline-none focus:border-brand focus:ring-4 focus:ring-brand/20 placeholder:text-ink-muted placeholder:font-medium placeholder:text-base placeholder:font-sans"
-                autoFocus
-              />
-              <button
-                onClick={handlePalletCountSubmit}
-                className="shrink-0 px-5 py-2 rounded-xl bg-brand text-ink-inverse font-extrabold text-sm hover:bg-brand-hover transition"
-              >
-                {tr('palletVerify.uniformSet')}
-              </button>
-            </div>
-            {palletCountError && (
-              <p className="text-danger-weak-ink text-xs">{palletCountError}</p>
-            )}
-            {pendingSingleGroup && (
-              <button
-                onClick={handleCancelSingleConfirm}
-                className="w-full text-xs text-ink-muted hover:text-ink-body underline pt-1"
-              >
-                {tr('palletVerify.cancelSingle')}
-              </button>
-            )}
-          </div>
-        ) : (
-          <>
-            {!canConfirm && canForceConfirm ? (
-              // Scanned fewer than declared (and no OCR warnings): let the worker
-              // force the LPN, but warn first via a confirm modal.
-              <button
-                onClick={() => setPendingForceConfirm(true)}
-                disabled={phase === 'confirming'}
-                className="flex items-center justify-center gap-1.5 w-full py-3 rounded-xl font-extrabold text-base bg-warn text-canvas hover:opacity-90 transition disabled:bg-sunken disabled:text-ink-muted"
-              >
-                <AlertTriangle className="w-4 h-4" /> {tr('palletVerify.forceCreateBtn')}
-              </button>
-            ) : canConfirm && phase !== 'confirming' ? (
-              // Terminal design: swipe slider guards the pallet confirm
-              // against accidental taps. Same handler as the old button.
-              <SwipeConfirm
-                onConfirm={handleConfirmPallet}
-                label={tr('palletVerify.swipeConfirmPallet', { current: currentPallet })}
-              />
-            ) : (
-              <button
-                disabled
-                className="w-full py-3 rounded-xl font-extrabold text-base bg-sunken text-ink-muted cursor-not-allowed"
-              >
-                {canConfirm
-                  ? tr('palletVerify.confirmPalletBtn', { current: currentPallet })
-                  : hasUnresolvedWarnings
-                  ? tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })
-                  : committed < 2
-                  ? tr('palletVerify.scanMoreToContinue', { count: 2 - committed })
-                  : tr('palletVerify.boxesNeeded', { count: Math.max(0, confirmedBoxCount - committed) })}
-              </button>
-            )}
-            {confirmedBoxCount === 0 && !forcedMix && !pendingSingleGroup && doneCount < 4 && doneCount >= 1 && !anyProcessing && (
-              <button
-                onClick={() => setForcedMix(true)}
-                className="w-full text-xs text-ink-muted hover:text-ink-body underline pt-2"
-              >
-                {tr('palletVerify.fewerThan4')}
-              </button>
-            )}
-            {hasUnresolvedWarnings && (
-              <p className="flex items-center justify-center gap-1 text-[11px] text-warn-weak-ink text-center mt-1.5">
-                <AlertTriangle className="w-3 h-3 shrink-0" />{' '}
-                {softWarnings
-                  ? tr('palletVerify.unreadableSoftNote', { count: unresolvedWarnings })
-                  : tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })}
-              </p>
-            )}
-          </>
-        )}
-        {softWarnings && !manualMode && phase === 'scanning' && (
-          <button
-            onClick={() => setManualMode(true)}
-            className="w-full mt-2 text-xs text-warn-weak-ink hover:text-warn font-medium underline"
-          >
-            {tr('palletVerify.stickersDamaged')}
-          </button>
-        )}
-
-        {/* Terminal-design tools that need backend we don't have yet —
-            rendered locked (design's own lock-chip pattern), no-op on tap. */}
-        <div className="flex items-center justify-center gap-2 mt-3">
-          <button
-            onClick={() => {
-              setLockedToastVisible(true);
-              if (lockedToastTimer.current) clearTimeout(lockedToastTimer.current);
-              lockedToastTimer.current = setTimeout(() => setLockedToastVisible(false), 2400);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1a2530] border border-[#3a4a57] opacity-60 text-[11px] font-bold text-ink-muted"
-          >
-            <Lock className="w-3 h-3 text-[#f6b45a]" /> <Tag className="w-3 h-3" /> {tr('palletVerify.toolLabels')}
-          </button>
-          <button
-            onClick={() => {
-              setLockedToastVisible(true);
-              if (lockedToastTimer.current) clearTimeout(lockedToastTimer.current);
-              lockedToastTimer.current = setTimeout(() => setLockedToastVisible(false), 2400);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1a2530] border border-[#3a4a57] opacity-60 text-[11px] font-bold text-ink-muted"
-          >
-            <Lock className="w-3 h-3 text-[#f6b45a]" /> <Send className="w-3 h-3" /> {tr('palletVerify.toolAssign')}
-          </button>
+      {/* Camera area with the floating bottom sheet over it */}
+      <div className="flex-1 min-h-0 relative bg-black">
+        <div className="absolute inset-0">
+          {/* Scanner — keyed per pallet so each new pallet gets a fresh
+              scanner instance (clears the internal cooldown/dedup refs). */}
+          <SmartScanner
+            key={`pallet-scanner-${currentPallet}`}
+            frame="corner"
+            className="h-full"
+            onBarcodeDetected={handleBarcodeDetected}
+            onManualCapture={handleManualCapture}
+            onDuplicateFlash={(fn) => { dupFlashRef.current = fn; }}
+            scannedBarcodes={new Map()}
+            ocrResults={new Map()}
+          />
         </div>
-        {lockedToastVisible && (
-          <p className="text-[11px] text-warn-weak-ink text-center mt-1.5 animate-fadeIn">
-            {tr('palletVerify.featureLocked')}
-          </p>
+        {phase === 'confirming' && (
+          <div className="absolute inset-0 z-40 bg-black/60 flex items-center justify-center">
+            <div className="bg-overlay-card border border-line rounded-[13px] px-4 py-3 flex items-center gap-2 animate-doneRise">
+              <Loader2 className="animate-spin w-5 h-5 text-brand" />
+              <span className="text-sm font-bold text-ink">{tr('palletVerify.savingPallet')}</span>
+            </div>
+          </div>
         )}
+
+        <BottomSheet
+          ref={sheetRef}
+          toolbar={
+            <ToolDock
+              chips={buildDockChips({
+                gap: () =>
+                  canForceConfirm
+                    ? setPendingForceConfirm(true)
+                    : showToast(tr('terminal.gapNotApplicable'), 'report_problem', '#fbbf5c'),
+              })}
+              onLockedPress={showLockToast}
+            />
+          }
+          footer={editForm && !editForm.isLoose ? undefined : mainFooter}
+        >
+          {editForm && !editForm.isLoose ? (
+            editPanelNode
+          ) : (
+            <>
+              {/* AI consolidation banner — Gemini thinks two groups are the
+                  same product (OCR drift). Worker confirms or dismisses. */}
+              {pendingMerge && (
+                <div className="bg-amber-card border-[1.5px] border-warn/55 rounded-[14px] p-3">
+                  <p className="flex items-center gap-1 text-xs font-bold text-warn-weak-ink mb-1">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {tr('palletVerify.aiMergeBanner')}
+                  </p>
+                  <ul className="text-xs text-warn-weak-ink mb-2 space-y-0.5">
+                    {pendingMerge.sample_names.map((nm, i) => {
+                      const fallbackKey = pendingMerge.from_keys[i]?.replace(/^(he|en|unknown):/, '') ?? '';
+                      const display = nm.he || nm.en || fallbackKey;
+                      const count = pendingMerge.box_counts[i] ?? 0;
+                      return (
+                        <li key={pendingMerge.from_keys[i] ?? i} className="flex items-baseline gap-1">
+                          <span className="font-semibold">{display}</span>
+                          <span>×{count}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleAcceptMerge}
+                      className="flex items-center justify-center gap-[6px] flex-1 min-w-0 py-2 rounded-[10px] bg-warn text-canvas text-xs font-bold"
+                    >
+                      <Check className="w-3.5 h-3.5" /> {tr('palletVerify.aiMergeAccept')}
+                    </button>
+                    <button
+                      onClick={handleRejectMerge}
+                      className="shrink-0 px-4 py-2 rounded-[10px] bg-tile border border-warn/30 text-warn-weak-ink text-xs font-bold"
+                    >
+                      {tr('palletVerify.aiMergeReject')}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Locked uniform single-item groups */}
+              {uniformGroups.size > 0 && (
+                <div className="bg-ok-weak border border-ok/30 rounded-[13px] px-3 py-2">
+                  <p className="flex items-center gap-1 text-[11px] font-bold text-ok-weak-ink mb-1">
+                    <CheckCircle className="w-3.5 h-3.5 shrink-0" /> {tr('palletVerify.uniformItemsHeader')}
+                  </p>
+                  <ul className="text-xs text-ok-weak-ink space-y-0.5">
+                    {Array.from(uniformGroups.values()).map((g) => {
+                      const name = g.item_name_hebrew || g.item_name || g.name_key.replace(/^(he|en|unknown):/, '');
+                      return (
+                        <li key={g.name_key}>
+                          {tr('palletVerify.uniformLockedItem', { name, count: g.total_count, weight: g.avg_weight })}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {activeBox && (
+                <ActiveScanCard
+                  index={scannedBoxes.length}
+                  name={activeBox.item_name_hebrew || activeBox.item_name || '—'}
+                  value={activeBox.weight > 0 ? activeBox.weight.toFixed(2) : '—'}
+                  unit={tr('common.kg')}
+                  barcode={activeBox.barcode}
+                  expiry={activeBox.expiry || undefined}
+                  status={
+                    activeBox.ocr_status === 'processing'
+                      ? 'reading'
+                      : activeBox.ocr_status === 'failed'
+                      ? 'failed'
+                      : 'done'
+                  }
+                  expanded={activeExpanded}
+                  onToggleExpand={() => setActiveExpanded((v) => !v)}
+                  onEdit={() => openEdit(activeBox)}
+                />
+              )}
+              {activeBox && selectedBarcode === activeBox.barcode && (
+                <div className="flex justify-end -mt-1">{palletRowTrailing(activeBox)}</div>
+              )}
+
+              {restBoxes.map((box, i) => (
+                <HistoryRow
+                  key={box.barcode + i}
+                  index={scannedBoxes.length - 1 - i}
+                  name={box.item_name_hebrew || box.item_name || '—'}
+                  barcode={box.barcode}
+                  weight={box.weight > 0 ? box.weight.toFixed(2) : undefined}
+                  unitLabel={tr('common.kg')}
+                  status={
+                    box.ocr_status === 'processing'
+                      ? 'pending'
+                      : box.ocr_status === 'failed'
+                      ? 'failed'
+                      : box.needs_review
+                      ? 'pending'
+                      : 'done'
+                  }
+                  onClick={() => setSelectedBarcode(selectedBarcode === box.barcode ? null : box.barcode)}
+                  trailing={palletRowTrailing(box)}
+                />
+              ))}
+
+              {detectedType === 'mix' && Object.keys(groupedItems).length > 1 && (
+                <p className="text-xs text-ink-muted text-center">
+                  {tr('palletVerify.itemTypesDetected', { count: Object.keys(groupedItems).length })}
+                </p>
+              )}
+            </>
+          )}
+        </BottomSheet>
       </div>
+
+      <Toast toast={toast} />
+      {drawer.node}
       {imageModal}
-      {editModal}
       {pendingForceConfirm && (
         // Terminal design "פער מול התעודה" — amber discrepancy card with
         // scanned/expected/shortfall tiles + swipe-to-confirm. Same handler
         // wiring as the old force-confirm buttons.
-        <div className="fixed inset-0 z-50 bg-[rgba(5,8,10,0.74)] backdrop-blur-[3px] flex items-center justify-center p-[22px]">
-          <div className="w-full max-w-[330px] bg-[#1a1408] border border-[rgba(245,158,11,0.5)] rounded-[20px] px-5 py-[22px] shadow-[0_26px_64px_rgba(0,0,0,0.72)] animate-fadeUp">
+        <div className="fixed inset-0 z-[72] bg-[rgba(5,8,10,0.74)] backdrop-blur-[3px] flex items-center justify-center p-[22px]">
+          <div className="w-full max-w-[330px] bg-amber-card border border-[rgba(245,158,11,0.5)] rounded-[20px] px-5 py-[22px] shadow-[0_26px_64px_rgba(0,0,0,0.72)] animate-doneRise">
             <div className="flex justify-center mb-[13px]">
               <div className="w-16 h-16 rounded-full bg-[rgba(245,158,11,0.16)] flex items-center justify-center">
-                <AlertTriangle className="w-[34px] h-[34px] text-[#fbbf5c]" />
+                <MI name="report_problem" size={34} style={{ color: '#fbbf5c' }} />
               </div>
             </div>
             <h2 className="text-center text-[19px] font-black text-ink-inverse">{tr('palletVerify.discrepancyTitle')}</h2>
             <p className="text-center text-xs font-semibold text-[#d8c9a0] mt-1">{tr('palletVerify.discrepancySubtitle')}</p>
             <div className="flex gap-2 mt-4">
-              <div className="flex-1 bg-[#120d04] border border-[rgba(245,158,11,0.28)] rounded-[11px] px-1.5 py-2.5 text-center">
+              <div className="flex-1 bg-amber-well border border-[rgba(245,158,11,0.28)] rounded-[11px] px-1.5 py-2.5 text-center">
                 <div className="font-mono font-black text-base text-ink-inverse" dir="ltr">{committed}</div>
                 <div className="text-[8.5px] font-bold text-[#d8c9a0] mt-0.5">{tr('palletVerify.discrepancyScanned')}</div>
               </div>
-              <div className="flex-1 bg-[#120d04] border border-[rgba(245,158,11,0.28)] rounded-[11px] px-1.5 py-2.5 text-center">
+              <div className="flex-1 bg-amber-well border border-[rgba(245,158,11,0.28)] rounded-[11px] px-1.5 py-2.5 text-center">
                 <div className="font-mono font-black text-base text-ink-inverse" dir="ltr">{confirmedBoxCount}</div>
                 <div className="text-[8.5px] font-bold text-[#d8c9a0] mt-0.5">{tr('palletVerify.discrepancyExpected')}</div>
               </div>
-              <div className="flex-1 bg-[#120d04] border border-[rgba(245,158,11,0.28)] rounded-[11px] px-1.5 py-2.5 text-center">
+              <div className="flex-1 bg-amber-well border border-[rgba(245,158,11,0.28)] rounded-[11px] px-1.5 py-2.5 text-center">
                 <div className="font-mono font-black text-base text-[#fbbf5c]" dir="ltr">{Math.max(0, confirmedBoxCount - committed)}</div>
                 <div className="text-[8.5px] font-bold text-[#d8c9a0] mt-0.5">{tr('palletVerify.discrepancyShortfall')}</div>
               </div>
@@ -2377,7 +2189,7 @@ export default function PalletVerifyPage({
             </div>
             <button
               onClick={() => setPendingForceConfirm(false)}
-              className="w-full mt-2 py-2 text-ink-muted text-xs font-extrabold hover:text-ink-body transition"
+              className="w-full mt-2 py-2 text-ink-muted text-xs font-extrabold transition"
             >
               {tr('common.cancel')}
             </button>

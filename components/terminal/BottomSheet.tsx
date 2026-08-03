@@ -22,6 +22,9 @@ interface BottomSheetProps {
   initialSnap?: number;
   /** Fixed region under the drag handle (the tool dock) */
   toolbar?: ReactNode;
+  /** Fixed region below the scroll area (confirm actions) — always visible
+   *  at mid/tall snaps regardless of list scroll. */
+  footer?: ReactNode;
   children: ReactNode;
 }
 
@@ -32,7 +35,7 @@ const DEFAULT_SNAPS: [number, number, number] = [0.106, 0.419, 0.87];
 // drags (pointer capture) and a clean tap cycles mid → tall → peek.
 // Mount inside a `relative` container that fills the camera region.
 export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(function BottomSheet(
-  { snapFractions = DEFAULT_SNAPS, initialSnap = 1, toolbar, children },
+  { snapFractions = DEFAULT_SNAPS, initialSnap = 1, toolbar, footer, children },
   ref,
 ) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -136,9 +139,15 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
 
       {toolbar && <div className="flex-none">{toolbar}</div>}
 
-      <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar flex flex-col gap-[10px] px-4 pb-4 safe-bottom" style={{ touchAction: 'pan-y' }}>
+      <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar flex flex-col gap-[10px] px-4 pb-3" style={{ touchAction: 'pan-y' }}>
         {children}
       </div>
+
+      {footer && (
+        <div className="flex-none px-4 pt-2 pb-3 safe-bottom border-t border-line bg-raised">
+          {footer}
+        </div>
+      )}
     </div>
   );
 });
