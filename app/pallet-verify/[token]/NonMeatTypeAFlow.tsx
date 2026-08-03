@@ -347,7 +347,7 @@ export function NonMeatTypeAFlow({
         <h1 className="text-xl font-extrabold text-ok-weak-ink">
           {tr('nonmeatTypeA.allDone', { count: palletCount })}
         </h1>
-        <p className="text-sm text-muted">{tr('nonmeatTypeA.allDoneHint')}</p>
+        <p className="text-sm text-ink-muted">{tr('nonmeatTypeA.allDoneHint')}</p>
         <div className="space-y-2 text-start">
           {(session.completed_pallets || []).map((p) => (
             <a
@@ -403,7 +403,7 @@ export function NonMeatTypeAFlow({
                 {tr('nonmeatTypeA.palletHeader', { current: currentPallet, total: palletCount })}
               </div>
               {session.document_number && (
-                <div className="text-xs font-mono text-muted" dir="ltr">
+                <div className="text-xs font-mono text-ink-muted" dir="ltr">
                   {tr('palletVerify.docPrefix', { doc: session.document_number })}
                 </div>
               )}
@@ -412,13 +412,14 @@ export function NonMeatTypeAFlow({
               <Scale className="w-3.5 h-3.5" /> {tr('nonmeatTypeA.badge')}
             </span>
           </div>
-          <p className="mt-2 text-sm text-muted">{tr('nonmeatTypeA.instruction')}</p>
+          <p className="mt-2 text-sm text-ink-muted">{tr('nonmeatTypeA.instruction')}</p>
         </div>
 
         {/* Scanner */}
         <div className="relative mt-3">
           <SmartScanner
             key={`nm-scanner-${currentPallet}`}
+            frame="corner"
             onBarcodeDetected={handleBarcodeDetected}
             onManualCapture={handleManualCapture}
             onDuplicateFlash={(fn) => {
@@ -451,7 +452,7 @@ export function NonMeatTypeAFlow({
             {tr('nonmeatTypeA.capturedTitle')}
           </div>
           {captures.length === 0 && (
-            <div className="text-sm text-muted py-2">{tr('nonmeatTypeA.scanHint')}</div>
+            <div className="text-sm text-ink-muted py-2">{tr('nonmeatTypeA.scanHint')}</div>
           )}
           {captures.map((c) => {
             const mismatch =
@@ -464,21 +465,21 @@ export function NonMeatTypeAFlow({
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="font-bold text-ink truncate">{c.name_he || c.name_en || c.item_code}</div>
-                    <div className="text-xs text-muted">
+                    <div className="text-xs text-ink-muted">
                       {tr('nonmeatTypeA.perCarton', { weight: c.unit_weight_kg })} ·{' '}
                       {tr('nonmeatTypeA.remainingLeft', { count: c.remaining })}
                     </div>
                   </div>
                   <button
                     onClick={() => removeCapture(c)}
-                    className="text-muted hover:text-danger p-1"
+                    className="text-ink-muted hover:text-danger p-1"
                     aria-label={tr('nonmeatTypeA.remove')}
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
                 <div className="mt-2 flex items-center gap-2">
-                  <label className="text-sm text-muted">{tr('nonmeatTypeA.cartonsQ')}</label>
+                  <label className="text-sm text-ink-muted">{tr('nonmeatTypeA.cartonsQ')}</label>
                   <input
                     type="number"
                     inputMode="numeric"
@@ -488,7 +489,7 @@ export function NonMeatTypeAFlow({
                     onChange={(e) => setCount(c.item_key, Number(e.target.value))}
                     className="w-20 bg-sunken border border-line-strong rounded-lg px-2 py-1.5 text-center font-bold font-mono text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
                   />
-                  <span className="text-sm text-muted">{tr('nonmeatTypeA.subtotal', { total: subtotal })}</span>
+                  <span className="text-sm text-ink-muted">{tr('nonmeatTypeA.subtotal', { total: subtotal })}</span>
                 </div>
                 {mismatch && (
                   <div className="mt-2 flex items-center gap-1 text-xs text-warn-weak-ink">
@@ -508,11 +509,11 @@ export function NonMeatTypeAFlow({
         <div className="sticky bottom-0 bg-header/95 backdrop-blur border-t border-line px-4 py-3 safe-bottom">
           {canFinish ? (
             <div className="flex items-center justify-between mb-2 text-sm">
-              <span className="text-muted">{tr('nonmeatTypeA.capturedTitle')}</span>
+              <span className="text-ink-muted">{tr('nonmeatTypeA.capturedTitle')}</span>
               <span className="font-bold font-mono text-ink" dir="ltr">{Math.round(totalKg * 1000) / 1000} {tr('common.kg')}</span>
             </div>
           ) : (
-            <p className="text-xs text-muted mb-2">{tr('nonmeatTypeA.needItem')}</p>
+            <p className="text-xs text-ink-muted mb-2">{tr('nonmeatTypeA.needItem')}</p>
           )}
           <button
             onClick={finishPallet}
@@ -529,7 +530,7 @@ export function NonMeatTypeAFlow({
 
   return (
     <LanguageContext.Provider value={lang}>
-      <div className="min-h-screen bg-app text-fg flex flex-col">
+      <div className="min-h-screen bg-canvas text-ink flex flex-col">
         {body}
 
         {/* Item picker — shown when OCR didn't confidently match a line */}
@@ -541,11 +542,11 @@ export function NonMeatTypeAFlow({
                 <h2 className="font-extrabold text-ink flex items-center gap-2">
                   <Package className="w-5 h-5 text-brand" /> {tr('nonmeatTypeA.pickTitle')}
                 </h2>
-                <button onClick={cancelPick} className="text-muted p-1" aria-label={tr('common.cancel')}>
+                <button onClick={cancelPick} className="text-ink-muted p-1" aria-label={tr('common.cancel')}>
                   <X className="w-5 h-5" />
                 </button>
               </div>
-              <p className="text-sm text-muted">{tr('nonmeatTypeA.pickHint')}</p>
+              <p className="text-sm text-ink-muted">{tr('nonmeatTypeA.pickHint')}</p>
               <div className="space-y-2 max-h-72 overflow-y-auto">
                 {invoiceItems.map((it) => {
                   const key = nonMeatItemKey(it);
@@ -565,7 +566,7 @@ export function NonMeatTypeAFlow({
                       <span className="min-w-0 truncate text-ink">
                         {it.item_name_hebrew || it.item_name_english || it.item_code}
                       </span>
-                      <span className="text-xs text-muted whitespace-nowrap ms-2">
+                      <span className="text-xs text-ink-muted whitespace-nowrap ms-2">
                         {onPallet
                           ? tr('nonmeatTypeA.alreadyOnPallet')
                           : remaining <= 0

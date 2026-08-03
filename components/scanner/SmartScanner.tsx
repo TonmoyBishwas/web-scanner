@@ -16,6 +16,12 @@ interface SmartScannerProps {
   onScannerTypeDetected?: (type: 'native' | 'fallback') => void;
   onDuplicateFlash?: (triggerFn: () => void) => void;
   className?: string;
+  /**
+   * Target-frame style. 'square' = legacy centered 240×240 box.
+   * 'corner' = terminal-design 276×150 corner frame pinned near the top
+   * (the bottom of the camera area sits under the floating sheet).
+   */
+  frame?: 'square' | 'corner';
 }
 
 // Declare BarcodeDetector types
@@ -112,7 +118,8 @@ export function SmartScanner({
   onError,
   onScannerTypeDetected,
   onDuplicateFlash,
-  className
+  className,
+  frame = 'square'
 }: SmartScannerProps) {
   const tr = useT();
   const hardwareTriggerEnabled = useSettingsStore((s) => s.hardwareTriggerEnabled);
@@ -901,16 +908,30 @@ export function SmartScanner({
 
       {/* Minimal scanning indicator */}
       <div className="absolute inset-0 pointer-events-none">
-        {/* Target box */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="relative" style={{ width: 240, height: 240 }}>
+        {/* Target box — centered square (legacy) or terminal corner frame */}
+        <div
+          className={
+            frame === 'corner'
+              ? 'absolute inset-x-0 top-0 flex flex-col items-center pt-3 px-6'
+              : 'absolute inset-0 flex items-center justify-center'
+          }
+        >
+          {frame === 'corner' && (
+            <span className="text-[10px] font-semibold mb-2" style={{ color: 'rgba(226,232,240,.5)' }}>
+              {tr('terminal.tapToScan')}
+            </span>
+          )}
+          <div
+            className={frame === 'corner' ? 'relative w-full' : 'relative'}
+            style={frame === 'corner' ? { maxWidth: 276, height: 150 } : { width: 240, height: 240 }}
+          >
 
             {/* === COOLDOWN STATE === */}
             {isInCooldown && (
               <>
                 <div className="absolute inset-0 border-[3px] border-danger rounded-xl" />
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-6xl font-mono font-extrabold text-danger-weak-ink" dir="ltr">
+                  <span className={`font-mono font-extrabold text-danger-weak-ink ${frame === 'corner' ? 'text-5xl' : 'text-6xl'}`} dir="ltr">
                     {cooldownTimeLeft}
                   </span>
                 </div>
@@ -927,21 +948,37 @@ export function SmartScanner({
               </>
             )}
 
-            {/* === IDLE / CAPTURING STATE (green trail) === */}
+            {/* === IDLE / CAPTURING STATE === */}
             {!isInCooldown && !isDuplicate && (
               <>
-                {/* Dim green base border (shows unfilled portion) */}
-                <div className="absolute inset-0 border-[3px] border-ok/25 rounded-xl" />
+                {frame === 'corner' ? (
+                  <>
+                    {/* Terminal corner frame: faint brand fill + 4 L-corners */}
+                    <div
+                      className="absolute inset-0 rounded-[12px]"
+                      style={{ border: '1px solid rgba(19,164,236,.2)', background: 'rgba(19,164,236,.05)' }}
+                    />
+                    <span className="absolute -top-px -left-px w-6 h-6 border-t-4 border-l-4 border-brand rounded-tl-[10px]" />
+                    <span className="absolute -top-px -right-px w-6 h-6 border-t-4 border-r-4 border-brand rounded-tr-[10px]" />
+                    <span className="absolute -bottom-px -left-px w-6 h-6 border-b-4 border-l-4 border-brand rounded-bl-[10px]" />
+                    <span className="absolute -bottom-px -right-px w-6 h-6 border-b-4 border-r-4 border-brand rounded-br-[10px]" />
+                  </>
+                ) : (
+                  /* Dim green base border (shows unfilled portion) */
+                  <div className="absolute inset-0 border-[3px] border-ok/25 rounded-xl" />
+                )}
 
-                {/* SVG trail overlay */}
+                {/* SVG capture-progress trail */}
                 <svg
                   className="absolute inset-0 w-full h-full pointer-events-none"
-                  viewBox="0 0 240 240"
+                  viewBox={frame === 'corner' ? '0 0 276 150' : '0 0 240 240'}
+                  preserveAspectRatio="none"
                   xmlns="http://www.w3.org/2000/svg"
                 >
                   <rect
                     x="1.5" y="1.5"
-                    width="237" height="237"
+                    width={frame === 'corner' ? 273 : 237}
+                    height={frame === 'corner' ? 147 : 237}
                     rx="10"
                     fill="none"
                     stroke="var(--ok)"

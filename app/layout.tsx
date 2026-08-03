@@ -1,26 +1,36 @@
 import type { Metadata, Viewport } from "next";
-import { Rubik, IBM_Plex_Mono } from "next/font/google";
+import { Heebo, Roboto_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { EnvExposer } from "@/components/scanner/EnvExposer";
 import { ThemeProvider } from "@/components/shared/ThemeProvider";
 
-// Rubik — first-class Hebrew + Latin in one voice, tall x-height + softly
-// rounded terminals read clearly at a glance for low-literacy warehouse
-// workers. (subsets:["hebrew"] ships the Hebrew glyphs Geist lacked.)
-const appSans = Rubik({
+// Heebo — the terminal design's UI face (first-class Hebrew + Latin).
+const appSans = Heebo({
   variable: "--font-app-sans",
   subsets: ["latin", "hebrew"],
-  // 800/900 power the terminal design's heavy titles / hero numerals.
-  weight: ["400", "500", "600", "700", "800", "900"],
+  // 800/900 power the design's heavy titles / hero numerals.
+  weight: ["400", "500", "700", "800", "900"],
   display: "swap",
 });
 
-// IBM Plex Mono — disambiguates 0/O, 1/l/I, 5/S for barcodes, SKUs, LPNs.
-const appMono = IBM_Plex_Mono({
+// Roboto Mono — all numeric/technical values (weights, barcodes, LPNs);
+// disambiguates 0/O, 1/l/I, 5/S.
+const appMono = Roboto_Mono({
   variable: "--font-app-mono",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+  weight: ["400", "500", "700"],
   display: "swap",
+});
+
+// Material Icons Round — the design's icon set, rendered via ligatures.
+// Self-hosted (next/font/google excludes icon fonts); display:"block" hides
+// raw ligature text ("check_circle") until the font loads.
+const appIcons = localFont({
+  src: "./fonts/material-icons-round.woff2",
+  variable: "--font-app-icons",
+  weight: "400",
+  display: "block",
 });
 
 export const metadata: Metadata = {
@@ -46,7 +56,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body
-        className={`${appSans.variable} ${appMono.variable} antialiased`}
+        className={`${appSans.variable} ${appMono.variable} ${appIcons.variable} antialiased`}
       >
         <EnvExposer />
         <ThemeProvider>
