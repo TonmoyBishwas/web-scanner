@@ -178,7 +178,6 @@ export const en = {
   'palletVerify.lpnLabel': 'LPN: {lpn}',
   'palletVerify.viewPrintSticker': 'View & Print Sticker',
 
-  'palletVerify.movingNext': 'Moving to pallet {next}…',
   'palletVerify.howManyBoxes': 'How many boxes?',
 
   'palletVerify.totalOnPallet': 'Total boxes on pallet {current}.',
@@ -220,10 +219,7 @@ export const en = {
   'palletVerify.scanMoreToContinue': 'Scan {count} more boxes to continue',
   'palletVerify.boxesNeeded': '{count} more boxes needed',
   'palletVerify.forceCreateBtn': 'Create LPN anyway',
-  'palletVerify.forceConfirmTitle': 'Create LPN without scanning all?',
   'palletVerify.forceConfirmWarning': 'You’ve scanned {committed} of {declared} boxes. The pallet will be created with {committed} box(es). Create the LPN and continue?',
-  'palletVerify.forceConfirmYes': 'Create anyway',
-  'palletVerify.forceConfirmNo': 'Go back & scan',
   'palletVerify.swipeConfirmPallet': 'Slide to confirm · Pallet {current}',
   'palletVerify.swipeConfirmLoose': 'Slide to confirm {count} loose boxes',
   'palletVerify.discrepancyTitle': 'Discrepancy vs. delivery note',
@@ -232,9 +228,6 @@ export const en = {
   'palletVerify.discrepancyExpected': 'Expected',
   'palletVerify.discrepancyShortfall': 'Shortfall',
   'palletVerify.discrepancySwipe': 'Slide to confirm the shortfall',
-  'palletVerify.toolLabels': 'Labels',
-  'palletVerify.toolAssign': 'Send task',
-  'palletVerify.featureLocked': 'Locked · not available yet',
   'palletVerify.palletTypeSingle': 'single',
   'palletVerify.palletTypeMix': 'mix',
   'palletVerify.scanToStart': 'Scan boxes on this pallet',
