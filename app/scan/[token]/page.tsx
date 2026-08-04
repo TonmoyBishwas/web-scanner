@@ -18,6 +18,7 @@ import { ToolDock, type ToolChip } from '@/components/terminal/ToolDock';
 import { PalletIcon } from '@/components/terminal/MI';
 import { Toast, useLockToast } from '@/components/terminal/Toast';
 import { useDrawerHost } from '@/components/terminal/DrawerHost';
+import { PalletsBrowser } from '@/components/terminal/PalletsBrowser';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
 import { queueScan, getQueue, replayQueue } from '@/lib/offline-queue';
@@ -96,6 +97,7 @@ export default function ScanPage({
     session?.created_at ? <SessionTimer createdAt={session.created_at} /> : undefined,
   );
   const { toast: infoToast, showToast: showInfoToast, showLockToast } = useLockToast(tr('terminal.lockedToast'));
+  const [showPallets, setShowPallets] = useState(false);
   const [manualEntries, setManualEntries] = useState<ManualEntryData[]>([]);
 
   // UI drawers & panels
@@ -991,7 +993,7 @@ export default function ScanPage({
       : []),
     { id: 'labels', icon: 'label', label: tr('terminal.toolLabels'), tint: 'neutral', locked: true },
     { id: 'warehouses', icon: 'warehouse', label: tr('terminal.toolWarehouses'), tint: 'neutral', locked: true },
-    { id: 'pallets', icon: <PalletIcon />, label: tr('terminal.toolPallets'), tint: 'neutral', locked: true },
+    { id: 'pallets', icon: <PalletIcon />, label: tr('terminal.toolPallets'), tint: 'neutral', onPress: () => setShowPallets(true) },
     {
       id: 'delete', icon: 'delete_sweep', label: tr('terminal.toolDelete'), tint: 'red',
       onPress: () => showInfoToast(tr('terminal.deleteHint'), 'delete_sweep', '#ef8a8a'),
@@ -1119,6 +1121,7 @@ export default function ScanPage({
 
       <Toast toast={infoToast} />
       {drawer.node}
+      {showPallets && <PalletsBrowser token={token} onBack={() => setShowPallets(false)} />}
 
       {/* ── Invoice Drawer ────────────────────────────────────── */}
       {session && (

@@ -26,6 +26,7 @@ import { EditPanel } from '@/components/terminal/EditPanel';
 import { DoneOverlay } from '@/components/terminal/DoneOverlay';
 import { Toast, useLockToast } from '@/components/terminal/Toast';
 import { useDrawerHost } from '@/components/terminal/DrawerHost';
+import { PalletsBrowser } from '@/components/terminal/PalletsBrowser';
 import { installDebugLogCapture } from '@/lib/debug-log';
 import { LanguageContext, useLangDir, t } from '@/lib/i18n';
 import type { Language, MultiPalletSession, MultiPalletBoxScan, ParsedBarcode } from '@/types';
@@ -294,6 +295,7 @@ export default function PalletVerifyPage({
   const looseSheetRef = useRef<BottomSheetHandle>(null);
   const drawer = useDrawerHost();
   const { toast, showToast, showLockToast } = useLockToast(tr('terminal.lockedToast'));
+  const [showPallets, setShowPallets] = useState(false);
   const [activeExpanded, setActiveExpanded] = useState(false);
   const [pendingNextPallet, setPendingNextPallet] = useState<number | null>(null);
 
@@ -956,7 +958,7 @@ export default function PalletVerifyPage({
       { id: 'create', icon: 'add', label: tr('terminal.toolCreateCarton'), tint: 'blue', iconColor: '#33b1f0', locked: true },
       { id: 'labels', icon: 'label', label: tr('terminal.toolLabels'), tint: 'neutral', locked: true },
       { id: 'warehouses', icon: 'warehouse', label: tr('terminal.toolWarehouses'), tint: 'neutral', locked: true },
-      { id: 'pallets', icon: <PalletIcon />, label: tr('terminal.toolPallets'), tint: 'neutral', locked: true },
+      { id: 'pallets', icon: <PalletIcon />, label: tr('terminal.toolPallets'), tint: 'neutral', onPress: () => setShowPallets(true) },
       {
         id: 'delete', icon: 'delete_sweep', label: tr('terminal.toolDelete'), tint: 'red',
         onPress: () => showToast(tr('terminal.deleteHint'), 'delete_sweep', '#ef8a8a'),
@@ -973,6 +975,11 @@ export default function PalletVerifyPage({
   // Always-visible bug-report widget. Tap the floating 🐛 button to see
   // captured console logs and copy them out — no Chrome DevTools needed.
   const debugPanel = <DebugLogPanel />;
+
+  // משטחים pallets browser overlay (opened from the tool dock).
+  const palletsBrowser = showPallets ? (
+    <PalletsBrowser token={token} onBack={() => setShowPallets(false)} />
+  ) : null;
 
   // Full-screen captured-image viewer (used for OCR-failed Diagnostics).
   // fixed/inset-0 means it overlays whatever phase is currently rendering.
@@ -1724,6 +1731,7 @@ export default function PalletVerifyPage({
 
         <Toast toast={toast} />
         {drawer.node}
+        {palletsBrowser}
         {imageModal}
         {debugPanel}
       </div>
@@ -2149,6 +2157,7 @@ export default function PalletVerifyPage({
 
       <Toast toast={toast} />
       {drawer.node}
+      {palletsBrowser}
       {imageModal}
       {pendingForceConfirm && (
         // Terminal design "פער מול התעודה" — amber discrepancy card with
