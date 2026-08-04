@@ -637,7 +637,7 @@ export const en = {
   'terminal.palletsFilterPartial': 'Partially issued',
   'terminal.palletsFilterEmpty': 'Empty',
   'terminal.palletsFilterAll': 'All',
-  'terminal.palletsStatusReceiving': 'Receiving',
+  'terminal.palletsStatusVerified': 'Verified',
   'terminal.palletsStatusInStock': 'In stock',
   'terminal.palletsStatusPartial': 'Partially issued',
   'terminal.palletsStatusEmpty': 'Empty',

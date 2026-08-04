@@ -62,7 +62,7 @@ const FILTERS: { id: StatusFilter; key: string }[] = [
 ];
 
 const STATUS_STYLE: Record<string, { bg: string; color: string; key: string }> = {
-  Receiving: { bg: 'rgba(19,164,236,.18)', color: '#7cc9f2', key: 'terminal.palletsStatusReceiving' },
+  Verified: { bg: 'rgba(19,164,236,.18)', color: '#7cc9f2', key: 'terminal.palletsStatusVerified' },
   'In Stock': { bg: 'rgba(34,197,94,.16)', color: '#86efac', key: 'terminal.palletsStatusInStock' },
   'Partially Issued': { bg: 'rgba(245,158,11,.18)', color: '#fbbf5c', key: 'terminal.palletsStatusPartial' },
   Empty: { bg: '#243444', color: '#94a3b8', key: 'terminal.palletsStatusEmpty' },

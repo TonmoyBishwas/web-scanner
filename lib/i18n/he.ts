@@ -641,7 +641,7 @@ export const he: Record<TranslationKey, string> = {
   'terminal.palletsFilterPartial': 'נופק חלקית',
   'terminal.palletsFilterEmpty': 'ריקים',
   'terminal.palletsFilterAll': 'הכל',
-  'terminal.palletsStatusReceiving': 'בקליטה',
+  'terminal.palletsStatusVerified': 'מאומת',
   'terminal.palletsStatusInStock': 'במלאי',
   'terminal.palletsStatusPartial': 'נופק חלקית',
   'terminal.palletsStatusEmpty': 'ריק',

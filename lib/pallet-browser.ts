@@ -13,7 +13,9 @@ import { supabase } from './supabase';
 
 export const PALLETS_PAGE_SIZE = 30;
 
-const ACTIVE_STATUSES = ['Receiving', 'In Stock', 'Partially Issued'];
+// pallet_status enum values (Postgres): In Stock | Partially Issued | Empty | Verified.
+// ("Receiving" from the old Airtable lifecycle was never migrated into the enum.)
+const ACTIVE_STATUSES = ['In Stock', 'Partially Issued', 'Verified'];
 
 export type StatusFilter = 'active' | 'in_stock' | 'partial' | 'empty' | 'all';
 
