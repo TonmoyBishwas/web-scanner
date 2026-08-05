@@ -293,7 +293,7 @@ export default function PalletVerifyPage({
   // active-card expand state, and the swipe-gated next-pallet number.
   const sheetRef = useRef<BottomSheetHandle>(null);
   const looseSheetRef = useRef<BottomSheetHandle>(null);
-  const drawer = useDrawerHost();
+  const drawer = useDrawerHost(token);
   const { toast, showToast, showLockToast } = useLockToast(tr('terminal.lockedToast'));
   const [showPallets, setShowPallets] = useState(false);
   const [activeExpanded, setActiveExpanded] = useState(false);

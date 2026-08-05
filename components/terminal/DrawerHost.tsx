@@ -4,7 +4,7 @@ import { useState, type ReactNode } from 'react';
 import { MI } from './MI';
 import { SideDrawer } from './SideDrawer';
 import { LockedScreen } from './LockedScreen';
-import { DocsScreenLocked } from './DocsScreenLocked';
+import { DocumentsBrowser } from './DocumentsBrowser';
 import { ScreenOverlay } from './ScreenOverlay';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useT } from '@/lib/i18n';
@@ -52,8 +52,9 @@ function SettingsScreen({ onBack }: { onBack: () => void }) {
 // (The useDrawerHost hook itself runs above that provider and must not
 // translate anything.)
 function DrawerHostView({
-  drawerOpen, screen, onCloseDrawer, onGo, onCloseScreen, footer,
+  token, drawerOpen, screen, onCloseDrawer, onGo, onCloseScreen, footer,
 }: {
+  token: string;
   drawerOpen: boolean;
   screen: Screen;
   onCloseDrawer: () => void;
@@ -74,7 +75,7 @@ function DrawerHostView({
         ]}
         footer={footer}
       />
-      {screen === 'docs' && <DocsScreenLocked onBack={onCloseScreen} />}
+      {screen === 'docs' && <DocumentsBrowser token={token} onBack={onCloseScreen} />}
       {screen === 'warehouses' && (
         <LockedScreen title={tr('terminal.menuWarehouses')} onBack={onCloseScreen} stubIcon="warehouse" />
       )}
@@ -85,16 +86,17 @@ function DrawerHostView({
 
 /**
  * Hosts the side drawer + its nav destinations for the scanner pages:
- * מסמכים (locked, dimmed sample), מחסנים (locked stub), הגדרות (real toggles).
- * Usage: const drawer = useDrawerHost(footer?); render {drawer.node} INSIDE
- * the page's LanguageContext.Provider; open with drawer.open().
+ * מסמכים (documents archive), מחסנים (locked stub), הגדרות (real toggles).
+ * Usage: const drawer = useDrawerHost(token, footer?); render {drawer.node}
+ * INSIDE the page's LanguageContext.Provider; open with drawer.open().
  */
-export function useDrawerHost(footer?: ReactNode): { open: () => void; node: ReactNode } {
+export function useDrawerHost(token: string, footer?: ReactNode): { open: () => void; node: ReactNode } {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [screen, setScreen] = useState<Screen>(null);
 
   const node = (
     <DrawerHostView
+      token={token}
       drawerOpen={drawerOpen}
       screen={screen}
       onCloseDrawer={() => setDrawerOpen(false)}

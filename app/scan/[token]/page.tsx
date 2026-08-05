@@ -94,6 +94,7 @@ export default function ScanPage({
   // Terminal chrome: side drawer host (session timer lives in its footer —
   // the design header has no room for it) + lock/info toast.
   const drawer = useDrawerHost(
+    token,
     session?.created_at ? <SessionTimer createdAt={session.created_at} /> : undefined,
   );
   const { toast: infoToast, showToast: showInfoToast, showLockToast } = useLockToast(tr('terminal.lockedToast'));

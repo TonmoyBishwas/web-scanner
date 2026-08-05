@@ -375,7 +375,7 @@ function IssueRender({
   const tr = useT();
   // Terminal chrome — IssueRender lives under LanguageContext.Provider, so
   // the context-translating hooks resolve the session language correctly.
-  const drawer = useDrawerHost();
+  const drawer = useDrawerHost(token);
   const { toast: infoToast, showToast: showInfoToast, showLockToast } = useLockToast();
   const [showPallets, setShowPallets] = useState(false);
 
