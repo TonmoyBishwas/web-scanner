@@ -312,7 +312,7 @@ export interface MultiPalletSession {
      *  duplicate guard; meat only, where catch-weight barcodes are unique. */
     barcodes?: string[];
   }>;
-  status: 'active' | 'completed';
+  status: 'planning' | 'active' | 'completed';
   created_at: string;
   /** User's preferred language. Set by the bot when creating the session. */
   language?: Language;
