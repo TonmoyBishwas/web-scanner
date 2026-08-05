@@ -97,9 +97,11 @@ function formatKg(kg: number): string {
 interface PalletsBrowserProps {
   token: string;
   onBack: () => void;
+  /** Open straight into this pallet's detail (documents-archive hand-off). */
+  initialPalletId?: string;
 }
 
-export function PalletsBrowser({ token, onBack }: PalletsBrowserProps) {
+export function PalletsBrowser({ token, onBack, initialPalletId }: PalletsBrowserProps) {
   const tr = useT();
   const language = useContext(LanguageContext);
   const { toast, showToast } = useToast();
@@ -188,6 +190,15 @@ export function PalletsBrowser({ token, onBack }: PalletsBrowserProps) {
     },
     [token, showToast, tr]
   );
+
+  // Documents-archive hand-off: open straight into a pallet's detail.
+  const openedInitial = useRef(false);
+  useEffect(() => {
+    if (initialPalletId && !openedInitial.current) {
+      openedInitial.current = true;
+      openDetail(initialPalletId);
+    }
+  }, [initialPalletId, openDetail]);
 
   /** Scan-to-find: LPN QR → that pallet; ≥13-digit barcode → owning pallet. */
   const handleScanPayload = useCallback(
