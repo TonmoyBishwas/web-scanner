@@ -448,7 +448,7 @@ export function DocumentsBrowser({ token, onBack }: DocumentsBrowserProps) {
               {detail.card.image_url && (
                 <button
                   onClick={() => window.open(detail.card.image_url as string, '_blank')}
-                  className="relative bg-raised border border-line rounded-[14px] overflow-hidden"
+                  className="relative flex-none bg-raised border border-line rounded-[14px] overflow-hidden"
                   aria-label={tr('terminal.docsOpenImage')}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
