@@ -46,18 +46,52 @@ export async function POST(request: NextRequest) {
     }
 
     let result: { status: number; body: Record<string, unknown> } | null = null;
+    let needsHandoff = false;
 
     await sessionStorage.withLock(token, async () => {
       const session = await load(token);
       if (!session) { result = { status: 404, body: { success: false, error: 'session_not_found' } }; return; }
+
+      // Re-entry after a failed bot handoff. The session is already committed
+      // (commit-before-webhook is the ordering invariant), but no Delivery was
+      // created and no worker was told. Re-fire the webhook instead of
+      // committing a second time — `handle_split_plan_ready` is idempotent.
+      if (session.status === 'active' && session.handoff_ok !== true) {
+        result = { status: 200, body: { success: true, session, resent: true } };
+        needsHandoff = true;
+        return;
+      }
       if (session.status !== 'planning') {
         result = { status: 409, body: { success: false, error: 'already_committed' } }; return;
       }
 
       // Keep only the workers the manager actually ticked, carrying their quota.
+      // Quota is coerced explicitly: the body is only TS-cast, so a numeric
+      // string from a client would otherwise turn the Σ-quota check into string
+      // concatenation. `null` must survive as null — it means pool-only, whereas
+      // 0 would be a real zero reservation.
       const roster: RosterEntry[] = (session.roster ?? [])
         .filter((r) => assignments.some((a) => a.chat_id === r.chat_id))
-        .map((r) => ({ ...r, quota: assignments.find((a) => a.chat_id === r.chat_id)?.quota ?? null }));
+        .map((r) => {
+          const q = assignments.find((a) => a.chat_id === r.chat_id)?.quota;
+          return { ...r, quota: q === null || q === undefined ? null : Number(q) };
+        });
+
+      // Every assignment must name someone actually on this session's roster.
+      // Without this, a mismatched payload commits a job with an EMPTY roster:
+      // the bot still creates the Delivery and messages nobody, and every
+      // worker is then rejected by pallet-claim with not_on_this_job. PATCH
+      // can only filter the roster, never re-add — so the job would be
+      // permanently unclaimable. Mirrors the membership guard in pallet-claim.
+      if (roster.length !== assignments.length) {
+        result = { status: 400, body: { success: false, error: 'unknown_workers' } }; return;
+      }
+
+      // The loose-box owner, when pinned, must be on the roster for the same
+      // reason — a pinned owner who isn't on the job can never claim it.
+      if (loose_owner && !roster.some((r) => r.chat_id === loose_owner)) {
+        result = { status: 400, body: { success: false, error: 'loose_owner_not_on_this_job' } }; return;
+      }
 
       const looseCount = Number(loose_box_count) || 0;
       const updated: MultiPalletSession = {
@@ -74,19 +108,28 @@ export async function POST(request: NextRequest) {
 
       await getRedisClient().set(sessionKey(token), JSON.stringify(updated), { ex: SESSION_TTL });
       result = { status: 200, body: { success: true, session: updated } };
+      needsHandoff = true;
     });
 
     const r = result as { status: number; body: Record<string, unknown> } | null;
     if (!r) return NextResponse.json({ success: false, error: 'lock_failed' }, { status: 500 });
-    if (r.status !== 200) return NextResponse.json(r.body, { status: r.status });
+    if (r.status !== 200 || !needsHandoff) {
+      return NextResponse.json(r!.body, { status: r!.status });
+    }
 
     // Hand off to the bot: it creates the Delivery + Delivery Items and
-    // messages each worker. Same direction as every other scanner→bot call.
+    // messages each worker. Fires only AFTER the session is durably saved, so
+    // a handoff failure can never leave workers holding links to a job that
+    // does not exist.
     const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
     if (botUrl) {
       const session = (r.body as { session: MultiPalletSession }).session;
+      // A hung bot must degrade to a reported 502, not an uncontrolled
+      // platform timeout that tells the manager nothing.
+      const abort = new AbortController();
+      const timer = setTimeout(() => abort.abort(), 15_000);
       try {
-        await fetch(`${botUrl}/webhook/split-plan-ready`, {
+        const res = await fetch(`${botUrl}/webhook/split-plan-ready`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -96,11 +139,34 @@ export async function POST(request: NextRequest) {
             loose_box_count: session.loose_box_count,
             roster: session.roster,
           }),
+          signal: abort.signal,
         });
+        // fetch does NOT throw on 4xx/5xx. Without this check a bot-side
+        // failure — no Delivery created, no worker messaged — would be
+        // reported to the manager as success.
+        if (!res.ok) {
+          console.error(`[split-plan] bot handoff returned ${res.status}`);
+          return NextResponse.json({ success: false, error: 'bot_unreachable' }, { status: 502 });
+        }
       } catch (e) {
         console.error('[split-plan] bot handoff failed:', e);
         return NextResponse.json({ success: false, error: 'bot_unreachable' }, { status: 502 });
+      } finally {
+        clearTimeout(timer);
       }
+
+      // Mark the handoff done so a retry of this endpoint re-commits nothing.
+      // Until this flag is set, the session is committed but un-notified, and
+      // POSTing again re-fires the webhook instead of returning 409.
+      await sessionStorage.withLock(token, async () => {
+        const fresh = await load(token);
+        if (!fresh) return;
+        await getRedisClient().set(
+          sessionKey(token),
+          JSON.stringify({ ...fresh, handoff_ok: true }),
+          { ex: SESSION_TTL },
+        );
+      });
     }
 
     return NextResponse.json(r.body, { status: 200 });
@@ -145,11 +211,32 @@ export async function PATCH(request: NextRequest) {
         }
       }
 
-      const roster = assignments
-        ? (session.roster ?? [])
-            .filter((r) => assignments.some((a) => a.chat_id === r.chat_id))
-            .map((r) => ({ ...r, quota: assignments.find((a) => a.chat_id === r.chat_id)?.quota ?? null }))
-        : (session.roster ?? []);
+      // Same coercion and membership rules as POST — a board edit must not be
+      // able to empty the roster or corrupt a quota where the initial commit
+      // could not.
+      let roster = session.roster ?? [];
+      if (assignments) {
+        const next = roster
+          .filter((r) => assignments.some((a) => a.chat_id === r.chat_id))
+          .map((r) => {
+            const q = assignments.find((a) => a.chat_id === r.chat_id)?.quota;
+            return { ...r, quota: q === null || q === undefined ? null : Number(q) };
+          });
+        if (next.length !== assignments.length) {
+          result = { status: 400, body: { success: false, error: 'unknown_workers' } }; return;
+        }
+        if (next.length === 0) {
+          result = { status: 400, body: { success: false, error: 'no_workers' } }; return;
+        }
+        // Anyone dropped from the roster must not still be holding work.
+        const droppedWithWork = pallets.some(
+          (p) => p.status === 'claimed' && p.owner && !next.some((r) => r.chat_id === p.owner),
+        );
+        if (droppedWithWork) {
+          result = { status: 409, body: { success: false, error: 'worker_still_holds_a_pallet' } }; return;
+        }
+        roster = next;
+      }
 
       const updated = applySplitState(session, { roster, pallets, loose: session.loose ?? null });
       await getRedisClient().set(sessionKey(token), JSON.stringify(updated), { ex: SESSION_TTL });

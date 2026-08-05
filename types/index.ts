@@ -367,6 +367,13 @@ export interface MultiPalletSession {
   pallets?: PalletSlot[];
   /** Split only: the loose-box task, or null when the delivery has none. */
   loose?: LooseTask | null;
+  /**
+   * Split only: true once the bot confirmed the plan handoff (Delivery rows
+   * created, workers messaged). A session that is `active` with this unset is
+   * committed but un-notified — POSTing /api/split-plan again re-fires the
+   * webhook rather than returning `already_committed`.
+   */
+  handoff_ok?: boolean;
 }
 
 // ─── UI State Types ────────────────────────────────────────────────────────────
