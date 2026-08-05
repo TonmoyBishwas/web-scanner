@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedisClient, sessionStorage } from '@/lib/redis';
 import {
-  claimNext, releaseSlot, reassignSlot, addSlot, closeShort,
+  claimNext, releaseSlot, reassignSlot, addSlot, closeShort, claimLoose,
 } from '@/lib/pallet-slots';
 import { isSplitSession, splitStateOf, applySplitState } from '@/lib/session-mode';
 import type { MultiPalletSession } from '@/types';
@@ -91,11 +91,9 @@ export async function POST(request: NextRequest) {
           next = r.state; dropped = r.dropped; break;
         }
         case 'take_loose': {
-          if (!state.loose || state.loose.status !== 'open') {
-            result = { status: 409, body: { success: false, error: 'loose_unavailable' } }; return;
-          }
-          next = { ...state, loose: { ...state.loose, owner: worker_chat_id!, status: 'claimed' } };
-          break;
+          const r = claimLoose(state, worker_chat_id!);
+          if (!r.ok) { result = { status: 409, body: { success: false, error: r.reason } }; return; }
+          next = r.state; break;
         }
         default:
           result = { status: 400, body: { success: false, error: 'unknown_action' } };

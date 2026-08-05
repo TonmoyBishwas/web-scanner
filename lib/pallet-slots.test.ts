@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildSlots, canClaim, claimNext, releaseSlot, reassignSlot,
-  addSlot, markDone, closeShort, isComplete, openCount, poolAvailableFor,
+  addSlot, markDone, closeShort, claimLoose, isComplete, openCount, poolAvailableFor,
   type SplitState,
 } from './pallet-slots';
 
@@ -242,6 +242,39 @@ describe('closeShort', () => {
     const s = claimTimes(tenPallets(), 'yossi', 1);
     const r = closeShort(s);
     expect(r.ok).toBe(false);
+  });
+});
+
+describe('claimLoose', () => {
+  function withLoose(status: 'open' | 'claimed', owner: string | null = null): SplitState {
+    return { ...tenPallets(), loose: { count: 7, owner, status } };
+  }
+
+  it('claims an open loose task', () => {
+    const r = claimLoose(withLoose('open'), 'yossi');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.state.loose).toEqual({ count: 7, owner: 'yossi', status: 'claimed' });
+  });
+
+  it('refuses when another worker already took it', () => {
+    const r = claimLoose(withLoose('claimed', 'david'), 'yossi');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toBe('loose_unavailable');
+  });
+
+  it('refuses when the delivery has no loose boxes', () => {
+    const r = claimLoose(tenPallets(), 'yossi');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toBe('no_loose_task');
+  });
+
+  it('does not mutate the input state', () => {
+    const s = withLoose('open');
+    claimLoose(s, 'yossi');
+    expect(s.loose?.owner).toBeNull();
   });
 });
 

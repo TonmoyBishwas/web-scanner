@@ -183,6 +183,21 @@ export function closeShort(
   };
 }
 
+/**
+ * Claim the loose-box task. Unlike pallet slots, a loose task has no
+ * `claimed_at` field to stamp — LooseTask carries no such timestamp — so
+ * this takes no `nowISO`.
+ */
+export function claimLoose(
+  state: SplitState,
+  chatId: string,
+): Ok<{ state: SplitState }> | Err {
+  if (!state.loose) return { ok: false, reason: 'no_loose_task' };
+  if (state.loose.status !== 'open') return { ok: false, reason: 'loose_unavailable' };
+  const loose: LooseTask = { ...state.loose, owner: chatId, status: 'claimed' };
+  return { ok: true, state: { ...state, loose } };
+}
+
 export function isComplete(state: SplitState): boolean {
   const palletsDone =
     state.pallets.length > 0 && state.pallets.every((p) => p.status === 'done');
