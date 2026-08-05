@@ -308,6 +308,9 @@ export interface MultiPalletSession {
     lpn: string;
     pallet_type: string;
     box_count: number;
+    /** Every box barcode registered on this pallet. Feeds the cross-worker
+     *  duplicate guard; meat only, where catch-weight barcodes are unique. */
+    barcodes?: string[];
   }>;
   status: 'active' | 'completed';
   created_at: string;
