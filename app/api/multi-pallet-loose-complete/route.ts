@@ -89,6 +89,15 @@ export async function POST(request: NextRequest) {
           worker_chat_id: workerChatId,
           owner_chat_id: session.owner_chat_id ?? session.chat_id,
           is_final: isFinal,
+          // Loose boxes can be the final piece of a delivery — when they are,
+          // this call is the one that triggers finalization, and in split
+          // mode the bot has no local copy of the completed pallets/roster to
+          // fall back on. Send the same two fields the pallet route sends on
+          // its final call, so the manager's summary and each worker's
+          // close-out aren't empty just because the last thing scanned was
+          // loose boxes instead of a pallet.
+          all_completed_pallets: isFinal ? updatedSession.completed_pallets : undefined,
+          roster_chat_ids: isFinal ? (session.roster ?? []).map((r) => r.chat_id) : undefined,
         }),
       }).catch((err) => console.error('[multi-pallet-loose-complete] bot webhook error:', err));
 
