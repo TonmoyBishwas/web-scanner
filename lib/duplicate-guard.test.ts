@@ -46,7 +46,27 @@ describe('findDuplicateOwner', () => {
     expect(findDuplicateOwner(s, '7290000000011', 2)).toBeNull();
   });
 
-  it('ignores blank barcodes', () => {
-    expect(findDuplicateOwner(session(), '', 2)).toBeNull();
+  it('fires when category is absent — a legacy session is meat', () => {
+    // Potency: exercises the `?? 'meat'` default. Every other fixture sets
+    // category explicitly, so without this test the default could be dropped
+    // and a pre-feature meat session would silently lose the guard.
+    const s = session();
+    delete (s as { category?: string }).category;
+    expect(findDuplicateOwner(s, '7290000000011', 2)).toEqual({ pallet_n: 1, owner: 'yossi' });
+  });
+
+  it('ignores a blank barcode even when a blank was recorded', () => {
+    // Potency: the fixture deliberately holds '' in barcodes, so `includes('')`
+    // would match and report a false collision if the `if (!barcode)` guard
+    // were removed. Asserting against a fixture with no '' proves nothing.
+    const s = session({
+      completed_pallets: [
+        {
+          pallet_number: 1, lpn: 'LPN-A-P1', pallet_type: 'single', box_count: 2,
+          barcodes: ['', '7290000000012'],
+        },
+      ],
+    });
+    expect(findDuplicateOwner(s, '', 2)).toBeNull();
   });
 });
