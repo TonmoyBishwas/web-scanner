@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedisClient, sessionStorage } from '@/lib/redis';
 import {
-  claimNext, releaseSlot, reassignSlot, addSlot, closeShort, claimLoose,
+  claimNext, releaseSlot, reassignSlot, addSlot, closeShort, claimLoose, isComplete,
 } from '@/lib/pallet-slots';
 import { isSplitSession, splitStateOf, applySplitState } from '@/lib/session-mode';
 import type { MultiPalletSession } from '@/types';
@@ -114,6 +114,35 @@ export async function POST(request: NextRequest) {
       const updated = applySplitState(session, next);
       await redis.set(sessionKey(token), JSON.stringify(updated), { ex: SESSION_TTL });
       result = { status: 200, body: { success: true, slot, dropped, session: updated } };
+
+      // Notify the bot after the save is durable. Fire-and-forget: a worker
+      // who already completed the claim/release must never see it fail
+      // because a WhatsApp notification timed out.
+      const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
+      if (botUrl && ['release', 'reassign', 'add', 'close_short'].includes(action)) {
+        const path = action === 'close_short' ? 'split-closed-short' : 'pallet-released';
+        const body = action === 'close_short'
+          ? {
+              owner_chat_id: session.owner_chat_id, actor_chat_id: worker_chat_id,
+              document_number: session.document_number,
+              done_count: next.pallets.filter((p) => p.status === 'done').length,
+              planned_count: state.pallets.length,
+              is_final: isComplete(next),
+              all_completed_pallets: updated.completed_pallets,
+              roster_chat_ids: (next.roster ?? []).map((r) => r.chat_id),
+            }
+          : {
+              owner_chat_id: session.owner_chat_id, actor_chat_id: worker_chat_id,
+              pallet_number: pallet_n ?? (slot as { n?: number } | undefined)?.n,
+              action,
+              former_owner_chat_id: state.pallets.find((p) => p.n === Number(pallet_n))?.owner ?? null,
+            };
+        fetch(`${botUrl}/webhook/${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }).catch((e) => console.error('[pallet-claim] bot notify failed:', e));
+      }
     });
 
     const r = result as { status: number; body: Record<string, unknown> } | null;
