@@ -168,6 +168,43 @@ describe('releaseSlot / reassignSlot', () => {
     if (!r.ok) return;
     expect(r.state.pallets[0]).toMatchObject({ owner: 'david', status: 'claimed' });
   });
+
+  it('refuses to reassign an unclaimed slot', () => {
+    // Reassign is not a back door for handing out open pallets: allowing it
+    // would let any roster member route open slots to themselves and ignore
+    // their quota. Open pallets are taken through claimNext, which enforces
+    // the reservation formula.
+    const r = reassignSlot(tenPallets(), 1, 'david', NOW);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toBe('not_claimed');
+  });
+
+  it('refuses to reassign a finished pallet', () => {
+    const s = finishAll(claimTimes(tenPallets(), 'yossi', 1), 'yossi');
+    expect(reassignSlot(s, 1, 'david', NOW).ok).toBe(false);
+  });
+});
+
+describe('markDone', () => {
+  it('refuses to finish a slot nobody claimed', () => {
+    // Guards the invariant that a done pallet always has an owner — otherwise
+    // a completed pallet could exist with owner: null, which no worker scanned.
+    const r = markDone(tenPallets(), 1, 'LPN-X-P1', 12);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toBe('not_claimed');
+  });
+
+  it('records the LPN and box count on a claimed slot', () => {
+    const s = claimTimes(tenPallets(), 'yossi', 1);
+    const r = markDone(s, 1, 'LPN-20260805-INV1-P1', 14);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.state.pallets[0]).toMatchObject({
+      status: 'done', owner: 'yossi', lpn: 'LPN-20260805-INV1-P1', box_count: 14,
+    });
+  });
 });
 
 describe('addSlot', () => {

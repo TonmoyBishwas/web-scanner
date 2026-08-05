@@ -129,7 +129,11 @@ export function reassignSlot(
 ): Ok<{ state: SplitState }> | Err {
   const target = state.pallets.find((p) => p.n === n);
   if (!target) return { ok: false, reason: 'no_such_slot' };
-  if (target.status === 'done') return { ok: false, reason: 'already_done' };
+  // Reassign moves work between people; it is NOT a way to hand out an
+  // unclaimed pallet. Allowing an open slot here would let any roster member
+  // route pallets to themselves and bypass the reservation formula entirely,
+  // making quotas advisory. Unclaimed pallets are taken via claimNext only.
+  if (target.status !== 'claimed') return { ok: false, reason: 'not_claimed' };
   const slot: PalletSlot = { ...target, owner: toChatId, status: 'claimed', claimed_at: nowISO };
   return { ok: true, state: { ...state, pallets: state.pallets.map((p) => (p.n === n ? slot : p)) } };
 }
@@ -157,7 +161,10 @@ export function markDone(
 ): Ok<{ state: SplitState }> | Err {
   const target = state.pallets.find((p) => p.n === n);
   if (!target) return { ok: false, reason: 'no_such_slot' };
-  if (target.status === 'done') return { ok: false, reason: 'already_done' };
+  // Only a claimed slot can be finished. Without this, an open slot could go
+  // straight to `done` with `owner: null` — a completed pallet nobody scanned,
+  // breaking the module's own invariant that owners are stamped on claim.
+  if (target.status !== 'claimed') return { ok: false, reason: 'not_claimed' };
   const slot: PalletSlot = { ...target, status: 'done', lpn, box_count: boxCount };
   return { ok: true, state: { ...state, pallets: state.pallets.map((p) => (p.n === n ? slot : p)) } };
 }
