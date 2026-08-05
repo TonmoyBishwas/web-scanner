@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getRedisClient, sessionStorage } from '@/lib/redis';
 import { t } from '@/lib/i18n/server';
 import type { MultiPalletSession, MultiPalletBoxScan, Language } from '@/types';
+import { isComplete } from '@/lib/pallet-slots';
+import { isSplitSession, splitStateOf, applySplitState } from '@/lib/session-mode';
 
 const SESSION_TTL = 7200;
 
@@ -16,7 +18,9 @@ function sessionKey(token: string) {
  */
 export async function POST(request: NextRequest) {
   try {
-    const { token, scanned_boxes } = await request.json();
+    // worker_chat_id: split jobs only — which worker scanned the loose-box
+    // task. Ignored on single sessions (owner is always session.chat_id).
+    const { token, scanned_boxes, worker_chat_id } = await request.json();
 
     if (!token) {
       return NextResponse.json({ success: false, error: t(undefined, 'errors.missingToken') }, { status: 400 });
@@ -51,6 +55,27 @@ export async function POST(request: NextRequest) {
         return;
       }
 
+      // Split jobs: the loose-box task is shared session state, not owned by
+      // a cursor — mark it done and let is_final reflect whether the whole
+      // delivery (pallets + loose) is finished. Single jobs keep the
+      // unconditional completion this route has always had.
+      const split = isSplitSession(session);
+      const workerChatId = split ? String(worker_chat_id ?? '') : session.chat_id;
+
+      let updatedSession: MultiPalletSession;
+      let isFinal: boolean;
+
+      if (split) {
+        const state = splitStateOf(session);
+        const next = { ...state, loose: state.loose ? { ...state.loose, status: 'done' as const } : null };
+        updatedSession = applySplitState(session, next);
+        isFinal = isComplete(next);
+        if (isFinal) updatedSession.status = 'completed';
+      } else {
+        updatedSession = { ...session, status: 'completed' };
+        isFinal = true;
+      }
+
       // Fire-and-forget to bot webhook
       const boxes: MultiPalletBoxScan[] = scanned_boxes || [];
       fetch(`${botUrl}/webhook/loose-boxes-complete`, {
@@ -61,12 +86,14 @@ export async function POST(request: NextRequest) {
           document_number: session.document_number,
           receipt_id: session.receipt_id,
           scanned_boxes: boxes,
+          worker_chat_id: workerChatId,
+          owner_chat_id: session.owner_chat_id ?? session.chat_id,
+          is_final: isFinal,
         }),
       }).catch((err) => console.error('[multi-pallet-loose-complete] bot webhook error:', err));
 
-      // Mark session completed
-      session.status = 'completed';
-      await redis.set(sessionKey(token), JSON.stringify(session), { ex: SESSION_TTL });
+      // Persist session (marks completed when this was the final piece)
+      await redis.set(sessionKey(token), JSON.stringify(updatedSession), { ex: SESSION_TTL });
 
       okResult = { success: true };
     });
