@@ -34,14 +34,25 @@ export async function POST(request: NextRequest) {
         loose_owner?: string | null;
       };
 
-    if (!token || !pallet_count || pallet_count < 1) {
+    // Coerce ONCE, here, and use the coerced values for every check below.
+    // The request body is only TS-cast, never runtime-validated, so a numeric
+    // string reaching `+` would concatenate instead of add: quotas "1","2","3"
+    // sum to "0123" → 123, and a legitimate plan is rejected as over-allocated.
+    const totalPallets = Number(pallet_count);
+    if (!token || !Number.isFinite(totalPallets) || totalPallets < 1) {
       return NextResponse.json({ success: false, error: 'invalid_plan' }, { status: 400 });
     }
     if (assignments.length === 0) {
       return NextResponse.json({ success: false, error: 'no_workers' }, { status: 400 });
     }
-    const quotaSum = assignments.reduce((s, a) => s + (a.quota ?? 0), 0);
-    if (quotaSum > pallet_count) {
+    // `?? 0` before Number(), not after: a null quota means pool-only and
+    // contributes nothing to the reserved total. Number(null) is 0 too, but
+    // spelling it this way keeps the null-means-pool intent visible.
+    const quotaSum = assignments.reduce((s, a) => s + Number(a.quota ?? 0), 0);
+    if (!Number.isFinite(quotaSum)) {
+      return NextResponse.json({ success: false, error: 'invalid_plan' }, { status: 400 });
+    }
+    if (quotaSum > totalPallets) {
       return NextResponse.json({ success: false, error: 'quotas_exceed_total' }, { status: 400 });
     }
 
@@ -97,7 +108,7 @@ export async function POST(request: NextRequest) {
       const updated: MultiPalletSession = {
         ...applySplitState(session, {
           roster,
-          pallets: buildSlots(Number(pallet_count)),
+          pallets: buildSlots(totalPallets),
           loose: looseCount > 0
             ? { count: looseCount, owner: loose_owner, status: loose_owner ? 'claimed' : 'open' }
             : null,
@@ -158,15 +169,26 @@ export async function POST(request: NextRequest) {
       // Mark the handoff done so a retry of this endpoint re-commits nothing.
       // Until this flag is set, the session is committed but un-notified, and
       // POSTing again re-fires the webhook instead of returning 409.
-      await sessionStorage.withLock(token, async () => {
-        const fresh = await load(token);
-        if (!fresh) return;
-        await getRedisClient().set(
-          sessionKey(token),
-          JSON.stringify({ ...fresh, handoff_ok: true }),
-          { ex: SESSION_TTL },
-        );
-      });
+      //
+      // Failing to record the flag must NOT be reported as a failed handoff:
+      // by this point the Delivery exists and the workers have been messaged.
+      // Telling the manager it failed would send them round the retry loop for
+      // work that already succeeded. Worst case the flag stays unset and a
+      // later retry re-sends the notifications, which the bot handler
+      // tolerates (it is idempotent on the plan token).
+      try {
+        await sessionStorage.withLock(token, async () => {
+          const fresh = await load(token);
+          if (!fresh) return;
+          await getRedisClient().set(
+            sessionKey(token),
+            JSON.stringify({ ...fresh, handoff_ok: true }),
+            { ex: SESSION_TTL },
+          );
+        });
+      } catch (e) {
+        console.error('[split-plan] handoff succeeded but handoff_ok not persisted:', e);
+      }
     }
 
     return NextResponse.json(r.body, { status: 200 });
