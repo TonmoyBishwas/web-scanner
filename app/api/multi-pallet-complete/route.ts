@@ -454,13 +454,17 @@ export async function POST(request: NextRequest) {
       await redisM.set(sessionKey(token), JSON.stringify(mUpdated), { ex: SESSION_TTL });
 
       const mAppUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
+      // Split sessions: next_pallet/all_done are cursor-derived and meaningless
+      // per-worker (the worker who closes the highest-numbered slot isn't
+      // necessarily the one who finishes the delivery). isFinal is already the
+      // right answer; the job screen decides what a split worker does next.
       okResult = {
         success: true,
         lpn: mLpn,
         lpn_url: `${mAppUrl}/pallet/${mLpn}`,
         pallet_number: palletNumber,
-        next_pallet: mAllPalletsDone ? null : mNextPallet,
-        all_done: mAllPalletsDone,
+        next_pallet: split ? null : (mAllPalletsDone ? null : mNextPallet),
+        all_done: split ? mIsFinal : mAllPalletsDone,
       };
       return;
     }
@@ -678,13 +682,17 @@ export async function POST(request: NextRequest) {
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
 
+    // Split sessions: next_pallet/all_done are cursor-derived and meaningless
+    // per-worker (the worker who closes the highest-numbered slot isn't
+    // necessarily the one who finishes the delivery). isFinal is already the
+    // right answer; the job screen decides what a split worker does next.
     okResult = {
       success: true,
       lpn,
       lpn_url: `${appUrl}/pallet/${lpn}`,
       pallet_number: palletNumber,
-      next_pallet: allPalletsDone ? null : newCurrentPallet,
-      all_done: allPalletsDone,
+      next_pallet: split ? null : (allPalletsDone ? null : newCurrentPallet),
+      all_done: split ? isFinal : allPalletsDone,
     };
     });
 

@@ -311,7 +311,9 @@ export interface MultiPalletSession {
     /** Every box barcode registered on this pallet. Feeds the cross-worker
      *  duplicate guard; meat only, where catch-weight barcodes are unique. */
     barcodes?: string[];
-    /** Who scanned this pallet. Split jobs only; absent on single sessions. */
+    /** Who scanned this pallet — the claimed slot's owner for split jobs,
+     *  or the session's own chat_id for a single-scanner delivery. Always
+     *  written (optional only because it predates this field). */
     worker_chat_id?: string;
   }>;
   status: 'planning' | 'active' | 'completed';

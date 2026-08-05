@@ -56,6 +56,17 @@ export async function POST(request: NextRequest) {
       let slot: unknown = undefined;
       let dropped: number[] | undefined;
 
+      // A worker holds at most one pallet at a time. Two claims make "which
+      // slot is this worker finishing?" ambiguous, and the completion route
+      // would resolve it to the wrong one.
+      if (
+        (action === 'next' || action === 'add') &&
+        state.pallets.some((p) => p.owner === worker_chat_id && p.status === 'claimed')
+      ) {
+        result = { status: 409, body: { success: false, error: 'already_holding_a_pallet' } };
+        return;
+      }
+
       switch (action) {
         case 'next': {
           const r = claimNext(state, worker_chat_id!, now);

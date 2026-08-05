@@ -67,7 +67,24 @@ export async function POST(request: NextRequest) {
 
       if (split) {
         const state = splitStateOf(session);
-        const next = { ...state, loose: state.loose ? { ...state.loose, status: 'done' as const } : null };
+        if (!state.loose || state.loose.status !== 'claimed') {
+          // Not claimed, or already done — this is a refresh or a double
+          // submit. Before this guard, the session correctly stays 'active'
+          // while loose finishes ahead of the last pallet, so the top-level
+          // `session.status !== 'active'` check no longer catches a resend
+          // and it would re-fire the bot webhook with the same boxes.
+          // markDone enforces the same rule for pallets; loose needs it too.
+          errorResult = { status: 409, body: { success: false, error: 'loose_not_claimed' } };
+          return;
+        }
+        if (!worker_chat_id || state.loose.owner !== worker_chat_id) {
+          // Closing the loose task can finalize the whole delivery, so it
+          // must be the worker who took it — not merely anyone holding the
+          // session token.
+          errorResult = { status: 403, body: { success: false, error: 'not_your_loose_task' } };
+          return;
+        }
+        const next = { ...state, loose: { ...state.loose, status: 'done' as const } };
         updatedSession = applySplitState(session, next);
         isFinal = isComplete(next);
         if (isFinal) updatedSession.status = 'completed';
