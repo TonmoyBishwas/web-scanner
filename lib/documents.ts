@@ -79,6 +79,27 @@ function fail(context: string, message: string): never {
   throw new Error(`${context}: ${message}`);
 }
 
+/**
+ * Page through a read 1000 rows at a time — PostgREST silently caps a single
+ * request at max-rows (default 1000), which would truncate the archive as
+ * delivery_items / invoice_ocr_results grow.
+ */
+const FETCH_CHUNK = 1000;
+
+async function fetchAllRows<T>(
+  context: string,
+  build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>
+): Promise<T[]> {
+  const all: T[] = [];
+  for (let from = 0; ; from += FETCH_CHUNK) {
+    const { data, error } = await build(from, from + FETCH_CHUNK - 1);
+    if (error) fail(context, error.message);
+    const rows = data ?? [];
+    all.push(...rows);
+    if (rows.length < FETCH_CHUNK) return all;
+  }
+}
+
 /** Card + pre-computed lowercase haystack for text search. */
 interface DocEntry {
   card: DocumentCard;
@@ -126,21 +147,34 @@ function buildMeatCard(
 }
 
 async function fetchMeatEntries(): Promise<DocEntry[]> {
-  const [deliveriesRes, itemsRes, ocrRes] = await Promise.all([
-    supabase.from('deliveries').select(DELIVERY_COLUMNS),
-    supabase.from('delivery_items').select('receipt_id, item_name_hebrew, item_name_english'),
-    supabase
-      .from('invoice_ocr_results')
-      .select('delivery_id, invoice_image_url')
-      .not('delivery_id', 'is', null)
-      .not('invoice_image_url', 'is', null),
+  const [deliveryRows, itemRows, ocrRows] = await Promise.all([
+    fetchAllRows<DeliveryRow>('deliveries read', (from, to) =>
+      supabase.from('deliveries').select(DELIVERY_COLUMNS).order('id').range(from, to)
+    ),
+    fetchAllRows<{ receipt_id: string | null; item_name_hebrew: string | null; item_name_english: string | null }>(
+      'delivery_items read',
+      (from, to) =>
+        supabase
+          .from('delivery_items')
+          .select('receipt_id, item_name_hebrew, item_name_english')
+          .order('id')
+          .range(from, to)
+    ),
+    fetchAllRows<{ delivery_id: string | null; invoice_image_url: string | null }>(
+      'invoice_ocr_results read',
+      (from, to) =>
+        supabase
+          .from('invoice_ocr_results')
+          .select('delivery_id, invoice_image_url')
+          .not('delivery_id', 'is', null)
+          .not('invoice_image_url', 'is', null)
+          .order('id')
+          .range(from, to)
+    ),
   ]);
-  if (deliveriesRes.error) fail('deliveries read', deliveriesRes.error.message);
-  if (itemsRes.error) fail('delivery_items read', itemsRes.error.message);
-  if (ocrRes.error) fail('invoice_ocr_results read', ocrRes.error.message);
 
   const linesByDelivery = new Map<string, { he: string; en: string }[]>();
-  for (const row of itemsRes.data ?? []) {
+  for (const row of itemRows) {
     if (!row.receipt_id) continue;
     const list = linesByDelivery.get(row.receipt_id) ?? [];
     list.push({ he: row.item_name_hebrew ?? '', en: row.item_name_english ?? '' });
@@ -148,13 +182,13 @@ async function fetchMeatEntries(): Promise<DocEntry[]> {
   }
 
   const ocrImageByDelivery = new Map<string, string>();
-  for (const row of ocrRes.data ?? []) {
+  for (const row of ocrRows) {
     if (row.delivery_id && row.invoice_image_url && !ocrImageByDelivery.has(row.delivery_id)) {
       ocrImageByDelivery.set(row.delivery_id, row.invoice_image_url);
     }
   }
 
-  return ((deliveriesRes.data ?? []) as DeliveryRow[]).map(d =>
+  return deliveryRows.map(d =>
     buildMeatCard(d, linesByDelivery.get(d.id) ?? [], ocrImageByDelivery.get(d.id) ?? null)
   );
 }
@@ -182,11 +216,11 @@ const NM_COLUMNS =
   'session_id, supplier_hebrew, supplier_english, invoice_number, invoice_date, invoice_image_url, item_name_hebrew, item_name_english, quantity, invoice_quantity, unit, has_discrepancy, discrepancy_reason, pallet_id, voice_note_id, created_at';
 
 async function fetchNonMeatRows(sessionId?: string): Promise<NonMeatRow[]> {
-  let query = supabase.from('non_meat_inventory').select(NM_COLUMNS);
-  if (sessionId) query = query.eq('session_id', sessionId);
-  const { data, error } = await query;
-  if (error) fail('non_meat_inventory read', error.message);
-  return (data ?? []) as NonMeatRow[];
+  return fetchAllRows<NonMeatRow>('non_meat_inventory read', (from, to) => {
+    let query = supabase.from('non_meat_inventory').select(NM_COLUMNS);
+    if (sessionId) query = query.eq('session_id', sessionId);
+    return query.order('id').range(from, to);
+  });
 }
 
 function buildNonMeatEntry(sessionId: string, rows: NonMeatRow[]): DocEntry {
