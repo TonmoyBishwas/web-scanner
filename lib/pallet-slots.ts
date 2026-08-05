@@ -175,6 +175,18 @@ export function closeShort(
   if (state.pallets.some((p) => p.status === 'claimed')) {
     return { ok: false, reason: 'pallet_still_claimed' };
   }
+  // Idempotency guard. closeShort filters state.pallets down to only 'done'
+  // slots, so a REPEAT call — a retried fetch, a double-tap, a second open
+  // tab — finds zero 'open' slots and would otherwise still return
+  // `ok: true, dropped: []`. The caller (pallet-claim route) reads that as a
+  // fresh success, re-saves the session, and re-fires the bot notification
+  // with is_final still true — double-finalizing (and double-booking stock)
+  // on a call that changed nothing. Refuse once there is nothing left to
+  // drop; the first, legitimate call always has at least one 'open' slot
+  // (that's the shortfall being declared).
+  if (!state.pallets.some((p) => p.status === 'open')) {
+    return { ok: false, reason: 'nothing_to_close' };
+  }
   const dropped = state.pallets.filter((p) => p.status === 'open').map((p) => p.n);
   return {
     ok: true,

@@ -243,6 +243,21 @@ describe('closeShort', () => {
     const r = closeShort(s);
     expect(r.ok).toBe(false);
   });
+
+  it('refuses a second close — nothing left to drop', () => {
+    const s = finishAll(claimTimes(tenPallets(), 'yossi', 2), 'yossi');
+    const first = closeShort(s);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    // Repeating the call on the state closeShort itself just produced (a
+    // retried fetch, a double-tap, a second tab) must NOT succeed again —
+    // a second `ok: true` here is exactly what would let the route re-fire
+    // the bot notification and double-finalize the delivery.
+    const second = closeShort(first.state);
+    expect(second.ok).toBe(false);
+    if (second.ok) return;
+    expect(second.reason).toBe('nothing_to_close');
+  });
 });
 
 describe('claimLoose', () => {
