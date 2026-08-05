@@ -1,3 +1,6 @@
+export type { PalletSlot, RosterEntry, LooseTask, SlotStatus } from '@/lib/pallet-slots';
+import type { PalletSlot, RosterEntry, LooseTask } from '@/lib/pallet-slots';
+
 // Barcode Data Types
 export interface ParsedBarcode {
   type: 'id-only' | '31-digit' | '25-digit' | 'short' | 'unknown';
@@ -347,6 +350,20 @@ export interface MultiPalletSession {
    * (damaged) pallets contribute — normally-scanned pallets do not.
    */
   meat_committed?: Record<string, number>;
+  /**
+   * 'single' (default, and the shape of every pre-split session) keeps the
+   * `current_pallet` cursor. 'split' replaces it with the `pallets` slot array.
+   * Absent means single, so in-flight sessions are unaffected.
+   */
+  mode?: 'single' | 'split';
+  /** Split only: the manager who planned the job. Receives the delivery summary. */
+  owner_chat_id?: string;
+  /** Split only: who is on this job and how much capacity each reserved. */
+  roster?: RosterEntry[];
+  /** Split only: one entry per pallet. Replaces `current_pallet`. */
+  pallets?: PalletSlot[];
+  /** Split only: the loose-box task, or null when the delivery has none. */
+  loose?: LooseTask | null;
 }
 
 // ─── UI State Types ────────────────────────────────────────────────────────────
