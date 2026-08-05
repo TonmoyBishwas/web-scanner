@@ -136,6 +136,7 @@ export async function POST(request: NextRequest) {
               pallet_number: pallet_n ?? (slot as { n?: number } | undefined)?.n,
               action,
               former_owner_chat_id: state.pallets.find((p) => p.n === Number(pallet_n))?.owner ?? null,
+              to_chat_id: action === 'reassign' ? to_chat_id : undefined,
             };
         fetch(`${botUrl}/webhook/${path}`, {
           method: 'POST',
