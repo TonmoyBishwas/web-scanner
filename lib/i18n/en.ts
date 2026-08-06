@@ -691,6 +691,7 @@ export const en = {
   'split.palletDone': 'Done',
   'split.poolAvailable': '{count} pallets available',
   'split.takeNext': 'Take next pallet',
+  'split.refresh': 'Refresh',
   'split.takeLoose': 'Take loose boxes ×{count}',
   'split.addPallet': '+ Add pallet',
   'split.closeShort': 'No more pallets',

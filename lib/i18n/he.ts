@@ -695,6 +695,7 @@ export const he: Record<TranslationKey, string> = {
   'split.palletDone': 'הושלם',
   'split.poolAvailable': '{count} משטחים זמינים',
   'split.takeNext': 'קח משטח הבא',
+  'split.refresh': 'רענן',
   'split.takeLoose': 'קח קרטונים בודדים ×{count}',
   'split.addPallet': '+ הוסף משטח',
   'split.closeShort': 'אין יותר משטחים',

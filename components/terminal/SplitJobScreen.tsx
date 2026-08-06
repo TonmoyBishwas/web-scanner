@@ -19,7 +19,7 @@
  * (Task 5); the pure slot math it wraps lives in lib/pallet-slots.ts.
  */
 
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { MI } from './MI';
 import { useT } from '@/lib/i18n';
 import type { TranslationKey } from '@/lib/i18n';
@@ -106,15 +106,57 @@ export default function SplitJobScreen({ session, workerChatId, onClaimed, onRef
         return;
       }
       await onRefresh();
+    } catch {
+      // Dropped connection / non-JSON error page (502 etc.) — fetch or
+      // res.json() threw before setError above ever ran. Without this, busy
+      // resets and the button just looks like it did nothing on the exact
+      // network conditions (warehouse Wi-Fi) where this is the common case,
+      // not the rare one. 'network_error' isn't a key in CLAIM_ERROR_KEYS,
+      // so splitErrorKey falls back to the generic retry message.
+      setError('network_error');
     } finally {
       setBusy(false);
     }
   }
 
+  // Manual + polled recovery from a stale session. reserved_for_others /
+  // no_open_slots can leave the worker with NO tappable action (see
+  // nextDisabled below) — the pool count they're looking at was correct only
+  // at render time. Clearing `error` here is deliberate: once onRefresh()
+  // lands a fresh session, `open`/`canAdd`/`canCloseShort` are recomputed
+  // from real data, so the stale error code has nothing left to add — and if
+  // the fresh pool is genuinely still empty, the "0 pallets available" pool
+  // heading already says so.
+  const refresh = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onRefresh();
+    } catch {
+      // Best-effort, same as the parent's reloadSession — keep showing the
+      // last-known session rather than surface an error for a background poll.
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, onRefresh]);
+
+  // Modest poll so a worker who never notices they're stuck still recovers.
+  // Re-created (and its interval reset) whenever `busy` flips — harmless,
+  // since it also means the check below is never reading a stale value.
+  useEffect(() => {
+    const id = setInterval(() => {
+      void refresh();
+    }, 12000);
+    return () => clearInterval(id);
+  }, [refresh]);
+
   // The claim API's own failure reasons already gate the next attempt (a
   // repeat tap after reserved_for_others/no_open_slots would just fail
   // again); open === 0 is the same fact known ahead of any click, so the
   // button is disabled before the worker ever wastes a round trip on it.
+  // Tapping refresh (below) clears `error`, so this never strands the
+  // worker — only a genuinely empty pool (open === 0) keeps it disabled.
   const nextDisabled =
     busy || open === 0 || error === 'reserved_for_others' || error === 'no_open_slots';
 
@@ -207,6 +249,18 @@ export default function SplitJobScreen({ session, workerChatId, onClaimed, onRef
           >
             {busy && <MI name="autorenew" size={18} className="animate-spin" />}
             {tr('split.takeNext')}
+          </button>
+
+          {/* Always rendered — the one action guaranteed to be tappable even
+              when reserved_for_others/no_open_slots (or a teammate holding
+              the last slot) leaves every other button above disabled. */}
+          <button
+            onClick={() => void refresh()}
+            disabled={busy}
+            className="w-full py-[13px] rounded-[13px] font-extrabold text-[13px] border border-line text-ink-muted disabled:opacity-50 flex items-center justify-center gap-2 tap-target"
+          >
+            <MI name="refresh" size={16} className={busy ? 'animate-spin' : undefined} />
+            {tr('split.refresh')}
           </button>
 
           {looseOpen && (
