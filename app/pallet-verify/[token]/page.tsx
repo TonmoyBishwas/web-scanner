@@ -34,6 +34,7 @@ import type { Language, MultiPalletSession, MultiPalletBoxScan, ParsedBarcode } 
 import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
 import { matchInvoiceItem } from '@/lib/invoice-match';
 import { isSplitSession } from '@/lib/session-mode';
+import { findDuplicateOwner } from '@/lib/duplicate-guard';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
 import {
@@ -267,6 +268,16 @@ export default function PalletVerifyPage({
   // invoice names so OCR drift doesn't fragment one item into several groups.
   const invoiceItemsRef = useRef<MultiPalletSession['ocr_data']>([]);
   useEffect(() => { invoiceItemsRef.current = session?.ocr_data ?? []; }, [session]);
+  // Same reasoning, for the split-mode duplicate-box guard (Task 16):
+  // handleBarcodeDetected and runOcr's manual-capture branch both need the
+  // current session (roster/completed_pallets) and pallet number to call
+  // findDuplicateOwner, but both are reached through refs/frozen closures —
+  // see the sessionRef.current guards below for why direct `session` /
+  // `currentPallet` reads there would be stale.
+  const sessionRef = useRef<MultiPalletSession | null>(null);
+  useEffect(() => { sessionRef.current = session; }, [session]);
+  const currentPalletRef = useRef(1);
+  useEffect(() => { currentPalletRef.current = currentPallet; }, [currentPallet]);
   // Deferred-single-confirm state: when the worker picks "Complete as
   // single-item" in the uniform-pair prompt, we capture the group params
   // here and surface the pallet box-count input in the footer. Locking
@@ -610,6 +621,22 @@ export default function PalletVerifyPage({
         image_data: imageData,
       };
 
+      // Split-mode duplicate-box guard (Task 16): refuse a box already
+      // registered on a teammate's (different) pallet on this delivery.
+      // findDuplicateOwner itself no-ops for single-scanner / non-meat
+      // sessions, so this is a no-op cost for the unaffected common case.
+      const activeSession = sessionRef.current;
+      if (activeSession) {
+        const clash = findDuplicateOwner(activeSession, barcode, currentPalletRef.current);
+        if (clash) {
+          const lang = activeSession.language || 'English';
+          const who = (activeSession.roster ?? []).find((r) => r.chat_id === clash.owner)?.nickname
+            || t(lang, 'split.anotherWorker');
+          setError(t(lang, 'split.duplicateBox', { who, pallet: clash.pallet_n }));
+          return; // the box is NOT added
+        }
+      }
+
       setScannedBoxes((prev) => [...prev, box]);
 
       // Fire OCR with the frame captured at detection time
@@ -745,6 +772,26 @@ export default function PalletVerifyPage({
                 dupFlashRef.current?.(); // red "already scanned" flash
                 scanDuplicateFeedback();
                 return prev.filter((_, i) => i !== idx); // drop the provisional box
+              }
+              // Split-mode duplicate-box guard (Task 16): the manual-capture
+              // path never has a decoded barcode at accept time — the box was
+              // pushed with a provisional placeholder ID — so this OCR-resolved
+              // digit string is the FIRST point its real identity is known.
+              // This is where a teammate's already-registered box must be
+              // caught for this path; findDuplicateOwner no-ops for
+              // single-scanner / non-meat sessions.
+              const activeSession = sessionRef.current;
+              if (activeSession) {
+                const clash = findDuplicateOwner(activeSession, digits, currentPalletRef.current);
+                if (clash) {
+                  const lang = activeSession.language || 'English';
+                  const who = (activeSession.roster ?? []).find((r) => r.chat_id === clash.owner)?.nickname
+                    || t(lang, 'split.anotherWorker');
+                  dupFlashRef.current?.();
+                  scanDuplicateFeedback();
+                  setError(t(lang, 'split.duplicateBox', { who, pallet: clash.pallet_n }));
+                  return prev.filter((_, i) => i !== idx); // drop the provisional box
+                }
               }
               resolvedBarcode = digits;
               resolvedSku = digits.slice(0, 13);

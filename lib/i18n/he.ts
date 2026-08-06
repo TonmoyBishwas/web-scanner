@@ -713,6 +713,10 @@ export const he: Record<TranslationKey, string> = {
   'split.error.targetNotOnThisJob': 'העובד הזה אינו משויך למשימה.',
   'split.error.generic': 'משהו השתבש. נסה שוב.',
 
+  // ── Split-delivery cross-worker duplicate guard (Task 16) ───────────
+  'split.duplicateBox': 'הקופסה כבר נסרקה — היא נמצאת על משטח {pallet} של {who}.',
+  'split.anotherWorker': 'עובד אחר',
+
   // ── Split-delivery manager planner + board (Task 15) ────────────────
   'split.plan.title': 'תכנון המשלוח',
   'split.plan.invoiceSummary': '{items} פריטים · {kg} ק"ג',

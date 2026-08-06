@@ -709,6 +709,10 @@ export const en = {
   'split.error.targetNotOnThisJob': "That worker isn't on this job.",
   'split.error.generic': 'Something went wrong. Please try again.',
 
+  // ── Split-delivery cross-worker duplicate guard (Task 16) ───────────
+  'split.duplicateBox': "This box is already on {who}'s pallet {pallet}. You're on the wrong pallet.",
+  'split.anotherWorker': 'another worker',
+
   // ── Split-delivery manager planner + board (Task 15) ────────────────
   'split.plan.title': 'Plan this delivery',
   'split.plan.invoiceSummary': '{items} items · {kg} kg',
