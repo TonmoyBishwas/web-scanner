@@ -602,8 +602,34 @@ export default function PalletVerifyPage({
         scanDuplicateFeedback(); // already scanned this sticker
         return;
       }
+
+      // Split-mode duplicate-box guard (Task 16): refuse a box already
+      // registered on a teammate's (different) pallet on this delivery.
+      // Runs BEFORE processedRef.current.add()/scanSuccessFeedback() below —
+      // a clash must never be marked "processed" in this page's local
+      // dedupe set, or a rescan after the clash is resolved (e.g. the
+      // manager reassigns that pallet) would silently hit the "already
+      // scanned" branch above instead of re-running this guard, leaving the
+      // worker stuck with a generic duplicate buzz and no way to add the
+      // box. findDuplicateOwner itself no-ops for single-scanner / non-meat
+      // sessions, so this is a no-op cost for the unaffected common case.
+      const activeSession = sessionRef.current;
+      if (activeSession) {
+        const clash = findDuplicateOwner(activeSession, barcode, currentPalletRef.current);
+        if (clash) {
+          const lang = activeSession.language || 'English';
+          const who = (activeSession.roster ?? []).find((r) => r.chat_id === clash.owner)?.nickname
+            || t(lang, 'split.anotherWorker');
+          dupFlashRef.current?.(); // red "already scanned" flash — same cue as every other rejected scan
+          scanDuplicateFeedback();
+          setError(t(lang, 'split.duplicateBox', { who, pallet: clash.pallet_n }));
+          return; // the box is NOT added, NOT marked processed
+        }
+      }
+
       processedRef.current.add(barcode);
       scanSuccessFeedback(); // good scan — box added below
+      setError(null); // clear any earlier rejection banner now that a scan succeeded
 
       // Barcode is an identifier only — extract first 13 digits as dedup key
       const digits = barcode.replace(/\D/g, '');
@@ -620,22 +646,6 @@ export default function PalletVerifyPage({
         ocr_status: 'processing',
         image_data: imageData,
       };
-
-      // Split-mode duplicate-box guard (Task 16): refuse a box already
-      // registered on a teammate's (different) pallet on this delivery.
-      // findDuplicateOwner itself no-ops for single-scanner / non-meat
-      // sessions, so this is a no-op cost for the unaffected common case.
-      const activeSession = sessionRef.current;
-      if (activeSession) {
-        const clash = findDuplicateOwner(activeSession, barcode, currentPalletRef.current);
-        if (clash) {
-          const lang = activeSession.language || 'English';
-          const who = (activeSession.roster ?? []).find((r) => r.chat_id === clash.owner)?.nickname
-            || t(lang, 'split.anotherWorker');
-          setError(t(lang, 'split.duplicateBox', { who, pallet: clash.pallet_n }));
-          return; // the box is NOT added
-        }
-      }
 
       setScannedBoxes((prev) => [...prev, box]);
 
@@ -796,6 +806,7 @@ export default function PalletVerifyPage({
               resolvedBarcode = digits;
               resolvedSku = digits.slice(0, 13);
               processedRef.current.add(digits); // so a later bar-scan of this sticker is caught
+              setError(null); // clear any earlier rejection banner now that this box committed
             } else {
               needsReview = true; // OCR couldn't read the digits → can't dedupe
             }
