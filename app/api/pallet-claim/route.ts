@@ -43,10 +43,25 @@ export async function POST(request: NextRequest) {
         return;
       }
       // Reject an unknown ?w= — the token is a bearer credential, but the
-      // worker identity must still be one this job actually invited.
-      const known = (session.roster ?? []).some((r) => r.chat_id === worker_chat_id);
+      // identity must still be one this job recognises.
+      //
+      // The job OWNER always qualifies, even when they aren't on the roster.
+      // A manager who split the work without keeping any pallets for
+      // themselves is not a roster member, yet Release and Reassign on their
+      // own board are exactly their job. Without this the board has to
+      // impersonate the slot's current owner to get past the gate, which
+      // misattributes the action in the bot's notification — it would read as
+      // the worker releasing their own pallet.
+      const isOwner = !!worker_chat_id && worker_chat_id === session.owner_chat_id;
+      const known = isOwner || (session.roster ?? []).some((r) => r.chat_id === worker_chat_id);
       if (!known) {
         result = { status: 403, body: { success: false, error: 'not_on_this_job' } };
+        return;
+      }
+      // Owner-only actions. A worker may hand their own pallet back
+      // (`release`), but reassigning someone else's is a manager action.
+      if (action === 'reassign' && !isOwner) {
+        result = { status: 403, body: { success: false, error: 'owner_action_only' } };
         return;
       }
 

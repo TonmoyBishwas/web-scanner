@@ -762,6 +762,7 @@ export const he: Record<TranslationKey, string> = {
   'split.board.error.notClaimed': 'המשטח הזה כבר לא תפוס — רענן כדי לראות את הסטטוס.',
   'split.board.error.targetNotOnJob': 'העובד הזה כבר לא במשימה — רענן את הצוות.',
   'split.board.error.staleAction': 'הפעולה הזו כבר לא רלוונטית. רענן ונסה שוב.',
+  'split.board.error.ownerActionOnly': 'רק המנהל שתכנן את המשימה יכול לשייך משטח מחדש. רענן ונסה שוב.',
   'split.board.error.stillHoldsPalletGeneric': 'אחד העובדים שהוסרו עדיין מחזיק משטח — שחרר אותו ונסה שוב.',
   'split.board.error.stillNotNotified': 'עדיין לא הצלחנו להגיע לעובדים. התוכנית שמורה — נסה לשלוח שוב.',
   'split.page.expiredTitle': 'הקישור פג תוקף',

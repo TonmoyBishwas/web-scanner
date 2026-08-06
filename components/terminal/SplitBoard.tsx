@@ -8,16 +8,17 @@
  * /api/pallet-claim (Task 5); the roster editor and the total-pallets control
  * PATCH /api/split-plan (Task 6).
  *
- * Caller identity for Release/Reassign: /api/pallet-claim's only gate is "is
- * this chat_id on session.roster" — it never checks that the caller IS the
- * slot's owner (releaseSlot/reassignSlot take no such argument). The
- * manager's own chat_id is neither passed to this page (no `?w=` on /assign
- * links, unlike a worker's /pallet-verify/{token}?w={chat_id}) nor
- * necessarily on the roster at all. So the identity sent as `worker_chat_id`
- * here is the SLOT'S CURRENT OWNER — trivially "known" (they hold the slot),
- * and the actually-affected party for the bot's release/reassign
- * notification. This is an inference from the route's contract, not spelled
- * out in the task brief; flagged in the task report for confirmation.
+ * Caller identity for Release/Reassign: /api/pallet-claim now recognises the
+ * JOB OWNER (`worker_chat_id === session.owner_chat_id`) whether or not
+ * they're on the roster — a manager who split the work without keeping any
+ * pallets for themselves isn't a roster member at all. This board sends
+ * `session.owner_chat_id` for both actions; `session` already carries it
+ * (set by the bot when the planning session was created), so no `?w=` param
+ * on the /assign link is needed. Reassign is owner-only server-side
+ * (`owner_action_only`, 403) — a worker hands their own pallet back via
+ * `release` from their own job screen (SplitJobScreen, which sends its own
+ * `?w=` identity and is unaffected by this route change); moving someone
+ * else's pallet is exclusively a manager action, which this board is.
  *
  * The stale marker (decision 6) is display-only — nothing here ever calls
  * release automatically. `nowMs` is a state value set together with each
@@ -82,6 +83,11 @@ const CLAIM_ERROR_KEYS: Record<string, TranslationKey> = {
   unknown_action: 'split.board.error.staleAction',
   missing_to_chat_id: 'split.board.error.staleAction',
   missing_fields: 'split.board.error.staleAction',
+  // Reassign is owner-only server-side. This board always sends the owner's
+  // own chat_id, so hitting this would mean local `session.owner_chat_id` is
+  // stale — worth its own copy rather than the generic "stale action" bucket
+  // since it points at a more specific "refresh" fix.
+  owner_action_only: 'split.board.error.ownerActionOnly',
 };
 function claimErrorKey(code: string | undefined): TranslationKey {
   if (code && Object.prototype.hasOwnProperty.call(CLAIM_ERROR_KEYS, code)) return CLAIM_ERROR_KEYS[code];
@@ -164,14 +170,23 @@ export default function SplitBoard({ session: initialSession }: Props) {
   }
 
   function release(slot: PalletSlot) {
-    if (!slot.owner) return;
-    void doClaimAction({ worker_chat_id: slot.owner, action: 'release', pallet_n: slot.n }, `release-${slot.n}`);
+    if (!session.owner_chat_id) {
+      setError('split.board.error.staleAction');
+      return;
+    }
+    void doClaimAction(
+      { worker_chat_id: session.owner_chat_id, action: 'release', pallet_n: slot.n },
+      `release-${slot.n}`
+    );
   }
 
   function reassign(slot: PalletSlot, toChatId: string) {
-    if (!slot.owner || !toChatId) return;
+    if (!session.owner_chat_id || !toChatId) {
+      setError('split.board.error.staleAction');
+      return;
+    }
     void doClaimAction(
-      { worker_chat_id: slot.owner, action: 'reassign', pallet_n: slot.n, to_chat_id: toChatId },
+      { worker_chat_id: session.owner_chat_id, action: 'reassign', pallet_n: slot.n, to_chat_id: toChatId },
       `reassign-${slot.n}`
     );
   }

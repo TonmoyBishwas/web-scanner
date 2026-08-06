@@ -758,6 +758,7 @@ export const en = {
   'split.board.error.notClaimed': "That pallet isn't claimed anymore — refresh to see its status.",
   'split.board.error.targetNotOnJob': "That worker isn't on this job anymore — refresh the roster.",
   'split.board.error.staleAction': 'That action no longer applies. Refresh and try again.',
+  'split.board.error.ownerActionOnly': 'Only the manager who planned this job can reassign a pallet. Refresh and try again.',
   'split.board.error.stillHoldsPalletGeneric': 'One of the removed workers still holds a pallet — release it and try again.',
   'split.board.error.stillNotNotified': "Still couldn't reach the workers. The plan is saved — try resending.",
   'split.page.expiredTitle': 'This link has expired',
