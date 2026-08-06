@@ -27,11 +27,13 @@ import { DoneOverlay } from '@/components/terminal/DoneOverlay';
 import { Toast, useLockToast } from '@/components/terminal/Toast';
 import { useDrawerHost } from '@/components/terminal/DrawerHost';
 import { PalletsBrowser } from '@/components/terminal/PalletsBrowser';
+import SplitJobScreen, { SPLIT_CLAIM_ERROR_KEYS } from '@/components/terminal/SplitJobScreen';
 import { installDebugLogCapture } from '@/lib/debug-log';
 import { LanguageContext, useLangDir, t } from '@/lib/i18n';
 import type { Language, MultiPalletSession, MultiPalletBoxScan, ParsedBarcode } from '@/types';
 import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
 import { matchInvoiceItem } from '@/lib/invoice-match';
+import { isSplitSession } from '@/lib/session-mode';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
 import {
@@ -154,7 +156,7 @@ const UNIFORM_WEIGHT_TOLERANCE = 0.0001;
 
 // ── Page state machine ──
 
-type Phase = 'loading' | 'scanning' | 'confirming' | 'pallet_done' | 'loose_scanning' | 'loose_confirming' | 'all_done' | 'error';
+type Phase = 'loading' | 'job' | 'scanning' | 'confirming' | 'pallet_done' | 'loose_scanning' | 'loose_confirming' | 'all_done' | 'error';
 
 export default function PalletVerifyPage({
   params,
@@ -162,6 +164,14 @@ export default function PalletVerifyPage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = use(params);
+
+  // Split jobs only: identifies which worker this scan link belongs to. The
+  // bot stamps `?w=<chat_id>` on each worker's own link when the manager
+  // splits a delivery. Absent on every single-scanner session — read once,
+  // it never changes for the life of this page.
+  const workerChatId = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('w') ?? ''
+    : '';
 
   const [phase, setPhase] = useState<Phase>('loading');
   const [session, setSession] = useState<MultiPalletSession | null>(null);
@@ -444,6 +454,47 @@ export default function PalletVerifyPage({
         }
         setSession(data);
 
+        // Split jobs: no cursor. Resume whatever this worker already holds
+        // (a claimed pallet or the claimed loose task), or send them to the
+        // job screen to claim something. Everything below this branch is
+        // the untouched single-mode path.
+        if (isSplitSession(data)) {
+          const mine = (data.pallets ?? []).find(
+            (p) => p.owner === workerChatId && p.status === 'claimed',
+          );
+          if (mine) {
+            // Resume the slot they already hold. Restored the same way the
+            // single-mode path below restores `data.current_pallet` — split
+            // sessions never advance that field, so the claimed slot number
+            // is the only correct cache key here.
+            setCurrentPallet(mine.n);
+            const cached = loadPalletScans<PalletScanSnapshot>(token, mine.n);
+            if (cached?.scannedBoxes?.length) {
+              setScannedBoxes(cached.scannedBoxes);
+              setUniformGroups(new Map(cached.uniformGroups || []));
+              setAcceptedMerges(new Map(cached.acceptedMerges || []));
+              if (cached.confirmedBoxCount > 0) setConfirmedBoxCount(cached.confirmedBoxCount);
+              if (cached.boxCountInput) setBoxCountInput(cached.boxCountInput);
+              setForcedMix(!!cached.forcedMix);
+              if (cached.detectedType) setDetectedType(cached.detectedType);
+              cached.scannedBoxes.forEach((b) => b.barcode && processedRef.current.add(b.barcode));
+            }
+            setPhase('scanning');
+          } else if (data.loose?.owner === workerChatId && data.loose?.status === 'claimed') {
+            // Resume: this worker already holds the loose-box task (either
+            // pinned by the manager at plan time, or claimed before a reload).
+            const cachedLoose = loadLooseScans<LooseScanSnapshot>(token);
+            if (cachedLoose?.looseBoxes?.length) {
+              setLooseBoxes(cachedLoose.looseBoxes);
+              cachedLoose.looseBoxes.forEach((b) => b.barcode && looseProcessedRef.current.add(b.barcode));
+            }
+            setPhase('loose_scanning');
+          } else {
+            setPhase('job');
+          }
+          return;
+        }
+
         // All pallets confirmed but loose boxes still pending → restore loose phase
         // (e.g. user refreshed the tab between pallet 2/2 confirm and scanning loose boxes)
         if (data.current_pallet > data.pallet_count && (data.loose_box_count || 0) > 0) {
@@ -486,7 +537,48 @@ export default function PalletVerifyPage({
       }
     }
     load();
+    // workerChatId comes from the URL query string and is stable for the
+    // life of this page — it deliberately isn't a dependency so this loader
+    // still only ever runs once per token, matching every other phase-load
+    // effect in this file.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  // ── Split jobs: on-demand session refresh ──
+  //
+  // The job screen's `onRefresh` prop, and every split-aware branch below
+  // that returns to 'job'. A plain re-GET + setSession — unlike the mount
+  // loader above, it never touches phase or per-pallet cache restoration;
+  // the caller decides what happens next.
+  const reloadSession = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/multi-pallet-session?token=${token}`);
+      if (!res.ok) return;
+      const data: MultiPalletSession = await res.json();
+      setSession(data);
+    } catch {
+      // Best-effort — the job screen just keeps showing the last-known state.
+    }
+  }, [token]);
+
+  // Split jobs only: once this worker holds the claimed loose-box task
+  // (either they just tapped "Take loose boxes ×N" on the job screen, or
+  // the manager pinned them as its owner at plan time), leave the job
+  // screen and start scanning it. SplitJobScreen has no phase-transition
+  // callback for loose — only `onClaimed`, which is pallet-numbered — so
+  // this effect is what actually makes that button go anywhere once the
+  // claim succeeds.
+  useEffect(() => {
+    if (phase !== 'job' || !session || !isSplitSession(session)) return;
+    if (session.loose?.owner === workerChatId && session.loose?.status === 'claimed') {
+      const cachedLoose = loadLooseScans<LooseScanSnapshot>(token);
+      if (cachedLoose?.looseBoxes?.length) {
+        setLooseBoxes(cachedLoose.looseBoxes);
+        cachedLoose.looseBoxes.forEach((b) => b.barcode && looseProcessedRef.current.add(b.barcode));
+      }
+      setPhase('loose_scanning');
+    }
+  }, [phase, session, workerChatId, token]);
 
   // ── Barcode detected — SmartScanner passes the captured frame as imageData ──
   // The barcode IS on the sticker, so that frame is the sticker. Auto-OCR it.
@@ -1122,12 +1214,30 @@ export default function PalletVerifyPage({
         body: JSON.stringify({
           token,
           scanned_boxes: looseBoxes.map(({ ocr_status: _, ...box }) => box),
+          // Split jobs only: which worker is closing the loose-box task.
+          // Ignored server-side on a single-scanner session. Task 7's
+          // ownership guard 403s a split submit without this (not_your_loose_task).
+          worker_chat_id: workerChatId,
         }),
       });
       const data = await res.json();
       if (!data.success) {
-        setError(data.error || tr('palletVerify.failedLooseComplete'));
+        // loose_not_claimed / not_your_loose_task arrive as raw reason codes
+        // (split-only, added by Task 7's guard) — everything else the server
+        // already translated. A raw code must never reach the worker.
+        const known = data.error ? SPLIT_CLAIM_ERROR_KEYS[data.error] : undefined;
+        setError(known ? tr(known) : (data.error || tr('palletVerify.failedLooseComplete')));
         setPhase('loose_scanning');
+        return;
+      }
+      if (session && isSplitSession(session)) {
+        // Split jobs: the loose task may not be the final piece of the
+        // delivery — another worker could still be mid-pallet. Return to the
+        // job screen instead of assuming the whole thing is done; reload so
+        // it reflects the loose task as finished.
+        setLooseBoxes([]);
+        setPhase('job');
+        reloadSession();
         return;
       }
       clearAllScans(token);
@@ -1202,6 +1312,25 @@ export default function PalletVerifyPage({
   ) {
     setLpn(data.lpn || '');
     setLpnUrl(data.lpn_url || '');
+
+    if (session && isSplitSession(session)) {
+      // Split jobs: this worker just finished the ONE slot they claimed —
+      // there is no cursor to advance and no "next pallet" number to swipe
+      // into (next_pallet/all_done are cursor-derived and meaningless per
+      // worker here, per the API route's own comment). Hand back to the job
+      // screen so they can claim whatever's next, which might not even be a
+      // pallet at all, or might go to someone else entirely. Clear this
+      // pallet's cache and reset every per-pallet UI flag the same way
+      // advanceToNextPallet does for single-mode, so a newly claimed pallet
+      // never inherits stale state (confirmedBoxCount, manualMode, etc.)
+      // left over from the one just confirmed.
+      clearPalletScans(token, currentPallet);
+      resetPalletUiState();
+      setPhase('job');
+      reloadSession();
+      return;
+    }
+
     setSession((prev) =>
       prev
         ? {
@@ -1242,11 +1371,13 @@ export default function PalletVerifyPage({
     }
   }
 
-  // Reset all per-pallet state and start scanning the next pallet. Fired by
-  // the swipe on the pallet_done overlay.
-  function advanceToNextPallet() {
-    setCurrentPallet(pendingNextPallet ?? currentPallet + 1);
-    setPendingNextPallet(null);
+  // Reset every per-pallet UI flag (scans, uniform groups, edit/merge state,
+  // damaged-sticker mode, …). Shared by advanceToNextPallet (single-mode:
+  // rolls into the next cursor pallet) and applyCompletion's split-mode
+  // branch (returns to the job screen instead) — both need a clean slate
+  // before the worker starts the next pallet, whichever one that turns out
+  // to be.
+  function resetPalletUiState() {
     setBoxCountInput('');
     setConfirmedBoxCount(0);
     setScannedBoxes([]);
@@ -1264,6 +1395,14 @@ export default function PalletVerifyPage({
     setPendingMerge(null);
     setManualMode(false); // damaged mode is per-pallet — reset for the next
     setActiveExpanded(false);
+  }
+
+  // Reset all per-pallet state and start scanning the next pallet. Fired by
+  // the swipe on the pallet_done overlay.
+  function advanceToNextPallet() {
+    setCurrentPallet(pendingNextPallet ?? currentPallet + 1);
+    setPendingNextPallet(null);
+    resetPalletUiState();
     setPhase('scanning');
   }
 
@@ -1296,12 +1435,35 @@ export default function PalletVerifyPage({
           box_count: confirmedBoxCount,
           uniform_groups: uniformGroupsPayload,
           merge_map: mergeMapPayload,
+          // Split jobs only: which worker is finishing this pallet. Ignored
+          // server-side on a single-scanner session (the cursor's owner is
+          // always session.chat_id there).
+          worker_chat_id: workerChatId,
         }),
       });
       const data = await res.json();
 
+      if (res.status === 409 && data.error === 'no_claimed_pallet') {
+        // The manager released or reassigned this pallet while we were
+        // scanning. Nothing was written server-side, so there is nothing to
+        // undo — discard the local scans and send the worker back to the
+        // job screen. A toast carries the message: SplitJobScreen has no
+        // prop for an injected message, so the page's own toast (already
+        // rendered alongside it) is what the worker actually sees.
+        clearPalletScans(token, currentPallet);
+        resetPalletUiState();
+        showToast(tr('split.palletReleased'), 'report_problem', '#f8a3a3');
+        setPhase('job');
+        reloadSession();
+        return;
+      }
+
       if (!data.success) {
-        setError(data.error || tr('palletVerify.failedComplete'));
+        // A handful of split-only reasons come back as raw codes — everything
+        // else the server already translated into a full sentence. A raw
+        // code must never reach the worker.
+        const known = data.error ? SPLIT_CLAIM_ERROR_KEYS[data.error] : undefined;
+        setError(known ? tr(known) : (data.error || tr('palletVerify.failedComplete')));
         setPhase('scanning');
         return;
       }
@@ -1418,6 +1580,24 @@ export default function PalletVerifyPage({
     );
   }
 
+  // Split jobs only: the worker has no claimed pallet (and no claimed loose
+  // task) right now — show the job screen instead of a numbered "pallet N of
+  // M" cursor. Claiming (or resuming) hands off to the scanning phase below
+  // completely unchanged; confirming a pallet returns here (applyCompletion).
+  if (phase === 'job') {
+    return withLang(
+      <>
+        <SplitJobScreen
+          session={session!}
+          workerChatId={workerChatId}
+          onClaimed={(n) => { setCurrentPallet(n); setPhase('scanning'); }}
+          onRefresh={reloadSession}
+        />
+        <Toast toast={toast} />
+      </>,
+    );
+  }
+
   // Weight-based non-meat (Type A) runs a completely different scanner UX:
   // one box per invoice item per pallet, count pre-filled from the invoice.
   // Hand off to the self-contained flow; the meat path below is untouched.
@@ -1435,6 +1615,7 @@ export default function PalletVerifyPage({
         token={token}
         session={session}
         lang={language}
+        workerChatId={workerChatId}
         onComplete={applyCompletion}
         onCancel={() => setManualMode(false)}
       />

@@ -47,12 +47,18 @@ export function MeatManualCountFlow({
   token,
   session,
   lang,
+  workerChatId,
   onComplete,
   onCancel,
 }: {
   token: string;
   session: MultiPalletSession;
   lang: Language;
+  /** Split jobs only: which worker is declaring this pallet's counts. Ignored
+   *  server-side on a single-scanner session. Without it, a split-session
+   *  submit through this (damaged-sticker) path 409s with no_claimed_pallet —
+   *  same guard as the normal scan-every-box confirm. */
+  workerChatId?: string;
   onComplete: (data: PalletCompleteResult, palletType: 'single' | 'mix', totalBoxes: number) => void;
   onCancel: () => void;
 }) {
@@ -109,6 +115,7 @@ export function MeatManualCountFlow({
           token,
           manual_declared: true,
           manual_items: withCounts.map((r) => ({ item_key: r.item_key, box_count: r.count })),
+          worker_chat_id: workerChatId,
         }),
       });
       const data: PalletCompleteResult = await res.json();
@@ -122,7 +129,7 @@ export function MeatManualCountFlow({
       setError(tr('meatManual.failed'));
       setSaving(false);
     }
-  }, [withCounts, token, tr, onComplete, totalBoxes]);
+  }, [withCounts, token, tr, onComplete, totalBoxes, workerChatId]);
 
   return (
     <LanguageContext.Provider value={lang}>

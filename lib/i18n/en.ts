@@ -680,6 +680,33 @@ export const en = {
   'terminal.palletsExpiry': 'Expiry',
   'terminal.palletsRemainingQty': 'Remaining qty',
   'terminal.palletsOpenSticker': 'Open sticker',
+
+  // ── Split-delivery worker job screen (Task 14) ─────────────────────
+  'split.jobTitle': 'Your job',
+  'split.deliveryProgress': 'Delivery',
+  'split.yoursDone': 'Yours',
+  'split.yourPallets': 'Your pallets',
+  'split.noOwnPallets': "You haven't taken a pallet yet",
+  'split.palletInProgress': 'In progress',
+  'split.palletDone': 'Done',
+  'split.poolAvailable': '{count} pallets available',
+  'split.takeNext': 'Take next pallet',
+  'split.takeLoose': 'Take loose boxes ×{count}',
+  'split.addPallet': '+ Add pallet',
+  'split.closeShort': 'No more pallets',
+  'split.palletReleased': 'This pallet was reassigned — pick another one.',
+  'split.error.reservedForOthers': 'The remaining pallets are reserved for other workers on this job.',
+  'split.error.noOpenSlots': 'No pallets left to take.',
+  'split.error.notOnThisJob': "You're not assigned to this delivery.",
+  'split.error.palletStillClaimed': 'A teammate is still scanning a pallet — try again once they finish.',
+  'split.error.looseUnavailable': 'A teammate already took the loose boxes.',
+  'split.error.noLooseTask': 'This delivery has no loose boxes.',
+  'split.error.alreadyHoldingAPallet': 'Finish or release your current pallet first.',
+  'split.error.looseNotClaimed': 'The loose-box task was released — go back and take it again.',
+  'split.error.notYourLooseTask': "This wasn't your loose-box task to close.",
+  'split.error.nothingToClose': 'There is nothing left to close out.',
+  'split.error.targetNotOnThisJob': "That worker isn't on this job.",
+  'split.error.generic': 'Something went wrong. Please try again.',
 } as const;
 
 export type TranslationKey = keyof typeof en;
