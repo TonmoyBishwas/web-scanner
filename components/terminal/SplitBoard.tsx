@@ -255,15 +255,19 @@ export default function SplitBoard({ session: initialSession }: Props) {
         if (data.session) {
           setSession(data.session);
           setNowMs(Date.now());
-        } else {
-          // Defensive only — the route always includes `session` on a 200
-          // (checked against the live handler), so this should be
-          // unreachable. `busyKeyRef` still reads 'resend' here (the
-          // `finally` below hasn't run yet) and poll() skips itself while
-          // busy, so clear it first or this call would silently no-op.
-          busyKeyRef.current = null;
-          void poll();
         }
+        // else: defensive only — the route always includes `session` on a
+        // 200 (checked against the live handler), so this branch should be
+        // unreachable. Deliberately NOT calling poll() from here: poll()
+        // runs synchronously up to its own `await fetch`, so it would take a
+        // ticket and advance `seqRef` past this function's `seq` BEFORE this
+        // function's `finally` runs — making `seq !== seqRef.current` true
+        // there and permanently skipping `setBusyKey(null)`. `busyKeyRef`
+        // then resyncs to the stale 'resend' value on the next render, and
+        // poll()'s own busy-skip disables every action forever (only a page
+        // reload would recover). Just falling through to `finally` below
+        // clears `busyKey` normally; the next scheduled 5s poll refreshes
+        // the board on its own if this branch is ever actually hit.
         return;
       }
       setError(data?.error === 'bot_unreachable' ? 'split.board.error.stillNotNotified' : planErrorKey(data?.error));
