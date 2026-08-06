@@ -27,7 +27,7 @@
  * null`, i.e. no stale glyphs) before the first poll lands.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MI } from './MI';
 import { useT } from '@/lib/i18n';
 import type { TranslationKey } from '@/lib/i18n';
@@ -105,15 +105,45 @@ export default function SplitBoard({ session: initialSession }: Props) {
   const [rosterChecked, setRosterChecked] = useState<Record<string, boolean>>({});
   const [totalEditInput, setTotalEditInput] = useState('');
 
+  // Every request that can end in `setSession` — the poll AND every write
+  // action below — takes a ticket from this counter before it fires and only
+  // applies its result if it's still the highest ticket issued when the
+  // response lands. Without this, a poll in flight when the manager taps
+  // Release can resolve with its stale pre-action snapshot AFTER Release's
+  // own response, silently reverting the just-applied change until the next
+  // cycle papers over it (mirrors the `requestSeq` pattern already used in
+  // PalletsBrowser.tsx for the same reason).
+  const seqRef = useRef(0);
+  // Mirrors `busyKey` for poll() to read without needing it in its own
+  // dependency array (which would tear down/rebuild the interval on every
+  // busy/idle flip). Assigned during render, not in an effect — a plain
+  // ref write is safe here since nothing reads it for this render's output.
+  const busyKeyRef = useRef<string | null>(busyKey);
+  busyKeyRef.current = busyKey;
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const poll = useCallback(async () => {
+    // Skip entirely while a write is in flight — both to avoid a wasted
+    // request and, more importantly, so this poll never takes a ticket that
+    // could supersede the write's own (still-pending) response.
+    if (busyKeyRef.current !== null) return;
+    const seq = ++seqRef.current;
     try {
       const res = await fetch(`/api/split-plan?token=${encodeURIComponent(initialSession.token)}`);
       if (res.status === 404) {
+        if (seq !== seqRef.current) return; // superseded while this was in flight
         setExpired(true);
+        // Stop hitting the API forever once the session is confirmed gone —
+        // nothing will ever un-404 a session past its TTL.
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
         return;
       }
       if (!res.ok) return; // best-effort background poll — keep the last-known board
       const data = (await res.json()) as MultiPalletSession;
+      if (seq !== seqRef.current) return; // a newer poll or write already landed — drop this one
       setSession(data);
       setNowMs(Date.now());
     } catch {
@@ -123,8 +153,11 @@ export default function SplitBoard({ session: initialSession }: Props) {
 
   useEffect(() => {
     void poll();
-    const id = setInterval(() => void poll(), POLL_MS);
-    return () => clearInterval(id);
+    pollIntervalRef.current = setInterval(() => void poll(), POLL_MS);
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    };
   }, [poll]);
 
   // Own useMemo (not a plain `?? []`) so useCallback/useMemo hooks below that
@@ -143,6 +176,7 @@ export default function SplitBoard({ session: initialSession }: Props) {
   const notNotified = session.status === 'active' && session.handoff_ok !== true;
 
   async function doClaimAction(body: Record<string, unknown>, key: string) {
+    const seq = ++seqRef.current;
     setBusyKey(key);
     setError(null);
     try {
@@ -154,6 +188,7 @@ export default function SplitBoard({ session: initialSession }: Props) {
       const data = (await res.json().catch(() => null)) as
         | { success?: boolean; error?: string; session?: MultiPalletSession }
         | null;
+      if (seq !== seqRef.current) return; // superseded — don't clobber whatever landed after us
       if (!res.ok || !data?.success) {
         setError(claimErrorKey(data?.error));
         return;
@@ -163,9 +198,9 @@ export default function SplitBoard({ session: initialSession }: Props) {
         setNowMs(Date.now());
       }
     } catch {
-      setError('split.error.generic');
+      if (seq === seqRef.current) setError('split.error.generic');
     } finally {
-      setBusyKey(null);
+      if (seq === seqRef.current) setBusyKey(null);
     }
   }
 
@@ -192,6 +227,7 @@ export default function SplitBoard({ session: initialSession }: Props) {
   }
 
   async function resend() {
+    const seq = ++seqRef.current;
     setBusyKey('resend');
     setError(null);
     try {
@@ -214,20 +250,27 @@ export default function SplitBoard({ session: initialSession }: Props) {
       const data = (await res.json().catch(() => null)) as
         | { success?: boolean; error?: string; session?: MultiPalletSession }
         | null;
+      if (seq !== seqRef.current) return; // superseded — don't clobber whatever landed after us
       if (res.ok && data?.success) {
         if (data.session) {
           setSession(data.session);
           setNowMs(Date.now());
         } else {
+          // Defensive only — the route always includes `session` on a 200
+          // (checked against the live handler), so this should be
+          // unreachable. `busyKeyRef` still reads 'resend' here (the
+          // `finally` below hasn't run yet) and poll() skips itself while
+          // busy, so clear it first or this call would silently no-op.
+          busyKeyRef.current = null;
           void poll();
         }
         return;
       }
       setError(data?.error === 'bot_unreachable' ? 'split.board.error.stillNotNotified' : planErrorKey(data?.error));
     } catch {
-      setError('split.error.generic');
+      if (seq === seqRef.current) setError('split.error.generic');
     } finally {
-      setBusyKey(null);
+      if (seq === seqRef.current) setBusyKey(null);
     }
   }
 
@@ -262,6 +305,7 @@ export default function SplitBoard({ session: initialSession }: Props) {
 
   async function saveRoster() {
     if (!canSaveRoster) return;
+    const seq = ++seqRef.current;
     setBusyKey('roster-save');
     setError(null);
     try {
@@ -276,6 +320,7 @@ export default function SplitBoard({ session: initialSession }: Props) {
       const data = (await res.json().catch(() => null)) as
         | { success?: boolean; error?: string; session?: MultiPalletSession }
         | null;
+      if (seq !== seqRef.current) return; // superseded — don't clobber whatever landed after us
       if (!res.ok || !data?.success) {
         setError(planErrorKey(data?.error));
         return;
@@ -286,9 +331,9 @@ export default function SplitBoard({ session: initialSession }: Props) {
       }
       setEditingRoster(false);
     } catch {
-      setError('split.error.generic');
+      if (seq === seqRef.current) setError('split.error.generic');
     } finally {
-      setBusyKey(null);
+      if (seq === seqRef.current) setBusyKey(null);
     }
   }
 
@@ -302,6 +347,7 @@ export default function SplitBoard({ session: initialSession }: Props) {
 
   async function updateTotal() {
     if (!canUpdateTotal) return;
+    const seq = ++seqRef.current;
     setBusyKey('total');
     setError(null);
     try {
@@ -315,6 +361,7 @@ export default function SplitBoard({ session: initialSession }: Props) {
       const data = (await res.json().catch(() => null)) as
         | { success?: boolean; error?: string; session?: MultiPalletSession }
         | null;
+      if (seq !== seqRef.current) return; // superseded — don't clobber whatever landed after us
       if (!res.ok || !data?.success) {
         setError(planErrorKey(data?.error));
         return;
@@ -325,9 +372,9 @@ export default function SplitBoard({ session: initialSession }: Props) {
       }
       setTotalEditInput('');
     } catch {
-      setError('split.error.generic');
+      if (seq === seqRef.current) setError('split.error.generic');
     } finally {
-      setBusyKey(null);
+      if (seq === seqRef.current) setBusyKey(null);
     }
   }
 
