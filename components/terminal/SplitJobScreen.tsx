@@ -54,6 +54,12 @@ const CLAIM_ERROR_KEYS: Record<string, TranslationKey> = {
   no_claimed_pallet: 'split.palletReleased',
   nothing_to_close: 'split.error.nothingToClose',
   target_not_on_this_job: 'split.error.targetNotOnThisJob',
+  // The job already finished (a completing action — e.g. a teammate's
+  // close_short — landed between this screen's last poll and the tap).
+  // /api/pallet-claim now rejects every action once session.status is
+  // 'completed' (C2 in the final review); this keeps that rejection from
+  // ever surfacing as a raw code.
+  session_already_completed: 'split.error.sessionAlreadyCompleted',
 };
 
 /** Exported so page.tsx can reuse the same table for errors that arrive via

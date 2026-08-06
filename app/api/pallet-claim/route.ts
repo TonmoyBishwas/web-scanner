@@ -42,6 +42,18 @@ export async function POST(request: NextRequest) {
         result = { status: 400, body: { success: false, error: 'not_a_split_session' } };
         return;
       }
+      // Once the job is fully done, no action may mutate it further — most
+      // importantly 'add', which never checked status and would otherwise
+      // open a brand-new claimed slot on a session multi-pallet-complete
+      // still believes is 'active' (because close_short, below, is the only
+      // completing action that used to skip writing status: 'completed'
+      // at all). Scanning that slot would then pass multi-pallet-complete's
+      // own `status === 'completed'` guard and re-run the bot's finalize —
+      // double-booking the delivery's stock. See C2 in the final review.
+      if (session.status === 'completed') {
+        result = { status: 409, body: { success: false, error: 'session_already_completed' } };
+        return;
+      }
       // Reject an unknown ?w= — the token is a bearer credential, but the
       // identity must still be one this job recognises.
       //
@@ -127,6 +139,14 @@ export async function POST(request: NextRequest) {
       }
 
       const updated = applySplitState(session, next);
+      // close_short is the only action here that can finish the job (it
+      // drops every remaining open slot); mirror the status write
+      // multi-pallet-complete already does on its own completing actions,
+      // so a stale 'active' status never lets a later action re-open —
+      // and re-finalize — a done delivery.
+      if (isComplete(next)) {
+        updated.status = 'completed';
+      }
       await redis.set(sessionKey(token), JSON.stringify(updated), { ex: SESSION_TTL });
       result = { status: 200, body: { success: true, slot, dropped, session: updated } };
 

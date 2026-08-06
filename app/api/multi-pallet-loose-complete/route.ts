@@ -99,6 +99,10 @@ export async function POST(request: NextRequest) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          // Lets the bot detect a stale plan the same way pallet-complete
+          // does. Additive only — the bot already tolerates the field being
+          // absent.
+          token: session.token,
           chat_id: session.chat_id,
           document_number: session.document_number,
           receipt_id: session.receipt_id,

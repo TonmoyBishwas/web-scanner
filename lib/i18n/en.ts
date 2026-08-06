@@ -707,6 +707,7 @@ export const en = {
   'split.error.notYourLooseTask': "This wasn't your loose-box task to close.",
   'split.error.nothingToClose': 'There is nothing left to close out.',
   'split.error.targetNotOnThisJob': "That worker isn't on this job.",
+  'split.error.sessionAlreadyCompleted': 'This delivery is already complete.',
   'split.error.generic': 'Something went wrong. Please try again.',
 
   // ── Split-delivery cross-worker duplicate guard (Task 16) ───────────
@@ -763,6 +764,7 @@ export const en = {
   'split.board.error.targetNotOnJob': "That worker isn't on this job anymore — refresh the roster.",
   'split.board.error.staleAction': 'That action no longer applies. Refresh and try again.',
   'split.board.error.ownerActionOnly': 'Only the manager who planned this job can reassign a pallet. Refresh and try again.',
+  'split.board.error.ownerOnly': 'Only the manager who planned this job can do that. Refresh and try again.',
   'split.board.error.stillHoldsPalletGeneric': 'One of the removed workers still holds a pallet — release it and try again.',
   'split.board.error.stillNotNotified': "Still couldn't reach the workers. The plan is saved — try resending.",
   'split.page.expiredTitle': 'This link has expired',

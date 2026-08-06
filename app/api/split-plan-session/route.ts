@@ -18,7 +18,7 @@ function sessionKey(token: string) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { chat_id, document_number, ocr_data, roster, language, category, receipt_id } = body;
+    const { chat_id, document_number, ocr_data, roster, language, category, receipt_id, meat_discrepancy } = body;
 
     if (!chat_id || !Array.isArray(roster) || roster.length === 0) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -45,6 +45,12 @@ export async function POST(request: NextRequest) {
       pallets: [],
       loose: null,
       meat_committed: {},
+      // Mirrors the same flag on /api/multi-pallet-session. Without it every
+      // split worker's scanner renders as if MEAT_DISCREPANCY_ENABLED were
+      // off — no declared-count "stickers damaged" mode, no "create LPN
+      // anyway" force-confirm — a silent regression vs a single-scanner
+      // delivery for the same worker (I2 in the final review).
+      meat_discrepancy: Boolean(meat_discrepancy),
     };
 
     const redis = getRedisClient();

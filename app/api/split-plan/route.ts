@@ -201,8 +201,8 @@ export async function POST(request: NextRequest) {
 /** Board edits after the job is live: change the total, or edit the roster. */
 export async function PATCH(request: NextRequest) {
   try {
-    const { token, pallet_count, assignments } = (await request.json()) as {
-      token?: string; pallet_count?: number;
+    const { token, worker_chat_id, pallet_count, assignments } = (await request.json()) as {
+      token?: string; worker_chat_id?: string; pallet_count?: number;
       assignments?: Array<{ chat_id: string; quota: number | null }>;
     };
     if (!token) return NextResponse.json({ success: false, error: 'missing_token' }, { status: 400 });
@@ -212,6 +212,16 @@ export async function PATCH(request: NextRequest) {
     await sessionStorage.withLock(token, async () => {
       const session = await load(token);
       if (!session) { result = { status: 404, body: { success: false, error: 'session_not_found' } }; return; }
+
+      // Same owner-only gate as /api/pallet-claim's reassign. Every worker on
+      // the job holds this token in their own `?w=` link, so without this any
+      // of them could rewrite the roster, drop a colleague, or change the
+      // pallet total — actions the board only ever intends for the manager
+      // who planned the job (I7 in the final review).
+      if (worker_chat_id !== session.owner_chat_id) {
+        result = { status: 403, body: { success: false, error: 'owner_action_only' } };
+        return;
+      }
 
       let pallets = session.pallets ?? [];
       if (typeof pallet_count === 'number' && pallet_count > 0) {

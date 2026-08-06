@@ -711,6 +711,7 @@ export const he: Record<TranslationKey, string> = {
   'split.error.notYourLooseTask': 'זו לא הייתה משימת הקרטונים הבודדים שלך לסגירה.',
   'split.error.nothingToClose': 'אין מה לסגור.',
   'split.error.targetNotOnThisJob': 'העובד הזה אינו משויך למשימה.',
+  'split.error.sessionAlreadyCompleted': 'המשלוח הזה כבר הושלם.',
   'split.error.generic': 'משהו השתבש. נסה שוב.',
 
   // ── Split-delivery cross-worker duplicate guard (Task 16) ───────────
@@ -767,6 +768,7 @@ export const he: Record<TranslationKey, string> = {
   'split.board.error.targetNotOnJob': 'העובד הזה כבר לא במשימה — רענן את הצוות.',
   'split.board.error.staleAction': 'הפעולה הזו כבר לא רלוונטית. רענן ונסה שוב.',
   'split.board.error.ownerActionOnly': 'רק המנהל שתכנן את המשימה יכול לשייך משטח מחדש. רענן ונסה שוב.',
+  'split.board.error.ownerOnly': 'רק המנהל שתכנן את המשימה יכול לבצע פעולה זו. רענן ונסה שוב.',
   'split.board.error.stillHoldsPalletGeneric': 'אחד העובדים שהוסרו עדיין מחזיק משטח — שחרר אותו ונסה שוב.',
   'split.board.error.stillNotNotified': 'עדיין לא הצלחנו להגיע לעובדים. התוכנית שמורה — נסה לשלוח שוב.',
   'split.page.expiredTitle': 'הקישור פג תוקף',

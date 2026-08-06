@@ -238,6 +238,7 @@ export async function POST(request: NextRequest) {
       }));
 
       const nmPayload: Record<string, unknown> = {
+        token: session.token,
         chat_id: session.chat_id,
         pallet_number: palletNumber,
         lpn: nmLpn,
@@ -363,6 +364,7 @@ export async function POST(request: NextRequest) {
         }));
 
       const mPayload: Record<string, unknown> = {
+        token: session.token,
         chat_id: session.chat_id,
         pallet_number: palletNumber,
         lpn: mLpn,
@@ -660,6 +662,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Fire webhook to bot (fire-and-forget)
+    // token: lets the bot detect a stale plan (a manager who started a
+    // second split job while an earlier one's webhook is still in flight).
+    // Additive only — the bot already tolerates the field being absent.
+    webhookPayload.token = session.token;
     webhookPayload.worker_chat_id = workerChatId;
     webhookPayload.owner_chat_id = session.owner_chat_id ?? session.chat_id;
     webhookPayload.is_final = isFinal;

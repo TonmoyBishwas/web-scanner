@@ -65,6 +65,12 @@ const PLAN_ERROR_KEYS: Record<string, TranslationKey> = {
   // fallback for the rare race where the 409 still lands despite the
   // pre-submit check (someone claimed a slot between check and submit).
   worker_still_holds_a_pallet: 'split.board.error.stillHoldsPalletGeneric',
+  // PATCH now checks worker_chat_id === session.owner_chat_id (I7). This
+  // board always sends the owner's own chat_id, so hitting it would mean a
+  // stale local `session.owner_chat_id` — worth its own copy since the
+  // pallet-claim `owner_action_only` text below is reassign-specific and
+  // PATCH covers roster/total edits instead.
+  owner_action_only: 'split.board.error.ownerOnly',
 };
 function planErrorKey(code: string | undefined): TranslationKey {
   if (code && Object.prototype.hasOwnProperty.call(PLAN_ERROR_KEYS, code)) return PLAN_ERROR_KEYS[code];
@@ -83,6 +89,10 @@ const CLAIM_ERROR_KEYS: Record<string, TranslationKey> = {
   unknown_action: 'split.board.error.staleAction',
   missing_to_chat_id: 'split.board.error.staleAction',
   missing_fields: 'split.board.error.staleAction',
+  // The job finished (including via close_short) between this board's last
+  // poll and the tap — same "nothing left to do here" situation as any other
+  // stale action.
+  session_already_completed: 'split.board.error.staleAction',
   // Reassign is owner-only server-side. This board always sends the owner's
   // own chat_id, so hitting this would mean local `session.owner_chat_id` is
   // stale — worth its own copy rather than the generic "stale action" bucket
@@ -319,7 +329,7 @@ export default function SplitBoard({ session: initialSession }: Props) {
       const res = await fetch('/api/split-plan', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: session.token, assignments }),
+        body: JSON.stringify({ token: session.token, worker_chat_id: session.owner_chat_id, assignments }),
       });
       const data = (await res.json().catch(() => null)) as
         | { success?: boolean; error?: string; session?: MultiPalletSession }
@@ -360,7 +370,11 @@ export default function SplitBoard({ session: initialSession }: Props) {
         headers: { 'Content-Type': 'application/json' },
         // MUST be a number — the route's guard is `typeof pallet_count ===
         // 'number'`, so a string silently no-ops: no error, nothing changes.
-        body: JSON.stringify({ token: session.token, pallet_count: totalEditNumber }),
+        body: JSON.stringify({
+          token: session.token,
+          worker_chat_id: session.owner_chat_id,
+          pallet_count: totalEditNumber,
+        }),
       });
       const data = (await res.json().catch(() => null)) as
         | { success?: boolean; error?: string; session?: MultiPalletSession }
