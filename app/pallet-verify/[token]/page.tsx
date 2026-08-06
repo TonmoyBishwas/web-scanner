@@ -42,6 +42,7 @@ import {
   saveLooseScans,
   loadLooseScans,
   clearPalletScans,
+  clearLooseScans,
   clearAllScans,
 } from '@/lib/pallet-scan-cache';
 
@@ -1233,11 +1234,27 @@ export default function PalletVerifyPage({
       if (session && isSplitSession(session)) {
         // Split jobs: the loose task may not be the final piece of the
         // delivery — another worker could still be mid-pallet. Return to the
-        // job screen instead of assuming the whole thing is done; reload so
-        // it reflects the loose task as finished.
+        // job screen instead of assuming the whole thing is done.
+        //
+        // The reload MUST land before phase flips to 'job'. The watcher
+        // effect above (~line 571) drives 'job' → 'loose_scanning' off
+        // session.loose.status === 'claimed'; if we set phase='job' first
+        // and let reloadSession() run in the background, React commits a
+        // render with phase='job' + the STALE session (loose still
+        // 'claimed') — that stale value matches the watcher's condition, so
+        // it immediately bounces the worker back into loose_scanning with
+        // whatever was still in localStorage, right after they just
+        // submitted it. Awaiting first means the session we render 'job'
+        // against already has loose.status === 'done', so the watcher never
+        // fires. Also clear the loose cache + dedup set (mirroring what the
+        // single-scanner branch does via clearAllScans below) so even a
+        // legitimate future loose-scanning entry never replays boxes that
+        // were already submitted.
         setLooseBoxes([]);
+        looseProcessedRef.current.clear();
+        clearLooseScans(token);
+        await reloadSession();
         setPhase('job');
-        reloadSession();
         return;
       }
       clearAllScans(token);
@@ -1406,6 +1423,22 @@ export default function PalletVerifyPage({
     setPhase('scanning');
   }
 
+  // Split jobs only: the manager released or reassigned this worker's
+  // claimed pallet mid-scan (409 no_claimed_pallet from either the normal
+  // scan-every-box confirm below or MeatManualCountFlow's damaged-sticker
+  // POST — both hit the exact same server-side guard). Nothing was written
+  // server-side, so there is nothing to undo — discard the local scans and
+  // send the worker back to the job screen. A toast carries the message:
+  // SplitJobScreen has no prop for an injected message, so the page's own
+  // toast (already rendered alongside it) is what the worker actually sees.
+  function handlePalletReleased() {
+    clearPalletScans(token, currentPallet);
+    resetPalletUiState();
+    showToast(tr('split.palletReleased'), 'report_problem', '#f8a3a3');
+    setPhase('job');
+    reloadSession();
+  }
+
   async function handleConfirmPallet() {
     if (scannedBoxes.length < 2) return;
     setPhase('confirming');
@@ -1444,17 +1477,7 @@ export default function PalletVerifyPage({
       const data = await res.json();
 
       if (res.status === 409 && data.error === 'no_claimed_pallet') {
-        // The manager released or reassigned this pallet while we were
-        // scanning. Nothing was written server-side, so there is nothing to
-        // undo — discard the local scans and send the worker back to the
-        // job screen. A toast carries the message: SplitJobScreen has no
-        // prop for an injected message, so the page's own toast (already
-        // rendered alongside it) is what the worker actually sees.
-        clearPalletScans(token, currentPallet);
-        resetPalletUiState();
-        showToast(tr('split.palletReleased'), 'report_problem', '#f8a3a3');
-        setPhase('job');
-        reloadSession();
+        handlePalletReleased();
         return;
       }
 
@@ -1584,7 +1607,15 @@ export default function PalletVerifyPage({
   // task) right now — show the job screen instead of a numbered "pallet N of
   // M" cursor. Claiming (or resuming) hands off to the scanning phase below
   // completely unchanged; confirming a pallet returns here (applyCompletion).
-  if (phase === 'job') {
+  //
+  // Gated on category !== 'non_meat': split is meat-only in phase 1, but
+  // nothing upstream stops a split session from also being non_meat. If the
+  // job screen rendered here, a worker could claim a slot and get handed to
+  // NonMeatTypeAFlow below — a component with no worker_chat_id wiring — and
+  // its completion POST would 409 every time. Falling through instead lets
+  // the (unconditional, phase-agnostic) non-meat handoff just below take
+  // over immediately, exactly as it already does for single-scanner sessions.
+  if (phase === 'job' && session?.category !== 'non_meat') {
     return withLang(
       <>
         <SplitJobScreen
@@ -1618,6 +1649,7 @@ export default function PalletVerifyPage({
         workerChatId={workerChatId}
         onComplete={applyCompletion}
         onCancel={() => setManualMode(false)}
+        onReleased={handlePalletReleased}
       />
     );
   }
