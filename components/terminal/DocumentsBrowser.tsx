@@ -18,7 +18,6 @@ import { ScreenOverlay } from './ScreenOverlay';
 import { Toast, useToast } from './Toast';
 import { PalletsBrowser } from './PalletsBrowser';
 import { useT } from '@/lib/i18n';
-import { useBackClose } from '@/lib/use-back-close';
 
 interface DocumentCard {
   source: 'meat' | 'non_meat';
@@ -206,12 +205,6 @@ export function DocumentsBrowser({ token, onBack }: DocumentsBrowserProps) {
     },
     [token, showToast, tr]
   );
-
-  // Device Back closes the innermost layer first: month sheet / detail, then
-  // the archive itself (handled by ScreenOverlay). The pallet hand-off brings
-  // its own ScreenOverlay and registers itself.
-  useBackClose(showMonthPicker, () => setShowMonthPicker(false));
-  useBackClose(Boolean(detail || detailLoading), () => setDetail(null));
 
   const categoryBadge = (source: 'meat' | 'non_meat') => {
     const style = BADGE_STYLE[source];
@@ -413,7 +406,7 @@ export function DocumentsBrowser({ token, onBack }: DocumentsBrowserProps) {
       {(detail || detailLoading) && (
         <div className="absolute inset-0 z-30 bg-canvas flex flex-col">
           <div className="h-14 flex-none flex items-center gap-2 px-2 border-b border-[#101821] bg-header">
-            <button onClick={() => setDetail(null)} className="tap-target flex-none flex items-center justify-center text-[#e8eef2]" aria-label="back">
+            <button onClick={() => setDetail(null)} className="p-2 flex text-[#e8eef2]" aria-label="back">
               <MI name="arrow_forward_ios" size={22} />
             </button>
             <h2 className="flex-1 text-[15px] font-extrabold text-ink-inverse m-0">

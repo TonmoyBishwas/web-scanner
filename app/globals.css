@@ -148,15 +148,6 @@
   --font-mono: var(--font-app-mono);
 }
 
-/* Kill Chrome-Android pull-to-refresh and the rubber-band bounce. Overscroll
-   at the top of any list used to RELOAD the page — mid-pallet, that threw the
-   worker back to a fresh session. `contain` also stops scroll chaining from a
-   sheet/overlay list into the page behind it. */
-html,
-body {
-  overscroll-behavior: none;
-}
-
 body {
   background: var(--surface-canvas);
   color: var(--ink-strong);

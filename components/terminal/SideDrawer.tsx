@@ -3,7 +3,6 @@
 import type { ReactNode } from 'react';
 import { MI } from './MI';
 import { useT } from '@/lib/i18n';
-import { useBackClose } from '@/lib/use-back-close';
 
 export interface DrawerNavItem {
   id: string;
@@ -24,9 +23,6 @@ interface SideDrawerProps {
 // RTL), scrim toggle, active "מצב סריקה" chip, "מסכים" section of 52px rows.
 export function SideDrawer({ open, onClose, items, footer }: SideDrawerProps) {
   const tr = useT();
-  // Called before the early return below — hooks must run on every render.
-  useBackClose(open, onClose);
-
   if (!open) return null;
 
   return (
@@ -34,7 +30,7 @@ export function SideDrawer({ open, onClose, items, footer }: SideDrawerProps) {
       <div onClick={onClose} className="fixed inset-0 z-[60] bg-black/55" />
       <div className="fixed top-0 bottom-0 start-0 w-[272px] z-[61] bg-header border-e border-line shadow-[-16px_0_44px_rgba(0,0,0,.6)] flex flex-col px-4 py-[18px] safe-top">
         <div className="flex justify-between items-center">
-          <button onClick={onClose} className="tap-target flex items-center justify-center text-ink-inverse ms-auto" aria-label="close">
+          <button onClick={onClose} className="flex text-ink-inverse ms-auto" aria-label="close">
             <MI name="close" size={22} />
           </button>
         </div>

@@ -35,7 +35,6 @@ import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
 import { matchInvoiceItem } from '@/lib/invoice-match';
 import { isSplitSession } from '@/lib/session-mode';
 import { findDuplicateOwner } from '@/lib/duplicate-guard';
-import { useBackClose } from '@/lib/use-back-close';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
 import {
@@ -321,12 +320,6 @@ export default function PalletVerifyPage({
   const [showPallets, setShowPallets] = useState(false);
   const [activeExpanded, setActiveExpanded] = useState(false);
   const [pendingNextPallet, setPendingNextPallet] = useState<number | null>(null);
-
-  // Device Back dismisses the full-screen image viewer instead of unloading
-  // the scan session. The decision modals below (uniform count, force-confirm,
-  // merge) deliberately do NOT register — they need an explicit answer, and a
-  // stray Back press must not silently discard the worker's input.
-  useBackClose(Boolean(viewingImage), () => setViewingImage(null));
 
   // ── AI consolidation: debounced call after scans settle ──
   //
