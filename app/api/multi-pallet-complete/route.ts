@@ -5,6 +5,8 @@ import type { MultiPalletSession, MultiPalletBoxScan, Language } from '@/types';
 import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
 import { matchInvoiceItem } from '@/lib/invoice-match';
 import { nonMeatItemKey } from '@/lib/nonmeat-key';
+import { markDone, isComplete } from '@/lib/pallet-slots';
+import { isSplitSession, splitStateOf, applySplitState } from '@/lib/session-mode';
 
 const SESSION_TTL = 7200;
 // "Same weight" means the printed weights are EXACTLY equal — a fixed-weight
@@ -130,7 +132,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { token, scanned_boxes, box_count, uniform_groups, merge_map, nonmeat_items,
-      manual_declared, manual_items } = body as {
+      manual_declared, manual_items, worker_chat_id } = body as {
       token: string;
       scanned_boxes: MultiPalletBoxScan[];
       box_count: number;
@@ -143,6 +145,9 @@ export async function POST(request: NextRequest) {
       // of scanning every box. Totals use the invoice per-box weight.
       manual_declared?: boolean;
       manual_items?: Array<{ item_key: string; box_count: number; sample_barcode?: string }>;
+      // Split jobs: which worker is finishing this pallet. Ignored on single
+      // sessions (the cursor's owner is always session.chat_id there).
+      worker_chat_id?: string;
     };
 
     if (!token) {
@@ -166,7 +171,21 @@ export async function POST(request: NextRequest) {
       return;
     }
 
-    const palletNumber = session.current_pallet;
+    // Split jobs: the worker is finishing the slot they claimed, which is not
+    // a global cursor — two workers hold two different slots at once. Single
+    // jobs keep the cursor exactly as before.
+    const split = isSplitSession(session);
+    const workerChatId = split ? String(worker_chat_id ?? '') : session.chat_id;
+    const claimedSlot = split
+      ? (session.pallets ?? []).find(
+          (p) => p.owner === workerChatId && p.status === 'claimed',
+        )
+      : undefined;
+    if (split && !claimedSlot) {
+      errorResult = { status: 409, body: { success: false, error: 'no_claimed_pallet' } };
+      return;
+    }
+    const palletNumber = split ? claimedSlot!.n : session.current_pallet;
 
     // ── Weight-based non-meat (Type A): invoice-authoritative math ──────────
     // The worker scanned one box per item on this pallet; the total for each
@@ -219,6 +238,7 @@ export async function POST(request: NextRequest) {
       }));
 
       const nmPayload: Record<string, unknown> = {
+        token: session.token,
         chat_id: session.chat_id,
         pallet_number: palletNumber,
         lpn: nmLpn,
@@ -344,6 +364,7 @@ export async function POST(request: NextRequest) {
         }));
 
       const mPayload: Record<string, unknown> = {
+        token: session.token,
         chat_id: session.chat_id,
         pallet_number: palletNumber,
         lpn: mLpn,
@@ -357,6 +378,71 @@ export async function POST(request: NextRequest) {
         scanned_boxes: mScannedBoxes,
       };
 
+      // Accumulate declared boxes per item so a later pallet pre-fills the
+      // correct remaining and never double-counts a split item.
+      const committed: Record<string, number> = { ...(session.meat_committed || {}) };
+      for (const it of items) committed[it.name_key] = (committed[it.name_key] || 0) + it.box_count;
+
+      const totalBoxes = items.reduce((s, it) => s + it.box_count, 0);
+
+      // Advance session: split jobs mark the claimed slot done instead of
+      // touching current_pallet — a split session can reach this branch too
+      // (unreadable stickers, declared counts). Single jobs keep advancing
+      // the cursor exactly as before.
+      const mNextPallet = palletNumber + 1;
+      const mAllPalletsDone = mNextPallet > session.pallet_count;
+
+      const mCompletedEntry = {
+        pallet_number: palletNumber,
+        lpn: mLpn,
+        pallet_type: items.length > 1 ? 'mix' : 'single',
+        box_count: totalBoxes,
+        // Who declared this pallet's counts. Drives the per-worker close-out
+        // the bot sends at finalization.
+        worker_chat_id: workerChatId,
+      };
+
+      let mUpdated: MultiPalletSession;
+      let mIsFinal: boolean;
+
+      if (split) {
+        const marked = markDone(splitStateOf(session), palletNumber, mLpn, totalBoxes);
+        if (!marked.ok) {
+          errorResult = { status: 409, body: { success: false, error: marked.reason } };
+          return;
+        }
+        mUpdated = {
+          ...applySplitState(session, marked.state),
+          meat_committed: committed,
+          completed_pallets: [...session.completed_pallets, mCompletedEntry],
+        };
+        mIsFinal = isComplete(marked.state);
+        if (mIsFinal) mUpdated.status = 'completed';
+      } else {
+        // Same completion rule this branch has always had: every pallet
+        // declared AND no loose boxes declared on this delivery. The original
+        // code wrote `status: mFullyDone ? 'completed' : 'active'` here;
+        // dropping it would silently stop this branch from ever completing a
+        // single-scanner delivery — the same omission Step 2 had to guard
+        // against in the plain meat branch.
+        mIsFinal = mAllPalletsDone && session.loose_box_count === 0;
+        mUpdated = {
+          ...session,
+          current_pallet: mNextPallet,
+          meat_committed: committed,
+          completed_pallets: [...session.completed_pallets, mCompletedEntry],
+          status: mIsFinal ? 'completed' : 'active',
+        };
+      }
+
+      mPayload.worker_chat_id = workerChatId;
+      mPayload.owner_chat_id = session.owner_chat_id ?? session.chat_id;
+      mPayload.is_final = mIsFinal;
+      mPayload.all_completed_pallets = mIsFinal ? mUpdated.completed_pallets : undefined;
+      // Everyone on the job, so the bot can send each of them their own
+      // close-out at finalization without a second lookup.
+      mPayload.roster_chat_ids = mIsFinal ? (session.roster ?? []).map((r) => r.chat_id) : undefined;
+
       const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
       if (botUrl) {
         fetch(`${botUrl}/webhook/pallet-complete`, {
@@ -366,43 +452,21 @@ export async function POST(request: NextRequest) {
         }).catch((err) => console.error('[multi-pallet-complete] Bot webhook (manual) failed:', err));
       }
 
-      // Accumulate declared boxes per item so a later pallet pre-fills the
-      // correct remaining and never double-counts a split item.
-      const committed: Record<string, number> = { ...(session.meat_committed || {}) };
-      for (const it of items) committed[it.name_key] = (committed[it.name_key] || 0) + it.box_count;
-
-      const totalBoxes = items.reduce((s, it) => s + it.box_count, 0);
-      const mNextPallet = palletNumber + 1;
-      const mAllPalletsDone = mNextPallet > session.pallet_count;
-      const mLoosePending = mAllPalletsDone && (session.loose_box_count || 0) > 0;
-      const mFullyDone = mAllPalletsDone && !mLoosePending;
-
-      const mUpdated: MultiPalletSession = {
-        ...session,
-        current_pallet: mNextPallet,
-        status: mFullyDone ? 'completed' : 'active',
-        meat_committed: committed,
-        completed_pallets: [
-          ...session.completed_pallets,
-          {
-            pallet_number: palletNumber,
-            lpn: mLpn,
-            pallet_type: items.length > 1 ? 'mix' : 'single',
-            box_count: totalBoxes,
-          },
-        ],
-      };
       const redisM = getRedisClient();
       await redisM.set(sessionKey(token), JSON.stringify(mUpdated), { ex: SESSION_TTL });
 
       const mAppUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
+      // Split sessions: next_pallet/all_done are cursor-derived and meaningless
+      // per-worker (the worker who closes the highest-numbered slot isn't
+      // necessarily the one who finishes the delivery). isFinal is already the
+      // right answer; the job screen decides what a split worker does next.
       okResult = {
         success: true,
         lpn: mLpn,
         lpn_url: `${mAppUrl}/pallet/${mLpn}`,
         pallet_number: palletNumber,
-        next_pallet: mAllPalletsDone ? null : mNextPallet,
-        all_done: mAllPalletsDone,
+        next_pallet: split ? null : (mAllPalletsDone ? null : mNextPallet),
+        all_done: split ? mIsFinal : mAllPalletsDone,
       };
       return;
     }
@@ -552,7 +616,64 @@ export async function POST(request: NextRequest) {
       };
     }
 
+    // Advance session: split jobs mark the claimed slot done; single jobs
+    // keep advancing the current_pallet cursor exactly as before.
+    const newCurrentPallet = palletNumber + 1;
+    const allPalletsDone = newCurrentPallet > session.pallet_count;
+
+    const completedEntry = {
+      pallet_number: palletNumber,
+      lpn,
+      pallet_type,
+      box_count: scanned_boxes.length,
+      // Every box barcode registered on this pallet. Feeds the cross-worker
+      // duplicate guard; meat only, where catch-weight barcodes are unique.
+      barcodes: scanned_boxes.map((b) => b.barcode).filter(Boolean),
+      // Who physically scanned this pallet. Drives the per-worker close-out
+      // ("you finished N pallets") the bot sends at finalization.
+      worker_chat_id: workerChatId,
+    };
+
+    let updatedSession: MultiPalletSession;
+    let isFinal: boolean;
+
+    if (split) {
+      const marked = markDone(splitStateOf(session), palletNumber, lpn, scanned_boxes.length);
+      if (!marked.ok) {
+        errorResult = { status: 409, body: { success: false, error: marked.reason } };
+        return;
+      }
+      updatedSession = {
+        ...applySplitState(session, marked.state),
+        completed_pallets: [...session.completed_pallets, completedEntry],
+      };
+      isFinal = isComplete(marked.state);
+      if (isFinal) updatedSession.status = 'completed';
+    } else {
+      // Same completion rule as before the split feature existed: every
+      // pallet scanned AND no loose boxes declared on this delivery.
+      isFinal = allPalletsDone && session.loose_box_count === 0;
+      updatedSession = {
+        ...session,
+        current_pallet: newCurrentPallet,
+        status: isFinal ? 'completed' : 'active',
+        completed_pallets: [...session.completed_pallets, completedEntry],
+      };
+    }
+
     // Fire webhook to bot (fire-and-forget)
+    // token: lets the bot detect a stale plan (a manager who started a
+    // second split job while an earlier one's webhook is still in flight).
+    // Additive only — the bot already tolerates the field being absent.
+    webhookPayload.token = session.token;
+    webhookPayload.worker_chat_id = workerChatId;
+    webhookPayload.owner_chat_id = session.owner_chat_id ?? session.chat_id;
+    webhookPayload.is_final = isFinal;
+    webhookPayload.all_completed_pallets = isFinal ? updatedSession.completed_pallets : undefined;
+    // Everyone on the job, so the bot can send each of them their own
+    // close-out at finalization without a second lookup.
+    webhookPayload.roster_chat_ids = isFinal ? (session.roster ?? []).map((r) => r.chat_id) : undefined;
+
     const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
     if (botUrl) {
       fetch(`${botUrl}/webhook/pallet-complete`, {
@@ -562,34 +683,22 @@ export async function POST(request: NextRequest) {
       }).catch((err) => console.error('[multi-pallet-complete] Bot webhook failed:', err));
     }
 
-    // Advance session
-    const newCurrentPallet = palletNumber + 1;
-    const allPalletsDone = newCurrentPallet > session.pallet_count;
-    const looseBoxesPending = allPalletsDone && (session.loose_box_count || 0) > 0;
-    const sessionFullyDone = allPalletsDone && !looseBoxesPending;
-
-    const updatedSession: MultiPalletSession = {
-      ...session,
-      current_pallet: newCurrentPallet,
-      status: sessionFullyDone ? 'completed' : 'active',
-      completed_pallets: [
-        ...session.completed_pallets,
-        { pallet_number: palletNumber, lpn, pallet_type, box_count: scanned_boxes.length },
-      ],
-    };
-
     const redis = getRedisClient();
     await redis.set(sessionKey(token), JSON.stringify(updatedSession), { ex: SESSION_TTL });
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
 
+    // Split sessions: next_pallet/all_done are cursor-derived and meaningless
+    // per-worker (the worker who closes the highest-numbered slot isn't
+    // necessarily the one who finishes the delivery). isFinal is already the
+    // right answer; the job screen decides what a split worker does next.
     okResult = {
       success: true,
       lpn,
       lpn_url: `${appUrl}/pallet/${lpn}`,
       pallet_number: palletNumber,
-      next_pallet: allPalletsDone ? null : newCurrentPallet,
-      all_done: allPalletsDone,
+      next_pallet: split ? null : (allPalletsDone ? null : newCurrentPallet),
+      all_done: split ? isFinal : allPalletsDone,
     };
     });
 

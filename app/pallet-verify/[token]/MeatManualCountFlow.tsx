@@ -22,6 +22,7 @@ import { Check, Minus, Plus, AlertTriangle, Loader2, ArrowLeft } from 'lucide-re
 import { LanguageContext, t } from '@/lib/i18n';
 import type { Language, MultiPalletSession } from '@/types';
 import { nonMeatItemKey } from '@/lib/nonmeat-key';
+import { splitErrorKey } from '@/components/terminal/SplitJobScreen';
 
 /** Result shape returned by POST /api/multi-pallet-complete. */
 export interface PalletCompleteResult {
@@ -47,14 +48,28 @@ export function MeatManualCountFlow({
   token,
   session,
   lang,
+  workerChatId,
   onComplete,
   onCancel,
+  onReleased,
 }: {
   token: string;
   session: MultiPalletSession;
   lang: Language;
+  /** Split jobs only: which worker is declaring this pallet's counts. Ignored
+   *  server-side on a single-scanner session. Without it, a split-session
+   *  submit through this (damaged-sticker) path 409s with no_claimed_pallet —
+   *  same guard as the normal scan-every-box confirm. */
+  workerChatId?: string;
   onComplete: (data: PalletCompleteResult, palletType: 'single' | 'mix', totalBoxes: number) => void;
   onCancel: () => void;
+  /** Split jobs only: the manager released/reassigned this pallet while the
+   *  worker was declaring counts (409 no_claimed_pallet — same guard the
+   *  normal scan-every-box confirm hits). Nothing was written server-side;
+   *  the parent owns discarding local state and returning to the job screen
+   *  (it already has this exact handler for its own confirm path). Ignored
+   *  on a single-scanner session — that guard can't fire there. */
+  onReleased?: () => void;
 }) {
   const tr = useCallback(
     (key: Parameters<typeof t>[1], vars?: Record<string, string | number>) => t(lang, key, vars),
@@ -109,11 +124,28 @@ export function MeatManualCountFlow({
           token,
           manual_declared: true,
           manual_items: withCounts.map((r) => ({ item_key: r.item_key, box_count: r.count })),
+          worker_chat_id: workerChatId,
         }),
       });
       const data: PalletCompleteResult = await res.json();
+
+      if (res.status === 409 && data.error === 'no_claimed_pallet' && onReleased) {
+        // Split jobs only: the manager released/reassigned this pallet while
+        // we were counting. Nothing was written server-side — hand back to
+        // the job screen via the parent's shared handler rather than
+        // stranding the worker on this screen with now-orphaned counts.
+        onReleased();
+        return;
+      }
+
       if (!data.success) {
-        setError(data.error || tr('meatManual.failed'));
+        // A raw reason code (no_claimed_pallet with no onReleased wired, or
+        // any other split-only code) must never reach the worker as literal
+        // text — route it through the same translation table the job screen
+        // and the normal scan-every-box confirm both use. splitErrorKey
+        // always returns a translated key (falls back to a generic retry
+        // message), never the raw string.
+        setError(tr(splitErrorKey(data.error)));
         setSaving(false);
         return;
       }
@@ -122,7 +154,7 @@ export function MeatManualCountFlow({
       setError(tr('meatManual.failed'));
       setSaving(false);
     }
-  }, [withCounts, token, tr, onComplete, totalBoxes]);
+  }, [withCounts, token, tr, onComplete, totalBoxes, workerChatId, onReleased]);
 
   return (
     <LanguageContext.Provider value={lang}>

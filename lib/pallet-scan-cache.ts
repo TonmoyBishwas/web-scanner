@@ -73,6 +73,13 @@ export function loadLooseScans<T = unknown>(token: string): T | null {
   return read<T>(looseKey(token));
 }
 
+/** Remove just the cached loose-box snapshot (leaves any per-pallet caches
+ *  for this token untouched — used when a split-job worker finishes the
+ *  loose task but other workers may still be mid-pallet). */
+export function clearLooseScans(token: string): void {
+  remove(looseKey(token));
+}
+
 /** Remove every cached snapshot for this session token (pallets + loose). */
 export function clearAllScans(token: string): void {
   if (typeof window === 'undefined') return;

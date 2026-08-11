@@ -1,3 +1,6 @@
+export type { PalletSlot, RosterEntry, LooseTask, SlotStatus } from '@/lib/pallet-slots';
+import type { PalletSlot, RosterEntry, LooseTask } from '@/lib/pallet-slots';
+
 // Barcode Data Types
 export interface ParsedBarcode {
   type: 'id-only' | '31-digit' | '25-digit' | 'short' | 'unknown';
@@ -305,8 +308,15 @@ export interface MultiPalletSession {
     lpn: string;
     pallet_type: string;
     box_count: number;
+    /** Every box barcode registered on this pallet. Feeds the cross-worker
+     *  duplicate guard; meat only, where catch-weight barcodes are unique. */
+    barcodes?: string[];
+    /** Who scanned this pallet — the claimed slot's owner for split jobs,
+     *  or the session's own chat_id for a single-scanner delivery. Always
+     *  written (optional only because it predates this field). */
+    worker_chat_id?: string;
   }>;
-  status: 'active' | 'completed';
+  status: 'planning' | 'active' | 'completed';
   created_at: string;
   /** User's preferred language. Set by the bot when creating the session. */
   language?: Language;
@@ -347,6 +357,27 @@ export interface MultiPalletSession {
    * (damaged) pallets contribute — normally-scanned pallets do not.
    */
   meat_committed?: Record<string, number>;
+  /**
+   * 'single' (default, and the shape of every pre-split session) keeps the
+   * `current_pallet` cursor. 'split' replaces it with the `pallets` slot array.
+   * Absent means single, so in-flight sessions are unaffected.
+   */
+  mode?: 'single' | 'split';
+  /** Split only: the manager who planned the job. Receives the delivery summary. */
+  owner_chat_id?: string;
+  /** Split only: who is on this job and how much capacity each reserved. */
+  roster?: RosterEntry[];
+  /** Split only: one entry per pallet. Replaces `current_pallet`. */
+  pallets?: PalletSlot[];
+  /** Split only: the loose-box task, or null when the delivery has none. */
+  loose?: LooseTask | null;
+  /**
+   * Split only: true once the bot confirmed the plan handoff (Delivery rows
+   * created, workers messaged). A session that is `active` with this unset is
+   * committed but un-notified — POSTing /api/split-plan again re-fires the
+   * webhook rather than returning `already_committed`.
+   */
+  handoff_ok?: boolean;
 }
 
 // ─── UI State Types ────────────────────────────────────────────────────────────
