@@ -18,29 +18,33 @@ export function DesignHeader({ title, subtitle, onMenu, onBack, right }: DesignH
   return (
     <div className="h-14 flex-none bg-header flex items-center justify-between px-2 border-b border-[#101821] relative z-30 safe-top box-content">
       {onMenu ? (
-        <button onClick={onMenu} className="p-2 flex text-ink-inverse" aria-label="menu">
+        <button onClick={onMenu} className="tap-target flex-none flex items-center justify-center text-ink-inverse" aria-label="menu">
           <MI name="menu" size={23} />
         </button>
       ) : (
-        <span className="w-10" />
+        <span className="flex-none w-12" />
       )}
-      <div className="flex flex-col items-center gap-[1px] min-w-0 px-1">
-        <h1 className="text-[13px] font-extrabold text-ink-inverse m-0 whitespace-nowrap overflow-hidden text-ellipsis max-w-[220px]">
+      {/* Fluid centre column. It used to carry hard max-w-[220px]/[240px] caps,
+          which truncated the pallet/document line early on wide phones and did
+          nothing to help narrow ones — `min-w-0` plus ellipsis is what actually
+          makes it adapt. */}
+      <div className="flex-1 min-w-0 flex flex-col items-center gap-[1px] px-1">
+        <h1 className="w-full text-center text-[13px] font-extrabold text-ink-inverse m-0 whitespace-nowrap overflow-hidden text-ellipsis">
           {title}
         </h1>
         {subtitle && (
-          <span className="text-[10.5px] font-semibold text-ink-inverse whitespace-nowrap overflow-hidden text-ellipsis max-w-[240px]">
+          <span className="w-full text-center text-[10.5px] font-semibold text-ink-inverse whitespace-nowrap overflow-hidden text-ellipsis">
             {subtitle}
           </span>
         )}
       </div>
       {right ?? (
         onBack ? (
-          <button onClick={onBack} className="p-2 flex text-[#e8eef2]" aria-label="back">
+          <button onClick={onBack} className="tap-target flex-none flex items-center justify-center text-[#e8eef2]" aria-label="back">
             <MI name="arrow_back_ios" size={20} />
           </button>
         ) : (
-          <span className="w-10" />
+          <span className="flex-none w-12" />
         )
       )}
     </div>
