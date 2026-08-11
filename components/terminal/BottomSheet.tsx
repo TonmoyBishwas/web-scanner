@@ -32,6 +32,15 @@ interface BottomSheetProps {
 
 const DEFAULT_SNAPS: [number, number, number] = [0.106, 0.419, 0.87];
 
+/**
+ * Camera height the sheet must never eat into at peek/mid — enough for the
+ * corner scan frame (150px) plus its label and top padding. The sheet floats
+ * over the live camera, so growing it to fit the footer costs the worker the
+ * thing they are actually aiming with. Camera wins; the footer moves to the
+ * tall snap when there isn't room for both.
+ */
+const MIN_CAMERA_PX = 190;
+
 /** px/ms past which a release counts as a flick and advances one snap point. */
 const FLICK_VELOCITY = 0.35;
 /** px of travel before a gesture stops counting as a tap. */
@@ -58,16 +67,26 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
 
   const [height, setHeight] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
+  // At peek the sheet is deliberately too short for the footer. Hiding it is
+  // honest; letting it overflow `overflow-hidden` left the confirm button
+  // present-but-invisible and unreachable, which is the bug this replaces.
+  const [footerHidden, setFooterHidden] = useState(false);
   // Mirrors snapIndexRef for rendering (aria-valuenow). The ref is what the
   // gesture handlers read, since they must see the current value synchronously.
   const [snapIndex, setSnapIndex] = useState(initialSnap);
 
   const snapIndexRef = useRef(initialSnap);
   const containerHRef = useRef(0);
-  // Combined height of the non-scrolling chrome (handle + tool dock + footer
-  // actions). The peek snap is floored to this so the confirm button can
-  // never be clipped — see snapPx.
-  const chromeMinRef = useRef(0);
+  // Non-scrolling chrome EXCLUDING the footer (handle + tool dock + the scroll
+  // area's padding + the root border). Flooring every snap at chrome INCLUDING
+  // the footer is what broke the scanner in production: the real footer is a
+  // status line plus a count-input block or swipe-confirm (~200px, not the
+  // ~65px a single button suggests), so the floor swallowed the camera region
+  // and the scan frame with it.
+  const baseChromeRef = useRef(0);
+  // Last known laid-out footer height. Cached because a hidden footer measures
+  // 0, and we still need its height to decide when it fits again.
+  const footerHRef = useRef(0);
   // Live gesture state. Deliberately a ref, not state: the handler used to
   // gate on a `dragging` state flag that React had not committed yet, so the
   // first pointermove events of every gesture were dropped and the sheet
@@ -88,12 +107,20 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
     (i: number) => {
       const container = containerHRef.current || 0;
       const idx = Math.max(0, Math.min(2, i));
-      // Floor every snap at the fixed chrome height. `flex-none` children do
-      // not shrink, so a snap shorter than the chrome pushed the footer past
-      // the sheet's `overflow-hidden` edge: at peek the confirm button was
-      // invisible AND unscrollable, leaving the tiny handle as the only way
-      // back. Capped at the container so the floor can't overflow it.
-      const floor = Math.min(chromeMinRef.current, container);
+      // Peek is floored at the base chrome only, so it stays compact and the
+      // camera + scan frame keep their room. Mid and tall are floored high
+      // enough to fit the footer, so the confirm action is always reachable
+      // there. `flex-none` children never shrink, so anything below these
+      // floors would be clipped past the sheet's `overflow-hidden` edge
+      // rather than shrunk — which is why the footer is hidden outright at
+      // peek instead of being allowed to overflow invisibly.
+      const base = Math.min(baseChromeRef.current, container);
+      // Never let the footer floor push the sheet over the camera the worker
+      // is aiming with. On a roomy screen mid still grows to show the footer;
+      // on a cramped one mid stays camera-first and the footer lives at tall.
+      const roomCap = Math.max(base, container - MIN_CAMERA_PX);
+      const withFooter = Math.min(baseChromeRef.current + footerHRef.current, roomCap, container);
+      const floor = idx === 0 ? base : withFooter;
       const raw = Math.round(container * snapFractions[idx]);
       return Math.max(floor, Math.min(container, raw));
     },
@@ -118,10 +145,14 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
     }
     const rootBorders = root ? root.offsetHeight - root.clientHeight : 0;
 
-    chromeMinRef.current =
+    // A hidden footer measures 0 — keep the last real value so we still know
+    // how much room it needs to come back.
+    const fh = footerRef.current?.offsetHeight || 0;
+    if (fh > 0) footerHRef.current = fh;
+
+    baseChromeRef.current =
       (grabRef.current?.offsetHeight || 0) +
       (toolbarRef.current?.offsetHeight || 0) +
-      (footerRef.current?.offsetHeight || 0) +
       scrollPad +
       rootBorders;
   }, []);
@@ -183,6 +214,14 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
       window.visualViewport?.removeEventListener('resize', applyMeasured);
     };
   }, [measure, snapPx, hasToolbar, hasFooter]);
+
+  // Show the footer exactly when there is room for it (mid/tall), hide it when
+  // there isn't (peek, and mid-drag on the way down).
+  useEffect(() => {
+    if (height === null) return;
+    const fits = height >= baseChromeRef.current + footerHRef.current - 1;
+    setFooterHidden(!fits);
+  }, [height]);
 
   useImperativeHandle(ref, () => ({ snapTo: settle }), [settle]);
 
@@ -315,7 +354,11 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
       </div>
 
       {footer && (
-        <div ref={footerRef} className="flex-none px-4 pt-2 pb-3 safe-bottom border-t border-line bg-raised">
+        <div
+          ref={footerRef}
+          className="flex-none px-4 pt-2 pb-3 safe-bottom border-t border-line bg-raised"
+          style={footerHidden ? { display: 'none' } : undefined}
+        >
           {footer}
         </div>
       )}
