@@ -17,6 +17,7 @@ import { ScreenOverlay } from './ScreenOverlay';
 import { Toast, useToast } from './Toast';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
 import { LanguageContext, useT } from '@/lib/i18n';
+import { useBackClose } from '@/lib/use-back-close';
 import type { ParsedBarcode, BoxStickerOCR } from '@/types';
 
 interface PalletCard {
@@ -199,6 +200,20 @@ export function PalletsBrowser({ token, onBack, initialPalletId }: PalletsBrowse
       openDetail(initialPalletId);
     }
   }, [initialPalletId, openDetail]);
+
+  // Leaving the detail view. When we were opened straight into one pallet from
+  // the documents archive, the list behind it is not somewhere the worker
+  // asked to be — dropping them there on Back looked like the app had lost
+  // their place. Return to the document instead.
+  const closeDetail = useCallback(() => {
+    if (initialPalletId) onBack();
+    else setDetail(null);
+  }, [initialPalletId, onBack]);
+
+  // Device Back closes the innermost layer first: scan sheet → detail →
+  // the browser itself (handled by ScreenOverlay).
+  useBackClose(showScanner, () => setShowScanner(false));
+  useBackClose(Boolean(detail || detailLoading), closeDetail);
 
   /** Scan-to-find: LPN QR → that pallet; ≥13-digit barcode → owning pallet. */
   const handleScanPayload = useCallback(
@@ -384,7 +399,7 @@ export function PalletsBrowser({ token, onBack, initialPalletId }: PalletsBrowse
       {showScanner && (
         <div className="absolute inset-0 z-20 bg-canvas flex flex-col">
           <div className="h-12 flex-none flex items-center gap-2 px-2 bg-header border-b border-[#101821]">
-            <button onClick={() => setShowScanner(false)} className="p-2 flex text-[#e8eef2]" aria-label="close scanner">
+            <button onClick={() => setShowScanner(false)} className="tap-target flex-none flex items-center justify-center text-[#e8eef2]" aria-label="close scanner">
               <MI name="close" size={22} />
             </button>
             <span className="text-[13px] font-extrabold text-ink-inverse">{tr('terminal.palletsScanHint')}</span>
@@ -405,7 +420,7 @@ export function PalletsBrowser({ token, onBack, initialPalletId }: PalletsBrowse
       {(detail || detailLoading) && (
         <div className="absolute inset-0 z-30 bg-canvas flex flex-col">
           <div className="h-14 flex-none flex items-center gap-2 px-2 border-b border-[#101821] bg-header">
-            <button onClick={() => setDetail(null)} className="p-2 flex text-[#e8eef2]" aria-label="back">
+            <button onClick={closeDetail} className="tap-target flex-none flex items-center justify-center text-[#e8eef2]" aria-label="back">
               <MI name="arrow_forward_ios" size={22} />
             </button>
             <h2 className="flex-1 text-[15px] font-extrabold text-ink-inverse m-0">

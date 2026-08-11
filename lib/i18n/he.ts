@@ -557,6 +557,7 @@ export const he: Record<TranslationKey, string> = {
 
   // ── Terminal rebuild (WMS Receiving Terminal design — verbatim) ────
   'terminal.lockedToast': 'נעול · לא זמין עדיין',
+  'terminal.sheetHandle': 'גרור לשינוי גודל החלונית',
   'terminal.tapToScan': 'הקש לסריקה · זיהוי אוטומטי',
   'terminal.scanningNow': 'נסרק כרגע',
   'terminal.progressLabel': 'קליטה · משטח {n} מתוך {total}',
