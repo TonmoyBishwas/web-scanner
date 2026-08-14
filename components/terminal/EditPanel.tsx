@@ -111,7 +111,13 @@ export function EditPanel({
   ) : null;
 
   return (
-    <div className="border-2 border-brand rounded-[14px] overflow-hidden bg-header flex flex-col">
+    // `shrink-0` is load-bearing. The sheet's scroll area is a column flex
+    // container, and `overflow-hidden` here (needed for the rounded corners)
+    // sets this item's automatic minimum size to 0 — so flex happily squashed
+    // the panel to the visible height and CLIPPED the overflow instead of
+    // letting the container scroll. The bottom keypad rows were rendered,
+    // invisible and unreachable.
+    <div className="shrink-0 border-2 border-brand rounded-[14px] overflow-hidden bg-header flex flex-col">
       {/* Top bar */}
       <div className="flex justify-between items-center gap-2 px-[13px] py-[11px] bg-brand-weak border-b border-[rgba(19,164,236,.2)]">
         <button onClick={onCancel} className="flex-none flex items-center p-1 text-ink-inverse" aria-label="back">
