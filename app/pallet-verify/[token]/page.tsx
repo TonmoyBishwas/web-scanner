@@ -168,6 +168,12 @@ const UNIFORM_WEIGHT_TOLERANCE = 0.0001;
 // box contradicts it.
 const UNIFORM_MIN_SAMPLES = 2;
 
+// Shared look for the per-scan row actions (edit / delete / retry / view).
+// They share a full-width line under the row, so each one is a real target —
+// the old inline pills were 10px text crammed beside a 31-digit barcode.
+const ROW_ACTION_BTN =
+  'flex-1 min-w-0 flex items-center justify-center gap-[5px] py-2 rounded-[10px] text-[12px] font-extrabold';
+
 // ── Page state machine ──
 
 type Phase = 'loading' | 'job' | 'scanning' | 'confirming' | 'pallet_done' | 'loose_scanning' | 'loose_confirming' | 'all_done' | 'error';
@@ -1898,50 +1904,52 @@ export default function PalletVerifyPage({
     const looseActive = looseNewestFirst[0];
     const looseRest = looseNewestFirst.slice(1);
 
-    // Two-step row actions (tap row → tap action), same handlers as before.
-    const looseRowTrailing = (box: BoxScan) => {
+    // Two-step row actions (tap row → tap action). They render on their own
+    // line under the row, so they get real tap targets instead of competing
+    // with the barcode and weight for the same line.
+    const looseRowActions = (box: BoxScan) => {
       if (selectedBarcode !== box.barcode) return undefined;
       if (box.ocr_status === 'failed') {
         return (
-          <span className="flex gap-1">
+          <>
             {box.image_data && (
               <button
                 onClick={(e) => { e.stopPropagation(); setViewingImage(box.image_data!); }}
-                className="px-2 py-1 bg-sunken text-ink-body rounded-[8px] text-[10px] font-semibold"
+                className={`${ROW_ACTION_BTN} bg-sunken border border-line text-ink-body`}
               >
-                {tr('ocr.view')}
+                <MI name="image" size={16} /> {tr('ocr.view')}
               </button>
             )}
             <button
               onClick={(e) => { e.stopPropagation(); retryLooseOcr(box.barcode); }}
-              className="px-2 py-1 bg-brand-weak text-brand-weak-ink rounded-[8px] text-[10px] font-semibold"
+              className={`${ROW_ACTION_BTN} bg-brand-weak border border-brand/40 text-brand-weak-ink`}
             >
-              {tr('ocr.retry')}
+              <MI name="refresh" size={16} /> {tr('ocr.retry')}
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); rescanLooseBox(box.barcode); setSelectedBarcode(null); }}
-              className="px-2 py-1 bg-danger text-ink-inverse rounded-[8px] text-[10px] font-semibold"
+              className={`${ROW_ACTION_BTN} bg-danger-weak border border-danger/45 text-danger-weak-ink`}
             >
-              {tr('palletVerify.deleteScan')}
+              <MI name="delete" size={16} /> {tr('common.delete')}
             </button>
-          </span>
+          </>
         );
       }
       return (
-        <span className="flex gap-1">
+        <>
           <button
             onClick={(e) => { e.stopPropagation(); openEdit(box, true); }}
-            className="px-2 py-1 bg-brand text-ink-inverse rounded-[8px] text-[10px] font-semibold"
+            className={`${ROW_ACTION_BTN} bg-brand-weak border border-brand/40 text-brand-weak-ink`}
           >
-            {tr('palletVerify.editScan')}
+            <MI name="edit" size={16} /> {tr('palletVerify.editScan')}
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); rescanLooseBox(box.barcode); setSelectedBarcode(null); }}
-            className="px-2 py-1 bg-danger text-ink-inverse rounded-[8px] text-[10px] font-semibold"
+            className={`${ROW_ACTION_BTN} bg-danger-weak border border-danger/45 text-danger-weak-ink`}
           >
-            {tr('palletVerify.deleteScan')}
+            <MI name="delete" size={16} /> {tr('common.delete')}
           </button>
-        </span>
+        </>
       );
     };
 
@@ -2052,6 +2060,9 @@ export default function PalletVerifyPage({
                     expanded={activeExpanded}
                     onToggleExpand={() => setActiveExpanded((v) => !v)}
                     onEdit={() => openEdit(looseActive, true)}
+                    onDelete={() => { rescanLooseBox(looseActive.barcode); setSelectedBarcode(null); }}
+                    onRetry={looseActive.ocr_status === 'failed' ? () => retryLooseOcr(looseActive.barcode) : undefined}
+                    onViewImage={looseActive.image_data ? () => setViewingImage(looseActive.image_data!) : undefined}
                   />
                 )}
                 {looseRest.map((box, i) => (
@@ -2070,7 +2081,7 @@ export default function PalletVerifyPage({
                         : 'done'
                     }
                     onClick={() => setSelectedBarcode(selectedBarcode === box.barcode ? null : box.barcode)}
-                    trailing={looseRowTrailing(box)}
+                    actions={looseRowActions(box)}
                   />
                 ))}
               </>
@@ -2141,50 +2152,52 @@ export default function PalletVerifyPage({
   const activeBox = newestFirst[0];
   const restBoxes = newestFirst.slice(1);
 
-  // Two-step row actions (tap row → tap action), same handlers as before.
-  const palletRowTrailing = (box: BoxScan) => {
+  // Two-step row actions (tap row → tap action). They render on their own
+  // line under the row, so they get real tap targets instead of competing
+  // with the barcode and weight for the same line.
+  const palletRowActions = (box: BoxScan) => {
     if (selectedBarcode !== box.barcode) return undefined;
     if (box.ocr_status === 'failed') {
       return (
-        <span className="flex gap-1">
+        <>
           {box.image_data && (
             <button
               onClick={(e) => { e.stopPropagation(); setViewingImage(box.image_data!); }}
-              className="px-2 py-1 bg-sunken text-ink-body rounded-[8px] text-[10px] font-semibold"
+              className={`${ROW_ACTION_BTN} bg-sunken border border-line text-ink-body`}
             >
-              {tr('ocr.view')}
+              <MI name="image" size={16} /> {tr('ocr.view')}
             </button>
           )}
           <button
             onClick={(e) => { e.stopPropagation(); retryPalletOcr(box.barcode); }}
-            className="px-2 py-1 bg-brand-weak text-brand-weak-ink rounded-[8px] text-[10px] font-semibold"
+            className={`${ROW_ACTION_BTN} bg-brand-weak border border-brand/40 text-brand-weak-ink`}
           >
-            {tr('ocr.retry')}
+            <MI name="refresh" size={16} /> {tr('ocr.retry')}
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
-            className="px-2 py-1 bg-danger text-ink-inverse rounded-[8px] text-[10px] font-semibold"
+            className={`${ROW_ACTION_BTN} bg-danger-weak border border-danger/45 text-danger-weak-ink`}
           >
-            {tr('palletVerify.deleteScan')}
+            <MI name="delete" size={16} /> {tr('common.delete')}
           </button>
-        </span>
+        </>
       );
     }
     return (
-      <span className="flex gap-1">
+      <>
         <button
           onClick={(e) => { e.stopPropagation(); openEdit(box); }}
-          className="px-2 py-1 bg-brand text-ink-inverse rounded-[8px] text-[10px] font-semibold"
+          className={`${ROW_ACTION_BTN} bg-brand-weak border border-brand/40 text-brand-weak-ink`}
         >
-          {tr('palletVerify.editScan')}
+          <MI name="edit" size={16} /> {tr('palletVerify.editScan')}
         </button>
         <button
           onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
-          className="px-2 py-1 bg-danger text-ink-inverse rounded-[8px] text-[10px] font-semibold"
+          className={`${ROW_ACTION_BTN} bg-danger-weak border border-danger/45 text-danger-weak-ink`}
         >
-          {tr('palletVerify.deleteScan')}
+          <MI name="delete" size={16} /> {tr('common.delete')}
         </button>
-      </span>
+      </>
     );
   };
 
@@ -2478,10 +2491,10 @@ export default function PalletVerifyPage({
                   expanded={activeExpanded}
                   onToggleExpand={() => setActiveExpanded((v) => !v)}
                   onEdit={() => openEdit(activeBox)}
+                  onDelete={() => { rescanPalletBox(activeBox.barcode); setSelectedBarcode(null); }}
+                  onRetry={activeBox.ocr_status === 'failed' ? () => retryPalletOcr(activeBox.barcode) : undefined}
+                  onViewImage={activeBox.image_data ? () => setViewingImage(activeBox.image_data!) : undefined}
                 />
-              )}
-              {activeBox && selectedBarcode === activeBox.barcode && (
-                <div className="flex justify-end -mt-1">{palletRowTrailing(activeBox)}</div>
               )}
 
               {restBoxes.map((box, i) => (
@@ -2502,7 +2515,7 @@ export default function PalletVerifyPage({
                       : 'done'
                   }
                   onClick={() => setSelectedBarcode(selectedBarcode === box.barcode ? null : box.barcode)}
-                  trailing={palletRowTrailing(box)}
+                  actions={palletRowActions(box)}
                 />
               ))}
 
