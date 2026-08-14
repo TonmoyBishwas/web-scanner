@@ -2300,6 +2300,10 @@ export default function PalletVerifyPage({
                 ? tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })
                 : committed < 2
                 ? tr('palletVerify.scanMoreToContinue', { count: 2 - committed })
+                : confirmedBoxCount === 0
+                ? // No total declared yet, so nothing is outstanding — the old
+                  // fallback rendered a flat "0 more boxes needed" here.
+                  tr('palletVerify.setTotalBelow')
                 : tr('palletVerify.boxesNeeded', { count: Math.max(0, confirmedBoxCount - committed) })}
             </button>
           )}
