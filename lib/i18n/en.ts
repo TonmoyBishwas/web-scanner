@@ -211,7 +211,7 @@ export const en = {
 
   'palletVerify.uniformContinueMix': 'No — other products too',
 
-  'palletVerify.fewerThan4': 'Fewer than 4 boxes? Tap to finish',
+  'palletVerify.doneScanning': 'Done scanning? Enter the pallet total',
   'palletVerify.uniformPlaceholder': 'Enter count',
   'palletVerify.uniformSet': 'Set',
   'palletVerify.confirmPalletBtn': 'Confirm Pallet {current}',
@@ -236,6 +236,7 @@ export const en = {
   'palletVerify.cancelSingle': 'Cancel — keep scanning',
   'palletVerify.deferredCountTitle': 'How many boxes on this pallet?',
   'palletVerify.deferredCountHint': 'Enter the total — including the {scanned} you already scanned.',
+  'palletVerify.singleMultiplyNote': 'Every box weighs {weight} kg — we multiply by the total you enter. No need to scan the rest.',
   'palletVerify.deferredCountTooLow': 'Total must be at least {min} (boxes already scanned).',
   'palletVerify.deleteScan': 'Delete this scan',
 

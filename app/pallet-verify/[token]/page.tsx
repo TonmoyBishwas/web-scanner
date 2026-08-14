@@ -157,6 +157,17 @@ type UniformPrompt =
 // app/api/multi-pallet-complete/route.ts.
 const UNIFORM_WEIGHT_TOLERANCE = 0.0001;
 
+// How many OCR'd boxes must agree before the scanner offers the single-item
+// shortcut ("scan a couple, declare the total, we multiply"). Two is the
+// smallest number that can establish "same weight" at all, and it is what the
+// floor actually does: on an all-identical pallet, scanning every box is wasted
+// work. Raised to 4 in May 2026 to cut down on premature prompts, lowered back
+// to 2 in Aug 2026 at the user's request — the tradeoff being that on a mix
+// pallet whose first two boxes happen to match, the choice appears early. That
+// is why maybeTriggerUniformPrompt retracts an open prompt the moment a later
+// box contradicts it.
+const UNIFORM_MIN_SAMPLES = 2;
+
 // ── Page state machine ──
 
 type Phase = 'loading' | 'job' | 'scanning' | 'confirming' | 'pallet_done' | 'loose_scanning' | 'loose_confirming' | 'all_done' | 'error';
@@ -496,6 +507,7 @@ export default function PalletVerifyPage({
               if (cached.boxCountInput) setBoxCountInput(cached.boxCountInput);
               setForcedMix(!!cached.forcedMix);
               if (cached.detectedType) setDetectedType(cached.detectedType);
+              restoreUniformPrompt(cached);
               cached.scannedBoxes.forEach((b) => b.barcode && processedRef.current.add(b.barcode));
             }
             setPhase('scanning');
@@ -539,6 +551,7 @@ export default function PalletVerifyPage({
           if (cached.boxCountInput) setBoxCountInput(cached.boxCountInput);
           setForcedMix(!!cached.forcedMix);
           if (cached.detectedType) setDetectedType(cached.detectedType);
+          restoreUniformPrompt(cached);
           // Repopulate the dedup set so a re-scan of a restored sticker is caught.
           cached.scannedBoxes.forEach((b) => b.barcode && processedRef.current.add(b.barcode));
         } else if (data.current_box_count && data.current_box_count > 0) {
@@ -858,34 +871,77 @@ export default function PalletVerifyPage({
       });
   }
 
-  // Classify the pallet once >=4 boxes have finished OCR (and none are still
-  // processing). Only the single-uniform case (one product, all same weight)
-  // raises the single-vs-mix choice. Variable-weight or multi-product pallets
-  // raise NO prompt — they fall through to the pallet-total input (mix path).
-  function maybeTriggerUniformPrompt(latestBoxes: BoxScan[], _justFinishedBarcode: string) {
-    if (pendingUniformPromptRef.current) return;     // already prompting
-    if (forcedMixRef.current) return;                // worker already said it's mix
-    if (uniformGroupsRef.current.size > 0) return;   // single already locked in
-    const done = latestBoxes.filter(
-      (b) => b.ocr_status === 'done' && b.weight > 0 && (b.item_name || b.item_name_hebrew),
-    );
-    const anyProcessing = latestBoxes.some((b) => b.ocr_status === 'processing');
-    if (anyProcessing || done.length < 4) return;    // wait for >=4 OCR'd boxes
-    const keyOf = (b: BoxScan) => acceptedMerges.get(groupKeyForBox(b)) ?? groupKeyForBox(b);
+  // Does the current scan set look like ONE product whose boxes all weigh the
+  // same? That is the only configuration where the worker may scan a couple of
+  // samples and declare the total instead of scanning every box — the domain
+  // rule being that a single item on a pallet is either all-same-weight or
+  // all-different-weights. Returns the group description, or null.
+  //
+  // "Same weight" means EXACTLY equal (UNIFORM_WEIGHT_TOLERANCE is 0.1 g, not
+  // the 0.5 kg the older docs claim). Catch-weight meat differs box to box, so
+  // it never qualifies — and it must not, because every catch-weight box's own
+  // weight is what goes to box_inventory for FEFO on the way out.
+  function uniformCandidateFrom(
+    done: BoxScan[],
+    merges: Map<string, string> = acceptedMerges,
+  ): Omit<UniformPrompt, 'mode'> | null {
+    if (done.length < UNIFORM_MIN_SAMPLES) return null;
+    const keyOf = (b: BoxScan) => merges.get(groupKeyForBox(b)) ?? groupKeyForBox(b);
     const distinct = new Set(done.map(keyOf));
-    if (distinct.size !== 1) return;                 // multiple products -> mix path
+    if (distinct.size !== 1) return null;            // multiple products -> mix path
     const ws = done.map((b) => b.weight);
-    if (Math.max(...ws) - Math.min(...ws) >= UNIFORM_WEIGHT_TOLERANCE) return; // varies -> mix
+    if (Math.max(...ws) - Math.min(...ws) >= UNIFORM_WEIGHT_TOLERANCE) return null; // varies -> mix
     const sample = done[0];
     const avg = ws.reduce((a, b) => a + b, 0) / ws.length;
-    setPendingUniformPrompt({
-      mode: 'single_or_mix',
+    return {
       name_key: keyOf(sample),
       item_name: sample.item_name || '',
       item_name_hebrew: sample.item_name_hebrew || '',
       avg_weight: Math.round(avg * 1000) / 1000,
       sample_barcodes: done.map((b) => b.barcode),
-    });
+    };
+  }
+
+  // The prompt is raised by the OCR success path, so scans restored from the
+  // localStorage cache (reload, phone sleep, tab switch) would arrive with no
+  // prompt at all — pushing a pallet that qualifies for the shortcut onto the
+  // scan-every-box path instead. Re-derive it from the cached snapshot, using
+  // the cached flags rather than the refs, which useEffect has not synced yet.
+  function restoreUniformPrompt(cached: PalletScanSnapshot) {
+    if (cached.forcedMix) return;                       // worker already said mix
+    if ((cached.uniformGroups || []).length > 0) return; // single already locked in
+    if (cached.confirmedBoxCount > 0) return;            // total already declared
+    const boxes = cached.scannedBoxes || [];
+    if (boxes.some((b) => b.ocr_status === 'processing')) return;
+    const done = boxes.filter(
+      (b) => b.ocr_status === 'done' && b.weight > 0 && (b.item_name || b.item_name_hebrew),
+    );
+    const candidate = uniformCandidateFrom(done, new Map(cached.acceptedMerges || []));
+    if (candidate) setPendingUniformPrompt({ mode: 'single_or_mix', ...candidate });
+  }
+
+  // Classify the pallet once UNIFORM_MIN_SAMPLES boxes have finished OCR (and
+  // none are still processing). Only the single-uniform case raises the
+  // single-vs-mix choice. Variable-weight or multi-product pallets raise NO
+  // prompt — they fall through to the pallet-total input (mix path).
+  function maybeTriggerUniformPrompt(latestBoxes: BoxScan[], _justFinishedBarcode: string) {
+    if (forcedMixRef.current) return;                // worker already said it's mix
+    if (uniformGroupsRef.current.size > 0) return;   // single already locked in
+    const done = latestBoxes.filter(
+      (b) => b.ocr_status === 'done' && b.weight > 0 && (b.item_name || b.item_name_hebrew),
+    );
+    if (latestBoxes.some((b) => b.ocr_status === 'processing')) return;
+    const candidate = uniformCandidateFrom(done);
+    if (pendingUniformPromptRef.current) {
+      // Prompting from two samples means a later box can invalidate the
+      // question while it is still on screen (a second product, or a box that
+      // weighs something else). Retract it rather than let the worker answer
+      // "only this product?" about a pallet that has since become a mix.
+      if (!candidate) setPendingUniformPrompt(null);
+      return;
+    }
+    if (!candidate) return;
+    setPendingUniformPrompt({ mode: 'single_or_mix', ...candidate });
   }
 
   // ── Loose box barcode detected ──
@@ -1355,7 +1411,7 @@ export default function PalletVerifyPage({
 
     if (pendingSingleGroup) {
       // Single-item path: lock the group at total_count = count, then
-      // auto-confirm on next tick once React commits the state.
+      // auto-confirm.
       const group: UniformGroup = {
         name_key: pendingSingleGroup.name_key,
         item_name: pendingSingleGroup.item_name,
@@ -1364,13 +1420,18 @@ export default function PalletVerifyPage({
         total_count: count,
         sample_barcodes: pendingSingleGroup.sample_barcodes,
       };
-      setUniformGroups((prev) => {
-        const next = new Map(prev);
-        next.set(group.name_key, group);
-        return next;
-      });
+      const nextGroups = new Map(uniformGroups);
+      nextGroups.set(group.name_key, group);
+      setUniformGroups(nextGroups);
       setPendingSingleGroup(null);
-      setTimeout(() => handleConfirmPallet(), 0);
+      // Hand the count and the locked group to the confirm explicitly. The
+      // deferred call captures THIS render's closure, where confirmedBoxCount
+      // is still 0 and uniformGroups still lacks the group we just built —
+      // React re-renders with the new values but a scheduled callback keeps
+      // the old ones. Reading them from state here posted box_count: 0 with an
+      // empty uniform_groups, and the server's `box_count || itemBoxes.length`
+      // fallback then booked the pallet at the SAMPLE count: declare 40, get 4.
+      setTimeout(() => handleConfirmPallet({ boxCount: count, groups: nextGroups }), 0);
     } else {
       // Mix / non-uniform path: persist the count for resume safety.
       fetch('/api/multi-pallet-session', {
@@ -1504,15 +1565,25 @@ export default function PalletVerifyPage({
     reloadSession();
   }
 
-  async function handleConfirmPallet() {
+  // `override` lets a caller that has just computed the declared count and the
+  // locked groups pass them in directly instead of going through state — see
+  // handlePalletCountSubmit, where reading them back off state would read the
+  // pre-update values.
+  async function handleConfirmPallet(override?: {
+    boxCount: number;
+    groups: Map<string, UniformGroup>;
+  }) {
     if (scannedBoxes.length < 2) return;
     setPhase('confirming');
     setError(null);
 
+    const declaredCount = override?.boxCount ?? confirmedBoxCount;
+    const lockedGroups = override?.groups ?? uniformGroups;
+
     // Build uniform_groups overrides from locked groups (and image_data is
     // intentionally stripped from scanned_boxes — the server doesn't need it).
     // `name_key` is the normalized-name grouping key, NOT the barcode digits.
-    const uniformGroupsPayload = Array.from(uniformGroups.values()).map((g) => ({
+    const uniformGroupsPayload = Array.from(lockedGroups.values()).map((g) => ({
       name_key: g.name_key,
       total_count: g.total_count,
       avg_weight: g.avg_weight,
@@ -1530,7 +1601,7 @@ export default function PalletVerifyPage({
         body: JSON.stringify({
           token,
           scanned_boxes: scannedBoxes.map(({ ocr_status: _, image_data: _img, ...box }) => box),
-          box_count: confirmedBoxCount,
+          box_count: declaredCount,
           uniform_groups: uniformGroupsPayload,
           merge_map: mergeMapPayload,
           // Split jobs only: which worker is finishing this pallet. Ignored
@@ -1561,7 +1632,7 @@ export default function PalletVerifyPage({
       // same-weight counts as single. Advance via the shared helper.
       const palletTypeLabel: 'single' | 'mix' =
         detectedType === 'single-uniform' ? 'single' : 'mix';
-      applyCompletion(data, palletTypeLabel, confirmedBoxCount);
+      applyCompletion(data, palletTypeLabel, declaredCount);
     } catch {
       setError(tr('palletVerify.networkError'));
       setPhase('scanning');
@@ -2163,7 +2234,11 @@ export default function PalletVerifyPage({
             {tr('palletVerify.deferredCountTitle')}
           </label>
           <p className="text-[11px] text-ink-muted">
-            {tr('palletVerify.deferredCountHint', { scanned: scannedBoxes.length })}
+            {pendingSingleGroup
+              ? tr('palletVerify.singleMultiplyNote', {
+                  weight: pendingSingleGroup.avg_weight.toFixed(3),
+                })
+              : tr('palletVerify.deferredCountHint', { scanned: scannedBoxes.length })}
           </p>
           <div className="flex gap-2">
             <input
@@ -2211,7 +2286,7 @@ export default function PalletVerifyPage({
             </button>
           ) : canConfirm && phase !== 'confirming' ? (
             <SwipeConfirm
-              onConfirm={handleConfirmPallet}
+              onConfirm={() => handleConfirmPallet()}
               label={tr('palletVerify.swipeConfirmPallet', { current: currentPallet })}
             />
           ) : (
@@ -2229,11 +2304,15 @@ export default function PalletVerifyPage({
             </button>
           )}
           {confirmedBoxCount === 0 && !forcedMix && !pendingSingleGroup && doneCount < 4 && doneCount >= 1 && !anyProcessing && (
+            // The way off a pallet the scanner can't classify on its own —
+            // a handful of boxes that aren't all one uniform item. It used to
+            // be a thin grey underline that workers missed, so it now carries
+            // the same weight as the other footer actions.
             <button
               onClick={() => setForcedMix(true)}
-              className="w-full text-xs text-ink-muted underline pt-2"
+              className="flex items-center justify-center gap-[6px] w-full mt-2 py-3 rounded-[13px] font-extrabold text-[14px] bg-tile border-2 border-brand text-brand-weak-ink"
             >
-              {tr('palletVerify.fewerThan4')}
+              <MI name="done_all" size={18} /> {tr('palletVerify.doneScanning')}
             </button>
           )}
           {hasUnresolvedWarnings && (
