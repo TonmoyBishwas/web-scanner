@@ -45,11 +45,18 @@ const isoToDdmmyyyy = (iso: string): string => {
   return `${m[3]}/${m[2]}/${m[1]}`;
 };
 
-// Design in-sheet edit panel: blue-bordered card on #0a0f14 with a tinted
-// top bar (back / "קרטון #N" / blue שמור pill), tappable field boxes
-// ("נתוני המוצר"), and a context input footer that swaps per selected field —
-// numeric keypad for weight, item chips + free text for the name, calendar
-// for expiry. Barcode renders read-only (it is the dedup key).
+// Design in-sheet edit panel: blue-bordered card on #0a0f14 with a tinted top
+// bar (back / "קרטון #N" / blue שמור pill), a tab strip carrying all three
+// product values, and a context input that swaps per selected field — numeric
+// keypad for weight, item chips + free text for the name, calendar for expiry.
+// Barcode renders read-only (it is the dedup key).
+//
+// Layout rule that drives the order below: the worker is editing BECAUSE the
+// OCR misread the sticker, so the sticker photo has to sit next to whatever
+// they are typing into — the panel scrolls, and anything more than a screen
+// away from the keypad may as well not exist. The photo used to be a 36px
+// thumbnail below the keypad that had to be tapped open, which meant looking
+// at the sticker and correcting it were two separate, alternating steps.
 export function EditPanel({
   cartonNumber, name, weight, expiry, barcode, itemChips,
   imageData, onViewImage,
@@ -59,7 +66,7 @@ export function EditPanel({
   const [field, setField] = useState<Field>('weight');
   const [calOpen, setCalOpen] = useState(false);
 
-  const fieldBoxStyle = (sel: boolean): React.CSSProperties =>
+  const tabStyle = (sel: boolean): React.CSSProperties =>
     sel
       ? { background: 'rgba(19,164,236,.18)', border: '2px solid #13a4ec', boxShadow: '0 0 16px rgba(19,164,236,.5)' }
       : { background: 'rgba(19,164,236,.05)', border: '1.5px solid rgba(19,164,236,.32)' };
@@ -71,8 +78,46 @@ export function EditPanel({
     onWeightChange(weight + k);
   };
 
+  const tab = (f: Field, label: string, value: string, mono: boolean, grow: string) => (
+    <button
+      onClick={() => setField(f)}
+      className={`${grow} min-w-0 text-start rounded-[11px] px-[10px] py-[7px] transition-all`}
+      style={tabStyle(field === f)}
+    >
+      <div className="text-[8px] font-extrabold text-[#e8eef2] tracking-[.5px] whitespace-nowrap overflow-hidden text-ellipsis">
+        {label}
+      </div>
+      <div
+        className={`${mono ? 'font-mono' : ''} text-[14px] font-black text-ink-inverse mt-[2px] whitespace-nowrap overflow-hidden text-ellipsis`}
+        dir={mono ? 'ltr' : undefined}
+      >
+        {value}
+      </div>
+    </button>
+  );
+
+  // Sticker photo — sized to be readable in place, tap to open full screen.
+  const photo = imageData && onViewImage ? (
+    <button
+      onClick={onViewImage}
+      className="relative flex-none w-[112px] h-[86px] rounded-[10px] overflow-hidden border border-line bg-black"
+      aria-label={tr('terminal.viewSticker')}
+    >
+      <Image src={imageData} alt="" fill sizes="112px" className="object-contain" unoptimized />
+      <span className="absolute bottom-[3px] end-[3px] flex items-center justify-center w-[22px] h-[22px] rounded-[6px] bg-black/65 text-ink-inverse">
+        <MI name="search" size={14} />
+      </span>
+    </button>
+  ) : null;
+
   return (
-    <div className="border-2 border-brand rounded-[14px] overflow-hidden bg-header flex flex-col">
+    // `shrink-0` is load-bearing. The sheet's scroll area is a column flex
+    // container, and `overflow-hidden` here (needed for the rounded corners)
+    // sets this item's automatic minimum size to 0 — so flex happily squashed
+    // the panel to the visible height and CLIPPED the overflow instead of
+    // letting the container scroll. The bottom keypad rows were rendered,
+    // invisible and unreachable.
+    <div className="shrink-0 border-2 border-brand rounded-[14px] overflow-hidden bg-header flex flex-col">
       {/* Top bar */}
       <div className="flex justify-between items-center gap-2 px-[13px] py-[11px] bg-brand-weak border-b border-[rgba(19,164,236,.2)]">
         <button onClick={onCancel} className="flex-none flex items-center p-1 text-ink-inverse" aria-label="back">
@@ -93,19 +138,53 @@ export function EditPanel({
         </button>
       </div>
 
-      {/* Context input area (design places it above the field boxes) */}
-      <div className="px-[13px] py-3 border-b border-line bg-header">
+      {/* Product data — all three values at a glance, one tap switches field.
+          Above the input so it is never the thing buried at the bottom. */}
+      <div className="px-[13px] pt-3 pb-[10px]">
+        <div className="text-[9px] font-black text-ink-inverse tracking-[.5px] mb-[7px]">
+          {tr('terminal.productData')}
+        </div>
+        <div className="flex gap-[7px]">
+          {tab('weight', tr('terminal.netWeight'), `${weight || '0'} ${tr('common.kg')}`, true, 'flex-[1.15]')}
+          {tab('name', tr('terminal.itemName'), name || '—', false, 'flex-1')}
+          {tab('expiry', tr('terminal.expiryDate'), expiry || '—', true, 'flex-1')}
+        </div>
+      </div>
+
+      {/* Context input — the sticker photo travels with it, so reading the
+          sticker and correcting the value happen in one glance. */}
+      <div className="px-[13px] py-3 border-t border-line" style={{ background: 'linear-gradient(180deg,#0d171d,#0a1015)' }}>
         {field === 'weight' && (
           <>
-            <div className="flex items-baseline justify-end gap-[6px] bg-overlay-card border border-line rounded-[10px] px-[14px] py-[10px] mb-[10px]" dir="ltr">
-              <span className="font-mono font-black text-[26px] text-ink-inverse">{weight || '0'}</span>
-              <span className="text-[12px] font-extrabold text-brand-weak-ink">{tr('common.kg')}</span>
+            <div className="flex items-stretch gap-[10px] mb-[10px]">
+              {photo}
+              <div
+                className="flex-1 min-w-0 flex items-center justify-end gap-[6px] bg-overlay-card border border-line rounded-[10px] px-[14px]"
+                dir="ltr"
+              >
+                <span className="font-mono font-black text-[30px] text-ink-inverse truncate">{weight || '0'}</span>
+                <span className="text-[12px] font-extrabold text-brand-weak-ink">{tr('common.kg')}</span>
+              </div>
             </div>
             <Keypad onKey={handleKey} />
           </>
         )}
         {field === 'name' && (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-[10px]">
+            {/* Full-width photo here: the chips need the whole line, and with
+                no keypad below there is room for a bigger read of the sticker. */}
+            {imageData && onViewImage && (
+              <button
+                onClick={onViewImage}
+                className="relative w-full h-[104px] rounded-[10px] overflow-hidden border border-line bg-black"
+                aria-label={tr('terminal.viewSticker')}
+              >
+                <Image src={imageData} alt="" fill sizes="100vw" className="object-contain" unoptimized />
+                <span className="absolute bottom-1 end-1 flex items-center justify-center w-[22px] h-[22px] rounded-[6px] bg-black/65 text-ink-inverse">
+                  <MI name="search" size={14} />
+                </span>
+              </button>
+            )}
             {itemChips && itemChips.length > 0 && (
               <div className="flex flex-wrap gap-[7px]">
                 {itemChips.map((chip, i) => (
@@ -132,68 +211,36 @@ export function EditPanel({
           </div>
         )}
         {field === 'expiry' && (
-          <button
-            onClick={() => setCalOpen(true)}
-            className="w-full box-border flex items-center gap-3 bg-line border-2 border-brand rounded-[12px] px-[13px] py-[11px] text-start"
-          >
-            <span className="flex-none w-[38px] h-[38px] rounded-[10px] bg-[rgba(19,164,236,.16)] flex items-center justify-center">
-              <MI name="calendar_month" size={21} className="text-brand" />
-            </span>
-            <span className="flex-1 min-w-0">
-              <span className="block text-[9px] font-bold text-[#e8eef2] tracking-[.5px]">{tr('terminal.expiryDate')}</span>
-              <span className="block text-[15px] font-extrabold text-ink-inverse mt-[2px]" dir="ltr">
+          <div className="flex items-stretch gap-[10px]">
+            {photo}
+            <button
+              onClick={() => setCalOpen(true)}
+              className="flex-1 min-w-0 flex flex-col justify-center gap-1 bg-line border-2 border-brand rounded-[12px] px-[13px] py-[11px] text-start"
+            >
+              <span className="flex items-center gap-2">
+                <MI name="calendar_month" size={19} className="text-brand" />
+                <span className="text-[9px] font-bold text-[#e8eef2] tracking-[.5px]">{tr('terminal.expiryDate')}</span>
+              </span>
+              <span className="block text-[17px] font-extrabold text-ink-inverse font-mono" dir="ltr">
                 {expiry || 'DD/MM/YYYY'}
               </span>
-            </span>
-            <span className="flex-none text-[11px] font-extrabold text-brand-weak-ink">{tr('terminal.openCalendar')}</span>
-          </button>
+              <span className="block text-[10px] font-extrabold text-brand-weak-ink">{tr('terminal.openCalendar')}</span>
+            </button>
+          </div>
         )}
       </div>
 
-      {/* Field boxes */}
-      <div className="px-[13px] py-4" style={{ background: 'linear-gradient(180deg,#0d171d,#0a1015)' }}>
-        <div className="mb-[13px] flex items-center justify-between">
-          <div className="text-[10px] font-black text-ink-inverse tracking-[.5px]">{tr('terminal.productData')}</div>
-          {imageData && onViewImage && (
-            <button onClick={onViewImage} className="relative w-9 h-9 rounded-[8px] overflow-hidden border border-line">
-              <Image src={imageData} alt="" fill sizes="36px" className="object-cover" unoptimized />
-            </button>
-          )}
-        </div>
-
-        {/* Weight */}
-        <button onClick={() => setField('weight')} className="w-full relative text-start rounded-[11px] px-3 py-[11px] transition-all" style={fieldBoxStyle(field === 'weight')}>
-          <span className="absolute -top-2 left-[10px] bg-brand text-[#04222f] font-mono font-extrabold text-[7px] px-[6px] py-[2px] rounded-[4px] tracking-[.5px]">WT_DETECT</span>
-          <div className="text-[8px] font-extrabold text-[#e8eef2] tracking-[.5px]">{tr('terminal.netWeight')}</div>
-          <div className="font-mono font-black text-[27px] text-ink-inverse mt-[2px]" dir="ltr">
-            {weight || '0'} <span className="text-[13px] text-brand-weak-ink">kg</span>
-          </div>
-        </button>
-
-        {/* Name + expiry row */}
-        <div className="flex gap-[9px] mt-[15px]">
-          <button onClick={() => setField('name')} className="flex-1 min-w-0 relative text-start rounded-[11px] px-3 py-[11px] transition-all" style={fieldBoxStyle(field === 'name')}>
-            <div className="text-[8px] font-extrabold text-[#e8eef2] tracking-[.5px]">{tr('terminal.itemName')}</div>
-            <div className="text-[13px] font-bold text-ink-inverse mt-[3px] whitespace-nowrap overflow-hidden text-ellipsis">{name || '—'}</div>
-          </button>
-          <button onClick={() => setField('expiry')} className="flex-1 min-w-0 relative text-start rounded-[11px] px-3 py-[11px] transition-all" style={fieldBoxStyle(field === 'expiry')}>
-            <div className="flex items-center justify-between">
-              <span className="text-[8px] font-extrabold text-[#e8eef2] tracking-[.5px]">{tr('terminal.expiryDate')}</span>
-              <MI name="calendar_month" size={14} className="text-brand" />
-            </div>
-            <div className="font-mono text-[13px] font-bold text-ink-inverse mt-[3px]" dir="ltr">{expiry || '—'}</div>
-          </button>
-        </div>
-
-        {/* Barcode (read-only — it is the row's identity/dedup key) */}
-        <div className="w-full relative rounded-[11px] px-3 py-[11px] mt-[15px]" style={fieldBoxStyle(false)}>
-          <span className="absolute -top-2 left-[10px] bg-brand text-[#04222f] font-mono font-extrabold text-[7px] px-[6px] py-[2px] rounded-[4px] tracking-[.5px]">BC_SCAN</span>
-          <div
-            className="h-[34px] rounded-[2px] mt-[3px] mb-[6px]"
-            style={{ background: 'repeating-linear-gradient(90deg,#e8edf2 0 2px,transparent 2px 4px,#e8edf2 4px 5px,transparent 5px 8px)' }}
-          />
-          <div className="font-mono text-[10px] font-bold text-ink-inverse text-center tracking-[2px]" dir="ltr">{barcode}</div>
-        </div>
+      {/* Barcode (read-only — it is the row's identity/dedup key) */}
+      <div className="px-[13px] pt-[10px] pb-3 border-t border-line flex items-center gap-2">
+        <span className="flex-none bg-brand text-[#04222f] font-mono font-extrabold text-[7px] px-[6px] py-[2px] rounded-[4px] tracking-[.5px]">
+          BC_SCAN
+        </span>
+        <span
+          className="flex-1 min-w-0 font-mono text-[10px] font-bold text-ink-inverse text-center tracking-[1.5px] whitespace-nowrap overflow-hidden text-ellipsis"
+          dir="ltr"
+        >
+          {barcode}
+        </span>
       </div>
 
       {calOpen && (
