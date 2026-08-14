@@ -1,6 +1,6 @@
 # Web Scanner API Reference
 
-Base URL: `/api`
+Base URL: `/api` — **25 route files** in `app/api/`.
 
 All routes are Next.js App Router route handlers. All mutations (POST routes that modify a session or write persistent records) use `withLock(token, ...)` from `lib/redis.ts` to prevent race conditions. As of the 2026-06-30 Supabase migration, locking was extended to the previously-unlocked `multi-pallet-complete`, `multi-pallet-loose-complete`, and `manual-entry` routes; `withLock` is now a Postgres `locks` table (`acquire_lock` / `release_lock` RPCs), same 10s TTL + 20×250ms retry as the old Redis lock.
 
@@ -480,9 +480,88 @@ Submits all scanned loose boxes to the bot after the loose scanning phase is don
 
 ---
 
-### 18. Legacy Pallet Routes (kept for compatibility)
+### 18. AI Name Consolidation
+
+`POST /api/consolidate-items`
+
+Body: `{ groups: IncomingGroup[], language?: string }`
+
+Asks the model whether two OCR'd name groups are the same product (OCR drift on
+Hebrew names). The scanner surfaces the answer as the amber "these look like the
+same item" banner; the worker accepts or dismisses it, and an accepted merge is
+recorded in `acceptedMerges` so both groups share one group key.
+
+---
+
+### 19. Legacy Pallet Routes (kept for compatibility)
 
 Some older single-pallet routes may still exist (`/api/pallet-session`, `/api/pallet-ocr`). The active path uses `/api/multi-pallet-session` and `/api/multi-pallet-ocr`.
+
+---
+
+## Split Assignment Routes (`SPLIT_ASSIGNMENT_ENABLED`)
+
+One delivery's pallets divided across a crew: the manager plans, workers claim
+slots. Shipped 2026-08-11; the bot-side flag gates whether the option is ever
+offered.
+
+### 20. Create Planning Session
+
+`POST /api/split-plan-session`
+
+Body: `{ chat_id, document_number, ocr_data, roster, language, category, receipt_id, meat_discrepancy }`
+
+Returns the manager's `/assign/[token]` link. `meat_discrepancy` must be carried
+through — without it split workers silently lose the damaged-sticker declared-count
+mode and the "create LPN anyway" force-confirm.
+
+### 21. Read / Save / Amend the Plan
+
+- `GET  /api/split-plan?token=…` — current plan + live board state
+- `POST /api/split-plan` — `{ token, pallet_count, loose_box_count?, assignments: [{chat_id, quota|null}], loose_owner? }`
+- `PATCH /api/split-plan` — `{ token, worker_chat_id, pallet_count, assignments }`
+
+A `null` quota means *pool-only* (the worker takes from the shared pool rather
+than holding reserved slots). **Quotas are runtime-coerced with `Number()` before
+any arithmetic** — the body is only TS-cast, so numeric strings would otherwise
+concatenate (`"1"+"2"+"3"` → `123`) and reject a valid plan.
+
+### 22. Claim / Release / Close a Slot
+
+`POST /api/pallet-claim`
+
+Body: `{ token, worker_chat_id, action, pallet_n?, to_chat_id? }`
+
+Runs under `withLock`. Once an action leaves the job complete it sets
+`session.status = 'completed'`, and every action is rejected outright thereafter —
+otherwise "+ Add pallet" could mint a new claimed slot on a finished session,
+pass `multi-pallet-complete`'s own guard, and re-run the bot's finalize,
+**double-booking stock**.
+
+---
+
+## Drawer Routes (read-only)
+
+Browsers behind the hamburger drawer. All four are guarded by
+`lib/session-guard.ts`: the caller must present a **live `scan_sessions` token**.
+They read only; none of them writes.
+
+### 23. Pallets Browser
+
+- `GET /api/pallets?token=…` — plus `barcode` (find the pallet holding a box),
+  `lpn` (find by sticker), `status`, `q`, `page`
+- `GET /api/pallets/detail?token=…&id=…` — one pallet with per-item remaining counts
+
+Availability math mirrors the bot's: uniform → `expected − issued`, non-uniform →
+count of `Available` rows, non-meat → `non_meat_inventory`, Loose → grouped by
+batch/SKU. Note the `pallet_status` enum has **no `Receiving`** value — active
+means `In Stock` / `Partially Issued` / `Verified`.
+
+### 24. Documents Archive
+
+- `GET /api/documents?token=…` — plus `category`, `month`, `q`, `page`
+- `GET /api/documents/detail?token=…&source=…&id=…` — invoice photo, lines with
+  their gaps (פער), pallets hand-off, and the Type B voice-note transcript
 
 ---
 
@@ -514,4 +593,4 @@ Removed in the migration: `KV_REST_API_URL`, `KV_REST_API_TOKEN`, and all `AIRTA
 
 ---
 
-**Last Updated**: 2026-06-30 (Supabase/Postgres data-layer migration) | Working branch: `preview` | Production branch: `main`
+**Last Updated**: 2026-08-14 (documented the split-assignment, drawer-browser and consolidate-items routes; route count 18 → 25) | Working branch: `preview` | Production branch: `main`

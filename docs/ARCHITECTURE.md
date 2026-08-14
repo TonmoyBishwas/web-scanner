@@ -13,7 +13,16 @@ The Web Scanner is a Next.js 16 application designed to provide a high-performan
 ## Tech Stack
 - **Framework**: Next.js 16 (App Router)
 - **Language**: TypeScript
-- **Styling**: Tailwind CSS (via `globals.css`)
+- **Styling**: Tailwind CSS v4 + design tokens in `globals.css`. The UI is the
+  dark, RTL/Hebrew-first **"WMS Receiving Terminal"** design (1:1 rebuild,
+  2026-08-03). Fonts: Heebo (UI, `latin`+`hebrew` subsets) and Roboto Mono
+  (numbers — disambiguates 0/O, 1/l/I, 5/S) via `next/font/google`; Material
+  Icons Round via `next/font/local` from `app/fonts/` (`next/font/google`
+  excludes icon fonts), rendered through the `<MI name="…"/>` ligature wrapper
+  with `display: "block"` so raw ligature text never flashes.
+- **i18n**: `lib/i18n/{en,he}.ts` — flat key→string maps read through `useT()`.
+  **The two files must stay key-for-key identical**; a missing key renders the
+  raw key on screen.
 - **State Management**: React Hooks (`useState`, `useReducer`, `useRef`) + URL State
 - **Database**: Supabase / Postgres via `@supabase/supabase-js` (service-role key, server-side only). Holds both the persistent records (box_inventory, stock_batches, transactions, pallets) and the scan sessions + distributed locks. Migrated 2026-06-30 from Airtable + Upstash Redis.
 - **Scanning Library**: Native BarcodeDetector API (hardware-accelerated); fallback: html5-qrcode (@zxing/browser)
@@ -60,9 +69,18 @@ before kicking off camera init. Without that, a key-driven remount could
 inherit the previous instance's cleanup state (`false`) and `scanContinuously`
 would bail out of every frame.
 
+#### Target frame — `frame` prop
+
+`frame='square'` is the legacy centred 240×240 box described below.
+`frame='corner'` is the terminal design's 276×150 corner frame pinned near the
+top of the camera area — **all three scanner pages use `corner`.** In corner
+mode the capture-progress `<rect>` is stroked in the **frame's own hue**
+(brand blue), not `--ok` green; stroking green over a blue frame is what the
+floor reported as "the green mixes with the blue".
+
 #### Scanner Visual States (3-state system)
 
-The scanner viewport is a 240x240px target box. It renders one of three mutually exclusive visual states at all times.
+The `square` viewport is a 240x240px target box. It renders one of three mutually exclusive visual states at all times.
 
 **State 1: Idle / Capturing (green SVG trail)**
 
@@ -112,19 +130,63 @@ The UI for resolving OCR ambiguities (missing weight, missing product name).
 - Provides a dropdown of products from the current invoice.
 - Allows manual weight entry (with smart defaulting).
 
+### 4. `components/terminal/` — the shared design kit
+
+Every scanner screen is the same shell: a live camera filling the area under
+the header, with a draggable sheet floating over it.
+
+| Component | Role |
+|---|---|
+| `DesignHeader` / `ProgressHeader` | Title + doc number + hamburger; progress bar with count/total |
+| `BottomSheet` | The floating sheet. 3 snaps, drag handle, `toolbar` + scrolling children + `footer`. Exposes `snapTo(i)` via ref |
+| `ToolDock` | The chip row inside the sheet's toolbar (share / delete / pallets / locked stubs) |
+| `ActiveScanCard` | The newest scan — live status dot, big mono weight, details expander, and its actions (edit / delete / retry / view frame) |
+| `HistoryRow` | One older scan; tap to expand its action row |
+| `EditPanel` | In-sheet edit of a scan (see below) — value tabs, sticker photo, keypad / item chips / calendar |
+| `Keypad`, `CalendarPicker` | Context inputs for the edit panel |
+| `DoneOverlay`, `SwipeConfirm` (in `shared/`) | Pallet-done stats + RTL swipe-to-confirm actions |
+| `SideDrawer`, `DrawerHost`, `ScreenOverlay`, `LockedScreen` | Hamburger drawer, overlay host, "not built yet" screens |
+| `PalletsBrowser`, `DocumentsBrowser` | Unlocked drawer features: floor pallet lookup, completed-delivery archive |
+| `SplitJobScreen`, `SplitPlanner`, `SplitBoard` | Split-assignment worker/manager UI (`SPLIT_ASSIGNMENT_ENABLED`) |
+| `MI` | Material Icons Round ligature wrapper |
+
+**Two layout rules learned the hard way — both caused real breakage:**
+
+1. **The camera wins over the sheet.** `BottomSheet` floors its peek snap at
+   *base* chrome only (handle + dock + padding + border, **excluding** the
+   footer), and caps mid/tall at `container − MIN_CAMERA_PX` (190px = the
+   150px corner frame plus its label). When the sheet is too short for the
+   footer the footer is **hidden**, never allowed to overflow. Flooring every
+   snap at chrome *including* a ~170px footer pinned peek/mid/tall to the same
+   height and left 50px of camera — that was a production outage (2026-08-11).
+2. **An `overflow-hidden` child of the sheet's scroll area needs `shrink-0`.**
+   The scroll area is a column flex container; `overflow-hidden` (used for
+   rounded corners) sets a flex item's automatic minimum size to **0**, so the
+   child is squashed to the visible height and its content is **clipped rather
+   than scrolled** — `scrollHeight === clientHeight`, content present but
+   unreachable. This hid the bottom keypad rows of `EditPanel` (2026-08-14).
+
+**Gesture state must live in a ref, not React state.** `BottomSheet`'s
+`onPointerMove` originally gated on a `dragging` state flag React had not yet
+committed, so the opening moves of every gesture were dropped and a fast tap
+could be swallowed outright.
+
 ## Pages / Routes
 
 | URL | Page | Purpose |
 |-----|------|---------|
+| `/` | `app/page.tsx` | Landing |
 | `/scan/[token]` | `app/scan/[token]/page.tsx` | Carton scanning UI (RECEIVE or ISSUE) |
 | `/complete/[token]` | `app/complete/[token]/page.tsx` | Post-scan summary |
 | `/issue/[token]` | `app/issue/[token]/page.tsx` | Web scanner issue UI (outbound) |
-| `/pallet-verify/[token]` | `app/pallet-verify/[token]/page.tsx` | Pallet verification UI (inbound) — includes loose box scanning phase |
-| `/pallet/[lpn]` | `app/pallet/[lpn]/page.tsx` | LPN sticker page (QR code printout) |
+| `/pallet-verify/[token]` | `app/pallet-verify/[token]/page.tsx` | Pallet verification UI (inbound) — pallets, loose-box phase, and the split-job slot screen |
+| `/assign/[token]` | `app/assign/[token]/page.tsx` | Manager's split-assignment planner + live board |
+| `/sticker/v1/[lpn]` | `app/sticker/v1/[lpn]/page.tsx` | LPN sticker page (QR code printout) |
+| `/pallet/[lpn]` | `app/pallet/[lpn]/page.tsx` | Legacy sticker alias (still valid in old messages) |
 
 ## API Routes (`app/api/`)
 
-**18 routes total.** See [API_REFERENCE.md](API_REFERENCE.md) for full request/response docs.
+**25 routes total.** See [API_REFERENCE.md](API_REFERENCE.md) for full request/response docs.
 
 ### Carton Scan (RECEIVE/ISSUE)
 | Route | Purpose |
@@ -155,7 +217,24 @@ The UI for resolving OCR ambiguities (missing weight, missing product name).
 | `POST /api/pallet-manual` | Manual box entry for pallet |
 | `POST /api/pallet-assign` | Manually assign box to mix pallet item |
 | `POST /api/pallet-complete` | Generate LPN, insert pallet into Supabase (`savePalletToSupabase`), call bot `/webhook/pallet-complete` |
+| `POST /api/multi-pallet-complete` | Confirm one pallet of a multi-pallet session — classifies single/mix server-side (`detectPalletType`), applies `uniform_groups` overrides, emits the bot webhook |
 | `POST /api/multi-pallet-loose-complete` | Submit loose box scans → call bot `/webhook/loose-boxes-complete` (now under `withLock`) |
+| `POST /api/consolidate-items` | AI name-consolidation — asks whether two OCR name groups are the same product |
+
+### Split assignment (`SPLIT_ASSIGNMENT_ENABLED`)
+| Route | Purpose |
+|-------|---------|
+| `POST /api/split-plan-session` | Create the manager's planning session |
+| `POST /api/split-plan` | Save / update the pallet→worker plan |
+| `POST /api/pallet-claim` | A worker claims, releases, or closes-short a slot (guards the session's completed state) |
+
+### Drawer features (read-only, token-guarded by `lib/session-guard.ts`)
+| Route | Purpose |
+|-------|---------|
+| `GET /api/pallets` | Pallet list / search / find-by-barcode / find-by-LPN (floor lookup) |
+| `GET /api/pallets/detail` | One pallet with per-item remaining counts |
+| `GET /api/documents` | Completed-delivery archive list |
+| `GET /api/documents/detail` | One delivery: invoice photo, lines with gaps, pallets, Type B voice note |
 
 ## Session Storage (Supabase / Postgres)
 
@@ -245,7 +324,7 @@ BoxStickerOCR          // OCR result (Hebrew + English name, weight, expiry)
 ```typescript
 type Phase =
   | 'loading'
-  | 'box_count'
+  | 'job'                // split assignment: pick/claim a slot before scanning
   | 'scanning'
   | 'confirming'
   | 'pallet_done'
@@ -255,53 +334,154 @@ type Phase =
   | 'error'
 ```
 
+> The old `box_count` phase is **gone**. The worker no longer declares the total
+> before scanning: they scan first, and the total is asked for in the sheet
+> footer only when it's actually needed (the single-item shortcut, or the
+> "Done scanning?" exit). This is why the footer — not a separate screen — owns
+> the count input.
+
 Phase transitions:
-- `loading` → `box_count` (session loaded, first pallet)
+- `loading` → `scanning` (session loaded, first pallet)
+- `loading` → `job` (split session and this worker holds no slot yet)
 - `loading` → `loose_scanning` (session loaded, `current_pallet > pallet_count` and `loose_box_count > 0` — i.e. user refreshed mid-loose-phase)
 - `loading` → `all_done` (session loaded with `status: 'completed'`)
-- `box_count` → `scanning` (box count set)
-- `scanning` → `confirming` (canComplete and confirm tapped)
+- `job` → `scanning` (slot claimed)
+- `scanning` → `confirming` (canConfirm and swipe-confirm completed)
 - `confirming` → `pallet_done` (pallet-complete call succeeded)
-- `pallet_done` → `box_count` (next pallet) OR `loose_scanning` (all pallets done, loose_box_count > 0) OR `all_done` (all done, loose_box_count == 0)
+- `pallet_done` → `scanning` (next pallet, via swipe) OR `loose_scanning` (all pallets done, loose_box_count > 0) OR `all_done` (all done, loose_box_count == 0)
 - `loose_scanning` → `loose_confirming` (all loose boxes scanned, confirm tapped)
 - `loose_confirming` → `all_done` (loose-complete call succeeded)
 
+**Reload safety**: in-progress scans are cached in `localStorage` under
+`pv:{token}:p{n}` (and `pv:{token}:loose`) by `lib/pallet-scan-cache.ts`.
+Base64 `image_data` is **stripped on save** (5 MB quota) but not on load — so a
+restored box has no sticker photo, and the edit panel renders without one.
+
 > The session's `status` (in `scan_sessions.data`) only flips to `completed` once **both** all pallets and all loose boxes are done. While loose boxes are pending the status stays `active` so a tab refresh restores `loose_scanning`.
 
-## Uniform-pair detection (mix pallets)
+## Single-item shortcut (uniform detection)
 
-When 2+ scans of the same SKU come back from OCR with weights within `UNIFORM_WEIGHT_TOLERANCE` (0.5 kg), the page assumes the rest of that SKU's boxes on this pallet are also same-weight (per the warehouse domain rule). It surfaces a prompt at the bottom of the page so the worker can either complete the pallet as single-item or report the real total count for that uniform sub-item.
+*Rewritten 2026-08-14. Superseded: the old 0.5 kg tolerance, the `sku` group key,
+and the `mandatory_count` prompt mode — none of those exist any more.*
+
+The point of the shortcut: on a pallet where every box is the **same product at
+the identical printed weight**, scanning all 60 boxes is wasted work. Scan two,
+declare the total, the system multiplies.
+
+**"Same weight" is literal.** `UNIFORM_WEIGHT_TOLERANCE = 0.0001` kg (0.1 g) —
+below the 1 g resolution printed on a label. It exists to absorb floating-point
+noise, **not** as a grace band. Catch-weight meat (10.09 vs 10.08) is *different*
+and every box must be scanned, because each box's own weight is what
+`box_inventory` carries for FEFO at outbound. Mirrored by
+`UNIFORM_WEIGHT_TOLERANCE_KG` in `app/api/multi-pallet-complete/route.ts` —
+**keep the two in sync.**
 
 State (`pallet-verify/[token]/page.tsx`):
-- `uniformGroups: Map<sku, UniformGroup>` — locked groups; each has `{sku, item_name, item_name_hebrew, avg_weight, total_count, sample_barcodes}`.
-- `pendingUniformPrompt: UniformPrompt | null` — a queued prompt; modes:
-  - `'single_or_mix'` — only one SKU has been scanned and no groups are locked. Bottom shows two buttons: *Complete as single-item ({declared} boxes)* or *Continue scanning (this is mix)*.
-  - `'mandatory_count'` — number input + Set button + overflow-validation error if `total_count + committed_other > declared`.
-- Refs `uniformGroupsRef`, `pendingUniformPromptRef` mirror state so the trigger logic in `runOcr`'s success path always sees the latest values.
+- `UNIFORM_MIN_SAMPLES = 2` — the smallest number that can establish "same
+  weight" at all. (Raised to 4 in May 2026 to stop prompts overlapping mid-OCR;
+  lowered back to 2 in Aug 2026 — see the retraction rule below, which is what
+  the 4-box gate was really standing in for.)
+- `uniformGroups: Map<name_key, UniformGroup>` — locked groups, keyed by
+  **normalized name** (`lib/group-key.ts`, e.g. `he:קציצותברטובאדום`), *never* by
+  barcode/SKU. Each holds `{name_key, item_name, item_name_hebrew, avg_weight,
+  total_count, sample_barcodes}`.
+- `pendingUniformPrompt: UniformPrompt | null` — one mode only,
+  `'single_or_mix'`: *Complete as single-item* / *Continue scanning (mix)*.
+- Refs `uniformGroupsRef`, `pendingUniformPromptRef`, `forcedMixRef` mirror state
+  so the trigger in `runOcr`'s success path always sees current values.
 
-Trigger lives in `maybeTriggerUniformPrompt(latestBoxes, justFinishedBarcode)`:
-- Skip if a prompt is already pending or this SKU is already locked.
-- Look at all done-OCR scans of this SKU. If `len ≥ 2` and `max-min < 0.5`, decide mode based on `distinctSkus.size` and `uniformGroups.size`, then `setPendingUniformPrompt(...)`.
+`uniformCandidateFrom(doneBoxes, merges)` is the shared predicate: ≥2 done boxes,
+exactly one distinct group key, weight spread < tolerance. Two callers:
 
-Banner above the scanner lists locked groups (`✓ {item} — {N} boxes locked`) and the pending one (`⏳ {item} — awaiting count below`). Confirm button is gated:
+- `maybeTriggerUniformPrompt(latestBoxes, …)` — on each OCR success. Bails while
+  any box is still `processing`. **If a prompt is already open and the candidate
+  no longer holds, it retracts the prompt** (a second product arrived, or a
+  differing weight). That self-retraction is why 2 samples is safe.
+- `restoreUniformPrompt(cached)` — on cache restore after a reload. Reads the
+  *cached* flags, because the refs aren't synced yet at that point. Without it a
+  reload silently dropped the worker onto the mix path.
+
+**Escape hatch**: 1–3 OCR'd boxes that aren't all one uniform item get a
+full-width **"Done scanning? Enter the pallet total"** button in the footer
+(`setForcedMix(true)`). It was a thin grey underline that workers missed; it now
+carries the same weight as the other footer actions.
+
+Confirm gating:
 ```ts
-committed = nonUniformIndividualScans + Σ(uniformGroups.total_count)
-canConfirm = !pendingUniformPrompt && committed >= max(2, declaredBoxCount)
+committed  = nonUniformIndividualScans + Σ(uniformGroups.total_count)
+canConfirm = !pendingUniformPrompt && committed >= max(2, confirmedBoxCount)
 ```
 
-The locked groups are sent to the API as `uniform_groups: [{sku, total_count, avg_weight}]` so the backend can use the user-reported `total_count` for `Pallet Items.Expected Box Count` instead of the much smaller scanned-sample count.
+Locked groups go to the API as `uniform_groups: [{name_key, total_count,
+avg_weight}]` so the backend uses the worker-reported total for
+`Pallet Items.Expected Box Count` rather than the sample count.
 
-## OCR retry / rescan / view actions
+> ⚠️ **Never read the declared count out of state in a deferred callback.**
+> `handlePalletCountSubmit` used to do `setConfirmedBoxCount(n); setUniformGroups(…);
+> setTimeout(() => handleConfirmPallet(), 0)` — the scheduled callback captures
+> *that* render's closure, so it posted `box_count: 0` with empty
+> `uniform_groups`, and the server's `box_count || itemBoxes.length` fallback
+> booked the pallet at the **sample** count (declare 40, get 4 — real stock
+> corruption). The count and groups are now passed in explicitly:
+> `handleConfirmPallet({ boxCount, groups })`.
 
-Every `BoxScan` retains the captured frame as `image_data` (base64 JPEG from `canvas.toDataURL`). When `ocr_status === 'failed'`, the box card surfaces three small buttons inline next to the red "OCR failed" text:
+The server re-classifies independently (`detectPalletType`), so a pallet that is
+genuinely single+uniform is multiplied even when the client sent mix. That is why
+a "discrepancy vs. delivery note" warning can appear on a pallet that in fact
+books correctly.
 
-| Button | Behaviour |
+## The scan list — per-scan actions
+
+*Rewritten 2026-08-14.* The sheet shows the **newest scan as an `ActiveScanCard`**
+and every older scan as a `HistoryRow`, newest first. Grouping still drives the
+uniform logic; only the presentation is flat.
+
+Every `BoxScan` retains the captured frame as `image_data` (base64 JPEG from
+`canvas.toDataURL`), so every action below works without a rescan.
+
+| Action | Behaviour |
 |---|---|
-| **View** | Opens a full-screen image modal (`viewingImage` state, `fixed inset-0 bg-black/90`) showing the captured frame. Tap outside or the Close button to dismiss. Lets the worker confirm the photo is genuinely bad before deciding what to do. |
-| **Retry** | Re-runs `/api/multi-pallet-ocr` against the stored `image_data` (no rescan needed). Useful when the failure was transient (timeout, server hiccup). |
-| **Rescan** | Drops the box from the local list and clears `processedRef` for that barcode so the worker can physically rescan. If the box belonged to a locked uniform group and removing it brings the group below 2 same-weight samples, the group lock is cleared too. |
+| **ערוך / Edit** | Opens `EditPanel` in place of the list (see below) |
+| **מחק / Delete** | `rescanPalletBox` — drops the box and clears `processedRef` for that barcode so the worker can physically rescan. If removing it leaves a locked uniform group with <2 samples, the lock is cleared too |
+| **נסה שוב / Retry** *(failed OCR only)* | Re-runs `/api/multi-pallet-ocr` against the stored `image_data` — for transient failures (timeout, server hiccup) |
+| **צפה / View** *(failed OCR only)* | Full-screen image modal (`viewingImage`) of the captured frame, so the worker can see whether the photo is genuinely bad |
 
-The same three buttons appear in all three OCR-failure render sites: the single-item BoxCard, the mix-pallet grouped list, and the loose-box grouped list.
+Where they render:
+- **`ActiveScanCard`** — actions are **props on the card** (`onEdit`, `onDelete`,
+  `onRetry`, `onViewImage`), always visible. They used to be gated behind
+  `selectedBarcode === activeBox.barcode`, which nothing ever set on the card:
+  the newest scan — the one a worker realises they mis-scanned — was the only
+  scan with **no reachable delete**. Fixed 2026-08-14.
+- **`HistoryRow`** — tap the row to expand an `actions` row **underneath** it.
+  They previously rendered inline beside the 17px weight, on the same line as a
+  31-digit barcode; the barcode had no clamp, so the three collided. The barcode
+  now ellipsises and the buttons get a full-width line of their own.
+
+## Edit panel (`components/terminal/EditPanel.tsx`)
+
+Rendered **inside** the bottom sheet in place of the scan list while `editForm`
+is set (the sheet's footer is suppressed); `openEdit()` also calls `snapTo(2)`.
+
+The layout is driven by one fact: **the worker is editing because OCR misread the
+sticker**, so the sticker photo has to sit next to whatever they are typing into.
+
+```
+top bar        ‹ back · קרטון #N · שמור
+tab strip      משקל נטו | שם הפריט | ת. תפוגה   ← every value, tap to switch field
+context input  [sticker photo] + readout/chips/calendar
+               keypad (weight mode)
+barcode        read-only — it is the row's identity/dedup key
+```
+
+- The photo is 112×86 beside the weight readout, or full-width 104px above the
+  name chips (no keypad in that mode, so there is room). Tap it for the
+  full-screen viewer. It was previously a 36px thumbnail **below the keypad**
+  that had to be tapped open, making "read the sticker" and "correct the value"
+  two alternating steps.
+- The tab strip replaces the old tall "נתוני המוצר" field boxes, which sat below
+  the keypad and were mostly off-screen.
+- A restored-from-cache box has no `image_data`, so the panel simply renders
+  without a photo.
 
 ## All-done view — pallet sticker list
 
@@ -309,9 +489,22 @@ After every pallet is confirmed (and any loose boxes finalised), `phase === 'all
 
 The list reads from `session.completed_pallets`. `handleConfirmPallet` mirrors each successful API confirm into local React state (the API persists the session to Supabase but the page never refetches), so by the time the worker reaches `all_done` every pallet they confirmed in this session is in the list — even on a fresh-mount session that had completed_pallets prefilled from a mid-flow refresh.
 
-## Pallet sticker page (`/pallet/[lpn]`)
+## Pallet sticker page (`/sticker/v1/[lpn]`, legacy alias `/pallet/[lpn]`)
 
-Server component that reads the pallet from Supabase (`from('pallets')`) and uses route-level ISR (`export const revalidate = 60`) instead of the former per-fetch `next: { revalidate: 60 }`. It also reads `searchParams.token`. If present, the "← Back" button routes to `/pallet-verify/{token}` (returning the worker to their active scanner session) instead of the homepage `/`. All sticker links generated by the scanner already include `?token=…` for this round-trip. Direct visits from WhatsApp's bot messages have no token and fall back to `/`.
+Server component that reads the pallet from Supabase (`from('pallets')`) and uses route-level ISR (`export const revalidate = 60`) instead of the former per-fetch `next: { revalidate: 60 }`. It also reads `searchParams.token`.
+
+> **The sticker renders the denormalised display columns on the `pallets` row**
+> (`item_name`, `box_count`, `document_number`, ocr/calc weights) — it does not
+> aggregate `pallet_items`. `create_pallet_record` writes only lifecycle fields,
+> so the bot must backfill those columns via
+> `airtable_service.update_pallet_display_fields` on **every** pallet-creation
+> path. Without the backfill every multi-pallet sticker printed
+> `0 boxes / 0 kg / blank` (fixed 2026-07-09). A Mix pallet's item line reads
+> "Mix — N items".
+>
+> QR payload is `{scanner}/sticker/v1/{lpn}?sig=WHPL-…`, where the signature is
+> `sha256(LPN_SECRET + lpn)[:8]` — the **same `LPN_SECRET`** must be set on both
+> Railway and Vercel. If present, the "← Back" button routes to `/pallet-verify/{token}` (returning the worker to their active scanner session) instead of the homepage `/`. All sticker links generated by the scanner already include `?token=…` for this round-trip. Direct visits from WhatsApp's bot messages have no token and fall back to `/`.
 
 ## Important Implementation Notes
 
@@ -319,8 +512,32 @@ Server component that reads the pallet from Supabase (`from('pallets')`) and use
 - **Barcodes are IDs only**: `parseIsraeliBarcode()` intentionally returns `weight: 0`. Weight/item data comes exclusively from OCR. Never assume barcode encodes product details.
 - **Pallet OCR item matching**: Hebrew-first matching using first significant Hebrew word (≥3 chars). Never use barcode string for item matching.
 - **Loose box OCR**: Uses same `/api/multi-pallet-ocr` (synchronous) as pallet box OCR. Each loose box fires OCR immediately on scan.
-- **Uniform weight override**: If the stored data has `Uniform Weight = true` but actual Box Inventory rows show weight variance >0.5kg, the bot overrides to non-uniform at outbound time.
+- **Uniform weight override**: If the stored data has `Uniform Weight = true` but actual Box Inventory rows show weight variance >0.5kg, the bot overrides to non-uniform at outbound time. (This 0.5 kg is the *bot's outbound sanity check* and is unrelated to the scanner's 0.0001 kg inbound rule — don't conflate them.)
 - **Synthetic Box Inventory rows**: For uniform pallets, inbound stores only 2 sample rows. Outbound creates synthetic rows for the shortfall before marking as Issued.
 - **Loose pallet LPN**: `LOOSE-{YYYYMMDD}-{docShort}` — no physical sticker printed, system tracking only.
 
-**Last Updated**: 2026-06-30 (Supabase/Postgres data-layer migration) | Working branch: `preview` | Production branch: `main`
+## Verifying UI changes (no writes to the warehouse)
+
+Local dev cannot mint a session — `.env.local` has no `SUPABASE_*`. Verify on a
+**deployed** build instead:
+
+1. `POST /api/multi-pallet-session` with a `UI-VERIFY-…` document number. This is
+   inert: it creates a `scan_sessions` row and no delivery.
+2. Seed `localStorage['pv:{token}:p{n}']` with a `PalletScanSnapshot`. `image_data`
+   is stripped on save but **not** on load, so hand-seeding it is the only way to
+   get a sticker photo into the edit panel without a camera.
+3. Open `/pallet-verify/{token}`, hide the `.bg-cam-scrim` permission overlay, and
+   measure real rects.
+4. To exercise a confirm without writing: monkey-patch `window.fetch` to intercept
+   only `/api/multi-pallet-complete` and assert on the captured body.
+5. Afterwards `delete from scan_sessions where token = …` and check `pallets`
+   gained nothing.
+
+Gotchas: a **READY build is not proof the code shipped** — check which commit the
+production alias serves, and grep the live chunk for a distinctive string. Chrome's
+window will not go below **500px** wide, so `resize_page(400, …)` silently reports
+success at 500. Each new preview deployment invalidates the Vercel SSO share
+cookie. And a test harness must reproduce the **real** chrome of the screen under
+test — a stub footer is what hid the sheet outage.
+
+**Last Updated**: 2026-08-14 (terminal design kit, scan-list actions, edit panel, single-item shortcut at 2 samples, route inventory) | Working branch: `preview` | Production branch: `main`
