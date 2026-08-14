@@ -553,6 +553,7 @@ export const en = {
 
   // ── Terminal rebuild (WMS Receiving Terminal design) ──────────────
   'terminal.lockedToast': 'Locked · not available yet',
+  'terminal.sheetHandle': 'Drag to resize the panel',
   'terminal.tapToScan': 'Tap to scan · auto detect',
   'terminal.scanningNow': 'Scanning now',
   'terminal.progressLabel': 'Receiving · Pallet {n} of {total}',

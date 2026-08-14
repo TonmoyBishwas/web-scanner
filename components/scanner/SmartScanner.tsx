@@ -968,7 +968,11 @@ export function SmartScanner({
                   <div className="absolute inset-0 border-[3px] border-ok/25 rounded-xl" />
                 )}
 
-                {/* SVG capture-progress trail */}
+                {/* SVG capture-progress trail. The stroke follows the frame's
+                    own hue — the corner frame is brand blue, and stroking its
+                    progress in green made the two colours bleed into each
+                    other mid-scan. Green stays reserved for the confirmed-scan
+                    flash, where it actually means "captured". */}
                 <svg
                   className="absolute inset-0 w-full h-full pointer-events-none"
                   viewBox={frame === 'corner' ? '0 0 276 150' : '0 0 240 240'}
@@ -981,7 +985,7 @@ export function SmartScanner({
                     height={frame === 'corner' ? 147 : 237}
                     rx="10"
                     fill="none"
-                    stroke="var(--ok)"
+                    stroke={frame === 'corner' ? 'var(--brand)' : 'var(--ok)'}
                     strokeWidth="3"
                     pathLength="1"
                     strokeDasharray="1"
@@ -999,13 +1003,14 @@ export function SmartScanner({
 
           </div>
         </div>
-        {/* Active scanner indicator */}
+        {/* Active scanner indicator. Glass chip (same treatment as the camera
+            switch) with the state carried by the dot — the old solid green /
+            red fill was a loud block of colour sitting right beside the brand
+            frame. */}
         <div className="absolute top-2 left-2">
-          <div className={`flex items-center gap-1 px-2 py-1 rounded-full backdrop-blur-sm border border-cam-border ${
-            (isInCooldown || isDuplicate) ? 'bg-danger/80' : 'bg-ok/80'
-          }`}>
+          <div className="flex items-center gap-1 px-2 py-1 rounded-full backdrop-blur-sm border border-cam-border bg-cam-chip">
             <div className={`w-2 h-2 rounded-full ${
-              (isInCooldown || isDuplicate) ? 'bg-danger-weak-ink' : 'bg-ok-weak-ink animate-pulse'
+              (isInCooldown || isDuplicate) ? 'bg-danger' : 'bg-ok animate-pulse'
             }`}></div>
             {isInCooldown ? (
               <span className="text-cam-ink text-xs font-mono font-bold" dir="ltr">{cooldownTimeLeft}s</span>
