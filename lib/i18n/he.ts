@@ -215,7 +215,7 @@ export const he: Record<TranslationKey, string> = {
 
   'palletVerify.uniformContinueMix': 'לא — יש גם מוצרים אחרים',
 
-  'palletVerify.fewerThan4': 'פחות מ-4 קופסאות? הקש לסיום',
+  'palletVerify.doneScanning': 'סיימת לסרוק? הזן את סך הקופסאות',
   'palletVerify.uniformPlaceholder': 'הזן כמות',
   'palletVerify.uniformSet': 'קבע',
   'palletVerify.confirmPalletBtn': 'אשר משטח {current}',
@@ -240,6 +240,7 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.cancelSingle': 'בטל — המשך לסרוק',
   'palletVerify.deferredCountTitle': 'כמה קופסאות יש על המשטח?',
   'palletVerify.deferredCountHint': 'הזן את הסך הכל — כולל {scanned} שכבר נסרקו.',
+  'palletVerify.singleMultiplyNote': 'כל קופסה במשקל {weight} ק״ג — נכפיל בסך שתזין. אין צורך לסרוק את השאר.',
   'palletVerify.deferredCountTooLow': 'הסך הכל חייב להיות לפחות {min} (קופסאות שכבר נסרקו).',
   'palletVerify.deleteScan': 'מחק סריקה זו',
 
