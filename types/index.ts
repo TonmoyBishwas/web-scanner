@@ -276,6 +276,13 @@ export interface MultiPalletBoxScan {
   weight: number;
   expiry: string;
   scanned_at: string;
+  /**
+   * Public URL of the box-sticker photo in Supabase Storage, written to
+   * `box_inventory.box_image_url` by the bot. Uploaded in the background the
+   * moment the sticker is captured, so it is absent when the upload failed or
+   * has not landed yet — the box is stored either way.
+   */
+  image_url?: string;
 }
 
 export interface MultiPalletSession {

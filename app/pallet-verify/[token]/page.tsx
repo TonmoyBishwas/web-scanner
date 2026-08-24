@@ -679,6 +679,10 @@ export default function PalletVerifyPage({
       if (imageData) {
         const capturedIndex = processedRef.current.size - 1; // index of this box
         runOcr(barcode, imageData, capturedIndex);
+        // Archive the same frame. Done here rather than after OCR so a box
+        // whose OCR fails — the one the worker will retype by hand, and the
+        // one most worth having a picture of — still keeps its photo.
+        archiveStickerPhoto(barcode, imageData, 'pallet');
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -758,6 +762,55 @@ export default function PalletVerifyPage({
       return filtered;
     });
     processedRef.current.delete(barcode);
+  }
+
+  // ── Sticker photo archive ──
+  // The captured frame IS the sticker, and it is the only record of what was
+  // actually printed on the box: the barcode carries no weight/name/expiry, so
+  // every one of those values came from reading this picture. It used to be
+  // handed to OCR and dropped, which left a weight dispute weeks later with
+  // nothing to look at. Upload it in the background and keep the URL on the
+  // box; the bot writes it to box_inventory.box_image_url (every bot insert
+  // path already reads an `image_url` field — this is the missing sender).
+  //
+  // Deliberately fire-and-forget. A slow or failed upload must never hold up
+  // scanning or block a pallet, and a box with no photo behaves exactly as it
+  // did before this existed.
+  const uploadedStickersRef = useRef<Set<string>>(new Set());
+
+  function archiveStickerPhoto(
+    barcode: string,
+    imageData: string,
+    target: 'pallet' | 'loose',
+  ) {
+    if (!barcode || !imageData) return;
+    // Guards a retried OCR, a re-render, and StrictMode's double-invoked
+    // updater — all three would otherwise upload the same frame twice.
+    if (uploadedStickersRef.current.has(barcode)) return;
+    uploadedStickersRef.current.add(barcode);
+
+    fetch('/api/cloudinary/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image: imageData,
+        barcode,
+        document_number: sessionRef.current?.document_number,
+        image_type: 'box',
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data?.success || !data.secure_url) throw new Error(data?.error || 'no url');
+        const patch = (prev: BoxScan[]) =>
+          prev.map((b) => (b.barcode === barcode ? { ...b, image_url: data.secure_url } : b));
+        if (target === 'loose') setLooseBoxes(patch);
+        else setScannedBoxes(patch);
+      })
+      .catch(() => {
+        // Let a later retry try again rather than marking this frame done.
+        uploadedStickersRef.current.delete(barcode);
+      });
   }
 
   // ── OCR helper ──
@@ -865,6 +918,11 @@ export default function PalletVerifyPage({
           setDetectedType(detectType(updated, acceptedMerges));
           // Check if the box that just finished OCR triggers a uniform-pair prompt.
           maybeTriggerUniformPrompt(updated, resolvedBarcode);
+          // Manual capture had no decoded barcode at scan time, so this is the
+          // first moment the photo can be filed under the box's real identity.
+          // (Bar-scanned boxes already uploaded at detection; the ref guard
+          // makes a second call here a no-op either way.)
+          if (manual) archiveStickerPhoto(resolvedBarcode, imageData, 'pallet');
           return updated;
         });
       })
@@ -970,7 +1028,10 @@ export default function PalletVerifyPage({
         image_data: imageData,
       };
       setLooseBoxes((prev) => [...prev, box]);
-      if (imageData) runLooseOcr(barcode, imageData);
+      if (imageData) {
+        runLooseOcr(barcode, imageData);
+        archiveStickerPhoto(barcode, imageData, 'loose');
+      }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
@@ -1305,6 +1366,10 @@ export default function PalletVerifyPage({
             needsReview = true;
           }
 
+          // See the pallet-phase note: a manual capture's real identity only
+          // exists once OCR has read the printed digits.
+          if (manual) archiveStickerPhoto(resolvedBarcode, imageData, 'loose');
+
           return prev.map((b, i) => {
             if (i !== idx) return b;
             return {
@@ -1341,7 +1406,10 @@ export default function PalletVerifyPage({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           token,
-          scanned_boxes: looseBoxes.map(({ ocr_status: _, ...box }) => box),
+          // image_data (base64) is stripped like the pallet payload does —
+          // it was shipping the full frame of every loose box to the server
+          // and on to the bot, which never had a use for it. image_url does.
+          scanned_boxes: looseBoxes.map(({ ocr_status: _, image_data: _img, ...box }) => box),
           // Split jobs only: which worker is closing the loose-box task.
           // Ignored server-side on a single-scanner session. Task 7's
           // ownership guard 403s a split submit without this (not_your_loose_task).
