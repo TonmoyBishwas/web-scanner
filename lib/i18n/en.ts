@@ -482,6 +482,7 @@ export const en = {
   'components.settings.sound': 'Sound',
   'components.settings.vibration': 'Vibration',
   'components.settings.hardwareTrigger': 'Tap / remote capture',
+  'components.settings.cameraSwitch': 'Camera switch button',
   'components.photoGallery.processing': 'Processing…',
   'components.photoGallery.empty2': 'No photos captured yet',
   'components.photoGallery.galleryTitle': 'Photo Gallery ({count})',

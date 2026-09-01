@@ -7,17 +7,23 @@ export interface SettingsState {
   // keystroke. Default OFF so a stray tap can't fire a capture for workers who
   // don't want it. The on-screen capture button is always available regardless.
   hardwareTriggerEnabled: boolean;
+  // The camera-switch chip on the live camera. Default OFF: workers kept
+  // knocking it and landing on the ultrawide/front lens mid-pallet. Managers
+  // can turn it back on from the drawer's Settings screen when a device
+  // genuinely needs a different lens.
+  cameraSwitchEnabled: boolean;
   _hydrated: boolean;
   toggleSound: () => void;
   toggleVibration: () => void;
   toggleHardwareTrigger: () => void;
+  toggleCameraSwitch: () => void;
   hydrate: () => void;
 }
 
 const STORAGE_KEY = 'scanner-settings';
 
 function saveSettings(
-  state: Pick<SettingsState, 'soundEnabled' | 'vibrationEnabled' | 'hardwareTriggerEnabled'>
+  state: Pick<SettingsState, 'soundEnabled' | 'vibrationEnabled' | 'hardwareTriggerEnabled' | 'cameraSwitchEnabled'>
 ) {
   if (typeof window === 'undefined') return;
   try {
@@ -25,6 +31,7 @@ function saveSettings(
       soundEnabled: state.soundEnabled,
       vibrationEnabled: state.vibrationEnabled,
       hardwareTriggerEnabled: state.hardwareTriggerEnabled,
+      cameraSwitchEnabled: state.cameraSwitchEnabled,
     }));
   } catch {}
 }
@@ -34,6 +41,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   soundEnabled: true,
   vibrationEnabled: true,
   hardwareTriggerEnabled: false,
+  cameraSwitchEnabled: false,
   _hydrated: false,
 
   hydrate: () => {
@@ -46,6 +54,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
           soundEnabled: saved.soundEnabled ?? true,
           vibrationEnabled: saved.vibrationEnabled ?? true,
           hardwareTriggerEnabled: saved.hardwareTriggerEnabled ?? false,
+          cameraSwitchEnabled: saved.cameraSwitchEnabled ?? false,
           _hydrated: true,
         });
       } else {
@@ -75,6 +84,14 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   toggleHardwareTrigger: () => {
     set(s => {
       const next = { ...s, hardwareTriggerEnabled: !s.hardwareTriggerEnabled };
+      saveSettings(next);
+      return next;
+    });
+  },
+
+  toggleCameraSwitch: () => {
+    set(s => {
+      const next = { ...s, cameraSwitchEnabled: !s.cameraSwitchEnabled };
       saveSettings(next);
       return next;
     });

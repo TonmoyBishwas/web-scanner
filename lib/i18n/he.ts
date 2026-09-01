@@ -486,6 +486,7 @@ export const he: Record<TranslationKey, string> = {
   'components.settings.sound': 'צליל',
   'components.settings.vibration': 'רטט',
   'components.settings.hardwareTrigger': 'צילום בנגיעה / שלט',
+  'components.settings.cameraSwitch': 'כפתור החלפת מצלמה',
   'components.photoGallery.processing': 'מעבד…',
   'components.photoGallery.empty2': 'טרם צולמו תמונות',
   'components.photoGallery.galleryTitle': 'גלריית תמונות ({count})',

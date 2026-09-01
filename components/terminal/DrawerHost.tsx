@@ -12,12 +12,13 @@ import { useT } from '@/lib/i18n';
 type Screen = 'docs' | 'warehouses' | 'settings' | null;
 
 // Designed settings screen hosting the REAL toggles (sound / vibration /
-// hardware trigger) as design-style 52px rows with a switch.
+// hardware trigger / camera-switch chip) as design-style 52px rows with a
+// switch.
 function SettingsScreen({ onBack }: { onBack: () => void }) {
   const tr = useT();
   const {
-    soundEnabled, vibrationEnabled, hardwareTriggerEnabled,
-    toggleSound, toggleVibration, toggleHardwareTrigger,
+    soundEnabled, vibrationEnabled, hardwareTriggerEnabled, cameraSwitchEnabled,
+    toggleSound, toggleVibration, toggleHardwareTrigger, toggleCameraSwitch,
   } = useSettingsStore();
 
   const row = (icon: string, label: string, on: boolean, onToggle: () => void) => (
@@ -42,6 +43,7 @@ function SettingsScreen({ onBack }: { onBack: () => void }) {
         {row('volume_up', tr('components.settings.sound'), soundEnabled, toggleSound)}
         {row('vibration', tr('components.settings.vibration'), vibrationEnabled, toggleVibration)}
         {row('center_focus_strong', tr('components.settings.hardwareTrigger'), hardwareTriggerEnabled, toggleHardwareTrigger)}
+        {row('cameraswitch', tr('components.settings.cameraSwitch'), cameraSwitchEnabled, toggleCameraSwitch)}
       </div>
     </ScreenOverlay>
   );

@@ -562,6 +562,10 @@ export async function POST(request: NextRequest) {
           // Multi-invoice delivery: stamp each box with ITS invoice number so
           // the bot writes the right box_inventory.invoice_number per box.
           document_number: findInvoiceDoc(b.item_name_hebrew || '', b.item_name || '', session.ocr_data, session.document_number),
+          // Sticker photo, uploaded client-side while scanning. The bot writes
+          // it to box_inventory.box_image_url; null when the upload failed,
+          // which must never hold up a pallet.
+          image_url: b.image_url ?? null,
         })),
       };
     } else {
@@ -612,6 +616,8 @@ export async function POST(request: NextRequest) {
           // Multi-invoice delivery: the box's own invoice number (a single-item
           // pallet in a merged delivery still belongs to one specific invoice).
           document_number: findInvoiceDoc(b.item_name_hebrew || '', b.item_name || '', session.ocr_data, session.document_number),
+          // See the mix branch — sticker photo for box_inventory.box_image_url.
+          image_url: b.image_url ?? null,
         })),
       };
     }
