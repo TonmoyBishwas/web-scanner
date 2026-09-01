@@ -123,6 +123,9 @@ export function SmartScanner({
 }: SmartScannerProps) {
   const tr = useT();
   const hardwareTriggerEnabled = useSettingsStore((s) => s.hardwareTriggerEnabled);
+  // Hidden by default — see `cameraSwitchEnabled` in the settings store.
+  // Cycling lenses stays available via the drawer's Settings screen.
+  const cameraSwitchEnabled = useSettingsStore((s) => s.cameraSwitchEnabled);
   const [isSupported, setIsSupported] = useState<boolean | null>(null);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [currentCameraIndex, setCurrentCameraIndex] = useState(0);
@@ -1021,8 +1024,8 @@ export function SmartScanner({
             )}
           </div>
         </div>
-        {/* Camera switch button */}
-        {cameras.length > 1 && (
+        {/* Camera switch button — off unless enabled in Settings */}
+        {cameraSwitchEnabled && cameras.length > 1 && (
           <div className="absolute top-2 right-2 pointer-events-auto">
             <button
               onClick={switchCamera}
