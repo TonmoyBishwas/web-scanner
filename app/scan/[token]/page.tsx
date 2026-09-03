@@ -19,6 +19,8 @@ import { PalletIcon } from '@/components/terminal/MI';
 import { Toast, useLockToast } from '@/components/terminal/Toast';
 import { useDrawerHost } from '@/components/terminal/DrawerHost';
 import { PalletsBrowser } from '@/components/terminal/PalletsBrowser';
+import { CartonCreator } from '@/components/terminal/CartonCreator';
+import { LabelsBrowser } from '@/components/terminal/LabelsBrowser';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
 import { queueScan, getQueue, replayQueue } from '@/lib/offline-queue';
@@ -99,6 +101,11 @@ export default function ScanPage({
   );
   const { toast: infoToast, showToast: showInfoToast, showLockToast } = useLockToast(tr('terminal.lockedToast'));
   const [showPallets, setShowPallets] = useState(false);
+  // צור קרטון / מדבקות — mint a sticker for a carton whose own label is
+  // missing or unreadable, then print it. Neither writes stock: the printed
+  // sticker is scanned in through this same page.
+  const [showCartonCreator, setShowCartonCreator] = useState(false);
+  const [showLabels, setShowLabels] = useState(false);
   const [manualEntries, setManualEntries] = useState<ManualEntryData[]>([]);
 
   // UI drawers & panels
@@ -992,7 +999,11 @@ export default function ScanPage({
           tint: 'neutral' as const, onPress: () => setShowPhotoGallery(true),
         }]
       : []),
-    { id: 'labels', icon: 'label', label: tr('terminal.toolLabels'), tint: 'neutral', locked: true },
+    {
+      id: 'create', icon: 'add', label: tr('terminal.toolCreateCarton'), tint: 'blue', iconColor: '#33b1f0',
+      onPress: () => setShowCartonCreator(true),
+    },
+    { id: 'labels', icon: 'label', label: tr('terminal.toolLabels'), tint: 'neutral', onPress: () => setShowLabels(true) },
     { id: 'warehouses', icon: 'warehouse', label: tr('terminal.toolWarehouses'), tint: 'neutral', locked: true },
     { id: 'pallets', icon: <PalletIcon />, label: tr('terminal.toolPallets'), tint: 'neutral', onPress: () => setShowPallets(true) },
     {
@@ -1123,6 +1134,25 @@ export default function ScanPage({
       <Toast toast={infoToast} />
       {drawer.node}
       {showPallets && <PalletsBrowser token={token} onBack={() => setShowPallets(false)} />}
+      {showCartonCreator && session && (
+        <CartonCreator
+          token={token}
+          items={session.invoice_items}
+          onBack={() => setShowCartonCreator(false)}
+          onCreated={(count) => {
+            setShowCartonCreator(false);
+            setShowLabels(true);
+            showInfoToast(tr('carton.created', { count }), 'label');
+          }}
+        />
+      )}
+      {showLabels && (
+        <LabelsBrowser
+          token={token}
+          documentNumber={session?.document_number}
+          onBack={() => setShowLabels(false)}
+        />
+      )}
 
       {/* ── Invoice Drawer ────────────────────────────────────── */}
       {session && (
