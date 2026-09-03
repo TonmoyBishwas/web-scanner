@@ -186,7 +186,7 @@ could be swallowed outright.
 
 ## API Routes (`app/api/`)
 
-**25 routes total.** See [API_REFERENCE.md](API_REFERENCE.md) for full request/response docs.
+**27 routes total.** See [API_REFERENCE.md](API_REFERENCE.md) for full request/response docs.
 
 ### Carton Scan (RECEIVE/ISSUE)
 | Route | Purpose |
