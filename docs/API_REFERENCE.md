@@ -1,6 +1,6 @@
 # Web Scanner API Reference
 
-Base URL: `/api` — **25 route files** in `app/api/`.
+Base URL: `/api` — **27 route files** in `app/api/`.
 
 All routes are Next.js App Router route handlers. All mutations (POST routes that modify a session or write persistent records) use `withLock(token, ...)` from `lib/redis.ts` to prevent race conditions. As of the 2026-06-30 Supabase migration, locking was extended to the previously-unlocked `multi-pallet-complete`, `multi-pallet-loose-complete`, and `manual-entry` routes; `withLock` is now a Postgres `locks` table (`acquire_lock` / `release_lock` RPCs), same 10s TTL + 20×250ms retry as the old Redis lock.
 
@@ -562,6 +562,32 @@ means `In Stock` / `Partially Issued` / `Verified`.
 - `GET /api/documents?token=…` — plus `category`, `month`, `q`, `page`
 - `GET /api/documents/detail?token=…&source=…&id=…` — invoice photo, lines with
   their gaps (פער), pallets hand-off, and the Type B voice-note transcript
+
+### 25. Carton Labels (צור קרטון / מדבקות)
+
+- `GET /api/carton-labels?token=…&scope=delivery|all&status=all|created|printed`
+  — the Labels list. `scope=delivery` (default) filters to the session's own
+  document; an ISSUE session has none and falls back to `all`.
+- `POST /api/carton-labels` — mint stickers for one invoice line.
+  Body: `item_code`, `item_name_hebrew`/`_english`, `weight_kg` (nullable),
+  `quantity` (1–500), `production_date`, `expiry_date`, `notes`,
+  `print_barcode` (default **true**). Returns **one row per carton**, each with
+  its own barcode — the inbound path dedupes on barcode, so shared codes would
+  collapse into a single box.
+- `DELETE /api/carton-labels?token=…&batch=…` — drop a whole batch.
+- `GET /api/carton-labels/print?token=…&batches=…` — feeds the print sheet.
+  Addressed by batch, not by label id: a 200-id URL exceeds what some browsers
+  accept.
+- `POST /api/carton-labels/print` — mark `{batch_ids | ids}` printed and bump
+  `print_count`. Records the hand-off to the browser's print dialog; the
+  browser never reports whether paper actually came out.
+
+⚠️ These write, unlike the other drawer routes — but only to `carton_labels`.
+**Creating a sticker books no stock**: it writes no delivery, pallet or box row.
+The printed sticker goes on the carton and is scanned in through the normal
+receiving flow, which is why every sticker carries a real Code 128 barcode
+(`lib/code128.ts`; `28` + YYMMDD + 8 digits, the GS1 internal prefix range, so a
+minted code can never collide with a supplier GTIN).
 
 ---
 

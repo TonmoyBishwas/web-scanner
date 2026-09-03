@@ -27,6 +27,8 @@ import { DoneOverlay } from '@/components/terminal/DoneOverlay';
 import { Toast, useLockToast } from '@/components/terminal/Toast';
 import { useDrawerHost } from '@/components/terminal/DrawerHost';
 import { PalletsBrowser } from '@/components/terminal/PalletsBrowser';
+import { CartonCreator } from '@/components/terminal/CartonCreator';
+import { LabelsBrowser } from '@/components/terminal/LabelsBrowser';
 import SplitJobScreen, { SPLIT_CLAIM_ERROR_KEYS } from '@/components/terminal/SplitJobScreen';
 import { installDebugLogCapture } from '@/lib/debug-log';
 import { LanguageContext, useLangDir, t } from '@/lib/i18n';
@@ -336,6 +338,11 @@ export default function PalletVerifyPage({
   const drawer = useDrawerHost(token);
   const { toast, showToast, showLockToast } = useLockToast(tr('terminal.lockedToast'));
   const [showPallets, setShowPallets] = useState(false);
+  // צור קרטון / מדבקות — mint and print a sticker for a carton that arrived
+  // with none. Both are label-only: no stock is written here, the printed
+  // sticker is scanned onto the pallet through the normal flow.
+  const [showCartonCreator, setShowCartonCreator] = useState(false);
+  const [showLabels, setShowLabels] = useState(false);
   const [activeExpanded, setActiveExpanded] = useState(false);
   const [pendingNextPallet, setPendingNextPallet] = useState<number | null>(null);
 
@@ -1236,8 +1243,11 @@ export default function PalletVerifyPage({
   // Terminal tool dock: locked chips (no backend) + the real actions.
   function buildDockChips(opts: { gap: () => void }): ToolChip[] {
     return [
-      { id: 'create', icon: 'add', label: tr('terminal.toolCreateCarton'), tint: 'blue', iconColor: '#33b1f0', locked: true },
-      { id: 'labels', icon: 'label', label: tr('terminal.toolLabels'), tint: 'neutral', locked: true },
+      {
+        id: 'create', icon: 'add', label: tr('terminal.toolCreateCarton'), tint: 'blue', iconColor: '#33b1f0',
+        onPress: () => setShowCartonCreator(true),
+      },
+      { id: 'labels', icon: 'label', label: tr('terminal.toolLabels'), tint: 'neutral', onPress: () => setShowLabels(true) },
       { id: 'warehouses', icon: 'warehouse', label: tr('terminal.toolWarehouses'), tint: 'neutral', locked: true },
       { id: 'pallets', icon: <PalletIcon />, label: tr('terminal.toolPallets'), tint: 'neutral', onPress: () => setShowPallets(true) },
       {
@@ -1261,6 +1271,32 @@ export default function PalletVerifyPage({
   const palletsBrowser = showPallets ? (
     <PalletsBrowser token={token} onBack={() => setShowPallets(false)} />
   ) : null;
+
+  // צור קרטון + מדבקות overlays. Rendered next to `palletsBrowser` at every
+  // phase return so they stay reachable from the dock in each phase.
+  const cartonOverlays = (
+    <>
+      {showCartonCreator && (
+        <CartonCreator
+          token={token}
+          items={session?.ocr_data ?? []}
+          onBack={() => setShowCartonCreator(false)}
+          onCreated={(count) => {
+            setShowCartonCreator(false);
+            setShowLabels(true);
+            showToast(tr('carton.created', { count }), 'label');
+          }}
+        />
+      )}
+      {showLabels && (
+        <LabelsBrowser
+          token={token}
+          documentNumber={session?.document_number}
+          onBack={() => setShowLabels(false)}
+        />
+      )}
+    </>
+  );
 
   // Full-screen captured-image viewer (used for OCR-failed Diagnostics).
   // fixed/inset-0 means it overlays whatever phase is currently rendering.
@@ -2160,6 +2196,7 @@ export default function PalletVerifyPage({
         <Toast toast={toast} />
         {drawer.node}
         {palletsBrowser}
+        {cartonOverlays}
         {imageModal}
         {debugPanel}
       </div>
@@ -2600,6 +2637,7 @@ export default function PalletVerifyPage({
       <Toast toast={toast} />
       {drawer.node}
       {palletsBrowser}
+      {cartonOverlays}
       {imageModal}
       {pendingForceConfirm && (
         // Terminal design "פער מול התעודה" — amber discrepancy card with

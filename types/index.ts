@@ -402,3 +402,43 @@ export interface ScanStoreState {
   setError: (error: string | null) => void;
   clear: () => void;
 }
+
+// ─── Carton labels (New carton / Labels) ─────────────────────────────────────
+
+/** Sticker sizes the Labels screen can print. */
+export type LabelSize = '10x10' | '10x15' | 'a4';
+
+/**
+ * One warehouse-minted box sticker = one physical carton.
+ *
+ * Created by the New carton tool for a box that arrived with a missing or
+ * unreadable supplier sticker. Purely a label record — it books no stock; the
+ * printed sticker is scanned into the delivery through the normal inbound path.
+ */
+export interface CartonLabel {
+  id: string;
+  /** Ties together the stickers created in one New carton submission. */
+  batch_id: string;
+  /** 16-digit minted barcode (GS1 internal prefix 28 — never a supplier GTIN). */
+  barcode: string;
+  /** Human-readable serial printed on the sticker, e.g. C-260903-4F2A. */
+  serial: string;
+  session_token: string | null;
+  document_number: string | null;
+  item_code: string | null;
+  item_name_hebrew: string | null;
+  item_name_english: string | null;
+  weight_kg: number | null;
+  /** Size of the batch this sticker belongs to (same on every row of a batch). */
+  quantity: number;
+  production_date: string | null;
+  expiry_date: string | null;
+  notes: string | null;
+  /** False when the worker chose a barcode-free sticker (default is true). */
+  print_barcode: boolean;
+  label_size: LabelSize;
+  status: 'created' | 'printed';
+  print_count: number;
+  printed_at: string | null;
+  created_at: string;
+}

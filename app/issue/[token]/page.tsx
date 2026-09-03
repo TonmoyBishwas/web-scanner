@@ -22,6 +22,7 @@ import { PalletIcon } from '@/components/terminal/MI';
 import { Toast, useLockToast } from '@/components/terminal/Toast';
 import { useDrawerHost } from '@/components/terminal/DrawerHost';
 import { PalletsBrowser } from '@/components/terminal/PalletsBrowser';
+import { LabelsBrowser } from '@/components/terminal/LabelsBrowser';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
 
@@ -378,6 +379,10 @@ function IssueRender({
   const drawer = useDrawerHost(token);
   const { toast: infoToast, showToast: showInfoToast, showLockToast } = useLockToast();
   const [showPallets, setShowPallets] = useState(false);
+  // מדבקות is reachable here so a worker can reprint a carton sticker mid-job.
+  // צור קרטון stays locked on the ISSUE page: it labels goods being received
+  // against an invoice line, which an outbound session has no business doing.
+  const [showLabels, setShowLabels] = useState(false);
 
   // Loading
   if (phase === 'loading') {
@@ -481,7 +486,7 @@ function IssueRender({
 
   const issueDockChips: ToolChip[] = [
     { id: 'create', icon: 'add', label: tr('terminal.toolCreateCarton'), tint: 'blue', iconColor: '#33b1f0', locked: true },
-    { id: 'labels', icon: 'label', label: tr('terminal.toolLabels'), tint: 'neutral', locked: true },
+    { id: 'labels', icon: 'label', label: tr('terminal.toolLabels'), tint: 'neutral', onPress: () => setShowLabels(true) },
     { id: 'warehouses', icon: 'warehouse', label: tr('terminal.toolWarehouses'), tint: 'neutral', locked: true },
     { id: 'pallets', icon: <PalletIcon />, label: tr('terminal.toolPallets'), tint: 'neutral', onPress: () => setShowPallets(true) },
     { id: 'delete', icon: 'delete_sweep', label: tr('terminal.toolDelete'), tint: 'red', locked: true },
@@ -563,6 +568,13 @@ function IssueRender({
       <Toast toast={infoToast} />
       {drawer.node}
       {showPallets && <PalletsBrowser token={token} onBack={() => setShowPallets(false)} />}
+      {showLabels && (
+        <LabelsBrowser
+          token={token}
+          documentNumber={session?.document_number}
+          onBack={() => setShowLabels(false)}
+        />
+      )}
 
       {/* Box detail modal */}
       {phase === 'box_detail' && currentBox && (
