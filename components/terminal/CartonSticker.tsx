@@ -61,7 +61,18 @@ export function CartonSticker({ label, fontSize, className = '', style }: Carton
       }}
     >
       {/* Product name — the field OCR matches against the invoice line. */}
-      <div style={{ fontWeight: 900, fontSize: '1.7em', lineHeight: 1.1, wordBreak: 'break-word' }}>
+      <div
+        style={{
+          fontWeight: 900,
+          fontSize: '1.7em',
+          lineHeight: 1.1,
+          wordBreak: 'break-word',
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+        }}
+      >
         {name}
       </div>
 
@@ -97,9 +108,13 @@ export function CartonSticker({ label, fontSize, className = '', style }: Carton
         ) : null}
       </div>
 
-      {/* Bars last so they sit at the bottom edge of the sticker, where a
-          hand-held scanner is aimed. */}
-      <div style={{ marginTop: 'auto' }}>
+      {/* The bars sit immediately under the text, NOT pushed to the bottom of
+          the label. Aiming at the barcode is what frames the shot, and the
+          scanner OCRs that same frame for the product, weight and dates — a
+          gap between them means the worker scans a barcode with no readable
+          text in view, and the box lands as "needs review". Any spare label
+          height falls below this block instead of between it and the text. */}
+      <div style={{ marginTop: '0.35em' }}>
         {label.print_barcode ? (
           <>
             <Barcode128 value={label.barcode} height={34} cssHeight="2.6em" quietModules={10} />
