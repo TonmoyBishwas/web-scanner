@@ -1,4 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import {
+  BarcodeFormat,
+  BinaryBitmap,
+  DecodeHintType,
+  HybridBinarizer,
+  MultiFormatReader,
+  RGBLuminanceSource,
+} from '@zxing/library';
 import { encodeCode128, encodeCode128Values, code128ModuleCount } from './code128';
 
 /**
@@ -52,5 +60,48 @@ describe('encodeCode128', () => {
     const widths = encodeCode128('2826090312345678')!;
     // Start C + 8 pairs + checksum = 10 symbols, then the stop.
     expect(code128ModuleCount(widths)).toBe(10 * 11 + 13);
+  });
+});
+
+/**
+ * The encoder's real contract is not "produces plausible bars" — it is "a
+ * camera reads back exactly what we minted". These render the bars into a
+ * luminance bitmap and decode them with ZXing, the same library the scanner
+ * falls back to in the browser.
+ */
+describe('round-trip through a real Code 128 decoder', () => {
+  function decode(text: string, scale = 3): string {
+    const widths = encodeCode128(text)!;
+    const quiet = 12;
+    const modules = code128ModuleCount(widths) + quiet * 2;
+    const w = modules * scale;
+    const h = 40;
+    // RGBLuminanceSource treats a Uint8ClampedArray as one luminance byte per
+    // pixel (an RGBA buffer silently decodes as noise).
+    const lum = new Uint8ClampedArray(w * h).fill(255);
+    let x = quiet;
+    widths.forEach((run, i) => {
+      if (i % 2 === 0) {
+        for (let m = 0; m < run * scale; m++) {
+          const px = x * scale + m;
+          for (let y = 0; y < h; y++) lum[y * w + px] = 0;
+        }
+      }
+      x += run;
+    });
+    const reader = new MultiFormatReader();
+    reader.setHints(new Map([[DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128]]]));
+    const bitmap = new BinaryBitmap(new HybridBinarizer(new RGBLuminanceSource(lum, w, h)));
+    return reader.decode(bitmap).getText();
+  }
+
+  it.each([
+    '2826090312982430', // a minted carton barcode
+    '2800000000000000', // the preview placeholder
+    '12345678',         // pure subset C
+    '1234567',          // odd tail: subset C then B
+    'C-260903-GN81',    // a serial, i.e. the subset-B path
+  ])('decodes %s back to itself', value => {
+    expect(decode(value)).toBe(value);
   });
 });

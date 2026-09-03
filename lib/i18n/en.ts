@@ -831,6 +831,7 @@ export const en = {
   'labels.error': 'Could not load the labels.',
   'labels.sessionExpired': 'This session has expired. Ask for a fresh link.',
   'labels.delete': 'Delete',
+  'labels.cancelDelete': 'Cancel',
   'labels.deleted': 'Deleted',
   'labels.deleteFailed': 'Could not delete those stickers.',
   'labels.weightLabel': 'Weight',

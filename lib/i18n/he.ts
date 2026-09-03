@@ -835,6 +835,7 @@ export const he: Record<TranslationKey, string> = {
   'labels.error': 'טעינת המדבקות נכשלה.',
   'labels.sessionExpired': 'הפעילות פגה. בקש קישור חדש.',
   'labels.delete': 'מחק',
+  'labels.cancelDelete': 'ביטול',
   'labels.deleted': 'נמחק',
   'labels.deleteFailed': 'מחיקת המדבקות נכשלה.',
   'labels.weightLabel': 'משקל',

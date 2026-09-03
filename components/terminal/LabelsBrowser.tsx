@@ -218,7 +218,10 @@ export function LabelsBrowser({ token, documentNumber, onBack }: LabelsBrowserPr
                   size === s.id ? 'bg-brand text-white' : 'text-ink-muted'
                 }`}
               >
-                {s.name}
+                {/* Without an explicit LTR run, bidi reorders "10×15" to read
+                    "15×10" inside the RTL screen — and that is a physical
+                    label dimension the worker has to get right. */}
+                <span dir="ltr">{s.name}</span>
               </button>
             ))}
           </div>
@@ -345,7 +348,7 @@ export function LabelsBrowser({ token, documentNumber, onBack }: LabelsBrowserPr
                         onClick={() => setConfirmDelete(null)}
                         className="flex-1 py-[9px] text-[11.5px] font-extrabold text-ink-muted border-s border-line"
                       >
-                        {tr('labels.clearSelection')}
+                        {tr('labels.cancelDelete')}
                       </button>
                     </>
                   ) : (
