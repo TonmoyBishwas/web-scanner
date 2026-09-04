@@ -87,8 +87,9 @@ export function LabelSheet() {
       let tallest = 0;
       cells.forEach(cell => { tallest = Math.max(tallest, cell.getBoundingClientRect().height); });
       if (tallest <= 0) return;
-      // Round up to a whole mm and cap at the stock height.
-      const mm = Math.min(Math.ceil(pxToMm(tallest)), sheet.maxH);
+      // Round up to a whole mm, cap at the stock height, and keep a floor so a
+      // half-laid-out first measurement can never eject a sliver of a label.
+      const mm = Math.min(Math.max(Math.ceil(pxToMm(tallest)), 30), sheet.maxH);
       setPageHeightMm(prev => (prev === mm ? prev : mm));
     });
 
