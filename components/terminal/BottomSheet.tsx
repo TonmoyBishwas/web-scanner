@@ -34,12 +34,12 @@ const DEFAULT_SNAPS: [number, number, number] = [0.106, 0.419, 0.87];
 
 /**
  * Camera height the sheet must never eat into at peek/mid — enough for the
- * corner scan frame (150px) plus its label and top padding. The sheet floats
- * over the live camera, so growing it to fit the footer costs the worker the
- * thing they are actually aiming with. Camera wins; the footer moves to the
- * tall snap when there isn't room for both.
+ * corner scan frame (196px) plus its label and padding, i.e. SmartScanner's
+ * CORNER_BAND_PX. The sheet floats over the live camera, so growing it to fit
+ * the footer costs the worker the thing they are actually aiming with. Camera
+ * wins; the footer moves to the tall snap when there isn't room for both.
  */
-const MIN_CAMERA_PX = 190;
+const MIN_CAMERA_PX = 240;
 
 /** px/ms past which a release counts as a flick and advances one snap point. */
 const FLICK_VELOCITY = 0.35;
@@ -60,6 +60,9 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
 ) {
   const tr = useT();
   const rootRef = useRef<HTMLDivElement>(null);
+  // The camera region the sheet floats over (its offsetParent), cached so the
+  // unmount cleanup can still reach it.
+  const hostRef = useRef<HTMLElement | null>(null);
   const grabRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLDivElement>(null);
@@ -214,6 +217,32 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
       window.visualViewport?.removeEventListener('resize', applyMeasured);
     };
   }, [measure, snapPx, hasToolbar, hasFooter]);
+
+  /**
+   * Publish the live sheet height onto the camera region as `--sheet-h`, so the
+   * scan frame can centre itself in the strip of camera that is still visible.
+   *
+   * A CSS variable rather than a callback prop on purpose: the height changes
+   * on every pointermove of a drag, and re-rendering the live-camera component
+   * at that rate is not affordable. `--sheet-h-dur` mirrors the sheet's own
+   * height transition so the frame settles WITH the sheet, and is 0s mid-drag
+   * so it tracks the finger instead of lagging behind it.
+   */
+  useIsoLayoutEffect(() => {
+    const parent = rootRef.current?.offsetParent as HTMLElement | null;
+    if (!parent) return;
+    hostRef.current = parent;
+    parent.style.setProperty('--sheet-h', `${height ?? 0}px`);
+    parent.style.setProperty('--sheet-h-dur', dragging ? '0s' : '.26s');
+  }, [height, dragging]);
+
+  // Leave the camera region clean on unmount — `offsetParent` is already null
+  // by then, hence the cached host.
+  useEffect(() => () => {
+    const host = hostRef.current;
+    host?.style.removeProperty('--sheet-h');
+    host?.style.removeProperty('--sheet-h-dur');
+  }, []);
 
   // Show the footer exactly when there is room for it (mid/tall), hide it when
   // there isn't (peek, and mid-drag on the way down).
