@@ -57,6 +57,14 @@ interface Capture {
   count: number; // cartons of this item on THIS pallet
   sample_barcode: string;
   scanned_weight: number; // OCR'd weight of the sample box (soft cross-check)
+  /**
+   * Shelf-life and lot read off the ONE sample carton. Weight-type non-meat
+   * (fish, produce) ships in identical fixed-weight cartons, so the sample's
+   * sticker speaks for the whole lot — which is the only way this ledger gets
+   * any expiry data at all.
+   */
+  expiry_date: string;
+  supplier_batch: string;
 }
 
 /** A scanned box whose label OCR didn't confidently match an invoice line. */
@@ -65,6 +73,8 @@ interface PendingPick {
   scanned_weight: number;
   he: string;
   en: string;
+  expiry_date?: string;
+  supplier_batch?: string;
 }
 
 const CAPTURE_CACHE_PREFIX = 'nm-captures';
@@ -186,6 +196,8 @@ export function NonMeatTypeAFlow({
           count: remaining, // pre-fill: usually the whole item is on this pallet
           sample_barcode: pick.sample_barcode,
           scanned_weight: pick.scanned_weight,
+          expiry_date: pick.expiry_date || '',
+          supplier_batch: pick.supplier_batch || '',
         },
       ]);
     },
@@ -211,12 +223,18 @@ export function NonMeatTypeAFlow({
           const he = data?.ocr_data?.product_name_hebrew || '';
           const en = data?.ocr_data?.product_name_english || '';
           const wt = data?.ocr_data?.weight_kg ?? 0;
+          const exp = data?.ocr_data?.expiry_date || '';
+          const lot = data?.ocr_data?.supplier_batch || '';
           const match = matchInvoiceItem(he, en, invoiceRef.current as InvoiceItem[]);
+          const pick = {
+            sample_barcode: sampleBarcode, scanned_weight: wt, he, en,
+            expiry_date: exp, supplier_batch: lot,
+          };
           if (match) {
-            addCapture(match, { sample_barcode: sampleBarcode, scanned_weight: wt, he, en });
+            addCapture(match, pick);
           } else {
             // OCR read the label but it didn't match an invoice line — ask.
-            setPendingPick({ sample_barcode: sampleBarcode, scanned_weight: wt, he, en });
+            setPendingPick(pick);
           }
         })
         .catch(() => {
@@ -300,6 +318,8 @@ export function NonMeatTypeAFlow({
             item_key: c.item_key,
             box_count: c.count,
             sample_barcode: c.sample_barcode,
+            expiry_date: c.expiry_date,
+            supplier_batch: c.supplier_batch,
           })),
         }),
       });

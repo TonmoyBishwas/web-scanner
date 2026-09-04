@@ -614,6 +614,10 @@ export const en = {
   'terminal.expiryDate': 'Expiry date',
   'terminal.itemName': 'Item name',
   'terminal.openCalendar': 'Open calendar',
+  // Supplier's own batch/lot code off the carton label — Priority carries it
+  // on the batch (מנה) for traceability and recalls.
+  'terminal.batchTag': 'BATCH',
+  'terminal.batchHint': 'Supplier batch / lot (optional)',
   'terminal.viewSticker': 'Enlarge the sticker photo',
   'terminal.today': 'Today',
   'terminal.ok': 'OK',

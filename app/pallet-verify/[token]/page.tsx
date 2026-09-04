@@ -271,6 +271,9 @@ export default function PalletVerifyPage({
       name_en: string;
       weight: string;
       expiry: string;
+      /** Supplier batch/lot. Free text — OCR leaves it blank far more often
+          than it fills it, so this is usually the only way it gets entered. */
+      batch: string;
       // Captured sticker frame so the modal can show what the OCR actually saw.
       // Worker can't fix the name/weight blind — showing the photo is the whole
       // point of this view. Optional because rescue/legacy boxes might not have one.
@@ -917,6 +920,11 @@ export default function PalletVerifyPage({
               item_name_hebrew: match?.item_name_hebrew || rawHe,
               weight: data.ocr_data.weight_kg ?? 0,
               expiry: data.ocr_data.expiry_date || '',
+              // Same sticker, same OCR call — these were read and thrown away
+              // until 2026-09. Priority needs the production date to open its
+              // batch, and the supplier's lot code for traceability/recall.
+              production_date: data.ocr_data.production_date || '',
+              supplier_batch: data.ocr_data.supplier_batch || '',
               needs_review: needsReview || undefined,
             };
           });
@@ -1122,6 +1130,7 @@ export default function PalletVerifyPage({
       name_en: box.item_name || '',
       weight: box.weight > 0 ? String(box.weight) : '',
       expiry: box.expiry || '',
+      batch: box.supplier_batch || '',
       image_data: box.image_data,
       isLoose,
     });
@@ -1139,6 +1148,7 @@ export default function PalletVerifyPage({
     if (!editForm) return;
     const { barcode, name_he, name_en, isLoose } = editForm;
     const expiry = editForm.expiry.trim();
+    const batch = editForm.batch.trim();
     const w = parseFloat(editForm.weight);
 
     // Same patch shape for both collections. Crucially: clear needs_review
@@ -1156,6 +1166,7 @@ export default function PalletVerifyPage({
         item_name_hebrew: name_he,
         weight: newWeight,
         expiry,
+        supplier_batch: batch,
         needs_review: hasName && hasWeight ? undefined : b.needs_review,
       };
     }
@@ -1346,6 +1357,8 @@ export default function PalletVerifyPage({
       onNameChange={(v) => setEditForm({ ...editForm, name_he: v })}
       onWeightChange={(v) => setEditForm({ ...editForm, weight: v })}
       onExpiryChange={(v) => setEditForm({ ...editForm, expiry: v })}
+      batch={editForm.batch}
+      onBatchChange={(v) => setEditForm({ ...editForm, batch: v })}
       onSave={handleSaveEdit}
       onCancel={() => setEditForm(null)}
     />
@@ -1411,6 +1424,8 @@ export default function PalletVerifyPage({
               item_name_hebrew: data.ocr_data.product_name_hebrew || '',
               weight: data.ocr_data.weight_kg ?? 0,
               expiry: data.ocr_data.expiry_date || '',
+              production_date: data.ocr_data.production_date || '',
+              supplier_batch: data.ocr_data.supplier_batch || '',
               needs_review: needsReview || undefined,
             };
           });

@@ -618,6 +618,8 @@ export const he: Record<TranslationKey, string> = {
   'terminal.expiryDate': 'ת. תפוגה',
   'terminal.itemName': 'שם הפריט',
   'terminal.openCalendar': 'פתח לוח שנה',
+  'terminal.batchTag': 'מנה',
+  'terminal.batchHint': 'אצוות ספק / לוט (רשות)',
   'terminal.viewSticker': 'הגדל את תמונת המדבקה',
   'terminal.today': 'היום',
   'terminal.ok': 'אישור',

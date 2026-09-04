@@ -140,7 +140,14 @@ export async function POST(request: NextRequest) {
       merge_map?: Record<string, string>;
       // Weight-based non-meat (Type A): one entry per invoice item scanned on
       // this pallet. Totals are computed server-side from session.ocr_data.
-      nonmeat_items?: Array<{ item_key: string; box_count: number; sample_barcode?: string }>;
+      nonmeat_items?: Array<{
+        item_key: string;
+        box_count: number;
+        sample_barcode?: string;
+        /** Read off the ONE sample carton the worker scanned for this item. */
+        expiry_date?: string;
+        supplier_batch?: string;
+      }>;
       // Meat damaged-sticker mode: worker declared per-item box counts instead
       // of scanning every box. Totals use the invoice per-box weight.
       manual_declared?: boolean;
@@ -219,6 +226,11 @@ export async function POST(request: NextRequest) {
             ocr_box_weight: unitRounded,
             uniform_weight: true,
             sample_barcode: ni.sample_barcode || '',
+            // Every carton of a weight-type non-meat item is identical, so the
+            // sample sticker's dates speak for the whole lot. Before 2026-09
+            // the non-meat ledger had no shelf-life data at all.
+            expiry_date: ni.expiry_date || '',
+            supplier_batch: ni.supplier_batch || '',
           };
         })
         .filter((x): x is NonNullable<typeof x> => x !== null);
@@ -232,9 +244,10 @@ export async function POST(request: NextRequest) {
         barcode: it.sample_barcode,
         sku: '',
         weight: it.ocr_box_weight,
-        expiry: '',
+        expiry: it.expiry_date,
         item_name: it.item_name,
         item_name_hebrew: it.item_name_hebrew,
+        supplier_batch: it.supplier_batch,
       }));
 
       const nmPayload: Record<string, unknown> = {
@@ -261,6 +274,8 @@ export async function POST(request: NextRequest) {
         nmPayload.box_count = only.box_count;
         nmPayload.ocr_box_weight = only.ocr_box_weight;
         nmPayload.calculated_total_weight = only.calculated_total_weight;
+        nmPayload.expiry_date = only.expiry_date;
+        nmPayload.supplier_batch = only.supplier_batch;
       }
 
       const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
@@ -566,6 +581,11 @@ export async function POST(request: NextRequest) {
           // it to box_inventory.box_image_url; null when the upload failed,
           // which must never hold up a pallet.
           image_url: b.image_url ?? null,
+          // Read off the same sticker as the weight and expiry. Priority builds
+          // its batch (מנה) from the production date, and needs the supplier's
+          // own lot code for traceability/recall.
+          production_date: b.production_date || null,
+          supplier_batch: b.supplier_batch || null,
         })),
       };
     } else {
@@ -618,6 +638,8 @@ export async function POST(request: NextRequest) {
           document_number: findInvoiceDoc(b.item_name_hebrew || '', b.item_name || '', session.ocr_data, session.document_number),
           // See the mix branch — sticker photo for box_inventory.box_image_url.
           image_url: b.image_url ?? null,
+          production_date: b.production_date || null,
+          supplier_batch: b.supplier_batch || null,
         })),
       };
     }

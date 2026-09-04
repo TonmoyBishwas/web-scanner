@@ -20,6 +20,13 @@ export interface BoxStickerOCR {
   production_date: string | null;        // YYYY-MM-DD
   expiry_date: string | null;            // YYYY-MM-DD
   barcode_digits: string | null;         // Barcode digits from image
+  /**
+   * The SUPPLIER's own batch/lot code, when the carton label prints one under
+   * an explicit מנה/אצווה/לוט/Batch/Lot heading. Null otherwise — the bot's OCR
+   * parser deliberately rejects anything that looks like a date or a slice of
+   * the barcode, because a wrong batch is worse than a missing one for recalls.
+   */
+  supplier_batch?: string | null;
 }
 
 // Session Data Types
@@ -275,6 +282,15 @@ export interface MultiPalletBoxScan {
   item_name_hebrew?: string;
   weight: number;
   expiry: string;
+  /**
+   * Production date off the same sticker as the expiry (`YYYY-MM-DD`). Read by
+   * the OCR since day one but discarded on the pallet path until 2026-09; the
+   * bot now stores it in `box_inventory.production_date`, where Priority reads
+   * it to build the batch.
+   */
+  production_date?: string;
+  /** Supplier batch/lot — see `BoxStickerOCR.supplier_batch`. Worker-editable. */
+  supplier_batch?: string;
   scanned_at: string;
   /**
    * Public URL of the box-sticker photo in Supabase Storage, written to

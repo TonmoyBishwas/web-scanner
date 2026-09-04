@@ -159,6 +159,7 @@ export async function POST(request: NextRequest) {
                     production_date: ocrResult.ocr_data.production_date || null,
                     expiry_date: ocrResult.ocr_data.expiry_date || null,
                     barcode_digits: ocrResult.ocr_data.barcode_digits || null,
+                    supplier_batch: ocrResult.ocr_data.supplier_batch || null,
                     // Legacy field for backwards compatibility
                     product_name: ocrResult.ocr_data.product_name_hebrew || ocrResult.ocr_data.product_name || null,
                   };
