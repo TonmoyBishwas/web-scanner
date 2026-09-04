@@ -530,6 +530,7 @@ top bar        ‹ back · קרטון #N · שמור
 tab strip      משקל נטו | שם הפריט | ת. תפוגה   ← every value, tap to switch field
 context input  [sticker photo] + readout/chips/calendar
                keypad (weight mode)
+batch          BATCH · free-text input — supplier lot, optional
 barcode        read-only — it is the row's identity/dedup key
 ```
 
@@ -540,6 +541,12 @@ barcode        read-only — it is the row's identity/dedup key
   two alternating steps.
 - The tab strip replaces the old tall "נתוני המוצר" field boxes, which sat below
   the keypad and were mostly off-screen.
+- **Batch is a row, not a fourth tab.** The three tabs are the hot path — the
+  panel is open *because* OCR misread the weight or the name — and a fourth tab
+  drops all four below a legible width at 360px. `supplier_batch` is the
+  opposite: the OCR fills it only when the carton label prints an explicit
+  `מנה`/`אצווה`/`לוט`/`Batch`/`Lot` heading, so in practice this row is where it
+  gets entered at all. Blank is valid; nothing gates on it.
 - A restored-from-cache box has no `image_data`, so the panel simply renders
   without a photo.
 
@@ -600,4 +607,4 @@ success at 500. Each new preview deployment invalidates the Vercel SSO share
 cookie. And a test harness must reproduce the **real** chrome of the screen under
 test — a stub footer is what hid the sheet outage.
 
-**Last Updated**: 2026-08-14 (terminal design kit, scan-list actions, edit panel, single-item shortcut at 2 samples, route inventory) | Working branch: `preview` | Production branch: `main`
+**Last Updated**: 2026-09-04 (Priority capture fields: `production_date` + `supplier_batch` off the carton sticker, batch row in the edit panel, non-meat Type A expiry) | Working branch: `preview` | Production branch: `main`
