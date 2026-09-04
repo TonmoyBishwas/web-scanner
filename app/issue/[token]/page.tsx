@@ -569,11 +569,7 @@ function IssueRender({
       {drawer.node}
       {showPallets && <PalletsBrowser token={token} onBack={() => setShowPallets(false)} />}
       {showLabels && (
-        <LabelsBrowser
-          token={token}
-          documentNumber={session?.document_number}
-          onBack={() => setShowLabels(false)}
-        />
+        <LabelsBrowser token={token} onBack={() => setShowLabels(false)} />
       )}
 
       {/* Box detail modal */}

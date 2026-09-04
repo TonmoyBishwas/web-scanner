@@ -21,7 +21,7 @@ import { LanguageContext, useT } from '@/lib/i18n';
 import type { CartonLabel, LabelSize } from '@/types';
 
 type StatusFilter = 'all' | 'created' | 'printed';
-type Scope = 'delivery' | 'all';
+type Scope = 'session' | 'all';
 
 const SIZES: { id: LabelSize; name: string }[] = [
   { id: '10x10', name: '10×10' },
@@ -67,19 +67,20 @@ function shortDate(iso: string | null): string {
 
 interface LabelsBrowserProps {
   token: string;
-  /** Present on a receiving session; absent on an ISSUE session. */
-  documentNumber?: string | null;
   onBack: () => void;
 }
 
-export function LabelsBrowser({ token, documentNumber, onBack }: LabelsBrowserProps) {
+export function LabelsBrowser({ token, onBack }: LabelsBrowserProps) {
   const tr = useT();
   const language = useContext(LanguageContext);
   const { toast, showToast } = useToast();
 
   const [size, setSize] = useState<LabelSize>('10x15');
-  // An ISSUE session has no delivery to scope to, so it opens on "all recent".
-  const [scope, setScope] = useState<Scope>(documentNumber ? 'delivery' : 'all');
+  // Opens on THIS job's stickers. Anything older is a different job, even when
+  // it carries the same invoice number — re-scanning an invoice mints a new
+  // session, and showing both runs side by side is how a worker reprints
+  // yesterday's label onto today's carton.
+  const [scope, setScope] = useState<Scope>('session');
   const [status, setStatus] = useState<StatusFilter>('all');
   const [labels, setLabels] = useState<CartonLabel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -228,17 +229,13 @@ export function LabelsBrowser({ token, documentNumber, onBack }: LabelsBrowserPr
         </div>
 
         <div className="flex gap-[6px] overflow-x-auto no-scrollbar">
-          {documentNumber ? (
-            <>
-              <button onClick={() => setScope('delivery')} className={chip(scope === 'delivery')}>
-                {tr('labels.scopeDelivery')}
-              </button>
-              <button onClick={() => setScope('all')} className={chip(scope === 'all')}>
-                {tr('labels.scopeAll')}
-              </button>
-              <span className="w-px bg-line flex-none my-1" />
-            </>
-          ) : null}
+          <button onClick={() => setScope('session')} className={chip(scope === 'session')}>
+            {tr('labels.scopeSession')}
+          </button>
+          <button onClick={() => setScope('all')} className={chip(scope === 'all')}>
+            {tr('labels.scopeAll')}
+          </button>
+          <span className="w-px bg-line flex-none my-1" />
           <button onClick={() => setStatus('all')} className={chip(status === 'all')}>
             {tr('labels.filterAll')}
           </button>
@@ -269,7 +266,11 @@ export function LabelsBrowser({ token, documentNumber, onBack }: LabelsBrowserPr
           <p className="text-[12px] font-bold text-ink-muted text-center mt-8">{tr(errorKey)}</p>
         ) : batches.length === 0 ? (
           <p className="text-[12px] font-bold text-ink-muted text-center mt-8 leading-[1.5]">
-            {status === 'all' ? tr('labels.empty') : tr('labels.emptyFiltered')}
+            {status !== 'all'
+              ? tr('labels.emptyFiltered')
+              : scope === 'session'
+                ? tr('labels.empty')
+                : tr('labels.emptyAll')}
           </p>
         ) : (
           batches.map(batch => {
