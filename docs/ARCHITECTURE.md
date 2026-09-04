@@ -517,6 +517,39 @@ Where they render:
   31-digit barcode; the barcode had no clamp, so the three collided. The barcode
   now ellipsises and the buttons get a full-width line of their own.
 
+## Barcode cross-check (`lib/barcode-parser.ts`)
+
+`parseIsraeliBarcode` still treats every barcode as an **ID only** — that rule
+holds for the 25-digit format, which is 62 % of cartons and encodes nothing.
+
+But a **31-digit** carton barcode does carry data (measured across all 264 live
+`box_inventory` rows): weight at 1-based chars **14–19** ÷ 1000, and the expiry
+as a trailing **`DDMMYYYY`**. Agreement with the OCR is 65/67 on weight and
+64/67 on expiry — and in all three expiry disagreements the **barcode was right
+and the OCR had misread a digit**.
+
+`findBarcodeConflict(barcode, ocrWeight, ocrExpiry)` returns the disagreement, or
+null. On a conflict `runOcr` (pallet **and** loose phases) stores
+`BoxScan.barcode_conflict`, fires an amber toast naming both readings, and
+`EditPanel` offers the barcode's value as a one-tap **Use**. `handleSaveEdit`
+clears the flag — the worker has looked at both and chosen.
+
+Three constraints, all deliberate:
+
+- **Never `needs_review`.** That flag blocks the pallet from closing. A parser
+  validated on 67 cartons from two suppliers must not be able to stop a delivery.
+- **Never override, never fill a blank.** A missing value is `needs_review`'s
+  job; filling it from the barcode is the authoritative behaviour being avoided.
+- **50 g threshold** (`BARCODE_WEIGHT_TOLERANCE_KG`) — above label rounding,
+  below both measured outliers. Expiry flags on any difference.
+
+Server side, `box_inventory.barcode_expiry` / `.barcode_weight_kg` are
+**`GENERATED ALWAYS … STORED`** over the same parse (`wb_barcode_expiry` /
+`wb_barcode_weight_kg`), so they populate historical rows and cannot drift from
+the barcode across the four insert paths.
+
+---
+
 ## Edit panel (`components/terminal/EditPanel.tsx`)
 
 Rendered **inside** the bottom sheet in place of the scan list while `editForm`
@@ -607,4 +640,4 @@ success at 500. Each new preview deployment invalidates the Vercel SSO share
 cookie. And a test harness must reproduce the **real** chrome of the screen under
 test — a stub footer is what hid the sheet outage.
 
-**Last Updated**: 2026-09-04 (Priority capture fields: `production_date` + `supplier_batch` off the carton sticker, batch row in the edit panel, non-meat Type A expiry) | Working branch: `preview` | Production branch: `main`
+**Last Updated**: 2026-09-04 (Priority capture fields: `production_date` + `supplier_batch` off the carton sticker, batch row in the edit panel, non-meat Type A expiry, barcode-vs-OCR cross-check) | Working branch: `preview` | Production branch: `main`
