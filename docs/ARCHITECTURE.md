@@ -72,11 +72,22 @@ would bail out of every frame.
 #### Target frame — `frame` prop
 
 `frame='square'` is the legacy centred 240×240 box described below.
-`frame='corner'` is the terminal design's 276×150 corner frame pinned near the
-top of the camera area — **all three scanner pages use `corner`.** In corner
-mode the capture-progress `<rect>` is stroked in the **frame's own hue**
-(brand blue), not `--ok` green; stroking green over a blue frame is what the
-floor reported as "the green mixes with the blue".
+`frame='corner'` is the terminal design's **320×196** corner frame — **all
+three scanner pages use `corner`.** It is **centred in the strip of camera the
+bottom sheet leaves visible**, not pinned near the top: `BottomSheet` publishes
+its live height onto the camera region as the CSS variable `--sheet-h` (a
+variable rather than a React prop — the height changes on every `pointermove`
+of a drag, and re-rendering the live camera at that rate is not affordable),
+and the frame's wrapper sits at
+`bottom: min(var(--sheet-h, 0px), calc(100% - CORNER_BAND_PX))`. The `min()`
+floor keeps `CORNER_BAND_PX` (240px) of room, so at the sheet's *tall* snap the
+frame stays top-anchored instead of centring itself underneath the sheet.
+`CORNER_BAND_PX` must stay ≤ `MIN_CAMERA_PX` — that is what guarantees the
+frame fits at peek/mid.
+
+In corner mode the capture-progress `<rect>` is stroked in the **frame's own
+hue** (brand blue), not `--ok` green; stroking green over a blue frame is what
+the floor reported as "the green mixes with the blue".
 
 #### Scanner Visual States (3-state system)
 
@@ -137,7 +148,7 @@ the header, with a draggable sheet floating over it.
 
 | Component | Role |
 |---|---|
-| `DesignHeader` / `ProgressHeader` | Title + doc number + hamburger; progress bar with count/total |
+| `DesignHeader` / `ProgressHeader` | Hamburger + optional `leading` slot, centred title/subtitle, optional `right` slot; progress bar with an **optional** caption row (omit `label` for a bare bar) |
 | `BottomSheet` | The floating sheet. 3 snaps, drag handle, `toolbar` + scrolling children + `footer`. Exposes `snapTo(i)` via ref |
 | `ToolDock` | The chip row inside the sheet's toolbar (share / delete / pallets / locked stubs) |
 | `ActiveScanCard` | The newest scan — live status dot, big mono weight, details expander, and its actions (edit / delete / retry / view frame) |
@@ -154,8 +165,8 @@ the header, with a draggable sheet floating over it.
 
 1. **The camera wins over the sheet.** `BottomSheet` floors its peek snap at
    *base* chrome only (handle + dock + padding + border, **excluding** the
-   footer), and caps mid/tall at `container − MIN_CAMERA_PX` (190px = the
-   150px corner frame plus its label). When the sheet is too short for the
+   footer), and caps mid/tall at `container − MIN_CAMERA_PX` (240px = the
+   196px corner frame plus its label and padding, i.e. `CORNER_BAND_PX`). When the sheet is too short for the
    footer the footer is **hidden**, never allowed to overflow. Flooring every
    snap at chrome *including* a ~170px footer pinned peek/mid/tall to the same
    height and left 50px of camera — that was a production outage (2026-08-11).
@@ -333,6 +344,24 @@ type Phase =
   | 'all_done'
   | 'error'
 ```
+
+### Header — one counter per corner
+
+Both scanning phases put a single counter in each header corner and nothing
+else: **pallet `x/n` at the start**, the document number centred, **cartons
+`x/n` at the end** (the loose phase shows the word "loose boxes" at the start
+instead, since it has no pallet index). `ProgressHeader` below it renders as a
+**bare bar** — its `label` prop is omitted.
+
+This replaced three readouts that all said the same thing: the header title
+("Pallet 1 of 2"), a `TypeBadge` beside it ("Scan 2+ boxes to detect type" /
+"Mix · scan all boxes"), and the progress row's own label + count ("Receiving ·
+Pallet 1 of 2 … 1 Cartons"). Workers read the whole block as noise. The badge
+is gone entirely — `detectedType` still drives the classification and the
+single-vs-mix prompt, it is just no longer narrated in the header.
+
+Numbers carry `dir="ltr"` so "1/2" does not reorder inside the RTL header; the
+start/end sides mirror correctly in Hebrew.
 
 > The old `box_count` phase is **gone**. The worker no longer declares the total
 > before scanning: they scan first, and the total is asked for in the sheet
