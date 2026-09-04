@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { AlertTriangle, ScanLine, Camera } from 'lucide-react';
+import { AlertTriangle, ScanLine, Camera, Check } from 'lucide-react';
 import type { ParsedBarcode, BoxStickerOCR } from '@/types';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
 import { useT } from '@/lib/i18n';
@@ -15,6 +15,28 @@ interface SmartScannerProps {
   onError?: (error: string) => void;
   onScannerTypeDetected?: (type: 'native' | 'fallback') => void;
   onDuplicateFlash?: (triggerFn: () => void) => void;
+  /**
+   * Synchronous "have I already got this one?", asked the instant a barcode is
+   * confirmed — BEFORE the ~400ms sharpest-frame capture that runs ahead of
+   * `onBarcodeDetected`.
+   *
+   * Without it the scanner cannot tell a good scan from a duplicate at the
+   * moment it has to paint one, so it would show its green "saved" state for
+   * that whole window and only flip to red once the parent's own duplicate
+   * check finally lands. Optional: a page that doesn't pass it simply keeps
+   * the parent-driven `onDuplicateFlash` path, which arrives later.
+   */
+  isDuplicateBarcode?: (barcode: string) => boolean;
+  /**
+   * What the post-scan hold is allowed to claim.
+   *
+   * 'saved' (default): a confirmed decode IS a box added to the job, so the
+   * hold says "Box N saved" — pallet-verify and the carton /scan page.
+   * 'captured': the decode only *starts* something that can still fail (the
+   * /issue page looks the box up on the server, and the worker then has to
+   * confirm it), so the hold confirms the read without claiming the outcome.
+   */
+  holdClaim?: 'saved' | 'captured';
   className?: string;
   /**
    * Target-frame style. 'square' = legacy centered 240×240 box.
@@ -133,6 +155,8 @@ export function SmartScanner({
   onError,
   onScannerTypeDetected,
   onDuplicateFlash,
+  isDuplicateBarcode,
+  holdClaim = 'saved',
   className,
   frame = 'square'
 }: SmartScannerProps) {
@@ -158,6 +182,40 @@ export function SmartScanner({
   const [captureCount, setCaptureCount] = useState(0); // 0 | 1 | 2 | 3
   const [isDuplicate, setIsDuplicate] = useState(false);
   const duplicateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * What the 3-second post-scan hold is actually reporting.
+   *
+   * This window used to be painted as an error — red border, big red numeral,
+   * red status dot — which is the SAME treatment the duplicate state gets. So a
+   * good scan read as: 200ms of green flash, then three seconds of red. Workers
+   * could not tell "saved" from "already scanned" by sight; only the sound
+   * differed. The hold is not a failure, it is "captured — reading the sticker",
+   * so it is now coloured by its outcome.
+   *
+   * `outcomeRef` mirrors the state because `triggerRedFlash` (the parent saying
+   * "actually, rejected") must read it synchronously.
+   */
+  const [scanOutcome, setScanOutcome] = useState<'saved' | 'duplicate'>('saved');
+  const outcomeRef = useRef<'saved' | 'duplicate'>('saved');
+  // Boxes saved through THIS scanner instance. pallet-verify keys the scanner
+  // per pallet, so it reads as "box N on this pallet"; /scan and /issue mount
+  // once, so it counts the session. Only ever used as a label.
+  const savedCountRef = useRef(0);
+  const [savedCount, setSavedCount] = useState(0);
+  // Read by triggerRedFlash to decide whether a rejection lands inside the hold
+  // it needs to correct, or is a standalone one (a rejected manual capture).
+  const inCooldownRef = useRef(false);
+  // The duplicate predicate lives behind a ref: `detect` is a long-lived rAF
+  // closure and would otherwise capture the first render's prop forever.
+  const isDupRef = useRef(isDuplicateBarcode);
+  useEffect(() => {
+    isDupRef.current = isDuplicateBarcode;
+  }, [isDuplicateBarcode]);
+  const holdClaimRef = useRef(holdClaim);
+  useEffect(() => {
+    holdClaimRef.current = holdClaim;
+  }, [holdClaim]);
   // Manual OCR-capture fallback (for boxes whose barcode won't decode — glare,
   // a label folded around a corner, or a torn/half barcode). `lastActivityRef`
   // tracks the last confirmed decode (or mount); when no decode has happened in
@@ -440,7 +498,20 @@ export function SmartScanner({
   }, [onScannerTypeDetected, enumerateCameras]);
 
   // Function to trigger duplicate indicator (called by parent on duplicate detection)
+  // The parent rejecting a scan the predicate could not have known about — a
+  // split-assignment clash, or a manual capture whose OCR resolved to a box
+  // another worker already has. If it lands inside a hold we are currently
+  // painting as "saved", correct that hold (and take the box back off the
+  // label count) so it can never end on a green "saved" for a rejected box.
   const triggerRedFlash = useCallback(() => {
+    if (inCooldownRef.current && outcomeRef.current === 'saved') {
+      outcomeRef.current = 'duplicate';
+      setScanOutcome('duplicate');
+      if (holdClaimRef.current === 'saved') {
+        savedCountRef.current = Math.max(0, savedCountRef.current - 1);
+        setSavedCount(savedCountRef.current);
+      }
+    }
     setIsDuplicate(true);
     if (duplicateTimerRef.current) clearTimeout(duplicateTimerRef.current);
     duplicateTimerRef.current = setTimeout(() => setIsDuplicate(false), 1000);
@@ -723,7 +794,20 @@ export function SmartScanner({
           lastScanTimeRef.current = now;
           lastActivityRef.current = now; // a decode just happened — reset the manual-capture nudge
 
+          // Decide saved-vs-duplicate NOW, while we still have to paint
+          // something. The parent's own duplicate verdict only arrives after
+          // the sharpest-frame capture below (~400ms), which is far too late
+          // to be showing a green "saved" in the meantime.
+          const isDup = isDupRef.current?.(barcode) ?? false;
+          outcomeRef.current = isDup ? 'duplicate' : 'saved';
+          setScanOutcome(outcomeRef.current);
+          if (!isDup && holdClaimRef.current === 'saved') {
+            savedCountRef.current += 1;
+            setSavedCount(savedCountRef.current);
+          }
+
           // Set cooldown state
+          inCooldownRef.current = true;
           setIsInCooldown(true);
           setCooldownTimeLeft(3);
 
@@ -734,12 +818,16 @@ export function SmartScanner({
             setCooldownTimeLeft(countdown);
             if (countdown <= 0) {
               clearInterval(countdownInterval);
+              inCooldownRef.current = false;
               setIsInCooldown(false);
             }
           }, 1000);
 
-          setFlashColor('green');
-          setTimeout(() => setFlashColor(null), 200);
+          // Long enough to register as a deliberate confirmation rather than a
+          // blink. A rejected scan keeps the old short red blink — the red
+          // frame behind it is what carries that message.
+          setFlashColor(isDup ? 'red' : 'green');
+          setTimeout(() => setFlashColor(null), isDup ? 200 : 420);
 
           // Vibration handled by parent component with settings check
 
@@ -960,19 +1048,53 @@ export function SmartScanner({
             style={frame === 'corner' ? { maxWidth: CORNER_W, height: CORNER_H } : { width: 240, height: 240 }}
           >
 
-            {/* === COOLDOWN STATE === */}
+            {/* === POST-SCAN HOLD — green "saved" or red "already scanned" === */}
             {isInCooldown && (
               <>
-                <div className="absolute inset-0 border-[3px] border-danger rounded-xl" />
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className={`font-mono font-extrabold text-danger-weak-ink ${frame === 'corner' ? 'text-5xl' : 'text-6xl'}`} dir="ltr">
+                <div
+                  className={`absolute inset-0 border-[3px] rounded-xl ${
+                    scanOutcome === 'saved' ? 'border-ok bg-ok/10' : 'border-danger'
+                  }`}
+                />
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
+                  {scanOutcome === 'saved' ? (
+                    <>
+                      <Check
+                        className={frame === 'corner' ? 'w-14 h-14 text-ok' : 'w-16 h-16 text-ok'}
+                        strokeWidth={3.5}
+                        style={{ animation: 'scanSavedPop .28s cubic-bezier(.2,1.3,.4,1)' }}
+                      />
+                      <span className="text-[13px] font-black tracking-[.4px] text-ok-weak-ink uppercase">
+                        {holdClaim === 'saved'
+                          ? tr('scanner.boxSaved', { n: savedCount })
+                          : tr('scanner.boxCaptured')}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-base font-bold text-danger-weak-ink">
+                      {/* "Already scanned" is only true where a decode IS the
+                          save. On /issue a rejection can equally be not-found,
+                          already-issued or a network error — the toast says
+                          which, so the frame stays neutral. */}
+                      {holdClaim === 'saved'
+                        ? tr('scanner.alreadyScanned')
+                        : tr('scanner.scanRejected')}
+                    </span>
+                  )}
+                  {/* The wait is still real — the scanner ignores decodes for
+                      3s — but it no longer shouts. It was a full-height red
+                      numeral, which is what made a good scan look like a fault. */}
+                  <span
+                    className="font-mono text-[11px] font-bold text-cam-ink-muted"
+                    dir="ltr"
+                  >
                     {cooldownTimeLeft}
                   </span>
                 </div>
               </>
             )}
 
-            {/* === DUPLICATE STATE === */}
+            {/* === DUPLICATE STATE (outside a hold) === */}
             {!isInCooldown && isDuplicate && (
               <>
                 <div className="absolute inset-0 border-[3px] border-danger rounded-xl" />
@@ -1044,7 +1166,9 @@ export function SmartScanner({
         <div className="absolute top-2 left-2">
           <div className="flex items-center gap-1 px-2 py-1 rounded-full backdrop-blur-sm border border-cam-border bg-cam-chip">
             <div className={`w-2 h-2 rounded-full ${
-              (isInCooldown || isDuplicate) ? 'bg-danger' : 'bg-ok animate-pulse'
+              (isDuplicate || (isInCooldown && scanOutcome === 'duplicate'))
+                ? 'bg-danger'
+                : 'bg-ok animate-pulse'
             }`}></div>
             {isInCooldown ? (
               <span className="text-cam-ink text-xs font-mono font-bold" dir="ltr">{cooldownTimeLeft}s</span>
@@ -1114,6 +1238,10 @@ export function SmartScanner({
         @keyframes cameraFlash {
           0% { opacity: 1; }
           100% { opacity: 0; }
+        }
+        @keyframes scanSavedPop {
+          0%   { transform: scale(.5); opacity: 0; }
+          100% { transform: scale(1);  opacity: 1; }
         }
       `}</style>
     </div>

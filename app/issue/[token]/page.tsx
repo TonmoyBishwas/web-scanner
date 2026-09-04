@@ -79,7 +79,12 @@ export default function IssuePage({
     scanSuccessFeedback();
   }, []);
 
+  // Every rejection path — local duplicate, lookup miss, network error — also
+  // turns the scanner's post-scan hold red. Without it the hold would sit on a
+  // green "Captured" while the toast says the box was not found.
+  const redFlashTriggerRef = useRef<(() => void) | null>(null);
   const playErrorSound = useCallback(() => {
+    redFlashTriggerRef.current?.();
     scanDuplicateFeedback();
   }, []);
 
@@ -330,6 +335,7 @@ export default function IssuePage({
         scannedBarcodes={scannedBarcodes}
         ocrResults={ocrResults}
         handleBarcodeDetected={handleBarcodeDetected}
+        redFlashTriggerRef={redFlashTriggerRef}
         handleComplete={handleComplete}
         handleConfirmIssue={handleConfirmIssue}
         handleCancelDetail={handleCancelDetail}
@@ -351,6 +357,8 @@ interface IssueRenderProps {
   scannedBarcodes: Map<string, ParsedBarcode>;
   ocrResults: Map<string, BoxStickerOCR>;
   handleBarcodeDetected: (barcode: string, data: ParsedBarcode) => Promise<void>;
+  /** Receives SmartScanner's red-flash trigger; fired by every rejection path. */
+  redFlashTriggerRef: React.MutableRefObject<(() => void) | null>;
   handleComplete: () => Promise<void>;
   handleConfirmIssue: () => Promise<void>;
   handleCancelDetail: () => void;
@@ -369,6 +377,7 @@ function IssueRender({
   scannedBarcodes,
   ocrResults,
   handleBarcodeDetected,
+  redFlashTriggerRef,
   handleComplete,
   handleConfirmIssue,
   handleCancelDetail,
@@ -542,6 +551,12 @@ function IssueRender({
             onBarcodeDetected={handleBarcodeDetected}
             scannedBarcodes={scannedBarcodes}
             ocrResults={ocrResults}
+            // A scan here only STARTS a server lookup that can still come back
+            // "not found" / "already issued", and the worker has to confirm the
+            // box after that — so the hold confirms the read, never a save.
+            holdClaim="captured"
+            isDuplicateBarcode={(b) => scannedBarcodes.has(b)}
+            onDuplicateFlash={(fn) => { redFlashTriggerRef.current = fn; }}
           />
         </div>
 

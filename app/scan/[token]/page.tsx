@@ -1110,6 +1110,10 @@ export default function ScanPage({
               onDuplicateFlash={(triggerFn) => {
                 redFlashTriggerRef.current = triggerFn;
               }}
+              // Answers "already got this one?" the instant the barcode is
+              // confirmed, so the scanner paints red rather than green for the
+              // ~400ms before handleBarcodeDetected reaches the same verdict.
+              isDuplicateBarcode={(b) => processedBarcodesRef.current.has(b)}
             />
           </div>
 

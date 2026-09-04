@@ -95,6 +95,9 @@ export const he: Record<TranslationKey, string> = {
   'scanner.cameraErrorTitle': 'שגיאת מצלמה',
   'scanner.cameraErrorHint': 'תיקונים נפוצים: פתח את הקישור ב-Chrome/Safari (לא בדפדפן הפנימי של WhatsApp), בדוק הגדרות הרשאות אתר מצלמה, ואז הקש על נסה שוב.',
 
+  'scanner.boxSaved': 'קופסה {n} נשמרה',
+  'scanner.boxCaptured': 'נקלט',
+  'scanner.scanRejected': 'נדחה',
   'scanner.alreadyScanned': 'כבר נסרק',
   'scanner.duplicateBadge': 'כפילות',
   'scanner.captureAnyway': 'צלם בכל זאת',

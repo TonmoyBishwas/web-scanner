@@ -2133,6 +2133,7 @@ export default function PalletVerifyPage({
               onBarcodeDetected={handleLooseBarcodeDetected}
               onManualCapture={handleLooseManualCapture}
               onDuplicateFlash={(fn) => { looseDupFlashRef.current = fn; }}
+              isDuplicateBarcode={(b) => looseProcessedRef.current.has(b.trim())}
               scannedBarcodes={new Map()}
               ocrResults={new Map()}
             />
@@ -2516,6 +2517,10 @@ export default function PalletVerifyPage({
             onBarcodeDetected={handleBarcodeDetected}
             onManualCapture={handleManualCapture}
             onDuplicateFlash={(fn) => { dupFlashRef.current = fn; }}
+            // Answers "already got this one?" the instant the barcode is
+            // confirmed, so the scanner paints red rather than green for the
+            // ~400ms before handleBarcodeDetected below reaches the same verdict.
+            isDuplicateBarcode={(b) => processedRef.current.has(b.trim())}
             scannedBarcodes={new Map()}
             ocrResults={new Map()}
           />
