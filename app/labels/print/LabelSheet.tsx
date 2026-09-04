@@ -12,12 +12,20 @@ import type { CartonLabel, Language, LabelSize } from '@/types';
  * 10×10 and 10×15 print one sticker per page for a dedicated label printer.
  * A4 falls back to a grid on ordinary paper (or an 8-up label sheet), which is
  * what a warehouse without a label printer actually has.
+ *
+ * `maxH` is the label stock's height — a ceiling, not the printed height. For
+ * the one-per-page sizes the page shrinks to whatever the sticker actually
+ * needs (see `pageHeightMm`), so a short sticker does not eject a half-blank
+ * label. It never grows past `maxH`, so die-cut stock still lines up.
  */
-const SHEETS: Record<LabelSize, { page: string; margin: string; w: string; h: string; cols: number; font: string }> = {
-  '10x10': { page: '100mm 100mm', margin: '0', w: '100mm', h: '100mm', cols: 1, font: '3.4mm' },
-  '10x15': { page: '100mm 150mm', margin: '0', w: '100mm', h: '150mm', cols: 1, font: '4mm' },
-  a4:      { page: 'A4',          margin: '6mm', w: '96mm', h: '67mm', cols: 2, font: '2.6mm' },
+const SHEETS: Record<LabelSize, { margin: string; w: string; maxH: number; cols: number; font: string }> = {
+  '10x10': { margin: '0', w: '100mm', maxH: 100, cols: 1, font: '3.4mm' },
+  '10x15': { margin: '0', w: '100mm', maxH: 150, cols: 1, font: '4mm' },
+  a4:      { margin: '6mm', w: '96mm', maxH: 67, cols: 2, font: '2.6mm' },
 };
+
+/** CSS px → mm (1 CSS px is 1/96 in by definition). */
+const pxToMm = (px: number) => (px / 96) * 25.4;
 
 function isLabelSize(v: string | null): v is LabelSize {
   return v === '10x10' || v === '10x15' || v === 'a4';
@@ -36,6 +44,12 @@ export function LabelSheet() {
   // empty state renders without an effect having to set it.
   const [labels, setLabels] = useState<CartonLabel[] | null>(() => (token && batches ? null : []));
   const [failed, setFailed] = useState(false);
+  /**
+   * Printed page height in mm for the one-per-page sizes, measured from the
+   * rendered sticker. Null until the first measurement lands.
+   */
+  const [pageHeightMm, setPageHeightMm] = useState<number | null>(null);
+  const gridRef = useRef<HTMLDivElement | null>(null);
   // The print dialog must fire once, and only after the stickers are on screen —
   // printing an empty page is worse than making the worker tap Print.
   const printedRef = useRef(false);
@@ -54,21 +68,56 @@ export function LabelSheet() {
     return () => { cancelled = true; };
   }, [token, batches]);
 
+  const sheet = SHEETS[size];
+  const autoHeight = sheet.cols === 1;
+
+  /**
+   * Measure the tallest sticker and size the page to it.
+   *
+   * A ResizeObserver rather than a one-shot read: the webfonts land after the
+   * first paint and change the height, and a page sized from the fallback face
+   * would either clip the barcode or leave the blank strip back.
+   */
+  useEffect(() => {
+    const node = gridRef.current;
+    if (!autoHeight || !node || !labels?.length) return;
+
+    const observer = new ResizeObserver(() => {
+      const cells = node.querySelectorAll<HTMLElement>('.sheet-cell');
+      let tallest = 0;
+      cells.forEach(cell => { tallest = Math.max(tallest, cell.getBoundingClientRect().height); });
+      if (tallest <= 0) return;
+      // Round up to a whole mm, cap at the stock height, and keep a floor so a
+      // half-laid-out first measurement can never eject a sliver of a label.
+      const mm = Math.min(Math.max(Math.ceil(pxToMm(tallest)), 30), sheet.maxH);
+      setPageHeightMm(prev => (prev === mm ? prev : mm));
+    });
+
+    observer.observe(node);
+    node.querySelectorAll('.sheet-cell').forEach(cell => observer.observe(cell));
+    return () => observer.disconnect();
+  }, [autoHeight, labels, sheet.maxH]);
+
   useEffect(() => {
     if (printedRef.current || !labels?.length) return;
+    // Wait for the measured page height, otherwise the dialog opens against
+    // the pre-measurement layout and prints the blank strip we just removed.
+    if (autoHeight && pageHeightMm == null) return;
     printedRef.current = true;
-    // One frame for layout, then a beat for the webfonts — a sticker printed
-    // mid-font-swap comes out in the fallback face at the wrong metrics.
+    // A beat for the webfonts — a sticker printed mid-font-swap comes out in
+    // the fallback face at the wrong metrics.
     const timer = setTimeout(() => window.print(), 400);
     return () => clearTimeout(timer);
-  }, [labels]);
+  }, [labels, autoHeight, pageHeightMm]);
 
-  const sheet = SHEETS[size];
+  const pageSize = autoHeight
+    ? `${sheet.w} ${pageHeightMm ?? sheet.maxH}mm`
+    : 'A4';
 
   return (
     <div id="label-sheet-page" style={{ background: '#fff', minHeight: '100vh' }}>
       <style>{`
-        @page { size: ${sheet.page}; margin: ${sheet.margin}; }
+        @page { size: ${pageSize}; margin: ${sheet.margin}; }
         html, body { background: #fff !important; }
         #label-sheet-page { background: #fff !important; }
         /* Browsers drop background paint when printing; the sticker's rules,
@@ -82,7 +131,7 @@ export function LabelSheet() {
         }
         .sheet-cell {
           width: ${sheet.w};
-          height: ${sheet.h};
+          ${autoHeight ? '' : `height: ${sheet.maxH}mm;`}
           box-sizing: border-box;
           page-break-inside: avoid;
           break-inside: avoid;
@@ -122,7 +171,7 @@ export function LabelSheet() {
         </p>
       ) : null}
 
-      <div className="sheet-grid">
+      <div className="sheet-grid" ref={gridRef}>
         {(labels ?? []).map(label => (
           <div className="sheet-cell" key={label.id}>
             <CartonSticker label={label} fontSize={sheet.font} />

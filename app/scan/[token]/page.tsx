@@ -1147,11 +1147,7 @@ export default function ScanPage({
         />
       )}
       {showLabels && (
-        <LabelsBrowser
-          token={token}
-          documentNumber={session?.document_number}
-          onBack={() => setShowLabels(false)}
-        />
+        <LabelsBrowser token={token} onBack={() => setShowLabels(false)} />
       )}
 
       {/* ── Invoice Drawer ────────────────────────────────────── */}

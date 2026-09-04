@@ -810,7 +810,7 @@ export const en = {
   // ── מדבקות / Labels — print queue for the created stickers ──
   'labels.title': 'Labels',
   'labels.size': 'Label size',
-  'labels.scopeDelivery': 'This delivery',
+  'labels.scopeSession': 'This job',
   'labels.scopeAll': 'All recent',
   'labels.filterAll': 'All',
   'labels.filterCreated': 'Not printed',
@@ -822,7 +822,8 @@ export const en = {
   'labels.statusPrinted': 'Printed',
   'labels.printedTimes': 'Printed ×{count}',
   'labels.noBarcode': 'No barcode',
-  'labels.empty': 'No stickers yet. Create one with New carton.',
+  'labels.empty': 'No stickers for this job yet. Create one with New carton.',
+  'labels.emptyAll': 'No stickers have been created yet.',
   'labels.emptyFiltered': 'Nothing matches this filter.',
   'labels.print': 'Print {count} stickers',
   'labels.printNone': 'Select stickers to print',

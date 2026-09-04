@@ -106,7 +106,15 @@ export async function createCartonBatch(input: CreateCartonBatchInput): Promise<
 }
 
 export interface ListCartonLabelsOptions {
-  /** Restrict to one delivery. Omitted → the most recent labels warehouse-wide. */
+  /**
+   * Restrict to the stickers minted by ONE scanner session. This is the
+   * default view: a worker opening the Labels screen must see the job in front
+   * of them, not yesterday's. Re-scanning the same invoice creates a new
+   * session, so scoping by delivery is not enough — it would resurrect the
+   * previous run's stickers under the same document number.
+   */
+  sessionToken?: string | null;
+  /** Restrict to one delivery, across sessions. */
   documentNumber?: string | null;
   status?: 'created' | 'printed' | 'all';
   limit?: number;
@@ -121,6 +129,7 @@ export async function listCartonLabels(opts: ListCartonLabelsOptions = {}): Prom
     .order('created_at', { ascending: false })
     .limit(limit);
 
+  if (opts.sessionToken) query = query.eq('session_token', opts.sessionToken);
   if (opts.documentNumber) query = query.eq('document_number', opts.documentNumber);
   if (opts.status && opts.status !== 'all') query = query.eq('status', opts.status);
 

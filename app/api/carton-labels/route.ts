@@ -14,10 +14,13 @@ const unauthorized = () =>
 /**
  * GET /api/carton-labels?token&scope&status
  *
- * Labels screen list. `scope=delivery` (default) returns the stickers minted
- * for the session's own delivery; `scope=all` returns the most recent stickers
- * warehouse-wide, which is also what an ISSUE session (no document number)
- * falls back to.
+ * Labels screen list.
+ *   scope=session (default) — only what THIS scanner session minted. A worker
+ *     must not open the screen onto a previous job's stickers, and re-scanning
+ *     the same invoice makes a fresh session under the same document number,
+ *     so the delivery is too coarse a boundary.
+ *   scope=all — the most recent stickers warehouse-wide; the escape hatch for
+ *     reprinting something from an earlier job.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -25,12 +28,12 @@ export async function GET(request: NextRequest) {
     const context = await getSessionContext(searchParams.get('token'));
     if (!context) return unauthorized();
 
-    const scope = searchParams.get('scope') === 'all' ? 'all' : 'delivery';
+    const scope = searchParams.get('scope') === 'all' ? 'all' : 'session';
     const rawStatus = searchParams.get('status');
     const status = rawStatus === 'created' || rawStatus === 'printed' ? rawStatus : 'all';
 
     const labels = await listCartonLabels({
-      documentNumber: scope === 'delivery' ? context.documentNumber : null,
+      sessionToken: scope === 'session' ? searchParams.get('token') : null,
       status,
     });
 

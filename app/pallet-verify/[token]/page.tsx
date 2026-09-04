@@ -1289,11 +1289,7 @@ export default function PalletVerifyPage({
         />
       )}
       {showLabels && (
-        <LabelsBrowser
-          token={token}
-          documentNumber={session?.document_number}
-          onBack={() => setShowLabels(false)}
-        />
+        <LabelsBrowser token={token} onBack={() => setShowLabels(false)} />
       )}
     </>
   );

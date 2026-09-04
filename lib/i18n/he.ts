@@ -814,7 +814,7 @@ export const he: Record<TranslationKey, string> = {
   // ── מדבקות — תור ההדפסה של המדבקות שנוצרו ──
   'labels.title': 'מדבקות',
   'labels.size': 'גודל מדבקה',
-  'labels.scopeDelivery': 'המשלוח הזה',
+  'labels.scopeSession': 'המשימה הזו',
   'labels.scopeAll': 'כל האחרונות',
   'labels.filterAll': 'הכל',
   'labels.filterCreated': 'לא הודפסו',
@@ -826,7 +826,8 @@ export const he: Record<TranslationKey, string> = {
   'labels.statusPrinted': 'הודפסה',
   'labels.printedTimes': 'הודפסה ×{count}',
   'labels.noBarcode': 'ללא ברקוד',
-  'labels.empty': 'עדיין אין מדבקות. צור מדבקה דרך "צור קרטון".',
+  'labels.empty': 'אין עדיין מדבקות למשימה הזו. צור מדבקה דרך "צור קרטון".',
+  'labels.emptyAll': 'עדיין לא נוצרו מדבקות.',
   'labels.emptyFiltered': 'אין תוצאות לסינון הזה.',
   'labels.print': 'הדפס {count} מדבקות',
   'labels.printNone': 'בחר מדבקות להדפסה',
