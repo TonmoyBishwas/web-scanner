@@ -89,6 +89,37 @@ In corner mode the capture-progress `<rect>` is stroked in the **frame's own
 hue** (brand blue), not `--ok` green; stroking green over a blue frame is what
 the floor reported as "the green mixes with the blue".
 
+#### Post-scan hold — green "saved" vs red "rejected"
+
+A confirmed decode starts a **3-second hold** in which further decodes are
+ignored (the OCR frame is being captured). That hold used to be painted as an
+error — red border, full-height red numeral, red status dot — which is exactly
+how the *duplicate* state is painted. A good scan therefore read as 0.2s of
+green flash followed by 3s of red, and only the sound told the two apart.
+
+The hold is now coloured by `scanOutcome`:
+
+| outcome | frame | label |
+|---|---|---|
+| `saved` | green border + `bg-ok/10`, `Check` icon | `Box N saved` (or `Captured`) |
+| `duplicate` | red border | `Already scanned` (or `Rejected`) |
+
+Two props make that possible:
+
+- **`isDuplicateBarcode(barcode) => boolean`** — asked *synchronously* the
+  instant a barcode is confirmed. It has to be: the parent's own verdict only
+  arrives after `captureSharpestFrame` (4 × 110ms ≈ 400ms+), far too late to be
+  the thing that decides what to paint. Pages that cannot answer synchronously
+  (`NonMeatTypeAFlow` dedupes by OCR'd *item*, not barcode) omit it and keep the
+  parent-driven `onDuplicateFlash`, which now downgrades a hold it lands inside.
+- **`holdClaim: 'saved' | 'captured'`** — `/issue` passes `'captured'`, because a
+  scan there only starts a lookup that can still fail and the worker must confirm
+  the box afterwards. Claiming "saved" there would be a lie.
+
+Related fix: the duplicate frame used to be gated `!isInCooldown && isDuplicate`
+and the parent always sets `isDuplicate` *during* the cooldown — so it never
+actually rendered. Rejections now own the hold.
+
 #### Scanner Visual States (3-state system)
 
 The `square` viewport is a 240x240px target box. It renders one of three mutually exclusive visual states at all times.
