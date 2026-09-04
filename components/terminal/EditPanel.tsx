@@ -22,6 +22,17 @@ interface EditPanelProps {
   expiry: string;
   /** Supplier's own batch/lot code, free text. Often blank — see below. */
   batch: string;
+  /**
+   * What the carton's own 31-digit barcode says, when it disagrees with the
+   * OCR. Offered as a one-tap correction, never applied automatically: the
+   * barcode has won every disagreement we have measured, but on 67 cartons
+   * from two suppliers that is a hint, not authority. Undefined = agree, or
+   * the format carries nothing.
+   */
+  barcodeWeight?: string;
+  barcodeExpiry?: string;
+  onUseBarcodeWeight?: () => void;
+  onUseBarcodeExpiry?: () => void;
   barcode: string;
   /** Invoice item chips for name snapping (design's iField) */
   itemChips?: EditItemChip[];
@@ -63,6 +74,7 @@ const isoToDdmmyyyy = (iso: string): string => {
 export function EditPanel({
   cartonNumber, name, weight, expiry, batch, barcode, itemChips,
   imageData, onViewImage,
+  barcodeWeight, barcodeExpiry, onUseBarcodeWeight, onUseBarcodeExpiry,
   onNameChange, onWeightChange, onExpiryChange, onBatchChange, onSave, onCancel,
 }: EditPanelProps) {
   const tr = useT();
@@ -96,6 +108,27 @@ export function EditPanel({
       >
         {value}
       </div>
+    </button>
+  );
+
+  // The barcode's version of a value the OCR read differently. Amber, not red:
+  // nothing is wrong yet and nothing is blocked — the worker decides.
+  const suggestion = (value: string, onUse: () => void) => (
+    <button
+      onClick={onUse}
+      className="w-full flex items-center justify-between gap-2 rounded-[9px] px-[10px] py-[7px] mb-[10px] border"
+      style={{ background: 'rgba(245,158,11,.10)', borderColor: 'rgba(245,158,11,.42)' }}
+    >
+      <span className="flex items-center gap-[6px] min-w-0">
+        <MI name="qr_code_scanner" size={15} style={{ color: '#fbbf5c' }} className="flex-none" />
+        <span className="text-[11px] font-extrabold truncate" style={{ color: '#e8d3a8' }}>
+          {tr('terminal.barcodeSays', { value })}
+        </span>
+      </span>
+      <span className="flex-none text-[11px] font-black px-[9px] py-[3px] rounded-full"
+            style={{ background: '#fbbf5c', color: '#1a1408' }}>
+        {tr('terminal.useBarcodeValue')}
+      </span>
     </button>
   );
 
@@ -159,6 +192,8 @@ export function EditPanel({
       <div className="px-[13px] py-3 border-t border-line" style={{ background: 'linear-gradient(180deg,#0d171d,#0a1015)' }}>
         {field === 'weight' && (
           <>
+            {barcodeWeight && onUseBarcodeWeight
+              && suggestion(`${barcodeWeight} ${tr('common.kg')}`, onUseBarcodeWeight)}
             <div className="flex items-stretch gap-[10px] mb-[10px]">
               {photo}
               <div
@@ -214,6 +249,9 @@ export function EditPanel({
           </div>
         )}
         {field === 'expiry' && (
+          <>
+            {barcodeExpiry && onUseBarcodeExpiry
+              && suggestion(barcodeExpiry, onUseBarcodeExpiry)}
           <div className="flex items-stretch gap-[10px]">
             {photo}
             <button
@@ -230,6 +268,7 @@ export function EditPanel({
               <span className="block text-[10px] font-extrabold text-brand-weak-ink">{tr('terminal.openCalendar')}</span>
             </button>
           </div>
+          </>
         )}
       </div>
 

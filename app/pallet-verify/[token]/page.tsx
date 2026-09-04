@@ -21,6 +21,7 @@ import { ToolDock, type ToolChip } from '@/components/terminal/ToolDock';
 import { ActiveScanCard } from '@/components/terminal/ActiveScanCard';
 import { HistoryRow } from '@/components/terminal/HistoryRow';
 import { EditPanel } from '@/components/terminal/EditPanel';
+import { findBarcodeConflict, type BarcodeConflict } from '@/lib/barcode-parser';
 import { DoneOverlay } from '@/components/terminal/DoneOverlay';
 import { Toast, useLockToast } from '@/components/terminal/Toast';
 import { useDrawerHost } from '@/components/terminal/DrawerHost';
@@ -89,6 +90,13 @@ interface BoxScan extends MultiPalletBoxScan {
   // Set on a manual box when OCR couldn't read the printed digits either — no
   // dedupe ID is possible, so it's counted but flagged ⚠️ for the worker.
   needs_review?: boolean;
+  // A 31-digit carton barcode encodes the weight and expiry, so it is a free
+  // second reading of the same sticker. When the two disagree one of them is
+  // wrong and the worker is still holding the box. Deliberately NOT folded
+  // into `needs_review`: that flag BLOCKS the pallet from closing, and a
+  // parser validated on 67 cartons from two suppliers must not be able to
+  // stop a delivery. This only warns and offers the value.
+  barcode_conflict?: BarcodeConflict;
 }
 
 // Digits-only normaliser for comparing the full printed barcode number across
@@ -96,6 +104,12 @@ interface BoxScan extends MultiPalletBoxScan {
 // across every box of one product).
 function digitsOnly(s: string | null | undefined): string {
   return (s || '').replace(/\D/g, '');
+}
+
+/** `2027-06-16` → `16/06/27`, for a toast that has to stay one short line. */
+function isoToDdmmyyyyShort(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+  return m ? `${m[3]}/${m[2]}/${m[1].slice(2)}` : iso;
 }
 
 // ── Uniform-pair detection state ──
@@ -274,6 +288,8 @@ export default function PalletVerifyPage({
       /** Supplier batch/lot. Free text — OCR leaves it blank far more often
           than it fills it, so this is usually the only way it gets entered. */
       batch: string;
+      /** The carton barcode's own reading, when it contradicts the OCR. */
+      conflict?: BarcodeConflict;
       // Captured sticker frame so the modal can show what the OCR actually saw.
       // Worker can't fix the name/weight blind — showing the photo is the whole
       // point of this view. Optional because rescue/legacy boxes might not have one.
@@ -838,6 +854,19 @@ export default function PalletVerifyPage({
     })
       .then((r) => r.json())
       .then((data) => {
+        // Barcode-vs-OCR cross-check. Computed out here, not in the updater:
+        // it depends only on the OCR result and the box's own barcode, and a
+        // state updater may run twice (StrictMode) — which would double-toast.
+        // For a manual capture the identity is the OCR'd digit string, which is
+        // exactly what `resolvedBarcode` becomes inside the updater below.
+        const conflict = data?.ocr_data
+          ? findBarcodeConflict(
+              manual ? digitsOnly(data.ocr_data.barcode_digits) : lookupKey,
+              data.ocr_data.weight_kg,
+              data.ocr_data.expiry_date,
+            )
+          : null;
+
         setScannedBoxes((prev) => {
           // find the box by its (provisional, for manual) barcode key
           const idx = prev.findIndex((b) => b.barcode === lookupKey);
@@ -926,6 +955,7 @@ export default function PalletVerifyPage({
               production_date: data.ocr_data.production_date || '',
               supplier_batch: data.ocr_data.supplier_batch || '',
               needs_review: needsReview || undefined,
+              barcode_conflict: conflict || undefined,
             };
           });
           setDetectedType(detectType(updated, acceptedMerges));
@@ -938,6 +968,26 @@ export default function PalletVerifyPage({
           if (manual) archiveStickerPhoto(resolvedBarcode, imageData, 'pallet');
           return updated;
         });
+
+        // Warn, don't block: the worker is still holding the carton, and the
+        // barcode has been right in every disagreement we have measured — but
+        // three cases is not a licence to overrule the label automatically.
+        if (conflict) {
+          const label = (data.ocr_data.product_name_hebrew
+            || data.ocr_data.product_name_english || '').trim();
+          showToast(
+            conflict.weight
+              ? tr('palletVerify.barcodeConflictWeight', {
+                  item: label, bc: conflict.weight.barcode.toFixed(2),
+                  ocr: conflict.weight.ocr.toFixed(2),
+                })
+              : tr('palletVerify.barcodeConflictExpiry', {
+                  item: label, bc: isoToDdmmyyyyShort(conflict.expiry!.barcode),
+                  ocr: isoToDdmmyyyyShort(conflict.expiry!.ocr),
+                }),
+            'report_problem', '#fbbf5c',
+          );
+        }
       })
       .catch(() => {
         setScannedBoxes((prev) => {
@@ -1131,6 +1181,7 @@ export default function PalletVerifyPage({
       weight: box.weight > 0 ? String(box.weight) : '',
       expiry: box.expiry || '',
       batch: box.supplier_batch || '',
+      conflict: box.barcode_conflict,
       image_data: box.image_data,
       isLoose,
     });
@@ -1168,6 +1219,9 @@ export default function PalletVerifyPage({
         expiry,
         supplier_batch: batch,
         needs_review: hasName && hasWeight ? undefined : b.needs_review,
+        // The worker has now looked at both readings and chosen. Whatever they
+        // chose is the answer — don't keep flagging it.
+        barcode_conflict: undefined,
       };
     }
 
@@ -1359,6 +1413,30 @@ export default function PalletVerifyPage({
       onExpiryChange={(v) => setEditForm({ ...editForm, expiry: v })}
       batch={editForm.batch}
       onBatchChange={(v) => setEditForm({ ...editForm, batch: v })}
+      barcodeWeight={editForm.conflict?.weight?.barcode.toFixed(2)}
+      barcodeExpiry={
+        editForm.conflict?.expiry
+          ? isoToDdmmyyyyShort(editForm.conflict.expiry.barcode)
+          : undefined
+      }
+      onUseBarcodeWeight={
+        editForm.conflict?.weight
+          ? () => setEditForm({
+              ...editForm,
+              weight: String(editForm.conflict!.weight!.barcode),
+            })
+          : undefined
+      }
+      onUseBarcodeExpiry={
+        editForm.conflict?.expiry
+          // Apply the ISO form the OCR would have produced, so the stored value
+          // keeps one shape however it was arrived at.
+          ? () => setEditForm({
+              ...editForm,
+              expiry: editForm.conflict!.expiry!.barcode,
+            })
+          : undefined
+      }
       onSave={handleSaveEdit}
       onCancel={() => setEditForm(null)}
     />
@@ -1372,6 +1450,15 @@ export default function PalletVerifyPage({
     })
       .then((r) => r.json())
       .then((data) => {
+        // See the pallet-phase note — hoisted out of the updater for the same reason.
+        const conflict = data?.ocr_data
+          ? findBarcodeConflict(
+              manual ? digitsOnly(data.ocr_data.barcode_digits) : lookupKey,
+              data.ocr_data.weight_kg,
+              data.ocr_data.expiry_date,
+            )
+          : null;
+
         setLooseBoxes((prev) => {
           const idx = prev.findIndex((b) => b.barcode === lookupKey);
           if (idx === -1) return prev;
@@ -1427,9 +1514,27 @@ export default function PalletVerifyPage({
               production_date: data.ocr_data.production_date || '',
               supplier_batch: data.ocr_data.supplier_batch || '',
               needs_review: needsReview || undefined,
+              barcode_conflict: conflict || undefined,
             };
           });
         });
+
+        if (conflict) {
+          const label = (data.ocr_data.product_name_hebrew
+            || data.ocr_data.product_name_english || '').trim();
+          showToast(
+            conflict.weight
+              ? tr('palletVerify.barcodeConflictWeight', {
+                  item: label, bc: conflict.weight.barcode.toFixed(2),
+                  ocr: conflict.weight.ocr.toFixed(2),
+                })
+              : tr('palletVerify.barcodeConflictExpiry', {
+                  item: label, bc: isoToDdmmyyyyShort(conflict.expiry!.barcode),
+                  ocr: isoToDdmmyyyyShort(conflict.expiry!.ocr),
+                }),
+            'report_problem', '#fbbf5c',
+          );
+        }
       })
       .catch(() => {
         setLooseBoxes((prev) => {

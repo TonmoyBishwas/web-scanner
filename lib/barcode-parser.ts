@@ -152,3 +152,90 @@ export function needsOcrForExpiry(parsedBarcode: ParsedBarcode | null): boolean 
 export function needsOcrForWeight(parsedBarcode: ParsedBarcode | null): boolean {
   return true;  // All data must come from OCR or manual entry
 }
+
+// ─── 31-digit carton barcodes: a deterministic cross-check, never a source ───
+//
+// The rule above ("barcodes are IDs only") is correct for the 25-digit format,
+// which is 62 % of cartons and carries nothing at all. It is NOT correct for
+// the 31-digit format. Measured against all 264 live box_inventory rows on
+// 2026-09-04, and reproduced independently by the Priority side:
+//
+//   1-13   EAN13
+//   14-19  weight in grams    → 65/67 within 20 g of the OCR weight
+//   20-23  per-carton serial  → unique per carton; NOT a supplier batch
+//   24-31  expiry DDMMYYYY    → 67/67 valid, 64 agree with the OCR
+//
+// In all three expiry disagreements the barcode was right and the OCR had
+// misread a digit. That still does not make it authoritative: a parser that
+// speaks for a quarter of cartons and is silent for the rest is one supplier
+// label change away from booking a wrong weight. So this is only ever used to
+// FLAG a disagreement for the worker while they are still holding the carton.
+// Mirrored server-side by wb_barcode_expiry / wb_barcode_weight_kg, which feed
+// the generated columns box_inventory.barcode_expiry / .barcode_weight_kg.
+
+export interface CartonBarcodeData {
+  /** kg, or null when this barcode format carries no weight. */
+  weight: number | null;
+  /** ISO `YYYY-MM-DD`, or null. */
+  expiry: string | null;
+}
+
+export function parseCartonBarcode(barcodeString: string): CartonBarcodeData | null {
+  const digits = (barcodeString || '').replace(/\D/g, '');
+  if (digits.length !== 31) return null;   // only the one format we measured
+
+  let weight: number | null = Number(digits.slice(13, 19)) / 1000;
+  // Outside this band the offset does not hold for that supplier's stock —
+  // say nothing rather than something wrong.
+  if (!Number.isFinite(weight) || weight <= 0.5 || weight > 100) weight = null;
+  else weight = Math.round(weight * 1000) / 1000;
+
+  let expiry: string | null = null;
+  const tail = digits.slice(23, 31);
+  const dd = Number(tail.slice(0, 2));
+  const mm = Number(tail.slice(2, 4));
+  const yyyy = Number(tail.slice(4, 8));
+  if (yyyy >= 2020 && yyyy <= 2099 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+    const d = new Date(Date.UTC(yyyy, mm - 1, dd));
+    // Rejects 31/02 and friends, which Date would silently roll into March.
+    if (d.getUTCFullYear() === yyyy && d.getUTCMonth() === mm - 1 && d.getUTCDate() === dd) {
+      expiry = `${yyyy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+    }
+  }
+
+  return weight === null && expiry === null ? null : { weight, expiry };
+}
+
+/** Weight gap that counts as a real disagreement rather than label rounding. */
+export const BARCODE_WEIGHT_TOLERANCE_KG = 0.05;
+
+export interface BarcodeConflict {
+  weight?: { barcode: number; ocr: number };
+  expiry?: { barcode: string; ocr: string };
+}
+
+/**
+ * Compare a 31-digit barcode against what the OCR read off the same sticker.
+ * Returns null when they agree, when the format carries nothing, or when the
+ * OCR gave us nothing to compare against (a blank is a separate problem —
+ * `needs_review` already covers it, and filling it from the barcode is exactly
+ * the authoritative behaviour we are avoiding).
+ */
+export function findBarcodeConflict(
+  barcodeString: string,
+  ocrWeightKg: number | null | undefined,
+  ocrExpiryIso: string | null | undefined,
+): BarcodeConflict | null {
+  const parsed = parseCartonBarcode(barcodeString);
+  if (!parsed) return null;
+
+  const out: BarcodeConflict = {};
+  if (parsed.weight !== null && typeof ocrWeightKg === 'number' && ocrWeightKg > 0
+      && Math.abs(parsed.weight - ocrWeightKg) >= BARCODE_WEIGHT_TOLERANCE_KG) {
+    out.weight = { barcode: parsed.weight, ocr: ocrWeightKg };
+  }
+  if (parsed.expiry && ocrExpiryIso && parsed.expiry !== ocrExpiryIso) {
+    out.expiry = { barcode: parsed.expiry, ocr: ocrExpiryIso };
+  }
+  return out.weight || out.expiry ? out : null;
+}

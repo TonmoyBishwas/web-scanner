@@ -163,6 +163,9 @@ export const en = {
 
   'palletVerify.expiryNote': 'This page stays available for ~2 hours. Individual sticker pages stay available indefinitely.',
   'palletVerify.looseHeader': 'Loose Boxes · {scanned} / {declared} scanned',
+  // Barcode-vs-OCR disagreement. A warning, never a block — see lib/barcode-parser.
+  'palletVerify.barcodeConflictWeight': '{item}: barcode says {bc} kg, label read {ocr}',
+  'palletVerify.barcodeConflictExpiry': '{item}: barcode says {bc}, label read {ocr}',
   'palletVerify.docPrefix': 'Doc: {doc}',
   'palletVerify.savingLoose': 'Saving loose boxes…',
   'palletVerify.savingPallet': 'Saving pallet…',
@@ -618,6 +621,10 @@ export const en = {
   // on the batch (מנה) for traceability and recalls.
   'terminal.batchTag': 'BATCH',
   'terminal.batchHint': 'Supplier batch / lot (optional)',
+  // 31-digit carton barcodes carry the weight and expiry, so they are a free
+  // second reading of the same sticker. Shown, never auto-applied.
+  'terminal.barcodeSays': 'Barcode: {value}',
+  'terminal.useBarcodeValue': 'Use',
   'terminal.viewSticker': 'Enlarge the sticker photo',
   'terminal.today': 'Today',
   'terminal.ok': 'OK',
