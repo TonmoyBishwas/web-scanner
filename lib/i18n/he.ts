@@ -167,6 +167,8 @@ export const he: Record<TranslationKey, string> = {
 
   'palletVerify.expiryNote': 'הדף הזה זמין למשך כ-שעתיים. דפי המדבקות הבודדים זמינים ללא הגבלה.',
   'palletVerify.looseHeader': 'קופסאות בודדות · {scanned} / {declared} נסרקו',
+  'palletVerify.barcodeConflictWeight': '{item}: ברקוד {bc} ק"ג, תווית {ocr}',
+  'palletVerify.barcodeConflictExpiry': '{item}: ברקוד {bc}, תווית {ocr}',
   'palletVerify.docPrefix': 'מסמך: {doc}',
   'palletVerify.savingLoose': 'שומר קופסאות בודדות…',
   'palletVerify.savingPallet': 'שומר משטח…',
@@ -620,6 +622,8 @@ export const he: Record<TranslationKey, string> = {
   'terminal.openCalendar': 'פתח לוח שנה',
   'terminal.batchTag': 'מנה',
   'terminal.batchHint': 'אצוות ספק / לוט (רשות)',
+  'terminal.barcodeSays': 'ברקוד: {value}',
+  'terminal.useBarcodeValue': 'השתמש',
   'terminal.viewSticker': 'הגדל את תמונת המדבקה',
   'terminal.today': 'היום',
   'terminal.ok': 'אישור',
