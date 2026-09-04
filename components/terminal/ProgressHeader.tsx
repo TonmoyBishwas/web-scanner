@@ -1,11 +1,16 @@
 'use client';
 
 interface ProgressHeaderProps {
-  label: string;
+  /**
+   * Caption above the bar. Omit it to render the bar on its own — pallet-verify
+   * carries both counters in the header itself, and repeating them here read as
+   * clutter to the workers rather than as reassurance.
+   */
+  label?: string;
   count: number;
   total: number;
   /** Trailing word after "N / M" (design: "קרטונים") */
-  unitLabel: string;
+  unitLabel?: string;
   tone?: 'brand' | 'warn' | 'done';
 }
 
@@ -24,13 +29,15 @@ export function ProgressHeader({ label, count, total, unitLabel, tone = 'brand' 
 
   return (
     <div className="flex-none px-[14px] pt-2 pb-[10px] bg-header border-b border-[#101821]">
-      <div className="flex justify-between items-center mb-[6px]">
-        <span className="text-[9px] font-bold text-[#e8eef2] tracking-[.5px]">{label}</span>
-        <span className="font-mono font-black text-[11px] text-ink-inverse" dir="ltr">
-          <span style={{ color: countColor }}>{count}</span>
-          {total > 0 && <> / {total}</>} <bdi className="font-sans">{unitLabel}</bdi>
-        </span>
-      </div>
+      {label && (
+        <div className="flex justify-between items-center mb-[6px]">
+          <span className="text-[9px] font-bold text-[#e8eef2] tracking-[.5px]">{label}</span>
+          <span className="font-mono font-black text-[11px] text-ink-inverse" dir="ltr">
+            <span style={{ color: countColor }}>{count}</span>
+            {total > 0 && <> / {total}</>} <bdi className="font-sans">{unitLabel}</bdi>
+          </span>
+        </div>
+      )}
       <div className="h-[6px] bg-[#12202a] rounded-full overflow-hidden">
         <div
           className="h-full rounded-full transition-[width] duration-400"

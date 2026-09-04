@@ -6,8 +6,6 @@ import {
   XCircle,
   Loader2,
   AlertTriangle,
-  Scale,
-  Boxes,
   Check,
 } from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
@@ -1800,27 +1798,37 @@ export default function PalletVerifyPage({
 
   // ── Type badge ──
 
-  function TypeBadge() {
-    if (detectedType === 'unknown')
-      return <span className="text-xs text-ink-muted">{tr('palletVerify.scan2Detect')}</span>;
-    if (detectedType === 'single-uniform')
-      return (
-        <span className="inline-flex items-center gap-1 text-xs bg-ok-weak text-ok-weak-ink rounded-full px-2 py-0.5 font-bold">
-          <CheckCircle className="w-3.5 h-3.5 shrink-0" />
-          {tr('palletVerify.singleUniformBadge')}
-        </span>
-      );
-    if (detectedType === 'single-nonuniform')
-      return (
-        <span className="inline-flex items-center gap-1 text-xs bg-warn-weak text-warn-weak-ink rounded-full px-2 py-0.5 font-bold">
-          <Scale className="w-3.5 h-3.5 shrink-0" />
-          {tr('palletVerify.singleNonuniformBadge')}
-        </span>
-      );
+  /**
+   * A header corner counter: a small caption over a mono "x / n".
+   *
+   * The two of them replace three separate readouts that all said the same
+   * thing (header title, the scan-type hint, and the progress row's own
+   * label + count). Workers read the header as noise and stopped looking at
+   * it; one number per corner is what they actually need — which pallet
+   * they're on, and how many cartons are on it.
+   *
+   * `total <= 0` means "not declared yet", so the denominator is held back
+   * rather than shown as a misleading /0.
+   */
+  function HeaderCount({
+    caption, current, total, align, tone = 'brand',
+  }: {
+    caption: string;
+    current: number;
+    total: number;
+    align: 'start' | 'end';
+    tone?: 'brand' | 'warn' | 'done';
+  }) {
+    const color = tone === 'done' ? '#4ade80' : tone === 'warn' ? '#fbbf5c' : '#13a4ec';
     return (
-      <span className="inline-flex items-center gap-1 text-xs bg-brand-weak text-brand-weak-ink rounded-full px-2 py-0.5 font-bold">
-        <Boxes className="w-3.5 h-3.5 shrink-0" />
-        {tr('palletVerify.mixBadge')}
+      <span className={`flex flex-col ${align === 'start' ? 'items-start' : 'items-end'} leading-none gap-[3px]`}>
+        <span className="text-[8.5px] font-bold text-ink-muted tracking-[.6px] uppercase whitespace-nowrap">
+          {caption}
+        </span>
+        <span className="font-mono font-black text-[15px] text-ink-inverse" dir="ltr">
+          <span style={{ color }}>{current}</span>
+          {total > 0 && <span className="text-ink-muted">/{total}</span>}
+        </span>
       </span>
     );
   }
@@ -2087,15 +2095,28 @@ export default function PalletVerifyPage({
     return withLang(
       <div className="h-dvh flex flex-col bg-canvas overflow-hidden">
         <DesignHeader
-          title={tr('palletVerify.looseHeader', { scanned, declared })}
-          subtitle={tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}
+          title={tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}
           onMenu={drawer.open}
+          leading={
+            <span className="ps-1 text-[9px] font-bold text-warn-weak-ink tracking-[.6px] uppercase whitespace-nowrap">
+              {tr('loose.title')}
+            </span>
+          }
+          right={
+            <span className="pe-2">
+              <HeaderCount
+                caption={tr('terminal.statCartons')}
+                current={scanned}
+                total={declared}
+                align="end"
+                tone={declared > 0 && scanned >= declared ? 'done' : 'warn'}
+              />
+            </span>
+          }
         />
         <ProgressHeader
-          label={tr('terminal.progressLabelLoose')}
           count={scanned}
           total={declared}
-          unitLabel={tr('terminal.statCartons')}
           tone={declared > 0 && scanned >= declared ? 'done' : 'warn'}
         />
 
@@ -2457,22 +2478,31 @@ export default function PalletVerifyPage({
   return withLang(
     <div className="h-dvh flex flex-col bg-canvas overflow-hidden">
       <DesignHeader
-        title={
-          confirmedBoxCount > 0
-            ? tr('palletVerify.palletHeaderWithCount', { current: currentPallet, total: pallet_count, count: confirmedBoxCount })
-            : tr('palletVerify.palletHeaderShort', { current: currentPallet, total: pallet_count })
-        }
-        subtitle={tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}
+        title={tr('palletVerify.docPrefix', { doc: session?.document_number || '—' })}
         onMenu={drawer.open}
-        right={<span className="pe-1"><TypeBadge /></span>}
+        leading={
+          <span className="ps-1">
+            <HeaderCount
+              caption={tr('terminal.statPallet')}
+              current={currentPallet}
+              total={pallet_count}
+              align="start"
+            />
+          </span>
+        }
+        right={
+          <span className="pe-2">
+            <HeaderCount
+              caption={tr('terminal.statCartons')}
+              current={committed}
+              total={confirmedBoxCount}
+              align="end"
+              tone={canConfirm ? 'done' : 'brand'}
+            />
+          </span>
+        }
       />
-      <ProgressHeader
-        label={tr('terminal.progressLabel', { n: currentPallet, total: pallet_count })}
-        count={committed}
-        total={confirmedBoxCount}
-        unitLabel={tr('terminal.statCartons')}
-        tone={canConfirm ? 'done' : 'brand'}
-      />
+      <ProgressHeader count={committed} total={confirmedBoxCount} tone={canConfirm ? 'done' : 'brand'} />
 
       {/* Camera area with the floating bottom sheet over it */}
       <div className="flex-1 min-h-0 relative bg-black">

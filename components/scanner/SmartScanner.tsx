@@ -18,11 +18,26 @@ interface SmartScannerProps {
   className?: string;
   /**
    * Target-frame style. 'square' = legacy centered 240×240 box.
-   * 'corner' = terminal-design 276×150 corner frame pinned near the top
-   * (the bottom of the camera area sits under the floating sheet).
+   * 'corner' = terminal-design corner frame, centred in the camera strip the
+   * floating sheet leaves visible (see CORNER_* below).
    */
   frame?: 'square' | 'corner';
 }
+
+/**
+ * Corner-frame geometry, in CSS px.
+ *
+ * Grown from 276×150: workers reported the old box was both small and sitting
+ * high in the viewfinder, so they were tilting the phone up to fill it instead
+ * of just pointing it at the carton.
+ *
+ * CORNER_BAND_PX is the shortest camera strip the frame will centre itself in —
+ * the frame plus its label and padding. It must stay ≤ the sheet's
+ * MIN_CAMERA_PX, which is what guarantees that much camera at peek/mid.
+ */
+const CORNER_W = 320;
+const CORNER_H = 196;
+const CORNER_BAND_PX = 240;
 
 // Declare BarcodeDetector types
 declare global {
@@ -915,8 +930,24 @@ export function SmartScanner({
         <div
           className={
             frame === 'corner'
-              ? 'absolute inset-x-0 top-0 flex flex-col items-center pt-3 px-6'
+              ? 'absolute inset-x-0 top-0 flex flex-col items-center justify-center px-6 py-3'
               : 'absolute inset-0 flex items-center justify-center'
+          }
+          style={
+            frame === 'corner'
+              ? {
+                  // Centre the frame in the camera the worker can actually SEE:
+                  // the strip above the bottom sheet, not the whole element.
+                  // `--sheet-h` is published by BottomSheet as it drags and
+                  // snaps (a CSS var, not a prop — the height changes on every
+                  // pointermove and re-rendering the live camera at that rate
+                  // is not affordable). The min() keeps CORNER_BAND_PX of room
+                  // so the tall snap can't centre the frame under the sheet;
+                  // there it stays top-anchored, as it always was.
+                  bottom: `min(var(--sheet-h, 0px), calc(100% - ${CORNER_BAND_PX}px))`,
+                  transition: 'bottom var(--sheet-h-dur, 0s) cubic-bezier(.4,0,.2,1)',
+                }
+              : undefined
           }
         >
           {frame === 'corner' && (
@@ -926,7 +957,7 @@ export function SmartScanner({
           )}
           <div
             className={frame === 'corner' ? 'relative w-full' : 'relative'}
-            style={frame === 'corner' ? { maxWidth: 276, height: 150 } : { width: 240, height: 240 }}
+            style={frame === 'corner' ? { maxWidth: CORNER_W, height: CORNER_H } : { width: 240, height: 240 }}
           >
 
             {/* === COOLDOWN STATE === */}
@@ -978,14 +1009,14 @@ export function SmartScanner({
                     flash, where it actually means "captured". */}
                 <svg
                   className="absolute inset-0 w-full h-full pointer-events-none"
-                  viewBox={frame === 'corner' ? '0 0 276 150' : '0 0 240 240'}
+                  viewBox={frame === 'corner' ? `0 0 ${CORNER_W} ${CORNER_H}` : '0 0 240 240'}
                   preserveAspectRatio="none"
                   xmlns="http://www.w3.org/2000/svg"
                 >
                   <rect
                     x="1.5" y="1.5"
-                    width={frame === 'corner' ? 273 : 237}
-                    height={frame === 'corner' ? 147 : 237}
+                    width={frame === 'corner' ? CORNER_W - 3 : 237}
+                    height={frame === 'corner' ? CORNER_H - 3 : 237}
                     rx="10"
                     fill="none"
                     stroke={frame === 'corner' ? 'var(--brand)' : 'var(--ok)'}
