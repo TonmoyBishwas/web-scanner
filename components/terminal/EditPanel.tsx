@@ -20,6 +20,8 @@ interface EditPanelProps {
   weight: string;
   /** Expiry as free text (DD/MM/YYYY) */
   expiry: string;
+  /** Supplier's own batch/lot code, free text. Often blank — see below. */
+  batch: string;
   barcode: string;
   /** Invoice item chips for name snapping (design's iField) */
   itemChips?: EditItemChip[];
@@ -28,6 +30,7 @@ interface EditPanelProps {
   onNameChange: (v: string) => void;
   onWeightChange: (v: string) => void;
   onExpiryChange: (v: string) => void;
+  onBatchChange: (v: string) => void;
   onSave: () => void;
   onCancel: () => void;
 }
@@ -58,9 +61,9 @@ const isoToDdmmyyyy = (iso: string): string => {
 // thumbnail below the keypad that had to be tapped open, which meant looking
 // at the sticker and correcting it were two separate, alternating steps.
 export function EditPanel({
-  cartonNumber, name, weight, expiry, barcode, itemChips,
+  cartonNumber, name, weight, expiry, batch, barcode, itemChips,
   imageData, onViewImage,
-  onNameChange, onWeightChange, onExpiryChange, onSave, onCancel,
+  onNameChange, onWeightChange, onExpiryChange, onBatchChange, onSave, onCancel,
 }: EditPanelProps) {
   const tr = useT();
   const [field, setField] = useState<Field>('weight');
@@ -228,6 +231,30 @@ export function EditPanel({
             </button>
           </div>
         )}
+      </div>
+
+      {/* Supplier batch / lot.
+          Deliberately NOT a fourth tab: the three tabs above are the hot path
+          (OCR misreads weight and name constantly, and the worker fixes them
+          on nearly every problem carton), and a fourth would push all four
+          below a legible width on a 360px phone. Batch is the opposite — the
+          OCR only fills it when the label carries an explicit מנה/Batch
+          heading, so this row is usually where it gets entered at all, and it
+          is fine for it to sit quietly at the bottom. Blank is a valid answer;
+          nothing gates on it. */}
+      <div className="px-[13px] pt-[10px] pb-[2px] border-t border-line flex items-center gap-2">
+        <span className="flex-none bg-brand-weak text-brand-weak-ink font-mono font-extrabold text-[7px] px-[6px] py-[3px] rounded-[4px] tracking-[.5px]">
+          {tr('terminal.batchTag')}
+        </span>
+        <input
+          dir="ltr"
+          type="text"
+          value={batch}
+          maxLength={24}
+          placeholder={tr('terminal.batchHint')}
+          onChange={e => onBatchChange(e.target.value)}
+          className="flex-1 min-w-0 bg-line border border-line rounded-[8px] px-[10px] py-[7px] font-mono text-[11px] font-bold text-ink-inverse outline-none focus:border-brand"
+        />
       </div>
 
       {/* Barcode (read-only — it is the row's identity/dedup key) */}
