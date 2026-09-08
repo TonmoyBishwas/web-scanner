@@ -1,5 +1,15 @@
 # Web Scanner Documentation
 
+> **Start with [SCANNER_REFERENCE.md](SCANNER_REFERENCE.md)** — the complete scanner reference (pages,
+> phase machines, the camera engine, every API route, the UI kit), written 2026-09-08 from a full read of
+> the codebase. For how the scanner fits together with the bot — every scenario, the database, the
+> integration contracts, deployment and the issues register — see
+> [SYSTEM_REFERENCE.md](../../telegram-warehouse-bot/docs/SYSTEM_REFERENCE.md).
+>
+> The documents below predate it and have drifted; SCANNER_REFERENCE.md ch.8 audits them claim by claim.
+
+
+
 Detailed documentation for the Web Scanner component of the warehouse system.
 
 ## Contents
