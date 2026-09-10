@@ -106,6 +106,44 @@ function digitsOnly(s: string | null | undefined): string {
   return (s || '').replace(/\D/g, '');
 }
 
+// A manual capture is pushed with a placeholder id and only gets a real one
+// when OCR reads the printed digits — or, failing that, when the worker types
+// them. `MANUAL-…` must NEVER reach the database: it is not a barcode, so an
+// outbound box-sticker scan could never match the row it created.
+const PROVISIONAL_PREFIX = 'MANUAL-';
+const isProvisional = (barcode: string) => barcode.startsWith(PROVISIONAL_PREFIX);
+
+// What a carton with no readable barcode at all is booked as. It has to be
+// non-empty — the bot skips any box whose barcode is falsy
+// (`airtable_service.create_pallet_box_inventory`), so an empty string would
+// silently drop the carton out of `box_inventory` — and it has to be visibly
+// not-a-barcode so nothing ever tries to match it against a scan.
+const NO_BARCODE_PREFIX = 'NOBC-';
+const noBarcodeId = (doc: string, pallet: number, n: number) =>
+  `${NO_BARCODE_PREFIX}${(doc || 'DOC').replace(/[^A-Za-z0-9]/g, '').slice(0, 10)}-P${pallet}-${n}`;
+
+/** A real GS1 carton barcode carries at least the 13-digit item prefix. */
+const MIN_BARCODE_DIGITS = 13;
+
+/**
+ * Last line of defence before the wire. Every path that books a box is
+ * supposed to have replaced the placeholder by now (typed digits, or the
+ * NOBC- marker); this makes sure a future one that forgets cannot write
+ * `MANUAL-1789…` into `box_inventory.barcode`, where it would look like a
+ * scannable code and match nothing for the rest of the carton's life.
+ */
+function stripProvisionalIds<T extends { barcode: string; sku?: string }>(
+  boxes: T[],
+  doc: string,
+  pallet: number,
+): T[] {
+  return boxes.map((b, i) =>
+    isProvisional(b.barcode)
+      ? { ...b, barcode: noBarcodeId(doc, pallet, i + 1), sku: b.sku && !isProvisional(b.sku) ? b.sku : '' }
+      : b,
+  );
+}
+
 /** `2027-06-16` → `16/06/27`, for a toast that has to stay one short line. */
 function isoToDdmmyyyyShort(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
@@ -290,6 +328,19 @@ export default function PalletVerifyPage({
       batch: string;
       /** The carton barcode's own reading, when it contradicts the OCR. */
       conflict?: BarcodeConflict;
+      /**
+       * This carton still has no identity (a manual capture whose printed
+       * digits the OCR could not read). While true the panel asks for the
+       * digits, and the box stays flagged until it has some answer.
+       */
+      unidentified: boolean;
+      /** Digits the worker is typing for an unidentified carton. */
+      barcodeInput: string;
+      /**
+       * Set when the worker has declared the carton has no readable barcode:
+       * the NOBC- marker it will be booked under. Wins over `barcodeInput`.
+       */
+      forcedId?: string;
       // Captured sticker frame so the modal can show what the OCR actually saw.
       // Worker can't fix the name/weight blind — showing the photo is the whole
       // point of this view. Optional because rescue/legacy boxes might not have one.
@@ -1184,10 +1235,9 @@ export default function PalletVerifyPage({
       conflict: box.barcode_conflict,
       image_data: box.image_data,
       isLoose,
+      unidentified: isProvisional(box.barcode),
+      barcodeInput: '',
     });
-    // The design edit panel lives inside the bottom sheet — grow it so the
-    // whole panel (field boxes + keypad) is visible.
-    (isLoose ? looseSheetRef : sheetRef).current?.snapTo(2);
   }
 
   // Apply the edit: update the box, then re-group exactly like rescanPalletBox —
@@ -1195,12 +1245,66 @@ export default function PalletVerifyPage({
   // drop any uniform group / pending prompt that no longer has ≥2 done samples.
   // Loose-phase edits skip the regrouping (loose has no uniform groups) and
   // just patch the looseBoxes row.
+  // "There is no readable barcode on this carton." The escape hatch: without
+  // it a destroyed label would strand the pallet, which is the failure this
+  // whole manual path exists to prevent. It books the carton under a marker
+  // that is deliberately not barcode-shaped, so the row is real stock, is
+  // greppable, and can never be confused with a scannable code. Such a carton
+  // can still be issued via its pallet LPN — only the box-sticker route needs
+  // a barcode, and that route is impossible for it anyway.
+  function handleNoBarcode() {
+    if (!editForm) return;
+    const list = editForm.isLoose ? looseBoxes : scannedBoxes;
+    const n = list.findIndex((b) => b.barcode === editForm.barcode) + 1;
+    setEditForm({
+      ...editForm,
+      forcedId: noBarcodeId(session?.document_number || '', currentPallet, n || list.length + 1),
+      unidentified: false,
+      barcodeInput: '',
+    });
+  }
+
   function handleSaveEdit() {
     if (!editForm) return;
     const { barcode, name_he, name_en, isLoose } = editForm;
     const expiry = editForm.expiry.trim();
     const batch = editForm.batch.trim();
     const w = parseFloat(editForm.weight);
+
+    // ── Identity for a manual capture ──
+    // `resolvedId` is what this row's barcode BECOMES. For an already-identified
+    // carton that is its existing barcode; for one the worker just typed digits
+    // for it is those digits; for one they declared unreadable it is the
+    // NOBC- marker set by handleNoBarcode (which leaves `unidentified` false).
+    let resolvedId = barcode;
+    if (editForm.forcedId) {
+      resolvedId = editForm.forcedId;
+    } else if (editForm.unidentified) {
+      const typed = digitsOnly(editForm.barcodeInput);
+      if (typed.length >= MIN_BARCODE_DIGITS) {
+        // Same rule the scanned path uses: the FULL printed number identifies a
+        // carton, not the 13-digit SKU, which repeats across every box of one
+        // product. A clash here is the worker typing the sticker they already
+        // captured, so refuse rather than silently create a second row.
+        const others = (isLoose ? looseBoxes : scannedBoxes).filter((b) => b.barcode !== barcode);
+        if (others.some((b) => digitsOnly(b.barcode) === typed)) {
+          setError(t(session?.language || 'English', 'terminal.barcodeDuplicate'));
+          return;
+        }
+        resolvedId = typed;
+      } else if (editForm.barcodeInput.trim()) {
+        // Started typing but stopped short — that is a slip, not a decision.
+        setError(
+          t(session?.language || 'English', 'terminal.barcodeDigitsCount', {
+            n: typed.length,
+          }),
+        );
+        return;
+      }
+      // Nothing typed at all: leave the placeholder for now. The box keeps its
+      // warning, and the footer will bring the worker straight back here.
+    }
+    const stillUnidentified = isProvisional(resolvedId);
 
     // Same patch shape for both collections. Crucially: clear needs_review
     // when the worker's edit gives us BOTH a non-empty name AND a positive
@@ -1212,17 +1316,38 @@ export default function PalletVerifyPage({
       const hasWeight = newWeight > 0;
       return {
         ...b,
+        barcode: resolvedId,
+        // The SKU is the item prefix. Only re-derive it from a real typed
+        // barcode — a NOBC- marker carries no item information, and
+        // overwriting a scanned box's sku here would be a regression.
+        sku: resolvedId !== barcode && /^\d{13,}$/.test(resolvedId)
+          ? resolvedId.slice(0, 13)
+          : b.sku,
         ocr_status: 'done' as OcrStatus,
         item_name: name_en,
         item_name_hebrew: name_he,
         weight: newWeight,
         expiry,
         supplier_batch: batch,
-        needs_review: hasName && hasWeight ? undefined : b.needs_review,
+        // An identity is part of "resolved". A carton still carrying its
+        // placeholder stays flagged however good its name and weight are —
+        // otherwise Save quietly books an unmatchable row, which is exactly
+        // what it used to do.
+        needs_review: hasName && hasWeight && !stillUnidentified ? undefined : true,
         // The worker has now looked at both readings and chosen. Whatever they
         // chose is the answer — don't keep flagging it.
         barcode_conflict: undefined,
       };
+    }
+
+    // Keep the dedup sets in step: the old placeholder can never come back,
+    // and a freshly typed barcode must now be caught if the same sticker is
+    // scanned later.
+    if (resolvedId !== barcode) {
+      const set = isLoose ? looseProcessedRef.current : processedRef.current;
+      set.delete(barcode);
+      set.add(resolvedId);
+      setSelectedBarcode((cur) => (cur === barcode ? resolvedId : cur));
     }
 
     if (isLoose) {
@@ -1362,7 +1487,7 @@ export default function PalletVerifyPage({
   const imageModal = viewingImage ? (
     <div
       onClick={() => setViewingImage(null)}
-      className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4"
+      className="fixed inset-0 z-[90] bg-black/90 flex items-center justify-center p-4"
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
@@ -1383,10 +1508,12 @@ export default function PalletVerifyPage({
     </div>
   ) : null;
 
-  // Edit-a-scan: the terminal design's in-sheet edit panel (field boxes +
-  // numeric keypad + calendar). Rendered INSIDE the bottom sheet in place of
-  // the active card + history while editForm is set. Same editForm state and
-  // handleSaveEdit wiring as the old full-screen modal.
+  // Edit-a-scan. Rendered as a FULL-SCREEN overlay (not inside the bottom
+  // sheet, where it used to live): the worker opens this because the OCR
+  // misread the sticker, so they have to read the sticker and type at the same
+  // time, and inside the sheet — under a live camera — the photo could only
+  // ever be a thumbnail. Taking the screen also lets the camera pause, so
+  // nothing gets scanned into the pallet while they are typing.
   const editPanelNode = editForm ? (
     <EditPanel
       cartonNumber={(() => {
@@ -1397,7 +1524,11 @@ export default function PalletVerifyPage({
       name={editForm.name_he}
       weight={editForm.weight}
       expiry={editForm.expiry}
-      barcode={editForm.barcode}
+      barcode={editForm.forcedId || editForm.barcode}
+      barcodeEditable={editForm.unidentified}
+      barcodeInput={editForm.barcodeInput}
+      onBarcodeChange={(v) => { setEditForm({ ...editForm, barcodeInput: v }); setError(null); }}
+      onNoBarcode={handleNoBarcode}
       itemChips={(session?.ocr_data ?? [])
         .filter((it) => it.item_name_hebrew || it.item_name_english)
         .map((it) => ({
@@ -1559,7 +1690,11 @@ export default function PalletVerifyPage({
           // image_data (base64) is stripped like the pallet payload does —
           // it was shipping the full frame of every loose box to the server
           // and on to the bot, which never had a use for it. image_url does.
-          scanned_boxes: looseBoxes.map(({ ocr_status: _, image_data: _img, ...box }) => box),
+          scanned_boxes: stripProvisionalIds(
+            looseBoxes.map(({ ocr_status: _, image_data: _img, ...box }) => box),
+            session?.document_number || '',
+            0,
+          ),
           // Split jobs only: which worker is closing the loose-box task.
           // Ignored server-side on a single-scanner session. Task 7's
           // ownership guard 403s a split submit without this (not_your_loose_task).
@@ -1824,7 +1959,11 @@ export default function PalletVerifyPage({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           token,
-          scanned_boxes: scannedBoxes.map(({ ocr_status: _, image_data: _img, ...box }) => box),
+          scanned_boxes: stripProvisionalIds(
+            scannedBoxes.map(({ ocr_status: _, image_data: _img, ...box }) => box),
+            session?.document_number || '',
+            currentPallet,
+          ),
           box_count: declaredCount,
           uniform_groups: uniformGroupsPayload,
           merge_map: mergeMapPayload,
@@ -2191,18 +2330,29 @@ export default function PalletVerifyPage({
             label={tr('palletVerify.swipeConfirmLoose', { count: scanned })}
           />
         ) : (
+          hasUnresolvedLooseWarnings ? (
+          <button
+            onClick={() => {
+              const bad = looseBoxes.find((b) => b.needs_review);
+              if (bad) openEdit(bad, true);
+            }}
+            className="flex items-center justify-center gap-[6px] w-full py-3 rounded-[13px] font-black text-[14px] bg-warn text-canvas"
+          >
+            <MI name="report_problem" size={18} />
+            {tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })}
+          </button>
+          ) : (
           <button
             disabled
             className="w-full py-3 rounded-[13px] font-extrabold text-base bg-sunken text-ink-muted cursor-not-allowed"
           >
             {canConfirmLoose
               ? tr('palletVerify.confirmLooseBtn', { count: scanned })
-              : hasUnresolvedLooseWarnings
-              ? tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })
               : declared > 0
               ? tr('palletVerify.scanMoreLoose', { count: Math.max(0, declared - scanned) })
               : tr('palletVerify.scanAtLeast2')}
           </button>
+          )
         )}
         {hasUnresolvedLooseWarnings && (
           <p className="flex items-center justify-center gap-1 text-[11px] text-warn-weak-ink text-center mt-1.5">
@@ -2248,6 +2398,7 @@ export default function PalletVerifyPage({
                 instead of the stale pallet-phase handler. */}
             <SmartScanner
               key="loose-scanner"
+              paused={!!editForm}
               frame="corner"
               className="h-full"
               onBarcodeDetected={handleLooseBarcodeDetected}
@@ -2277,11 +2428,9 @@ export default function PalletVerifyPage({
                 onLockedPress={showLockToast}
               />
             }
-            footer={editForm?.isLoose ? undefined : looseFooter}
+            footer={looseFooter}
           >
-            {editForm?.isLoose ? (
-              editPanelNode
-            ) : (
+            {(
               <>
                 {looseActive && (
                   <ActiveScanCard
@@ -2546,14 +2695,29 @@ export default function PalletVerifyPage({
               label={tr('palletVerify.swipeConfirmPallet', { current: currentPallet })}
             />
           ) : (
+            hasUnresolvedWarnings ? (
+            // Live, not disabled. This used to be a dead grey bar reading "Fix
+            // 1 warning(s) to continue" with nothing to tap and no indication
+            // of WHICH carton or WHAT was wrong — a worker tapping it got
+            // nothing back. It now opens the offending carton's editor
+            // directly, which is the only thing they could have done anyway.
+            <button
+              onClick={() => {
+                const bad = scannedBoxes.find((b) => b.needs_review);
+                if (bad) openEdit(bad);
+              }}
+              className="flex items-center justify-center gap-[6px] w-full py-3 rounded-[13px] font-black text-[14px] bg-warn text-canvas"
+            >
+              <MI name="report_problem" size={18} />
+              {tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })}
+            </button>
+            ) : (
             <button
               disabled
               className="w-full py-3 rounded-[13px] font-extrabold text-base bg-sunken text-ink-muted cursor-not-allowed"
             >
               {canConfirm
                 ? tr('palletVerify.confirmPalletBtn', { current: currentPallet })
-                : hasUnresolvedWarnings
-                ? tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })
                 : committed < 2
                 ? tr('palletVerify.scanMoreToContinue', { count: 2 - committed })
                 : confirmedBoxCount === 0
@@ -2562,6 +2726,7 @@ export default function PalletVerifyPage({
                   tr('palletVerify.setTotalBelow')
                 : tr('palletVerify.boxesNeeded', { count: Math.max(0, confirmedBoxCount - committed) })}
             </button>
+            )
           )}
           {confirmedBoxCount === 0 && !forcedMix && !pendingSingleGroup && doneCount < 4 && doneCount >= 1 && !anyProcessing && (
             // The way off a pallet the scanner can't classify on its own —
@@ -2634,6 +2799,7 @@ export default function PalletVerifyPage({
             key={`pallet-scanner-${currentPallet}`}
             frame="corner"
             className="h-full"
+            paused={!!editForm}
             onBarcodeDetected={handleBarcodeDetected}
             onManualCapture={handleManualCapture}
             onDuplicateFlash={(fn) => { dupFlashRef.current = fn; }}
@@ -2667,11 +2833,9 @@ export default function PalletVerifyPage({
               onLockedPress={showLockToast}
             />
           }
-          footer={editForm && !editForm.isLoose ? undefined : mainFooter}
+          footer={mainFooter}
         >
-          {editForm && !editForm.isLoose ? (
-            editPanelNode
-          ) : (
+          {(
             <>
               {/* AI consolidation banner — Gemini thinks two groups are the
                   same product (OCR drift). Worker confirms or dismisses. */}
@@ -2789,6 +2953,7 @@ export default function PalletVerifyPage({
       {drawer.node}
       {palletsBrowser}
       {cartonOverlays}
+      {editPanelNode}
       {imageModal}
       {pendingForceConfirm && (
         // Terminal design "פער מול התעודה" — amber discrepancy card with

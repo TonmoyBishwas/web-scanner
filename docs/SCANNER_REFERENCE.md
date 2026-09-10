@@ -405,7 +405,9 @@ Note `canConfirm` has **no `>= 2` term**; the 2-box floor is enforced by the cou
 5. Push `BoxScan{ocr_status:'processing', image_data}` (688–700).
 6. If a frame exists: `runOcr(barcode, imageData, capturedIndex)` and `archiveStickerPhoto(barcode, imageData, 'pallet')` (703–710). `capturedIndex` is computed but **unused** by `runOcr` (see §6).
 
-**`handleManualCapture(imageData)`** — 720–737. "Capture anyway" (barcode would not decode). Creates a provisional id `MANUAL-{Date.now()}-{6 base36 chars}` used as both `barcode` and `sku`, `captured_via:'manual'`, then `runOcr(provisional, imageData, 0, true)`. No archive call here — the photo is filed only after OCR resolves the real digits (968).
+**`handleManualCapture(imageData)`** — "Capture anyway" / tap-anywhere (barcode would not decode). Creates a provisional id `MANUAL-{Date.now()}-{6 base36 chars}` used as both `barcode` and `sku`, `captured_via:'manual'`, then `runOcr(provisional, imageData, 0, true)`. No archive call here — the photo is filed only after OCR resolves the real digits.
+
+**The provisional id must never leave the page.** If OCR cannot read ≥13 printed digits the box keeps `MANUAL-…` and is flagged `needs_review`. Until 2026-09-10 the only way past that flag was Edit → Save, which cleared it *without* supplying an identity — so the carton was booked into `box_inventory.barcode` as `MANUAL-1789024548513-8jo…`: a string shaped like nothing, matching no outbound box-sticker scan, for the life of the carton. Now: the editor asks for the digits (`barcodeEditable`), `needs_review` stays set until the box has an identity, an explicit "no readable barcode" assigns a `NOBC-{doc}-P{n}-{i}` marker, and `stripProvisionalIds()` rewrites any survivor at the payload boundary. An **empty** barcode is not an option either — the bot's `create_pallet_box_inventory` skips any box whose barcode is falsy (`if not barcode or weight <= 0`), so a blank would silently drop the carton out of inventory.
 
 **`retryPalletOcr(barcode)`** — 741–754. Inside a `setScannedBoxes` updater: finds the row, requires `image_data`, schedules `runOcr` via `setTimeout(…,0)` preserving the `manual` flag, and marks the row `processing`. (Side effect inside an updater — see §6.)
 
@@ -2492,6 +2494,19 @@ sequenceDiagram
 Late rejection (`triggerRedFlash`, `:506-518`): if it lands inside a hold painted `saved` the hold flips to `duplicate` and the "Box N" count is un-incremented; in every case `isDuplicate` is raised for 1 s (visible only once the hold has ended).
 
 #### 2.3 Manual capture ("Capture anyway")
+
+> **Editor (rebuilt 2026-09-10).** `EditPanel` is now a **full-screen overlay**
+> (`fixed inset-0 z-[80]`), not a card inside the bottom sheet, and the caller
+> passes `paused` to `SmartScanner` while it is open — the detection loop stops
+> and the preview pauses, but the `MediaStream` stays, so returning is instant
+> and the per-pallet scan state survives. Layout: header, then the sticker photo
+> taking every pixel the controls do not need (`flex-1 min-h-0`, floor 132px —
+> it was a 112×86 thumbnail, too small to read Hebrew off a label), then the
+> tabs / keypad / calendar / batch / barcode in a `max-h-[62vh]` scroller. The
+> zoom modal moved to `z-[90]`; at its old `z-[60]` it opened *behind* the
+> editor. `barcode_reader` is **not in the self-hosted Material Icons Round
+> font** — a missing ligature renders as the literal words, so that block uses
+> `qr_code_scanner`.
 
 1. Tap anywhere on the camera (default), the on-screen button, or a BT-remote key → `handleManualCaptureClick` (guards: no cooldown, not busy, `onManualCapture` present).
 2. Green flash 200 ms, `captureSharpestFrame`, `onManualCapture(jpeg)`.

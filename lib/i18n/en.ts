@@ -620,6 +620,14 @@ export const en = {
   'terminal.openCalendar': 'Open calendar',
   // Supplier's own batch/lot code off the carton label — Priority carries it
   // on the batch (מנה) for traceability and recalls.
+  'terminal.barcodeMissingTitle': 'Barcode not read',
+  'terminal.barcodeMissingHelp': 'Type the digits printed under the barcode',
+  'terminal.barcodeDigitsCount': '{n} digits — need at least 13',
+  'terminal.barcodeNoneBtn': 'No readable barcode on this carton',
+  'terminal.barcodeNoneSet': 'Booked without a barcode',
+  'terminal.barcodeDuplicate': 'Another carton on this pallet already has that barcode',
+  'terminal.stickerPhoto': 'Sticker photo',
+  'terminal.noStickerPhoto': 'No photo for this carton',
   'terminal.batchTag': 'BATCH',
   'terminal.batchHint': 'Supplier batch / lot (optional)',
   // 31-digit carton barcodes carry the weight and expiry, so they are a free
