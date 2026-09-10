@@ -144,6 +144,19 @@ function stripProvisionalIds<T extends { barcode: string; sku?: string }>(
   );
 }
 
+/**
+ * Normalise whatever is in the editor's expiry field to ISO.
+ *
+ * It can be either: the OCR writes `YYYY-MM-DD` straight through, while the
+ * panel's calendar picker hands back `DD/MM/YYYY`. Anything else returns ''.
+ */
+function toIsoDate(v: string): string {
+  const raw = (v || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(raw);
+  return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : '';
+}
+
 /** `2027-06-16` → `16/06/27`, for a toast that has to stay one short line. */
 function isoToDdmmyyyyShort(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
@@ -314,6 +327,12 @@ export default function PalletVerifyPage({
   // Which scanned-box row is expanded to reveal its Delete action. Two-step
   // (tap row → tap Delete) guards against misclicks. Reset between pallets.
   const [selectedBarcode, setSelectedBarcode] = useState<string | null>(null);
+  // Minting a replacement carton sticker from inside the editor.
+  const [mintingBarcode, setMintingBarcode] = useState(false);
+  // Set only after a mint actually failed, which is what surfaces the
+  // book-without-a-barcode escape. Hidden otherwise: it is a worse outcome
+  // than a real sticker and should not be an equal-weight choice.
+  const [mintFailed, setMintFailed] = useState(false);
   // Edit-a-scan: the box (by barcode) currently being edited + its in-flight
   // name/weight values. Null when no edit modal is open. Reset between pallets.
   const [editForm, setEditForm] = useState<
@@ -1225,6 +1244,9 @@ export default function PalletVerifyPage({
   // box lives in — the modal itself is shared between both phases.
   function openEdit(box: BoxScan, isLoose = false) {
     setSelectedBarcode(null);
+    setMintingBarcode(false);
+    setMintFailed(false);
+    setError(null);
     setEditForm({
       barcode: box.barcode,
       name_he: box.item_name_hebrew || '',
@@ -1245,7 +1267,62 @@ export default function PalletVerifyPage({
   // drop any uniform group / pending prompt that no longer has ≥2 done samples.
   // Loose-phase edits skip the regrouping (loose has no uniform groups) and
   // just patch the looseBoxes row.
-  // "There is no readable barcode on this carton." The escape hatch: without
+  // Minting a real sticker for a carton whose printed barcode is destroyed.
+  // This is the SAME warehouse-minted label the "New carton" screen creates —
+  // `28` + YYMMDD + 8 digits, a GS1 internal prefix that can never collide with
+  // a supplier GTIN and is plain digits, so the outbound box-sticker gateway
+  // reads it like any other carton code. The worker prints it from Labels and
+  // puts it on the box, and from then on that carton behaves normally.
+  //
+  // Preferred over booking the box with no code at all: this one can actually
+  // be scanned again on the way out.
+  async function handleCreateBarcode() {
+    if (!editForm || mintingBarcode) return;
+    const nameHe = editForm.name_he.trim();
+    const nameEn = editForm.name_en.trim();
+    if (!nameHe && !nameEn) {
+      // The label has to say what it is. Send them to the name field rather
+      // than minting a sticker that identifies nothing.
+      setError(t(session?.language || 'English', 'terminal.barcodeNeedName'));
+      return;
+    }
+    setMintingBarcode(true);
+    setError(null);
+    try {
+      const list = editForm.isLoose ? looseBoxes : scannedBoxes;
+      const box = list.find((b) => b.barcode === editForm.barcode);
+      const res = await fetch('/api/carton-labels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token,
+          quantity: 1,
+          item_name_hebrew: nameHe || null,
+          item_name_english: nameEn || null,
+          weight_kg: parseFloat(editForm.weight) > 0 ? parseFloat(editForm.weight) : null,
+          production_date: box?.production_date || null,
+          expiry_date: toIsoDate(editForm.expiry) || null,
+          notes: 'Minted in receiving: the carton\'s printed barcode could not be read.',
+          label_size: '10x15',
+          print_barcode: true,
+        }),
+      });
+      const data = await res.json();
+      const minted: string | undefined = data?.labels?.[0]?.barcode;
+      if (!res.ok || !minted) throw new Error(data?.error || 'mint failed');
+      setEditForm((f) => (f ? { ...f, forcedId: minted, unidentified: false, barcodeInput: '' } : f));
+      showToast(tr('terminal.barcodeMinted', { code: minted }), 'label');
+    } catch {
+      // Never strand the worker on a failed network call — offer the
+      // book-without-a-barcode route instead, as a second, explicit tap.
+      setMintFailed(true);
+      setError(t(session?.language || 'English', 'terminal.barcodeMintFailed'));
+    } finally {
+      setMintingBarcode(false);
+    }
+  }
+
+  // "There is no readable barcode on this carton." The last resort: without
   // it a destroyed label would strand the pallet, which is the failure this
   // whole manual path exists to prevent. It books the carton under a marker
   // that is deliberately not barcode-shaped, so the row is real stock, is
@@ -1528,7 +1605,10 @@ export default function PalletVerifyPage({
       barcodeEditable={editForm.unidentified}
       barcodeInput={editForm.barcodeInput}
       onBarcodeChange={(v) => { setEditForm({ ...editForm, barcodeInput: v }); setError(null); }}
+      onCreateBarcode={handleCreateBarcode}
+      minting={mintingBarcode}
       onNoBarcode={handleNoBarcode}
+      showNoBarcode={mintFailed}
       itemChips={(session?.ocr_data ?? [])
         .filter((it) => it.item_name_hebrew || it.item_name_english)
         .map((it) => ({

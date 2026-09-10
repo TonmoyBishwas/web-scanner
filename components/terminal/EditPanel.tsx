@@ -43,8 +43,22 @@ interface EditPanelProps {
   /** Digits typed so far (only meaningful when `barcodeEditable`). */
   barcodeInput?: string;
   onBarcodeChange?: (v: string) => void;
-  /** "There is no readable barcode on this carton" — the escape hatch. */
+  /**
+   * Mint a replacement sticker for this carton — the same warehouse-minted
+   * label the "New carton" screen creates, printed from Labels and stuck on
+   * the box. Preferred over booking with no code: a minted barcode can be
+   * scanned again on the way out.
+   */
+  onCreateBarcode?: () => void;
+  minting?: boolean;
+  /**
+   * "Book it without a barcode." Shown ONLY once minting has actually failed —
+   * it is a worse outcome than a real sticker, so it must not sit next to the
+   * good option as an equal choice. It exists so a network problem can never
+   * leave a worker unable to finish the pallet.
+   */
   onNoBarcode?: () => void;
+  showNoBarcode?: boolean;
   /** Invoice item chips for name snapping (design's iField) */
   itemChips?: EditItemChip[];
   imageData?: string;
@@ -89,7 +103,8 @@ export function EditPanel({
   cartonNumber, name, weight, expiry, batch, barcode, itemChips,
   imageData, onViewImage,
   barcodeWeight, barcodeExpiry, onUseBarcodeWeight, onUseBarcodeExpiry,
-  barcodeEditable, barcodeInput = '', onBarcodeChange, onNoBarcode,
+  barcodeEditable, barcodeInput = '', onBarcodeChange,
+  onCreateBarcode, minting, onNoBarcode, showNoBarcode,
   onNameChange, onWeightChange, onExpiryChange, onBatchChange, onSave, onCancel,
 }: EditPanelProps) {
   const tr = useT();
@@ -225,7 +240,7 @@ export function EditPanel({
               className="w-full box-border bg-line border-2 rounded-[10px] px-[12px] py-[10px] font-mono text-[15px] font-bold text-ink-inverse tracking-[1px] outline-none"
               style={{ borderColor: barcodeReady ? '#22c55e' : '#fbbf5c' }}
             />
-            <div className="flex items-center justify-between gap-2 mt-[7px]">
+            <div className="mt-[7px]">
               <span
                 className="font-mono text-[10px] font-bold"
                 style={{ color: barcodeReady ? '#7ee2a8' : '#e8d3a8' }}
@@ -234,15 +249,32 @@ export function EditPanel({
                   ? `${digits.length} ✓`
                   : tr('terminal.barcodeDigitsCount', { n: digits.length })}
               </span>
-              {onNoBarcode && (
-                <button
-                  onClick={onNoBarcode}
-                  className="text-[11px] font-extrabold underline text-ink-muted"
-                >
-                  {tr('terminal.barcodeNoneBtn')}
-                </button>
-              )}
             </div>
+
+            {/* Destroyed beyond reading: mint a sticker instead of typing.
+                Full width and unmissable — it is the answer for the carton the
+                typing path cannot serve. */}
+            {onCreateBarcode && (
+              <button
+                onClick={onCreateBarcode}
+                disabled={minting}
+                className="mt-[10px] w-full flex items-center justify-center gap-[7px] rounded-[10px] py-[11px] text-[13px] font-extrabold border disabled:opacity-60"
+                style={{ background: 'rgba(245,158,11,.16)', borderColor: '#fbbf5c', color: '#f5d9a4' }}
+              >
+                <MI name={minting ? 'hourglass_top' : 'add_box'} size={17} />
+                {minting ? tr('terminal.barcodeCreating') : tr('terminal.barcodeCreateBtn')}
+              </button>
+            )}
+
+            {/* Only after a mint has failed — see the prop comment. */}
+            {showNoBarcode && onNoBarcode && (
+              <button
+                onClick={onNoBarcode}
+                className="mt-[8px] w-full text-[11px] font-extrabold underline text-ink-muted"
+              >
+                {tr('terminal.barcodeNoneBtn')}
+              </button>
+            )}
           </div>
         )}
 
