@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, type PointerEvent as ReactPointerEvent } from 'react';
 import { AlertTriangle, ScanLine, Camera, Check } from 'lucide-react';
 import type { ParsedBarcode, BoxStickerOCR } from '@/types';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
@@ -57,6 +57,21 @@ interface SmartScannerProps {
  * the frame plus its label and padding. It must stay ≤ the sheet's
  * MIN_CAMERA_PX, which is what guarantees that much camera at peek/mid.
  */
+/**
+ * What separates a deliberate capture tap from an accidental brush.
+ * 12px of travel is roughly a still finger on a handheld phone; 600ms is
+ * comfortably longer than a tap and shorter than a rest.
+ */
+const TAP_MAX_MOVE_PX = 12;
+const TAP_MAX_MS = 600;
+
+/**
+ * Headroom the manual-capture control keeps at the top of the camera region,
+ * so an unusually tall sheet can push it up but never off the top edge.
+ * Roughly the control's own height plus its gap.
+ */
+const CONTROL_BAND_PX = 56;
+
 const CORNER_W = 320;
 const CORNER_H = 196;
 const CORNER_BAND_PX = 240;
@@ -161,6 +176,10 @@ export function SmartScanner({
   frame = 'square'
 }: SmartScannerProps) {
   const tr = useT();
+  // Tap anywhere on the camera = capture the label. Default ON — a torn or
+  // glared barcode has no other way onto a pallet. See the settings store for
+  // why this is no longer bundled with the Bluetooth-remote trigger.
+  const tapCaptureEnabled = useSettingsStore((s) => s.tapCaptureEnabled);
   const hardwareTriggerEnabled = useSettingsStore((s) => s.hardwareTriggerEnabled);
   // Hidden by default — see `cameraSwitchEnabled` in the settings store.
   // Cycling lenses stays available via the drawer's Settings screen.
@@ -557,6 +576,42 @@ export function SmartScanner({
     }
   }, [isInCooldown, captureBusy, onManualCapture]);
 
+  // ── Tap-anywhere-on-the-camera capture ──
+  // A tap has to be a TAP: one finger, almost no travel, and let go quickly.
+  // That distinction is the whole reason this can be on by default — a swipe
+  // across the viewfinder, a drag that started on the camera and ended on the
+  // sheet, a second finger pinching to zoom, or a hand resting on the glass
+  // while the worker lifts a carton all fail one of the three tests and
+  // capture nothing. A phantom box costs the worker a delete, so the gesture
+  // errs towards doing nothing.
+  const tapStartRef = useRef<{ id: number; x: number; y: number; t: number } | null>(null);
+
+  const handleTapPointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    // Any non-primary pointer means a multi-touch gesture (pinch-zoom) — arm
+    // nothing, and disarm whatever the first finger armed.
+    if (!e.isPrimary) {
+      tapStartRef.current = null;
+      return;
+    }
+    tapStartRef.current = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp };
+  }, []);
+
+  const handleTapPointerUp = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      const start = tapStartRef.current;
+      tapStartRef.current = null;
+      if (!start || start.id !== e.pointerId) return;
+      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > TAP_MAX_MOVE_PX) return;
+      if (e.timeStamp - start.t > TAP_MAX_MS) return;
+      handleManualCaptureClick();
+    },
+    [handleManualCaptureClick]
+  );
+
+  const handleTapPointerCancel = useCallback(() => {
+    tapStartRef.current = null;
+  }, []);
+
   // ── Hardware capture trigger: Bluetooth remote keystroke ──
   // Opt-in (settings). A paired BT camera-remote / ring clicker emits a real
   // keydown; we fire the same manual-capture path. Deterministic — one press =
@@ -932,19 +987,24 @@ export function SmartScanner({
       />
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Tap-anywhere capture (opt-in). A full-area transparent layer that fires
-          the same manual capture as the on-screen button — no aiming for a small
-          target. Placed BEFORE the control buttons in the DOM so the camera-
-          switch / capture buttons (later siblings, pointer-events-auto) paint on
-          top and still receive their own taps. Hidden during cooldown so a tap
-          can't queue a capture mid-cooldown; the handler also bails on cooldown. */}
-      {hardwareTriggerEnabled && onManualCapture && !isInCooldown && (
-        <button
-          type="button"
-          onClick={handleManualCaptureClick}
-          disabled={captureBusy}
-          aria-label={tr('scanner.captureAnyway')}
-          className="absolute inset-0 z-0 bg-transparent"
+      {/* Tap-anywhere capture. A full-area transparent layer that fires the same
+          manual capture as the on-screen button — no aiming for a small target
+          with a carton in the other hand. Placed BEFORE the control buttons in
+          the DOM so the camera-switch / capture buttons (later siblings,
+          pointer-events-auto) paint on top and still receive their own taps;
+          they are siblings, not children, so tapping one cannot also fire this.
+          Unmounted during the cooldown so a tap can't queue a capture mid-hold
+          (the handler bails on cooldown too). Not focusable and aria-hidden:
+          the "capture anyway" button below is the accessible control, and a
+          full-screen tab stop would only get in the way. */}
+      {tapCaptureEnabled && onManualCapture && !isInCooldown && (
+        <div
+          onPointerDown={handleTapPointerDown}
+          onPointerUp={handleTapPointerUp}
+          onPointerCancel={handleTapPointerCancel}
+          className="absolute inset-0 z-0"
+          style={{ touchAction: 'manipulation' }}
+          aria-hidden
         />
       )}
 
@@ -1200,35 +1260,53 @@ export function SmartScanner({
 
         {/* Manual OCR-capture fallback — registers a box whose barcode won't
             decode (glare / folded / torn). Subtle by default; pulses once a few
-            seconds pass with no decode. */}
+            seconds pass with no decode.
+
+            Anchored to the top of the BOTTOM SHEET, not to the bottom of this
+            element. The camera runs full height *behind* the floating sheet on
+            every page that wires `onManualCapture`, so the old `bottom-3` put
+            this control — and the hint that explains it — permanently off
+            screen: the fallback for a damaged barcode had no reachable UI at
+            all. `--sheet-h` is the same live variable the corner frame reads,
+            but NOT with the frame's clamp: `min(sheet, 100% - band)` is there
+            to let a tall sheet cover the frame and keep it top-anchored, which
+            for this control means sliding straight back under the sheet — the
+            exact bug being fixed. Here the offset tracks the sheet outright and
+            the min() only stops it running off the TOP of the camera region.
+            The 0px fallback leaves a sheetless page exactly as it was. */}
         {onManualCapture && !isInCooldown && (
-          <>
+          <div
+            className="absolute inset-x-0 flex flex-col items-center gap-2 px-4"
+            style={{
+              bottom: `min(calc(var(--sheet-h, 0px) + 12px), calc(100% - ${CONTROL_BAND_PX}px))`,
+              transition: 'bottom var(--sheet-h-dur, 0s) cubic-bezier(.4,0,.2,1)',
+            }}
+          >
             {showCaptureHint && (
-              <div className="absolute bottom-16 inset-x-0 flex justify-center px-4 pointer-events-none">
-                <span className="text-xs font-semibold text-warn-weak-ink bg-cam-chip border border-cam-border backdrop-blur-sm px-3 py-1 rounded-full text-center max-w-[260px]">
-                  {tr('scanner.captureHint')}
-                </span>
-              </div>
+              <span className="text-xs font-semibold text-warn-weak-ink bg-cam-chip border border-cam-border backdrop-blur-sm px-3 py-1 rounded-full text-center max-w-[280px] pointer-events-none">
+                {tr('scanner.captureHint')}
+              </span>
             )}
-            <div className="absolute bottom-3 inset-x-0 flex justify-center pointer-events-auto">
-              <button
-                onClick={handleManualCaptureClick}
-                disabled={captureBusy}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-bold transition-all backdrop-blur-sm border disabled:opacity-50 ${
-                  showCaptureHint
-                    ? 'bg-warn text-canvas border-warn animate-pulse shadow-lg scale-105'
-                    : 'bg-cam-chip text-cam-ink border-cam-border'
-                }`}
-              >
-                <Camera className="w-4 h-4" /> {tr('scanner.captureAnyway')}
-                {hardwareTriggerEnabled && (
-                  <span className={`ms-1 text-[10px] font-semibold ${showCaptureHint ? 'text-canvas/80' : 'text-ok-weak-ink'}`}>
-                    {tr('scanner.hardwareTriggerOn')}
-                  </span>
-                )}
-              </button>
-            </div>
-          </>
+            <button
+              onClick={handleManualCaptureClick}
+              disabled={captureBusy}
+              className={`pointer-events-auto flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-bold transition-all backdrop-blur-sm border disabled:opacity-50 ${
+                showCaptureHint
+                  ? 'bg-warn text-canvas border-warn animate-pulse shadow-lg scale-105'
+                  : 'bg-cam-chip text-cam-ink border-cam-border'
+              }`}
+            >
+              <Camera className="w-4 h-4" /> {tr('scanner.captureAnyway')}
+              {/* Tap-anywhere is the default, so it needs no badge — the hint
+                  above says it when it matters. The remote is opt-in hardware,
+                  and a worker who paired one wants to see the page listening. */}
+              {hardwareTriggerEnabled && (
+                <span className={`ms-1 text-[10px] font-semibold ${showCaptureHint ? 'text-canvas/80' : 'text-ok-weak-ink'}`}>
+                  {tr('scanner.hardwareTriggerOn')}
+                </span>
+              )}
+            </button>
+          </div>
         )}
 
       </div>

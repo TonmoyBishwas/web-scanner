@@ -17,8 +17,8 @@ type Screen = 'docs' | 'warehouses' | 'settings' | null;
 function SettingsScreen({ onBack }: { onBack: () => void }) {
   const tr = useT();
   const {
-    soundEnabled, vibrationEnabled, hardwareTriggerEnabled, cameraSwitchEnabled,
-    toggleSound, toggleVibration, toggleHardwareTrigger, toggleCameraSwitch,
+    soundEnabled, vibrationEnabled, tapCaptureEnabled, hardwareTriggerEnabled, cameraSwitchEnabled,
+    toggleSound, toggleVibration, toggleTapCapture, toggleHardwareTrigger, toggleCameraSwitch,
   } = useSettingsStore();
 
   const row = (icon: string, label: string, on: boolean, onToggle: () => void) => (
@@ -42,7 +42,8 @@ function SettingsScreen({ onBack }: { onBack: () => void }) {
       <div className="p-4 flex flex-col gap-[10px]">
         {row('volume_up', tr('components.settings.sound'), soundEnabled, toggleSound)}
         {row('vibration', tr('components.settings.vibration'), vibrationEnabled, toggleVibration)}
-        {row('center_focus_strong', tr('components.settings.hardwareTrigger'), hardwareTriggerEnabled, toggleHardwareTrigger)}
+        {row('touch_app', tr('components.settings.tapCapture'), tapCaptureEnabled, toggleTapCapture)}
+        {row('settings_remote', tr('components.settings.hardwareTrigger'), hardwareTriggerEnabled, toggleHardwareTrigger)}
         {row('cameraswitch', tr('components.settings.cameraSwitch'), cameraSwitchEnabled, toggleCameraSwitch)}
       </div>
     </ScreenOverlay>
