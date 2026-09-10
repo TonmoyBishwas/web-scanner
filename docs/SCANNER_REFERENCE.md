@@ -1890,7 +1890,7 @@ States: `WAITING_WEB_SCAN_COMPLETE` (set `web_scan.py:163/240`, never routed on 
 | key | writer | reader |
 |---|---|---|
 | `localStorage['scanner-offline-queue']` (`QueuedScan[]`) | `queueScan`, `replayQueue` (`lib/offline-queue.ts:1,17,64`) | `/scan` sync effect |
-| `localStorage['scanner-settings']` (`{soundEnabled, vibrationEnabled, hardwareTriggerEnabled, cameraSwitchEnabled}`) | settings store | `hydrate()` on both pages |
+| `localStorage['scanner-settings']` (`{soundEnabled, vibrationEnabled, tapCaptureEnabled, hardwareTriggerEnabled, cameraSwitchEnabled}`) | settings store | `hydrate()` on both pages |
 
 No `localStorage` cache of scans on `/scan` or `/issue` (the reload-persist cache described in memory is pallet-verify only).
 
@@ -2081,7 +2081,7 @@ All paths below are relative to the **scanner** repo (`/Users/tonmoybishwas/Down
 
 #### `components/scanner/SmartScanner.tsx`  (1,249 lines)
 
-**Purpose.** The single camera + barcode component for every scanning surface. It owns the `MediaStream`, picks the lens, runs a `requestAnimationFrame` detection loop on the native `window.BarcodeDetector`, confirms a barcode after **2 consecutive identical reads**, enters a **3-second hold** during which it captures the sharpest full frame for OCR and calls `onBarcodeDetected(barcode, parsed, jpegDataUrl)`. It also exposes a "capture anyway" manual path (`onManualCapture(jpegDataUrl)`), an opt-in hardware trigger (keyboard/BT remote or tap-anywhere), a camera-switch chip, and the terminal-design corner frame that centres itself in the camera strip left visible by the `BottomSheet`.
+**Purpose.** The single camera + barcode component for every scanning surface. It owns the `MediaStream`, picks the lens, runs a `requestAnimationFrame` detection loop on the native `window.BarcodeDetector`, confirms a barcode after **2 consecutive identical reads**, enters a **3-second hold** during which it captures the sharpest full frame for OCR and calls `onBarcodeDetected(barcode, parsed, jpegDataUrl)`. It also exposes a "capture anyway" manual path (`onManualCapture(jpegDataUrl)`) reachable three ways — **tap anywhere on the camera (default ON)**, the on-screen button, and an opt-in BT-remote keystroke — plus a camera-switch chip, and the terminal-design corner frame that centres itself in the camera strip left visible by the `BottomSheet`.
 
 **Imports (internal).** `@/types` (`ParsedBarcode`, `BoxStickerOCR`), `@/lib/barcode-parser` (`parseIsraeliBarcode`), `@/lib/i18n` (`useT`), `@/stores/settings-store` (`useSettingsStore`). No barcode library is imported: there is **no html5-qrcode / ZXing fallback** in this component or anywhere else in `app/`/`components/` (grep: the only `@zxing` import in code is `lib/code128.test.ts:9`, a test-only decoder for the Code128 *writer*). An unsupported browser gets a static "Browser Not Supported" panel (`:912-922`).
 
@@ -2101,7 +2101,7 @@ All paths below are relative to the **scanner** repo (`/Users/tonmoybishwas/Down
 | prop | type | required | meaning |
 |---|---|---|---|
 | `onBarcodeDetected` | `(barcode: string, data: ParsedBarcode, imageData?: string) => void` | yes | Called once per confirmed scan, **after** `captureSharpestFrame` (~330 ms+). `imageData` is a `data:image/jpeg` URL (quality 0.9, ≤1280 px wide) or, if capture threw, the cropped detection canvas at 0.9. |
-| `onManualCapture` | `(imageData: string) => void` | no | Enables the "Capture anyway" button (`:1204`), the capture hint, the tap-anywhere layer and the hardware trigger. Absent ⇒ none of those render. |
+| `onManualCapture` | `(imageData: string) => void` | no | Enables the "Capture anyway" button, the capture hint, the tap-anywhere layer and the remote trigger. Absent ⇒ none of those render (which is why `/issue` has no manual path). |
 | `scannedBarcodes` | `Map<string, ParsedBarcode>` | yes (type) | **Never read inside the component** — destructured at `:153` and unused. Callers pass real maps or `new Map()`. |
 | `ocrResults` | `Map<string, BoxStickerOCR>` | yes (type) | **Never read** (`:154`). Same. |
 | `onError` | `(error: string) => void` | no | Called from `enumerateCameras` catch (`:474`) and `startNativeScanning` catch (`:695`). No caller passes it. |
@@ -2127,7 +2127,7 @@ All paths below are relative to the **scanner** repo (`/Users/tonmoybishwas/Down
 | cooldown | `:786`, `:812`, `:815` | 3000 ms / countdown 3→0 at 1 s ticks | confirmed scans inside it are dropped silently |
 | flash | `:829-830` | green 420 ms / red 200 ms | fullscreen tint overlay |
 | duplicate indicator | `:517` | 1000 ms | `isDuplicate` auto-clears |
-| capture hint | `:530-531` | interval 1000 ms, shows after 3500 ms without a decode | "Barcode won't scan? Tap to capture the label" |
+| capture hint | interval 1000 ms, shows after 3500 ms without a decode | "Barcode won't scan? Tap anywhere on the camera to capture the label" |
 | manual capture busy | `:556` | 1200 ms | debounce after a manual capture |
 | `captureSharpestFrame` defaults | `:116-121` | `maxWidth=1280`, `frames=4`, `intervalMs=110`, JPEG q 0.9 | ~330 ms minimum wall time (3 waits) |
 | `sharpnessScore` sample | `:82` | 320 px wide grayscale | gradient-energy proxy |
@@ -2151,7 +2151,7 @@ State and refs (`:163-235`):
 
 | name | kind | purpose |
 |---|---|---|
-| `hardwareTriggerEnabled`, `cameraSwitchEnabled` | settings-store selectors `:164-167` | gate the trigger effect / camera-switch chip |
+| `tapCaptureEnabled`, `hardwareTriggerEnabled`, `cameraSwitchEnabled` | settings-store selectors | gate the tap layer / the keydown trigger effect / the camera-switch chip |
 | `isSupported` | `boolean\|null` | `null` = initializing, `false` = no `BarcodeDetector` |
 | `cameras`, `currentCameraIndex`, `currentCameraLabel` | state | enumerated `videoinput` devices, chosen index, chip label (default `'Back Camera'`) |
 | `videoRef`, `canvasRef`, `streamRef`, `animationFrameRef` | refs | DOM + stream + rAF id |
@@ -2195,7 +2195,7 @@ State and refs (`:163-235`):
 
 **`handleManualCaptureClick()`** — `useCallback`, `:540-558`. Bails when in cooldown, busy, or no `onManualCapture`. Sets busy, flashes green 200 ms, awaits `captureSharpestFrame(video)` (fallback: current detection canvas at q0.9, or `''`), calls `onManualCapture(imageData)` if non-empty, resets `lastActivityRef` + hint, and clears busy after 1200 ms. Note the manual path **does not** enter the 3 s hold and does not touch `savedCount`/`scanOutcome`; the parent's own feedback (`scanSuccessFeedback`, or `dupFlashRef` after OCR) covers it.
 
-**Hardware trigger effect** — `:565-586`. Only when `hardwareTriggerEnabled && onManualCapture`. A `window` `keydown` listener ignores events whose target is `INPUT`/`TEXTAREA`/contentEditable, and for keys in `TRIGGER_KEYS` calls `preventDefault()` + `handleManualCaptureClick()`. Volume keys are listed but memory (`scanner_hardware_trigger.md`, commit `278d558`) records that Android does not deliver them to the page; the practical triggers are a BT remote (Enter/Space/media keys) and the tap-anywhere layer at `:941-949`.
+**Hardware trigger effect** — `:565-586`. Only when `hardwareTriggerEnabled && onManualCapture`. A `window` `keydown` listener ignores events whose target is `INPUT`/`TEXTAREA`/contentEditable, and for keys in `TRIGGER_KEYS` calls `preventDefault()` + `handleManualCaptureClick()`. Volume keys are listed but memory (`scanner_hardware_trigger.md`, commit `278d558`) records that Android does not deliver them to the page; the practical triggers are a BT remote (Enter/Space/media keys) and the tap-anywhere layer, which is now a separate, default-ON setting (`tapCaptureEnabled`) rather than part of this one.
 
 **`stopNativeScanning()`** — `:588-596`. Cancels the rAF and stops all tracks on `streamRef`. Does **not** clear the cooldown countdown interval or pending flash timeouts (see §6).
 
@@ -2223,7 +2223,7 @@ State and refs (`:163-235`):
 - `!isSupported` ⇒ warning panel `scanner.notSupportedTitle` / `scanner.notSupportedDesc` ("…Please use Chrome or Edge on Android…"). There is no retry and no fallback engine.
 - Otherwise the camera surface:
   - `<video playsInline muted object-cover>` + hidden `<canvas>`.
-  - Tap-anywhere transparent button (`:941-949`) when `hardwareTriggerEnabled && onManualCapture && !isInCooldown`.
+  - **Tap-anywhere capture layer** — a transparent full-area `div` rendered when `tapCaptureEnabled && onManualCapture && !isInCooldown` (`tapCaptureEnabled` defaults to **true**). It is a sibling *before* the control buttons, so those receive their own taps and cannot double-fire this. It discriminates a tap from a drag itself: `pointerdown` arms only a primary pointer, and `pointerup` fires the capture only if travel ≤ `TAP_MAX_MOVE_PX` (12) and elapsed ≤ `TAP_MAX_MS` (600). A swipe, a pinch (non-primary pointer), a long press and a `pointercancel` all capture nothing — verified by dispatching each gesture against the live page. `aria-hidden` and not focusable; the "Capture anyway" button is the accessible equivalent.
   - Flash overlay (`:952-961`) — `bg-ok/70` or `bg-danger/70`, `cameraFlash 0.2s` keyframe (opacity 1→0) — note the keyframe is 0.2 s while the green flash element stays mounted 420 ms, so it is invisible for the last ~220 ms.
   - Diagnostic overlay (`:964-1013`) whenever `diag.state !== 'ready'`: `init` spinner + `scanner.requestingPermission`/`permissionHint`; `no_cameras` + `noCamerasTitle`/`noCamerasDesc` + Retry (`common.retry`, resets to `init` and re-enumerates); `error` shows the raw `diag.message` in monospace LTR + `cameraErrorHint` + Retry.
   - **Target frame wrapper** (`:1018-1040`). `square`: centred `240×240`. `corner`: `absolute inset-x-0 top-0` column, with inline style `bottom: min(var(--sheet-h, 0px), calc(100% - 240px))` and `transition: bottom var(--sheet-h-dur, 0s)`. `--sheet-h`/`--sheet-h-dur` are written by `BottomSheet` onto its `offsetParent` (`components/terminal/BottomSheet.tsx:231-237`: `--sheet-h = height px`, `--sheet-h-dur = dragging ? '0s' : '.26s'`; removed on unmount `:241-245`). So the frame centres in the strip *above* the sheet; at the tall snap the `min()` keeps 240 px of band and the frame stays top-anchored. Without a sheet the var is absent ⇒ centred in the full container.
@@ -2234,7 +2234,9 @@ State and refs (`:163-235`):
     3. **Idle/capturing** (`:1108-1158`): corner ⇒ faint brand fill + four L-corners; square ⇒ dim `border-ok/25`. Over it an SVG `<rect pathLength=1>` progress trail stroked in `var(--brand)` (corner) or `var(--ok)` (square) with `strokeDashoffset` 1 / 0.5 / 0 for `captureCount` 0 / 1 / ≥2, `0.25s ease-out` transition while counting.
   - **Status chip** top-left (`:1166-1181`): dot is `bg-danger` when `isDuplicate || (isInCooldown && scanOutcome==='duplicate')`, else `bg-ok animate-pulse`; text = `{cooldownTimeLeft}s` in hold, `scanner.duplicateBadge` ("Duplicate", `כפילות`) when duplicate, else a `ScanLine` icon.
   - **Camera-switch chip** top-right (`:1183-1199`) only when `cameraSwitchEnabled && cameras.length > 1` (setting default OFF since commit `7f35b80`, 2026-09-01: workers kept knocking it onto the ultrawide/front lens).
-  - **Capture anyway** (`:1204-1232`) when `onManualCapture && !isInCooldown`: optional hint pill `scanner.captureHint` ("Barcode won't scan? Tap to capture the label", `הברקוד לא נסרק? הקש לצילום המדבקה`) at `bottom-16`; the button at `bottom-3` (`scanner.captureAnyway`, "Capture anyway", `צלם בכל זאת`), amber + pulsing when the hint is on, plus a `scanner.hardwareTriggerOn` suffix ("Tap anywhere / remote on") when the trigger setting is on.
+  - **Capture anyway** when `onManualCapture && !isInCooldown`: a flex column holding the optional hint pill `scanner.captureHint` ("Barcode won't scan? Tap anywhere on the camera to capture the label", `הברקוד לא נסרק? הקש בכל מקום על המצלמה לצילום המדבקה`) above the button (`scanner.captureAnyway`, "Capture anyway", `צלם בכל זאת`), amber + pulsing when the hint is on, plus a `scanner.hardwareTriggerOn` suffix ("Remote on") when the BT trigger is on.
+
+    **Positioning.** The column is anchored to the top of the bottom sheet — `bottom: min(calc(var(--sheet-h, 0px) + 12px), calc(100% - CONTROL_BAND_PX))` — not to the bottom of this element. Until 2026-09-10 it sat at `bottom-3`, and because the camera runs full height *behind* the floating sheet on every page that wires `onManualCapture`, both the button and its hint were off screen at every sheet snap: the documented fallback for a damaged barcode had no reachable UI. Note this is deliberately **not** the corner frame's `min(sheet, 100% - band)` clamp — that clamp exists to let a tall sheet cover the frame, which for this control would put it straight back under the sheet.
   - `<style jsx>` defines `cameraFlash` and `scanSavedPop` keyframes (`:1237-1246`).
 
 **Gotchas (SmartScanner).**
@@ -2413,13 +2415,14 @@ Design rationale in the comment `:33-47` and memory 1692-1698: one entry per ove
 
 #### `stores/settings-store.ts`  (99 lines)
 
-`STORAGE_KEY = 'scanner-settings'` (`:23`). Persisted JSON: `{soundEnabled, vibrationEnabled, hardwareTriggerEnabled, cameraSwitchEnabled}` (`:28-36`).
+`STORAGE_KEY = 'scanner-settings'`. Persisted JSON: `{soundEnabled, vibrationEnabled, tapCaptureEnabled, hardwareTriggerEnabled, cameraSwitchEnabled}`. A blob written before `tapCaptureEnabled` existed has no such key, and `hydrate()` gives it the new default (`?? true`) rather than inheriting the old combined toggle.
 
 | field / action | default | meaning |
 |---|---|---|
 | `soundEnabled` | `true` | scan-feedback tones |
 | `vibrationEnabled` | `true` | scan-feedback haptics |
-| `hardwareTriggerEnabled` | `false` | SmartScanner tap-anywhere layer + keydown trigger |
+| `tapCaptureEnabled` | **`true`** | SmartScanner tap-anywhere capture layer |
+| `hardwareTriggerEnabled` | `false` | SmartScanner BT-remote keydown trigger (tap-anywhere was split out of this on 2026-09-10) |
 | `cameraSwitchEnabled` | `false` | SmartScanner camera-switch chip (hidden since `7f35b80`) |
 | `_hydrated` | `false` | set `true` by `hydrate()` whether or not a saved value existed (`:47-66`, including on parse error) |
 | `toggleSound/Vibration/HardwareTrigger/CameraSwitch` | | flip + `saveSettings(next)` |
@@ -2490,7 +2493,7 @@ Late rejection (`triggerRedFlash`, `:506-518`): if it lands inside a hold painte
 
 #### 2.3 Manual capture ("Capture anyway")
 
-1. Button/tap-anywhere/hardware key → `handleManualCaptureClick` (guards: no cooldown, not busy, `onManualCapture` present).
+1. Tap anywhere on the camera (default), the on-screen button, or a BT-remote key → `handleManualCaptureClick` (guards: no cooldown, not busy, `onManualCapture` present).
 2. Green flash 200 ms, `captureSharpestFrame`, `onManualCapture(jpeg)`.
 3. Parent (pallet-verify `:720-…`, loose `:1104-…`, NonMeatTypeA `:267-275`, `/scan:704-…`) pushes a **provisional** box `MANUAL-{Date.now()}-{rand}` (or `MANUAL-{pallet}-{n}` in Type A), OCRs the frame, and resolves its real identity from `ocr_data.barcode_digits` (≥13 digits); duplicates found then (local set or `findDuplicateOwner`) drop the provisional box and call `dupFlashRef` → red frame outside a hold.
 4. `captureBusy` clears after 1200 ms.
@@ -2537,7 +2540,7 @@ open overlay → `registerOverlay` pushes one `__overlayGuard` history entry (if
 | key | writer | reader | shape | lifetime |
 |---|---|---|---|---|
 | `pallet-scanner:preferred-camera-device-id` | `SmartScanner.switchCamera` `:614` | `enumerateCameras` `:355` | `deviceId` string | forever |
-| `scanner-settings` | `settings-store.saveSettings` `:30` | `hydrate` `:50` | `{soundEnabled,vibrationEnabled,hardwareTriggerEnabled,cameraSwitchEnabled}` | forever |
+| `scanner-settings` | `settings-store.saveSettings` | `hydrate` | `{soundEnabled,vibrationEnabled,tapCaptureEnabled,hardwareTriggerEnabled,cameraSwitchEnabled}` | forever |
 | `scanner-offline-queue` | `offline-queue` `:17,:64` | `:23` | `QueuedScan[]` (all tokens) | until replay |
 | `pv:{token}:p{n}` | `savePalletScans` | `loadPalletScans` | `PalletScanSnapshot` | until confirm/all-done |
 | `pv:{token}:loose` | `saveLooseScans` | `loadLooseScans` | `LooseScanSnapshot` | until loose done/all-done |
@@ -2564,8 +2567,8 @@ open overlay → `registerOverlay` pushes one `__overlayGuard` history entry (if
 | `scanner.alreadyScanned` | Already scanned | כבר נסרק |
 | `scanner.duplicateBadge` | Duplicate | כפילות |
 | `scanner.captureAnyway` | Capture anyway | צלם בכל זאת |
-| `scanner.hardwareTriggerOn` | Tap anywhere / remote on | נגיעה בכל מקום / שלט פעיל |
-| `scanner.captureHint` | Barcode won't scan? Tap to capture the label | הברקוד לא נסרק? הקש לצילום המדבקה |
+| `scanner.hardwareTriggerOn` | Remote on | שלט פעיל |
+| `scanner.captureHint` | Barcode won't scan? Tap anywhere on the camera to capture the label | הברקוד לא נסרק? הקש בכל מקום על המצלמה לצילום המדבקה |
 | `scanner.switchCamera` / `tapToSwitch` / `cameraGeneric` | Switch camera / Tap to switch camera / Camera | החלף מצלמה / הקש להחלפת מצלמה / מצלמה |
 | `terminal.tapToScan` | Tap to scan · auto detect | הקש לסריקה · זיהוי אוטומטי |
 | `common.retry` | Retry | (see i18n section) |
@@ -2842,7 +2845,8 @@ So the **only permanently locked chips on every page are `warehouses` and `assig
   |---|---|---|---|
   | `volume_up` | `components.settings.sound` | `soundEnabled` / `toggleSound` | `true` |
   | `vibration` | `components.settings.vibration` | `vibrationEnabled` / `toggleVibration` | `true` |
-  | `center_focus_strong` | `components.settings.hardwareTrigger` | `hardwareTriggerEnabled` / `toggleHardwareTrigger` | `false` |
+  | `touch_app` | `components.settings.tapCapture` | `tapCaptureEnabled` / `toggleTapCapture` | **`true`** |
+  | `settings_remote` | `components.settings.hardwareTrigger` | `hardwareTriggerEnabled` / `toggleHardwareTrigger` | `false` |
   | `cameraswitch` | `components.settings.cameraSwitch` | `cameraSwitchEnabled` / `toggleCameraSwitch` | `false` |
 
   Every toggle persists to **localStorage key `scanner-settings`** (`stores/settings-store.ts:23,30`).
@@ -5503,8 +5507,8 @@ Every translation key defined in `lib/i18n/en.ts` and `lib/i18n/he.ts`, its Engl
 | 82 | `scanner.alreadyScanned` | Already scanned | yes |
 | 83 | `scanner.duplicateBadge` | Duplicate | yes |
 | 84 | `scanner.captureAnyway` | Capture anyway | yes |
-| 85 | `scanner.hardwareTriggerOn` | Tap anywhere / remote on | yes |
-| 86 | `scanner.captureHint` | Barcode won't scan? Tap to capture the label | yes |
+| 85 | `scanner.hardwareTriggerOn` | Remote on | yes |
+| 86 | `scanner.captureHint` | Barcode won't scan? Tap anywhere on the camera to capture the label | yes |
 | 87 | `scanner.cameraGeneric` | Camera | yes |
 | 88 | `scanner.tapToSwitch` | Tap to switch camera | yes |
 | 89 | `pallet.title` | Pallet Verification | **unused** |
@@ -5850,7 +5854,8 @@ Every translation key defined in `lib/i18n/en.ts` and `lib/i18n/he.ts`, its Engl
 | 429 | `components.settings.aria` | Settings | **unused** |
 | 430 | `components.settings.sound` | Sound | yes |
 | 431 | `components.settings.vibration` | Vibration | yes |
-| 432 | `components.settings.hardwareTrigger` | Tap / remote capture | yes |
+| 432 | `components.settings.tapCapture` | Tap camera to capture | yes |
+| 432 | `components.settings.hardwareTrigger` | Remote-control capture | yes |
 | 433 | `components.settings.cameraSwitch` | Camera switch button | yes |
 | 434 | `components.photoGallery.processing` | Processing… | yes |
 | 435 | `components.photoGallery.empty2` | No photos captured yet | yes |
