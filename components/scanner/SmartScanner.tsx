@@ -44,6 +44,17 @@ interface SmartScannerProps {
    * floating sheet leaves visible (see CORNER_* below).
    */
   frame?: 'square' | 'corner';
+  /**
+   * Freeze the scanner without tearing the camera down.
+   *
+   * Set while a full-screen editor is over the page: the detection loop stops
+   * (so nothing in the worker's peripheral vision can be scanned while they
+   * are typing) and the preview pauses, but the `MediaStream` stays open, so
+   * coming back is instant and the per-pallet scan state survives. Unmounting
+   * the scanner would do neither — it re-requests the camera and resets the
+   * "Box N saved" counter.
+   */
+  paused?: boolean;
 }
 
 /**
@@ -173,7 +184,8 @@ export function SmartScanner({
   isDuplicateBarcode,
   holdClaim = 'saved',
   className,
-  frame = 'square'
+  frame = 'square',
+  paused = false
 }: SmartScannerProps) {
   const tr = useT();
   // Tap anywhere on the camera = capture the label. Default ON — a torn or
@@ -235,6 +247,16 @@ export function SmartScanner({
   useEffect(() => {
     holdClaimRef.current = holdClaim;
   }, [holdClaim]);
+  // `detect` is a long-lived rAF closure, so the pause flag has to reach it
+  // through a ref — reading the prop would pin the first render's value.
+  const pausedRef = useRef(paused);
+  useEffect(() => {
+    pausedRef.current = paused;
+    const v = videoRef.current;
+    if (!v) return;
+    if (paused) v.pause();
+    else v.play().catch(() => {});
+  }, [paused]);
   // Manual OCR-capture fallback (for boxes whose barcode won't decode — glare,
   // a label folded around a corner, or a torn/half barcode). `lastActivityRef`
   // tracks the last confirmed decode (or mount); when no decode has happened in
@@ -774,6 +796,14 @@ export function SmartScanner({
 
     const detect = async () => {
       if (!isMountedRef.current) return;
+
+      // Paused: keep the loop alive (so resuming needs no restart) but read
+      // nothing. Deliberately before the readyState check — a paused <video>
+      // still reports readyState 4, so this must short-circuit first.
+      if (pausedRef.current) {
+        animationFrameRef.current = requestAnimationFrame(detect);
+        return;
+      }
 
       if (!video.readyState || video.readyState < 2) {
         animationFrameRef.current = requestAnimationFrame(detect);
