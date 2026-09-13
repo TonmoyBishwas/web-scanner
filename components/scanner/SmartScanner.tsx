@@ -82,6 +82,14 @@ const TAP_MAX_MS = 600;
  * Roughly the control's own height plus its gap.
  */
 const CONTROL_BAND_PX = 56;
+/**
+ * Height of the manual-capture control WITH its hint chip, which is what the
+ * scan frame must stay clear of. Used to lift the frame on a short camera
+ * strip (a landscape tablet, the non-meat page's bounded camera) where
+ * centring it would put it under the control. On a phone the strip is tall
+ * enough that this term never wins and the frame stays exactly where it was.
+ */
+const CONTROL_STACK_PX = 100;
 
 const CORNER_W = 320;
 const CORNER_H = 196;
@@ -99,6 +107,121 @@ declare global {
 // pallet-verify, and across page reloads. Picked up at mount time;
 // updated whenever the worker taps the camera-switch button.
 const CAMERA_PREFERENCE_KEY = 'pallet-scanner:preferred-camera-device-id';
+
+/**
+ * Which decoder reads the frames.
+ *
+ * 'native' is Chrome's BarcodeDetector. On Android it is not a browser
+ * feature but a thin wrapper over the Google Play Services barcode module —
+ * and on a good many tablets that module is missing (no Play Services, a
+ * stripped-down or enterprise image, or simply never downloaded). Chrome then
+ * still exposes the class, `getSupportedFormats()` answers `[]`, and every
+ * `detect()` rejects with NotSupportedError "Barcode detection service
+ * unavailable". The loop used to swallow that rejection on every frame, so
+ * the camera looked live while nothing ever decoded — which is exactly how
+ * "auto-capture doesn't work on the tablet" presents.
+ *
+ * 'zxing' is the pure-JS ZXing reader (already a dependency, never wired).
+ * Slower per frame and less forgiving of blur, but it works on any device
+ * that can open a camera. It is the fallback for a missing BarcodeDetector,
+ * for an empty format list, and for a native detector that rejects at
+ * runtime.
+ */
+type DecodeEngine = 'native' | 'zxing';
+
+const NATIVE_FORMATS = [
+  'code_128',
+  'code_39',
+  'ean_13',
+  'ean_8',
+  'upc_a',
+  'upc_e',
+  'qr_code',
+  'data_matrix',
+];
+
+/** Consecutive native `detect()` rejections before giving up on it. */
+const NATIVE_MAX_ERRORS = 3;
+/** ZXing is CPU-bound: cap it at ~10 fps so the preview stays smooth. */
+const ZXING_MIN_INTERVAL_MS = 100;
+
+interface FrameDecoder {
+  engine: DecodeEngine;
+  /** Resolves the first barcode's payload in the canvas, or null. Throws only for engine failure. */
+  detect(canvas: HTMLCanvasElement): Promise<string | null>;
+}
+
+async function pickDecodeEngine(): Promise<DecodeEngine> {
+  if (typeof window === 'undefined' || !('BarcodeDetector' in window)) return 'zxing';
+  try {
+    const fn = window.BarcodeDetector.getSupportedFormats;
+    if (typeof fn === 'function') {
+      const formats: unknown = await fn.call(window.BarcodeDetector);
+      if (Array.isArray(formats) && formats.length === 0) {
+        console.warn('[SmartScanner] BarcodeDetector present but supports no formats — using ZXing');
+        return 'zxing';
+      }
+    }
+  } catch (err) {
+    console.warn('[SmartScanner] getSupportedFormats failed — using ZXing:', err);
+    return 'zxing';
+  }
+  return 'native';
+}
+
+function createNativeDecoder(): FrameDecoder {
+  const detector = new window.BarcodeDetector({ formats: NATIVE_FORMATS });
+  return {
+    engine: 'native',
+    async detect(canvas) {
+      const barcodes = await detector.detect(canvas);
+      return barcodes.length > 0 ? String(barcodes[0].rawValue) : null;
+    },
+  };
+}
+
+async function createZxingDecoder(): Promise<FrameDecoder> {
+  const [{ BrowserMultiFormatReader }, lib] = await Promise.all([
+    import('@zxing/browser'),
+    import('@zxing/library'),
+  ]);
+  const hints = new Map();
+  hints.set(lib.DecodeHintType.POSSIBLE_FORMATS, [
+    lib.BarcodeFormat.CODE_128,
+    lib.BarcodeFormat.CODE_39,
+    lib.BarcodeFormat.EAN_13,
+    lib.BarcodeFormat.EAN_8,
+    lib.BarcodeFormat.UPC_A,
+    lib.BarcodeFormat.UPC_E,
+    lib.BarcodeFormat.QR_CODE,
+    lib.BarcodeFormat.DATA_MATRIX,
+  ]);
+  hints.set(lib.DecodeHintType.TRY_HARDER, true);
+  const reader = new BrowserMultiFormatReader(hints);
+  console.log('[SmartScanner] ZXing decoder ready');
+  let lastAttempt = 0;
+  return {
+    engine: 'zxing',
+    async detect(canvas) {
+      const now = performance.now();
+      if (now - lastAttempt < ZXING_MIN_INTERVAL_MS) return null;
+      lastAttempt = now;
+      try {
+        return reader.decodeFromCanvas(canvas).getText();
+      } catch (err) {
+        // "Nothing in this frame" is the normal case, not a failure.
+        if (
+          err instanceof lib.NotFoundException ||
+          err instanceof lib.ChecksumException ||
+          err instanceof lib.FormatException
+        ) {
+          return null;
+        }
+        throw err;
+      }
+    },
+  };
+}
 
 /**
  * Relative sharpness score (gradient energy) of a canvas. Higher = sharper.
@@ -197,6 +320,9 @@ export function SmartScanner({
   // Cycling lenses stays available via the drawer's Settings screen.
   const cameraSwitchEnabled = useSettingsStore((s) => s.cameraSwitchEnabled);
   const [isSupported, setIsSupported] = useState<boolean | null>(null);
+  // Decoder currently in use. A ref, not state: the detect loop reads it on
+  // every frame and may swap it mid-loop when the native detector fails.
+  const engineRef = useRef<DecodeEngine>('native');
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [currentCameraIndex, setCurrentCameraIndex] = useState(0);
   const [currentCameraLabel, setCurrentCameraLabel] = useState('Back Camera');
@@ -522,14 +648,28 @@ export function SmartScanner({
     // from a previous instance's cleanup.
     isMountedRef.current = true;
 
-    if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
-      console.log('[SmartScanner] Native BarcodeDetector API available');
-      setIsSupported(true);
-      onScannerTypeDetected?.('native');
-      enumerateCameras();
-    } else {
-      console.log('[SmartScanner] Native BarcodeDetector API not available');
+    // The only hard requirement is a camera. The decoder is negotiable: native
+    // BarcodeDetector when it genuinely works here, ZXing otherwise (see
+    // DecodeEngine). "Browser not supported" used to fire on every device
+    // without BarcodeDetector, which excluded whole classes of tablets.
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      console.log('[SmartScanner] mediaDevices.getUserMedia not available');
       setIsSupported(false);
+    } else {
+      let cancelled = false;
+      pickDecodeEngine().then((engine) => {
+        if (cancelled || !isMountedRef.current) return;
+        engineRef.current = engine;
+        console.log(`[SmartScanner] Decode engine: ${engine}`);
+        setIsSupported(true);
+        onScannerTypeDetected?.(engine === 'native' ? 'native' : 'fallback');
+        enumerateCameras();
+      });
+      return () => {
+        cancelled = true;
+        isMountedRef.current = false;
+        stopNativeScanning();
+      };
     }
 
     return () => {
@@ -778,21 +918,59 @@ export function SmartScanner({
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
+    // Both decoders read this canvas back every frame (ZXing via getImageData,
+    // the native detector from the pixel buffer); the hint keeps it CPU-backed
+    // so those reads don't stall on a GPU round-trip.
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return;
 
-    const barcodeDetector = new window.BarcodeDetector({
-      formats: [
-        'code_128',
-        'code_39',
-        'ean_13',
-        'ean_8',
-        'upc_a',
-        'upc_e',
-        'qr_code',
-        'data_matrix',
-      ],
-    });
+    // Decoder for this loop. Starts on whatever pickDecodeEngine chose; a
+    // native detector that rejects at runtime is swapped for ZXing in place,
+    // without restarting the camera.
+    let decoder: FrameDecoder | null = null;
+    let decoderLoading: Promise<void> | null = null;
+    let nativeErrors = 0;
+
+    const ensureDecoder = () => {
+      if (decoder && decoder.engine === engineRef.current) return;
+      if (decoderLoading) return;
+      const loading = (async () => {
+        try {
+          if (engineRef.current === 'native') {
+            try {
+              decoder = createNativeDecoder();
+            } catch (err) {
+              console.warn('[SmartScanner] BarcodeDetector constructor threw — using ZXing:', err);
+              engineRef.current = 'zxing';
+              decoder = await createZxingDecoder();
+              onScannerTypeDetected?.('fallback');
+            }
+          } else {
+            decoder = await createZxingDecoder();
+          }
+        } catch (err) {
+          console.error('[SmartScanner] Could not create any decoder:', err);
+        }
+      })();
+      // Cleared from a continuation, never from inside the IIFE: the native
+      // branch has no await, so a `finally` in there would run BEFORE this
+      // assignment and leave the flag set forever.
+      decoderLoading = loading;
+      loading.finally(() => {
+        if (decoderLoading === loading) decoderLoading = null;
+      });
+    };
+
+    const switchToZxing = async (reason: string) => {
+      if (engineRef.current === 'zxing') return;
+      console.warn(`[SmartScanner] Switching to ZXing decoder: ${reason}`);
+      engineRef.current = 'zxing';
+      decoder = null;
+      ensureDecoder();
+      await decoderLoading;
+      onScannerTypeDetected?.('fallback');
+    };
+    ensureDecoder();
 
     const detect = async () => {
       if (!isMountedRef.current) return;
@@ -837,10 +1015,34 @@ export function SmartScanner({
       ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
 
       try {
-        const barcodes = await barcodeDetector.detect(canvas);
+        ensureDecoder();
+        const active = decoder;
+        if (!active) {
+          animationFrameRef.current = requestAnimationFrame(detect);
+          return;
+        }
 
-        if (barcodes.length > 0) {
-          const barcode = barcodes[0].rawValue;
+        let barcode: string | null = null;
+        try {
+          barcode = await active.detect(canvas);
+          if (active.engine === 'native') nativeErrors = 0;
+        } catch (err) {
+          if (active.engine === 'native') {
+            nativeErrors += 1;
+            const name = err instanceof Error ? err.name : '';
+            // NotSupportedError is the "service unavailable" case and is
+            // permanent for this session; anything else gets a few chances.
+            if (name === 'NotSupportedError' || nativeErrors >= NATIVE_MAX_ERRORS) {
+              await switchToZxing(`native detect() failed ${nativeErrors}× (${name || String(err)})`);
+            } else {
+              console.warn('[SmartScanner] native detect() error:', err);
+            }
+          } else {
+            throw err;
+          }
+        }
+
+        if (barcode) {
           const now = Date.now();
 
           // Multi-read validation: require 2 consecutive identical reads within 3 seconds
@@ -1102,8 +1304,14 @@ export function SmartScanner({
         </div>
       )}
 
-      {/* Minimal scanning indicator */}
-      <div className="absolute inset-0 pointer-events-none">
+      {/* Minimal scanning indicator. `--sheet-w` is set by BottomSheet when it
+          docks as a side panel (wide landscape hosts — tablets on their side);
+          every overlay here then keeps to the camera the worker can see
+          instead of centring under the panel. 0 on a bottom sheet. */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{ insetInlineEnd: 'var(--sheet-w, 0px)' }}
+      >
         {/* Target box — centered square (legacy) or terminal corner frame */}
         <div
           className={
@@ -1122,7 +1330,15 @@ export function SmartScanner({
                   // is not affordable). The min() keeps CORNER_BAND_PX of room
                   // so the tall snap can't centre the frame under the sheet;
                   // there it stays top-anchored, as it always was.
-                  bottom: `min(var(--sheet-h, 0px), calc(100% - ${CORNER_BAND_PX}px))`,
+                  // Centre the frame in the visible strip, EXCEPT that its
+                  // bottom edge must clear the capture control + hint stacked
+                  // above the sheet (CONTROL_STACK_PX). With the frame centred
+                  // in a wrapper whose bottom is B, its bottom edge sits at
+                  // (100% + B)/2 − CORNER_BAND/2, so clearing the control needs
+                  // B ≥ 2·sheet + CORNER_BAND + 2·CONTROL_STACK − 100%. On a
+                  // tall strip that term is negative and the plain sheet
+                  // height wins; on a short one it lifts the frame just enough.
+                  bottom: `min(max(var(--sheet-h, 0px), calc(2 * var(--sheet-h, 0px) + ${CORNER_BAND_PX + 2 * CONTROL_STACK_PX}px - 100%)), calc(100% - ${CORNER_BAND_PX}px))`,
                   transition: 'bottom var(--sheet-h-dur, 0s) cubic-bezier(.4,0,.2,1)',
                 }
               : undefined

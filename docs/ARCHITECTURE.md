@@ -25,7 +25,7 @@ The Web Scanner is a Next.js 16 application designed to provide a high-performan
   raw key on screen.
 - **State Management**: React Hooks (`useState`, `useReducer`, `useRef`) + URL State
 - **Database**: Supabase / Postgres via `@supabase/supabase-js` (service-role key, server-side only). Holds both the persistent records (box_inventory, stock_batches, transactions, pallets) and the scan sessions + distributed locks. Migrated 2026-06-30 from Airtable + Upstash Redis.
-- **Scanning Library**: Native BarcodeDetector API (hardware-accelerated); fallback: html5-qrcode (@zxing/browser)
+- **Scanning Library**: Native BarcodeDetector API when it genuinely works on the device, otherwise the pure-JS ZXing reader (`@zxing/browser`, lazy-loaded). `SmartScanner` picks the engine at mount (`pickDecodeEngine`: no `BarcodeDetector`, or `getSupportedFormats()` returning `[]`, → ZXing) and **swaps to ZXing mid-loop** when the native `detect()` rejects — `NotSupportedError` "Barcode detection service unavailable" is what Android tablets without the Play Services barcode module throw on every frame. Before 2026-09-13 there was no fallback at all: those devices either saw "Browser not supported" or a live camera that never decoded. (`html5-qrcode` is still in `package.json` but unused.)
 - **Image Storage**: Supabase Storage — public bucket `warehouse-images` (via the `/api/cloudinary/upload` proxy route; Cloudinary removed 2026-07-09)
 
 ## Core Components
@@ -180,7 +180,7 @@ the header, with a draggable sheet floating over it.
 | Component | Role |
 |---|---|
 | `DesignHeader` / `ProgressHeader` | Hamburger + optional `leading` slot, centred title/subtitle, optional `right` slot; progress bar with an **optional** caption row (omit `label` for a bare bar) |
-| `BottomSheet` | The floating sheet. 3 snaps, drag handle, `toolbar` + scrolling children + `footer`. Exposes `snapTo(i)` via ref |
+| `BottomSheet` | The floating sheet. 3 snaps, drag handle, `toolbar` + scrolling children + `footer`. Exposes `snapTo(i)` via ref. **On a wide landscape host (≥ 720px and aspect ≥ 1.15 — a tablet on its side) it docks instead as a full-height side panel** at the inline end (`data-sheet-layout="side"`, width `clamp(340, 38%, 480)`): no handle, footer always shown, `--sheet-h` = 0 and `--sheet-w` = its width, so the scanner's overlays keep to the visible camera. Decided per measure, so rotation switches live |
 | `ToolDock` | The chip row inside the sheet's toolbar (share / delete / pallets / locked stubs) |
 | `ActiveScanCard` | The newest scan — live status dot, big mono weight, details expander, and its actions (edit / delete / retry / view frame) |
 | `HistoryRow` | One older scan; tap to expand its action row |
@@ -191,6 +191,8 @@ the header, with a draggable sheet floating over it.
 | `PalletsBrowser`, `DocumentsBrowser` | Unlocked drawer features: floor pallet lookup, completed-delivery archive |
 | `SplitJobScreen`, `SplitPlanner`, `SplitBoard` | Split-assignment worker/manager UI (`SPLIT_ASSIGNMENT_ENABLED`) |
 | `MI` | Material Icons Round ligature wrapper |
+
+**Tablets (2026-09-13).** Portrait tablets are just big phones and need nothing. Landscape is where the bottom-sheet geometry broke: on 1280×680 the mid snap left a 250px sheet showing one card, and the 347px camera strip above it had the corner frame, its label and the capture hint/button drawn over each other (at the tall snap the control was clamped into the frame's label). The side-panel mode above is the fix; `SmartScanner`'s overlay layer reads `--sheet-w` (`inset-inline-end`). `NonMeatTypeAFlow` (no sheet, plain scrolling column) bounds its camera to `min(48dvh, 440px)` instead of the default full-width square, which on a tablet pushed everything below it off screen. `body { touch-action: manipulation }` kills double-tap zoom, because Chrome on 10"+ tablets opens sites in desktop mode and ignores the viewport meta's zoom lock there.
 
 **Two layout rules learned the hard way — both caused real breakage:**
 
