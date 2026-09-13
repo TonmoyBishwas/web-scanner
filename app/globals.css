@@ -155,6 +155,12 @@
 html,
 body {
   overscroll-behavior: none;
+  /* No double-tap-to-zoom anywhere. Chrome on 10"+ Android tablets now opens
+     sites in desktop mode, where the viewport meta's zoom lock is ignored —
+     so a worker's quick second tap on the camera zoomed the whole page.
+     `manipulation` keeps panning and pinch; descendants that set their own
+     touch-action (the sheet handle's `none`) are only ever narrowed by this. */
+  touch-action: manipulation;
 }
 
 body {

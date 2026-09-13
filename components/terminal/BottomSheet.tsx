@@ -41,6 +41,33 @@ const DEFAULT_SNAPS: [number, number, number] = [0.106, 0.419, 0.87];
  */
 const MIN_CAMERA_PX = 240;
 
+/**
+ * Side-panel mode — for a host that is wide and short (an Android tablet on
+ * its side, or any landscape viewport). A sheet that floats up from the bottom
+ * was designed for a tall phone: on a 1280×680 tablet the mid snap left a
+ * 250px sheet showing one card, and the camera strip above it was so short
+ * that the scan frame, its label and the "capture anyway" control were drawn
+ * on top of each other. There is nothing to drag *to* on such a screen, so the
+ * sheet docks instead as a full-height panel at the inline end, the camera
+ * keeps the rest, and the footer is always visible. The mode is decided from
+ * the host's own size on every measure, so rotating the tablet switches it
+ * live in both directions.
+ */
+const SIDE_MIN_WIDTH_PX = 720;
+/** Host width ÷ height above which the panel layout is used. */
+const SIDE_MIN_ASPECT = 1.15;
+const SIDE_PANEL_MIN_PX = 340;
+const SIDE_PANEL_MAX_PX = 480;
+const SIDE_PANEL_FRACTION = 0.38;
+
+function sidePanelWidth(hostW: number): number {
+  return Math.round(Math.min(SIDE_PANEL_MAX_PX, Math.max(SIDE_PANEL_MIN_PX, hostW * SIDE_PANEL_FRACTION)));
+}
+
+function isSideLayout(hostW: number, hostH: number): boolean {
+  return hostW >= SIDE_MIN_WIDTH_PX && hostH > 0 && hostW / hostH >= SIDE_MIN_ASPECT;
+}
+
 /** px/ms past which a release counts as a flick and advances one snap point. */
 const FLICK_VELOCITY = 0.35;
 /** px of travel before a gesture stops counting as a tap. */
@@ -77,6 +104,10 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
   // Mirrors snapIndexRef for rendering (aria-valuenow). The ref is what the
   // gesture handlers read, since they must see the current value synchronously.
   const [snapIndex, setSnapIndex] = useState(initialSnap);
+  // Docked as a side panel (wide landscape host) rather than a bottom sheet.
+  // `null` until the first measure so SSR and the first client paint agree.
+  const [side, setSide] = useState<{ width: number } | null>(null);
+  const sideRef = useRef<{ width: number } | null>(null);
 
   const snapIndexRef = useRef(initialSnap);
   const containerHRef = useRef(0);
@@ -134,6 +165,12 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
     const root = rootRef.current;
     const parent = root?.offsetParent as HTMLElement | null;
     containerHRef.current = parent?.offsetHeight || window.innerHeight;
+    const hostW = parent?.offsetWidth || window.innerWidth;
+    const nextSide = isSideLayout(hostW, containerHRef.current) ? { width: sidePanelWidth(hostW) } : null;
+    if ((nextSide?.width ?? null) !== (sideRef.current?.width ?? null)) {
+      sideRef.current = nextSide;
+      setSide(nextSide);
+    }
 
     // The floor is what the sheet physically cannot render smaller than. It is
     // NOT just the three chrome blocks: the root's own top border and the
@@ -160,14 +197,23 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
       rootBorders;
   }, []);
 
+  // Every height change also decides the footer's visibility: it fits at a
+  // height that leaves room for it after the fixed chrome, and always fits in
+  // a side panel.
+  const applyHeight = useCallback((h: number) => {
+    setHeight(h);
+    const fits = Boolean(sideRef.current) || h >= baseChromeRef.current + footerHRef.current - 1;
+    setFooterHidden(!fits);
+  }, []);
+
   const settle = useCallback(
     (i: number) => {
       const clamped = Math.max(0, Math.min(2, i));
       snapIndexRef.current = clamped;
       setSnapIndex(clamped);
-      setHeight(snapPx(clamped));
+      applyHeight(snapPx(clamped));
     },
-    [snapPx],
+    [snapPx, applyHeight],
   );
 
   const nearestSnap = useCallback(
@@ -195,7 +241,7 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
     const applyMeasured = () => {
       measure();
       // Never fight an in-flight drag.
-      if (!dragRef.current) setHeight(snapPx(snapIndexRef.current));
+      if (!dragRef.current) applyHeight(snapPx(snapIndexRef.current));
     };
     applyMeasured();
 
@@ -216,7 +262,9 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
       window.removeEventListener('orientationchange', applyMeasured);
       window.visualViewport?.removeEventListener('resize', applyMeasured);
     };
-  }, [measure, snapPx, hasToolbar, hasFooter]);
+    // `side` is a dep so the observers re-attach to the handle/spacer that
+    // the current layout actually renders.
+  }, [measure, snapPx, applyHeight, hasToolbar, hasFooter, side]);
 
   /**
    * Publish the live sheet height onto the camera region as `--sheet-h`, so the
@@ -232,26 +280,31 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
     const parent = rootRef.current?.offsetParent as HTMLElement | null;
     if (!parent) return;
     hostRef.current = parent;
-    parent.style.setProperty('--sheet-h', `${height ?? 0}px`);
+    // As a side panel the sheet covers no camera height at all, and instead
+    // publishes the width it takes (`--sheet-w`) so the scanner's overlays
+    // can keep to the visible camera.
+    parent.style.setProperty('--sheet-h', side ? '0px' : `${height ?? 0}px`);
+    parent.style.setProperty('--sheet-w', side ? `${side.width}px` : '0px');
     parent.style.setProperty('--sheet-h-dur', dragging ? '0s' : '.26s');
-  }, [height, dragging]);
+  }, [height, dragging, side]);
 
   // Leave the camera region clean on unmount — `offsetParent` is already null
   // by then, hence the cached host.
   useEffect(() => () => {
     const host = hostRef.current;
     host?.style.removeProperty('--sheet-h');
+    host?.style.removeProperty('--sheet-w');
     host?.style.removeProperty('--sheet-h-dur');
   }, []);
 
   // Show the footer exactly when there is room for it (mid/tall), hide it when
-  // there isn't (peek, and mid-drag on the way down).
-  useEffect(() => {
-    if (height === null) return;
-    const fits = height >= baseChromeRef.current + footerHRef.current - 1;
-    setFooterHidden(!fits);
-  }, [height]);
+  // there isn't (peek, and mid-drag on the way down). A side panel is full
+  // height and always has room.
+  // (Decided wherever the height is set — see applyHeight — rather than in an
+  // effect on `height`, so the footer never renders one frame behind.)
 
+  // `snapTo` still records the index (so a later rotation back to a bottom
+  // sheet lands where the page asked), but a side panel has no height to move.
   useImperativeHandle(ref, () => ({ snapTo: settle }), [settle]);
 
   const onPointerDown = useCallback(
@@ -289,9 +342,9 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
         d.lastY = e.clientY;
         d.lastT = e.timeStamp;
       }
-      setHeight(Math.max(snapPx(0), Math.min(snapPx(2), d.startH + delta)));
+      applyHeight(Math.max(snapPx(0), Math.min(snapPx(2), d.startH + delta)));
     },
-    [snapPx],
+    [snapPx, applyHeight],
   );
 
   const onPointerUp = useCallback(
@@ -344,15 +397,28 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
   return (
     <div
       ref={rootRef}
-      className="absolute left-0 right-0 bottom-0 bg-raised border-t-2 border-line rounded-t-[20px] flex flex-col shadow-[0_-18px_44px_rgba(0,0,0,.72)] z-30 overflow-hidden"
-      style={{
-        height: height ?? undefined,
-        transition: dragging ? 'none' : 'height .26s cubic-bezier(.4,0,.2,1)',
-      }}
+      data-sheet-layout={side ? 'side' : 'bottom'}
+      className={
+        side
+          ? 'absolute top-0 bottom-0 end-0 bg-raised border-s-2 border-line flex flex-col shadow-[0_0_44px_rgba(0,0,0,.72)] z-30 overflow-hidden'
+          : 'absolute left-0 right-0 bottom-0 bg-raised border-t-2 border-line rounded-t-[20px] flex flex-col shadow-[0_-18px_44px_rgba(0,0,0,.72)] z-30 overflow-hidden'
+      }
+      style={
+        side
+          ? { width: side.width }
+          : {
+              height: height ?? undefined,
+              transition: dragging ? 'none' : 'height .26s cubic-bezier(.4,0,.2,1)',
+            }
+      }
     >
       {/* Drag handle. The grab area is a full-width 44px band — the visual pill
           is only 5px tall, and a ~20px strip was genuinely hard to hit with
-          gloves, which is what made the sheet feel stuck. */}
+          gloves, which is what made the sheet feel stuck. A side panel has
+          nothing to drag, so it gets a short spacer instead. */}
+      {side ? (
+        <div ref={grabRef} className="flex-none h-3" />
+      ) : (
       <div
         ref={grabRef}
         role="slider"
@@ -371,6 +437,7 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
       >
         <div className="w-12 h-[5px] rounded-full bg-[#e8edf2]" />
       </div>
+      )}
 
       {toolbar && <div ref={toolbarRef} className="flex-none">{toolbar}</div>}
 

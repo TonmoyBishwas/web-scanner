@@ -435,11 +435,15 @@ export function NonMeatTypeAFlow({
           <p className="mt-2 text-sm text-ink-muted">{tr('nonmeatTypeA.instruction')}</p>
         </div>
 
-        {/* Scanner */}
+        {/* Scanner. Height-bounded rather than the component's default square:
+            this page is a plain scrolling column with no floating sheet, and a
+            square camera the full width of an 800–1280px tablet pushed the item
+            list and the confirm controls clean off the screen. */}
         <div className="relative mt-3">
           <SmartScanner
             key={`nm-scanner-${currentPallet}`}
             frame="corner"
+            className="h-[min(48dvh,440px)] min-h-[340px]"
             onBarcodeDetected={handleBarcodeDetected}
             onManualCapture={handleManualCapture}
             onDuplicateFlash={(fn) => {
