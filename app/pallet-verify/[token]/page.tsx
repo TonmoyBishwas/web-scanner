@@ -36,6 +36,7 @@ import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
 import { matchInvoiceItem } from '@/lib/invoice-match';
 import { isSplitSession } from '@/lib/session-mode';
 import { findDuplicateOwner } from '@/lib/duplicate-guard';
+import { baseBarcode, classifyRead, isPerCartonUnique, repeatKey } from '@/lib/carton-barcode';
 import { useBackClose } from '@/lib/use-back-close';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
@@ -140,7 +141,9 @@ function stripProvisionalIds<T extends { barcode: string; sku?: string }>(
   return boxes.map((b, i) =>
     isProvisional(b.barcode)
       ? { ...b, barcode: noBarcodeId(doc, pallet, i + 1), sku: b.sku && !isProvisional(b.sku) ? b.sku : '' }
-      : b,
+      // A repeated label barcode is kept under `<code>-B`, `<code>-C`… on
+      // the page so every carton has its own row; the wire gets the code.
+      : { ...b, barcode: baseBarcode(b.barcode) },
   );
 }
 
@@ -717,10 +720,27 @@ export default function PalletVerifyPage({
 
   const handleBarcodeDetected = useCallback(
     (_barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
-      const barcode = _barcode.trim();
-      if (processedRef.current.has(barcode)) {
-        scanDuplicateFeedback(); // already scanned this sticker
+      const read = _barcode.trim();
+      // A read that cannot be a carton barcode (a fragment, a failed check
+      // digit) is a misread: show the digits, store nothing (SCN-13).
+      const verdict = classifyRead(read);
+      if (!verdict.ok) {
+        dupFlashRef.current?.();
+        scanDuplicateFeedback();
+        setError(t(sessionRef.current?.language || 'English',
+          verdict.reason === 'too_short' ? 'terminal.barcodeTooShort' : 'terminal.barcodeMisread',
+          { digits: read }));
         return;
+      }
+      let barcode = read;
+      if (processedRef.current.has(read)) {
+        if (isPerCartonUnique(read)) {
+          scanDuplicateFeedback(); // already scanned this sticker
+          return;
+        }
+        // Same product label on another carton (fixed-weight goods share one
+        // EAN): a new read after the hold is the next carton, not a repeat.
+        barcode = repeatKey(read, processedRef.current);
       }
 
       // Split-mode duplicate-box guard (Task 16): refuse a box already
@@ -735,7 +755,7 @@ export default function PalletVerifyPage({
       // sessions, so this is a no-op cost for the unaffected common case.
       const activeSession = sessionRef.current;
       if (activeSession) {
-        const clash = findDuplicateOwner(activeSession, barcode, currentPalletRef.current);
+        const clash = findDuplicateOwner(activeSession, read, currentPalletRef.current);
         if (clash) {
           const lang = activeSession.language || 'English';
           const who = (activeSession.roster ?? []).find((r) => r.chat_id === clash.owner)?.nickname
@@ -752,7 +772,7 @@ export default function PalletVerifyPage({
       setError(null); // clear any earlier rejection banner now that a scan succeeded
 
       // Barcode is an identifier only — extract first 13 digits as dedup key
-      const digits = barcode.replace(/\D/g, '');
+      const digits = read.replace(/\D/g, '');
       const sku = digits.length >= 13 ? digits.slice(0, 13) : digits || barcode;
 
       const box: BoxScan = {
@@ -920,7 +940,7 @@ export default function PalletVerifyPage({
     fetch('/api/multi-pallet-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey, candidates }),
+      body: JSON.stringify({ image: imageData, barcode: manual ? '' : baseBarcode(lookupKey), candidates }),
     })
       .then((r) => r.json())
       .then((data) => {
@@ -964,7 +984,7 @@ export default function PalletVerifyPage({
               // Dedupe against every OTHER box (bar-scanned or manual) by the
               // FULL printed number — not the SKU, which repeats per product.
               const dup = prev.some((b, i) => i !== idx && digitsOnly(b.barcode) === digits);
-              if (dup) {
+              if (dup && isPerCartonUnique(digits)) {
                 dupFlashRef.current?.(); // red "already scanned" flash
                 scanDuplicateFeedback();
                 return prev.filter((_, i) => i !== idx); // drop the provisional box
@@ -989,9 +1009,9 @@ export default function PalletVerifyPage({
                   return prev.filter((_, i) => i !== idx); // drop the provisional box
                 }
               }
-              resolvedBarcode = digits;
+              resolvedBarcode = dup ? repeatKey(digits, processedRef.current) : digits;
               resolvedSku = digits.slice(0, 13);
-              processedRef.current.add(digits); // so a later bar-scan of this sticker is caught
+              processedRef.current.add(resolvedBarcode); // so a later bar-scan of this sticker is caught
               setError(null); // clear any earlier rejection banner now that this box committed
             } else {
               needsReview = true; // OCR couldn't read the digits → can't dedupe
@@ -1145,14 +1165,28 @@ export default function PalletVerifyPage({
 
   const handleLooseBarcodeDetected = useCallback(
     (_barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
-      const barcode = _barcode.trim();
-      if (looseProcessedRef.current.has(barcode)) {
-        scanDuplicateFeedback(); // already scanned this loose box
+      const read = _barcode.trim();
+      const verdict = classifyRead(read);
+      if (!verdict.ok) {
+        looseDupFlashRef.current?.();
+        scanDuplicateFeedback();
+        setError(t(sessionRef.current?.language || 'English',
+          verdict.reason === 'too_short' ? 'terminal.barcodeTooShort' : 'terminal.barcodeMisread',
+          { digits: read }));
         return;
+      }
+      let barcode = read;
+      if (looseProcessedRef.current.has(read)) {
+        if (isPerCartonUnique(read)) {
+          scanDuplicateFeedback(); // already scanned this loose box
+          return;
+        }
+        barcode = repeatKey(read, looseProcessedRef.current); // next carton, same label
       }
       looseProcessedRef.current.add(barcode);
       scanSuccessFeedback(); // good scan — box added below
-      const digits = barcode.replace(/\D/g, '');
+      setError(null);
+      const digits = read.replace(/\D/g, '');
       const sku = digits.length >= 13 ? digits.slice(0, 13) : digits || barcode;
       const box: BoxScan = {
         barcode, sku, item_name: '', item_name_hebrew: '',
@@ -1364,7 +1398,7 @@ export default function PalletVerifyPage({
         // product. A clash here is the worker typing the sticker they already
         // captured, so refuse rather than silently create a second row.
         const others = (isLoose ? looseBoxes : scannedBoxes).filter((b) => b.barcode !== barcode);
-        if (others.some((b) => digitsOnly(b.barcode) === typed)) {
+        if (isPerCartonUnique(typed) && others.some((b) => digitsOnly(b.barcode) === typed)) {
           setError(t(session?.language || 'English', 'terminal.barcodeDuplicate'));
           return;
         }
@@ -1657,7 +1691,7 @@ export default function PalletVerifyPage({
     fetch('/api/multi-pallet-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey }),
+      body: JSON.stringify({ image: imageData, barcode: manual ? '' : baseBarcode(lookupKey) }),
     })
       .then((r) => r.json())
       .then((data) => {
@@ -1685,14 +1719,14 @@ export default function PalletVerifyPage({
             const digits = digitsOnly(data.ocr_data.barcode_digits);
             if (digits.length >= 13) {
               const dup = prev.some((b, i) => i !== idx && digitsOnly(b.barcode) === digits);
-              if (dup) {
+              if (dup && isPerCartonUnique(digits)) {
                 looseDupFlashRef.current?.();
                 scanDuplicateFeedback();
                 return prev.filter((_, i) => i !== idx);
               }
-              resolvedBarcode = digits;
+              resolvedBarcode = dup ? repeatKey(digits, looseProcessedRef.current) : digits;
               resolvedSku = digits.slice(0, 13);
-              looseProcessedRef.current.add(digits);
+              looseProcessedRef.current.add(resolvedBarcode);
             } else {
               needsReview = true;
             }
@@ -2484,7 +2518,7 @@ export default function PalletVerifyPage({
               onBarcodeDetected={handleLooseBarcodeDetected}
               onManualCapture={handleLooseManualCapture}
               onDuplicateFlash={(fn) => { looseDupFlashRef.current = fn; }}
-              isDuplicateBarcode={(b) => looseProcessedRef.current.has(b.trim())}
+              isDuplicateBarcode={(b) => looseProcessedRef.current.has(b.trim()) && isPerCartonUnique(b)}
               scannedBarcodes={new Map()}
               ocrResults={new Map()}
             />
@@ -2886,7 +2920,7 @@ export default function PalletVerifyPage({
             // Answers "already got this one?" the instant the barcode is
             // confirmed, so the scanner paints red rather than green for the
             // ~400ms before handleBarcodeDetected below reaches the same verdict.
-            isDuplicateBarcode={(b) => processedRef.current.has(b.trim())}
+            isDuplicateBarcode={(b) => processedRef.current.has(b.trim()) && isPerCartonUnique(b)}
             scannedBarcodes={new Map()}
             ocrResults={new Map()}
           />

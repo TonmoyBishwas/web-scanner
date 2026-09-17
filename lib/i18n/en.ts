@@ -631,6 +631,8 @@ export const en = {
   'terminal.barcodeNoneBtn': 'No readable barcode on this carton',
   'terminal.barcodeNoneSet': 'Booked without a barcode',
   'terminal.barcodeDuplicate': 'Another carton on this pallet already has that barcode',
+  'terminal.barcodeMisread': 'Barcode misread ({digits}) — the check digit is wrong. Scan it again.',
+  'terminal.barcodeTooShort': 'Only part of the barcode was read ({digits}). Aim at the long barcode and scan again.',
   'terminal.stickerPhoto': 'Sticker photo',
   'terminal.noStickerPhoto': 'No photo for this carton',
   'terminal.batchTag': 'BATCH',
