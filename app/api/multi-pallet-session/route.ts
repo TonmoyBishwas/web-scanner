@@ -21,7 +21,12 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { chat_id, pallet_count, loose_box_count = 0, document_number, ocr_data, receipt_id, language, category, nonmeat_meta, meat_discrepancy } = body;
 
-    if (!chat_id || !pallet_count || pallet_count < 1) {
+    // 0 pallets is a delivery that came loose (BOT-30): the page opens in the
+    // loose-box phase (current_pallet 1 > pallet_count 0) and the loose
+    // webhook closes the delivery. Only 0 pallets AND 0 loose boxes is invalid.
+    const pallets = Number(pallet_count) || 0;
+    const loose = Number(loose_box_count) || 0;
+    if (!chat_id || pallets < 0 || (pallets < 1 && loose < 1)) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
@@ -30,8 +35,8 @@ export async function POST(request: NextRequest) {
     const session: MultiPalletSession = {
       token,
       chat_id: String(chat_id),
-      pallet_count: Number(pallet_count),
-      loose_box_count: Number(loose_box_count) || 0,
+      pallet_count: pallets,
+      loose_box_count: loose,
       current_pallet: 1,
       document_number: document_number || '',
       ocr_data: ocr_data || [],
