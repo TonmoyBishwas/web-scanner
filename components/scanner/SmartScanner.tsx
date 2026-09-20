@@ -370,11 +370,13 @@ function decodeRegion(video: HTMLVideoElement, container: HTMLElement | null) {
   let sheetH = 0;
   let sheetW = 0;
   let rtl = false;
+  let dragging = false;
   if (container) {
     const cs = getComputedStyle(container);
     sheetH = parseFloat(cs.getPropertyValue('--sheet-h')) || 0;
     sheetW = parseFloat(cs.getPropertyValue('--sheet-w')) || 0;
     rtl = cs.direction === 'rtl';
+    dragging = cs.getPropertyValue('--sheet-h-dur').trim() === '0s';
   }
   // Never shrink the visible strip below a third of the container — a stray
   // value in the variable must not blind the decoder.
@@ -401,6 +403,7 @@ function decodeRegion(video: HTMLVideoElement, container: HTMLElement | null) {
     dw: Math.max(1, Math.round(sw * k)),
     dh: Math.max(1, Math.round(sh * k)),
     scaled: k < 1,
+    dragging,
   };
 }
 
@@ -1125,6 +1128,14 @@ export function SmartScanner({
         }
 
         const roi = decodeRegion(video, video.parentElement);
+        // While the sheet is being dragged (BottomSheet publishes
+        // `--sheet-h-dur: 0s` for exactly that window) give the finger the
+        // whole main thread; the loop resumes the moment it settles.
+        if (roi.dragging) {
+          lastDecodeAt = 0;
+          animationFrameRef.current = requestAnimationFrame(detect);
+          return;
+        }
 
         // Native path: crop + shrink straight from the video into an
         // ImageBitmap (GPU-side in Chrome), so the only pixels that ever reach
