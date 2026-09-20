@@ -153,6 +153,15 @@ const ZXING_MIN_INTERVAL_MS = 100;
  */
 const NATIVE_MIN_INTERVAL_MS = 80;
 /**
+ * Adaptive pacing: the loop waits at least this many times the detector's own
+ * (smoothed) wall time between attempts, capped at DECODE_MAX_INTERVAL_MS. On
+ * a phone where a detect takes 150 ms the loop backs off to ~300 ms instead of
+ * feeding the detector back to back — the UI keeps most of the main thread,
+ * and a 2-second hold still yields 6+ reads for the two-identical-reads rule.
+ */
+const DECODE_BACKOFF_FACTOR = 2;
+const DECODE_MAX_INTERVAL_MS = 400;
+/**
  * Longest edge of the frame handed to the decoder. A 1080×1920 stream is kept
  * for the OCR capture (the sticker text needs it), but the barcode decoder
  * only ever sees the strip of camera the worker can SEE (above the bottom
@@ -1031,6 +1040,8 @@ export function SmartScanner({
     let decoderLoading: Promise<void> | null = null;
     let nativeErrors = 0;
     let lastDecodeAt = 0;
+    // Smoothed wall time of one decode attempt (bitmap/canvas prep + detect).
+    let decodeCostMs = 0;
     let bitmapPath = typeof createImageBitmap === 'function';
 
     const ensureDecoder = () => {
@@ -1093,8 +1104,12 @@ export function SmartScanner({
       // Pace the decoder instead of running it on every animation frame. The
       // skipped frames cost nothing — no video readback, no canvas draw.
       const nowMs = performance.now();
-      const minInterval =
+      const baseInterval =
         engineRef.current === 'zxing' ? ZXING_MIN_INTERVAL_MS : NATIVE_MIN_INTERVAL_MS;
+      const minInterval = Math.min(
+        DECODE_MAX_INTERVAL_MS,
+        Math.max(baseInterval, decodeCostMs * DECODE_BACKOFF_FACTOR),
+      );
       if (nowMs - lastDecodeAt < minInterval) {
         animationFrameRef.current = requestAnimationFrame(detect);
         return;
@@ -1156,6 +1171,8 @@ export function SmartScanner({
         try {
           barcode = await active.detect(source);
           if (active.engine === 'native') nativeErrors = 0;
+          const took = performance.now() - nowMs;
+          decodeCostMs = decodeCostMs === 0 ? took : decodeCostMs * 0.7 + took * 0.3;
         } catch (err) {
           if (active.engine === 'native') {
             nativeErrors += 1;
