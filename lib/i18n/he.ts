@@ -224,6 +224,10 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.doneScanning': 'סיימת לסרוק? הזן את סך הקופסאות',
   'palletVerify.uniformPlaceholder': 'הזן כמות',
   'palletVerify.uniformSet': 'קבע',
+  'palletVerify.labelCountTitle': '{name}: לכל הקרטונים של המוצר הזה יש אותו ברקוד. כמה קרטונים ממנו יש על המשטח?',
+  'palletVerify.labelCountTitleLoose': '{name}: לכל הקרטונים של המוצר הזה יש אותו ברקוד. כמה קרטונים בודדים ממנו?',
+  'palletVerify.labelCountHint': 'כל קרטון {weight} ק"ג — נכפיל במספר שתקליד. אין צורך לסרוק את השאר.',
+  'palletVerify.labelCountDecline': 'לא — לכל קרטון ברקוד משלו, אסרוק את כולם',
   'palletVerify.confirmPalletBtn': 'אשר משטח {current}',
 
   'palletVerify.scanMoreToContinue': 'סרוק עוד {count} קופסאות כדי להמשיך',
