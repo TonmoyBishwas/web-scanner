@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback, type PointerEvent as ReactPointerEvent } from 'react';
+import { RepeatGate } from '@/lib/repeat-gate';
 import { AlertTriangle, ScanLine, Camera, Check } from 'lucide-react';
 import type { ParsedBarcode, BoxStickerOCR } from '@/types';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
@@ -27,6 +28,15 @@ interface SmartScannerProps {
    * the parent-driven `onDuplicateFlash` path, which arrives later.
    */
   isDuplicateBarcode?: (barcode: string) => boolean;
+  /**
+   * A barcode `isDuplicateBarcode` rejects may still be the NEXT carton when
+   * every carton of a product carries the same label and the worker opted in
+   * (pallet-verify's LabelPrompt). Return true to accept such a repeat — the
+   * scanner then only fires once the barcode has been OUT of the frame for
+   * REPEAT_GAP_MS since it was last accepted, so a phone left pointing at one
+   * box books it once, and the worker moves the camera box to box.
+   */
+  allowRepeat?: (barcode: string) => boolean;
   /**
    * What the post-scan hold is allowed to claim.
    *
@@ -142,6 +152,12 @@ const NATIVE_FORMATS = [
 
 /** Consecutive native `detect()` rejections before giving up on it. */
 const NATIVE_MAX_ERRORS = 3;
+/** How long a shared-label barcode must be absent from the decode stream
+ *  before a repeat read of it counts as a new carton (see `allowRepeat`). */
+const REPEAT_GAP_MS = 1500;
+/** …and at least this many decode attempts in a row must have missed it —
+ *  a single dropped frame on a slow phone is not "the box moved away". */
+const REPEAT_GAP_MISSES = 2;
 /** ZXing is CPU-bound: cap it at ~10 fps so the preview stays smooth. */
 const ZXING_MIN_INTERVAL_MS = 100;
 /**
@@ -420,6 +436,7 @@ export function SmartScanner({
   onScannerTypeDetected,
   onDuplicateFlash,
   isDuplicateBarcode,
+  allowRepeat,
   holdClaim = 'saved',
   className,
   frame = 'square',
@@ -484,6 +501,14 @@ export function SmartScanner({
   useEffect(() => {
     isDupRef.current = isDuplicateBarcode;
   }, [isDuplicateBarcode]);
+  const allowRepeatRef = useRef(allowRepeat);
+  useEffect(() => {
+    allowRepeatRef.current = allowRepeat;
+  }, [allowRepeat]);
+  // Repeat gate for shared labels — see lib/repeat-gate.ts. Fed every decode
+  // attempt (hit or miss); "armed" = the code has been away long enough that
+  // the next confirmed read of it is a different box.
+  const repeatGateRef = useRef(new RepeatGate(REPEAT_GAP_MS, REPEAT_GAP_MISSES));
   const holdClaimRef = useRef(holdClaim);
   useEffect(() => {
     holdClaimRef.current = holdClaim;
@@ -1202,6 +1227,9 @@ export function SmartScanner({
           bitmap?.close();
         }
 
+        // Repeat-gate bookkeeping runs on EVERY decode attempt, hit or miss.
+        repeatGateRef.current.observe(barcode, Date.now());
+
         if (barcode) {
           const now = Date.now();
 
@@ -1245,7 +1273,18 @@ export function SmartScanner({
           // something. The parent's own duplicate verdict only arrives after
           // the sharpest-frame capture below (~400ms), which is far too late
           // to be showing a green "saved" in the meantime.
-          const isDup = isDupRef.current?.(barcode) ?? false;
+          let isDup = isDupRef.current?.(barcode) ?? false;
+          if (isDup && allowRepeatRef.current?.(barcode)) {
+            if (!repeatGateRef.current.isArmed()) {
+              // Same shared-label box still in view since it was saved —
+              // not a new carton. No flash, no hold: the worker sees nothing
+              // happen until the camera moves to the next box.
+              animationFrameRef.current = requestAnimationFrame(detect);
+              return;
+            }
+            isDup = false;
+          }
+          if (!isDup) repeatGateRef.current.accepted(); // must leave the frame before it counts again
           outcomeRef.current = isDup ? 'duplicate' : 'saved';
           setScanOutcome(outcomeRef.current);
           if (!isDup && holdClaimRef.current === 'saved') {

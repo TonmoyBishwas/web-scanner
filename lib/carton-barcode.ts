@@ -14,9 +14,12 @@
  *    way past was a misread that happened to differ by a digit.
  *
  * So: a per-carton-unique barcode is deduped on its digits; a label barcode
- * is not — each read, after the scanner's own double-trigger guard (two
- * consecutive identical reads, then a 3 s hold), is another carton, and gets
- * its own row under a `-B`, `-C`, … suffix that is stripped before the wire.
+ * is deduped too UNTIL the worker opts in for that product (pallet-verify's
+ * LabelPrompt, asked once after the first carton's OCR). From then on each
+ * read — after the scanner's double-trigger guard AND the repeat gate in
+ * lib/repeat-gate.ts (the code must leave the frame between cartons) — is
+ * another carton, with its own photo and OCR, under a `-B`, `-C`, … suffix
+ * that is stripped before the wire. Never a count typed in, never a clone.
  *
  * And a read that cannot be a carton barcode at all (a fragment, or an EAN
  * whose check digit fails) is refused with the digits shown, never stored:
