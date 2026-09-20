@@ -221,6 +221,10 @@ export const en = {
   'palletVerify.doneScanning': 'Done scanning? Enter the pallet total',
   'palletVerify.uniformPlaceholder': 'Enter count',
   'palletVerify.uniformSet': 'Set',
+  'palletVerify.labelCountTitle': '{name}: every box of this product carries the same barcode. How many boxes of it are on this pallet?',
+  'palletVerify.labelCountTitleLoose': '{name}: every box of this product carries the same barcode. How many loose boxes of it?',
+  'palletVerify.labelCountHint': 'Each box is {weight} kg — we multiply by the number you enter. No need to scan the rest.',
+  'palletVerify.labelCountDecline': 'No — each box has its own barcode, I will scan them all',
   'palletVerify.confirmPalletBtn': 'Confirm Pallet {current}',
 
   'palletVerify.scanMoreToContinue': 'Scan {count} more boxes to continue',
