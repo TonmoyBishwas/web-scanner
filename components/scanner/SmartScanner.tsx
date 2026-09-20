@@ -144,11 +144,27 @@ const NATIVE_FORMATS = [
 const NATIVE_MAX_ERRORS = 3;
 /** ZXing is CPU-bound: cap it at ~10 fps so the preview stays smooth. */
 const ZXING_MIN_INTERVAL_MS = 100;
+/**
+ * Native decode cadence. ML Kit needs ~40–80 ms per frame on a mid-range
+ * Android SoC (Snapdragon 680 class); handing it a frame on every animation
+ * frame only queued full-resolution copies behind the UI, which is what made a
+ * 4 GB phone stutter on every touch. ~12 attempts/s is still 24+ reads per
+ * 2-second hold — the two-identical-reads rule never waits on this.
+ */
+const NATIVE_MIN_INTERVAL_MS = 80;
+/**
+ * Longest edge of the frame handed to the decoder. A 1080×1920 stream is kept
+ * for the OCR capture (the sticker text needs it), but the barcode decoder
+ * only ever sees the strip of camera the worker can SEE (above the bottom
+ * sheet / beside the side panel), shrunk to this edge. A carton barcode filling
+ * the 320px scan frame is still ≥3 px per module after the shrink.
+ */
+const DECODE_MAX_EDGE_PX = 1280;
 
 interface FrameDecoder {
   engine: DecodeEngine;
-  /** Resolves the first barcode's payload in the canvas, or null. Throws only for engine failure. */
-  detect(canvas: HTMLCanvasElement): Promise<string | null>;
+  /** Resolves the first barcode's payload in the frame, or null. Throws only for engine failure. */
+  detect(source: HTMLCanvasElement | ImageBitmap): Promise<string | null>;
 }
 
 async function pickDecodeEngine(): Promise<DecodeEngine> {
@@ -173,8 +189,8 @@ function createNativeDecoder(): FrameDecoder {
   const detector = new window.BarcodeDetector({ formats: NATIVE_FORMATS });
   return {
     engine: 'native',
-    async detect(canvas) {
-      const barcodes = await detector.detect(canvas);
+    async detect(source) {
+      const barcodes = await detector.detect(source);
       return barcodes.length > 0 ? String(barcodes[0].rawValue) : null;
     },
   };
@@ -202,12 +218,14 @@ async function createZxingDecoder(): Promise<FrameDecoder> {
   let lastAttempt = 0;
   return {
     engine: 'zxing',
-    async detect(canvas) {
+    async detect(source) {
+      // The loop only ever feeds ZXing a canvas; the bitmap path is native-only.
+      if (!(source instanceof HTMLCanvasElement)) return null;
       const now = performance.now();
       if (now - lastAttempt < ZXING_MIN_INTERVAL_MS) return null;
       lastAttempt = now;
       try {
-        return reader.decodeFromCanvas(canvas).getText();
+        return reader.decodeFromCanvas(source).getText();
       } catch (err) {
         // "Nothing in this frame" is the normal case, not a failure.
         if (
@@ -226,32 +244,56 @@ async function createZxingDecoder(): Promise<FrameDecoder> {
 /**
  * Relative sharpness score (gradient energy) of a canvas. Higher = sharper.
  * Downscales to ~`sample` px wide grayscale and sums squared differences of
- * horizontally-adjacent pixels — a cheap focus/motion-blur proxy.
+ * horizontally-adjacent pixels — a cheap focus/motion-blur proxy. `scratch`
+ * is reused across the burst so no canvas is allocated per frame.
  */
-function sharpnessScore(source: CanvasImageSource, srcW: number, srcH: number, sample = 320): number {
+function sharpnessScore(
+  source: CanvasImageSource,
+  srcW: number,
+  srcH: number,
+  scratch: HTMLCanvasElement,
+  sample = 320,
+): number {
   if (!srcW || !srcH) return 0;
   const w = Math.min(sample, srcW);
   const h = Math.max(1, Math.round((srcH / srcW) * w));
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  const cx = c.getContext('2d', { willReadFrequently: true });
+  if (scratch.width !== w || scratch.height !== h) {
+    scratch.width = w;
+    scratch.height = h;
+  }
+  const cx = scratch.getContext('2d', { willReadFrequently: true });
   if (!cx) return 0;
   cx.drawImage(source, 0, 0, w, h);
   const { data } = cx.getImageData(0, 0, w, h);
   let energy = 0;
   for (let y = 0; y < h; y++) {
+    const row = y * w * 4;
+    let g0 = 0.299 * data[row] + 0.587 * data[row + 1] + 0.114 * data[row + 2];
     for (let x = 1; x < w; x++) {
-      const i = (y * w + x) * 4;
-      const j = (y * w + x - 1) * 4;
+      const i = row + x * 4;
       // luma (Rec. 601) of the two adjacent pixels
       const g1 = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-      const g0 = 0.299 * data[j] + 0.587 * data[j + 1] + 0.114 * data[j + 2];
       const d = g1 - g0;
       energy += d * d;
+      g0 = g1;
     }
   }
   return energy / (w * h);
+}
+
+/** One full frame of the live video as a JPEG data URL (no burst, no scoring). */
+function snapshotFrame(video: HTMLVideoElement, maxWidth = 1280): string {
+  const vw = video.videoWidth || maxWidth;
+  const vh = video.videoHeight || Math.round(maxWidth * 0.75);
+  const w = Math.min(maxWidth, vw);
+  const h = Math.max(1, Math.round((vh / vw) * w));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+  ctx.drawImage(video, 0, 0, w, h);
+  return canvas.toDataURL('image/jpeg', 0.9);
 }
 
 /**
@@ -261,6 +303,10 @@ function sharpnessScore(source: CanvasImageSource, srcW: number, srcH: number, s
  * confirmation is motion-blurred, and (2) the barcode-detection canvas is
  * cropped, cutting off the product name. Here we use the whole frame (capped
  * at `maxWidth`) at higher quality.
+ *
+ * The best frame is kept as pixels (one canvas copy) and JPEG-encoded exactly
+ * once at the end. Encoding every candidate cost up to four 1080×1920 JPEG
+ * encodes per scan — ~100 ms each on a low-end phone, all on the main thread.
  */
 async function captureSharpestFrame(
   video: HTMLVideoElement,
@@ -276,20 +322,77 @@ async function captureSharpestFrame(
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d');
-  if (!ctx) return video as unknown as string; // unreachable; satisfies types
+  const best = document.createElement('canvas');
+  best.width = w;
+  best.height = h;
+  const bestCtx = best.getContext('2d');
+  const scratch = document.createElement('canvas');
+  if (!ctx || !bestCtx) return video as unknown as string; // unreachable; satisfies types
 
-  let bestData = '';
   let bestScore = -1;
   for (let f = 0; f < frames; f++) {
     ctx.drawImage(video, 0, 0, w, h);
-    const score = sharpnessScore(canvas, w, h);
+    const score = sharpnessScore(canvas, w, h, scratch);
     if (score > bestScore) {
       bestScore = score;
-      bestData = canvas.toDataURL('image/jpeg', 0.9);
+      bestCtx.drawImage(canvas, 0, 0);
     }
     if (f < frames - 1) await new Promise((r) => setTimeout(r, intervalMs));
   }
-  return bestData;
+  return best.toDataURL('image/jpeg', 0.9);
+}
+
+/**
+ * The part of the camera the worker can actually see, in VIDEO pixels, plus
+ * the size the decoder should get it at.
+ *
+ * The <video> is object-fit: cover inside `container`; BottomSheet publishes
+ * the height it covers as `--sheet-h` (or the width it takes as `--sheet-w`
+ * when docked as a side panel, at the inline end — the LEFT in RTL). Anything
+ * under the sheet is invisible to the worker, so decoding it is pure waste —
+ * at the mid snap that is ~40 % of every frame.
+ */
+function decodeRegion(video: HTMLVideoElement, container: HTMLElement | null) {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const cw = container?.clientWidth || vw;
+  const ch = container?.clientHeight || vh;
+
+  let sheetH = 0;
+  let sheetW = 0;
+  let rtl = false;
+  if (container) {
+    const cs = getComputedStyle(container);
+    sheetH = parseFloat(cs.getPropertyValue('--sheet-h')) || 0;
+    sheetW = parseFloat(cs.getPropertyValue('--sheet-w')) || 0;
+    rtl = cs.direction === 'rtl';
+  }
+  // Never shrink the visible strip below a third of the container — a stray
+  // value in the variable must not blind the decoder.
+  const visH = Math.max(ch / 3, ch - sheetH);
+  const visW = Math.max(cw / 3, cw - sheetW);
+  const visX = rtl && sheetW > 0 ? cw - visW : 0;
+
+  // object-fit: cover — scale so the video fills the container, centred.
+  const scale = Math.max(cw / vw, ch / vh);
+  const offX = (cw - vw * scale) / 2;
+  const offY = (ch - vh * scale) / 2;
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+  const sx = clamp((visX - offX) / scale, 0, vw);
+  const sy = clamp((0 - offY) / scale, 0, vh);
+  const sw = clamp((visX + visW - offX) / scale, 0, vw) - sx;
+  const sh = clamp((visH - offY) / scale, 0, vh) - sy;
+
+  const k = Math.min(1, DECODE_MAX_EDGE_PX / Math.max(sw, sh, 1));
+  return {
+    sx,
+    sy,
+    sw: Math.max(1, sw),
+    sh: Math.max(1, sh),
+    dw: Math.max(1, Math.round(sw * k)),
+    dh: Math.max(1, Math.round(sh * k)),
+    scaled: k < 1,
+  };
 }
 
 /**
@@ -726,10 +829,7 @@ export function SmartScanner({
     setFlashColor('green');
     setTimeout(() => setFlashColor(null), 200);
     try {
-      const imageData = await captureSharpestFrame(video).catch(() => {
-        const c = canvasRef.current;
-        return c ? c.toDataURL('image/jpeg', 0.9) : '';
-      });
+      const imageData = await captureSharpestFrame(video).catch(() => snapshotFrame(video));
       if (imageData) onManualCapture(imageData);
       lastActivityRef.current = Date.now();
       setShowCaptureHint(false);
@@ -930,6 +1030,8 @@ export function SmartScanner({
     let decoder: FrameDecoder | null = null;
     let decoderLoading: Promise<void> | null = null;
     let nativeErrors = 0;
+    let lastDecodeAt = 0;
+    let bitmapPath = typeof createImageBitmap === 'function';
 
     const ensureDecoder = () => {
       if (decoder && decoder.engine === engineRef.current) return;
@@ -988,31 +1090,16 @@ export function SmartScanner({
         return;
       }
 
-      // Compute target ratio from container dimensions (dynamic for layout flip)
-      const container = video.parentElement;
-      const containerW = container?.clientWidth || video.videoWidth;
-      const containerH = container?.clientHeight || video.videoHeight;
-      const videoRatio = video.videoWidth / video.videoHeight;
-      const targetRatio = containerW / Math.max(containerH, 1);
-
-      let sWidth, sHeight, sx, sy;
-
-      if (videoRatio > targetRatio) {
-        sHeight = video.videoHeight;
-        sWidth = sHeight * targetRatio;
-        sx = (video.videoWidth - sWidth) / 2;
-        sy = 0;
-      } else {
-        sWidth = video.videoWidth;
-        sHeight = sWidth / targetRatio;
-        sx = 0;
-        sy = (video.videoHeight - sHeight) / 2;
+      // Pace the decoder instead of running it on every animation frame. The
+      // skipped frames cost nothing — no video readback, no canvas draw.
+      const nowMs = performance.now();
+      const minInterval =
+        engineRef.current === 'zxing' ? ZXING_MIN_INTERVAL_MS : NATIVE_MIN_INTERVAL_MS;
+      if (nowMs - lastDecodeAt < minInterval) {
+        animationFrameRef.current = requestAnimationFrame(detect);
+        return;
       }
-
-      canvas.width = sWidth;
-      canvas.height = sHeight;
-
-      ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
+      lastDecodeAt = nowMs;
 
       try {
         ensureDecoder();
@@ -1022,9 +1109,52 @@ export function SmartScanner({
           return;
         }
 
+        const roi = decodeRegion(video, video.parentElement);
+
+        // Native path: crop + shrink straight from the video into an
+        // ImageBitmap (GPU-side in Chrome), so the only pixels that ever reach
+        // the CPU are the ones the detector needs. Falls back to the canvas
+        // permanently if this browser can't do it.
+        let source: HTMLCanvasElement | ImageBitmap = canvas;
+        let bitmap: ImageBitmap | null = null;
+        if (active.engine === 'native' && bitmapPath) {
+          try {
+            bitmap = await createImageBitmap(
+              video,
+              roi.sx,
+              roi.sy,
+              roi.sw,
+              roi.sh,
+              roi.scaled
+                ? { resizeWidth: roi.dw, resizeHeight: roi.dh, resizeQuality: 'low' }
+                : undefined,
+            );
+            if (!bitmap.width || !bitmap.height) {
+              bitmap.close();
+              bitmap = null;
+              bitmapPath = false;
+            } else {
+              source = bitmap;
+            }
+          } catch (err) {
+            bitmapPath = false;
+            console.warn('[SmartScanner] createImageBitmap(video) unavailable — using canvas:', err);
+          }
+        }
+        if (!bitmap) {
+          // Resizing a canvas reallocates its backing store; only do it when
+          // the visible region actually changed (sheet moved, rotation).
+          if (canvas.width !== roi.dw || canvas.height !== roi.dh) {
+            canvas.width = roi.dw;
+            canvas.height = roi.dh;
+          }
+          ctx.drawImage(video, roi.sx, roi.sy, roi.sw, roi.sh, 0, 0, roi.dw, roi.dh);
+          source = canvas;
+        }
+
         let barcode: string | null = null;
         try {
-          barcode = await active.detect(canvas);
+          barcode = await active.detect(source);
           if (active.engine === 'native') nativeErrors = 0;
         } catch (err) {
           if (active.engine === 'native') {
@@ -1040,6 +1170,8 @@ export function SmartScanner({
           } else {
             throw err;
           }
+        } finally {
+          bitmap?.close();
         }
 
         if (barcode) {
@@ -1130,9 +1262,7 @@ export function SmartScanner({
           // OCR image: sharpest of a short burst of FULL-frame stills (not the
           // cropped barcode region) so the whole sticker is captured and motion
           // blur from the aiming moment is avoided. Runs inside the 3s cooldown.
-          const imageData = await captureSharpestFrame(video).catch(
-            () => canvas.toDataURL('image/jpeg', 0.9),
-          );
+          const imageData = await captureSharpestFrame(video).catch(() => snapshotFrame(video));
           onBarcodeDetected(barcode, parsedData, imageData);
         }
       } catch (err) {
@@ -1470,7 +1600,7 @@ export function SmartScanner({
             red fill was a loud block of colour sitting right beside the brand
             frame. */}
         <div className="absolute top-2 left-2">
-          <div className="flex items-center gap-1 px-2 py-1 rounded-full backdrop-blur-sm border border-cam-border bg-cam-chip">
+          <div className="flex items-center gap-1 px-2 py-1 rounded-full border border-cam-border bg-cam-chip">
             <div className={`w-2 h-2 rounded-full ${
               (isDuplicate || (isInCooldown && scanOutcome === 'duplicate'))
                 ? 'bg-danger'
@@ -1490,7 +1620,7 @@ export function SmartScanner({
           <div className="absolute top-2 right-2 pointer-events-auto">
             <button
               onClick={switchCamera}
-              className="flex items-center gap-1.5 bg-cam-chip hover:bg-cam-chip-hover px-3 py-2 rounded-full text-cam-ink text-xs font-medium transition-colors backdrop-blur-sm border border-cam-border"
+              className="flex items-center gap-1.5 bg-cam-chip hover:bg-cam-chip-hover px-3 py-2 rounded-full text-cam-ink text-xs font-medium transition-colors border border-cam-border"
               aria-label={tr('scanner.switchCamera')}
               title={tr('scanner.tapToSwitch')}
             >
@@ -1529,14 +1659,14 @@ export function SmartScanner({
             }}
           >
             {showCaptureHint && (
-              <span className="text-xs font-semibold text-warn-weak-ink bg-cam-chip border border-cam-border backdrop-blur-sm px-3 py-1 rounded-full text-center max-w-[280px] pointer-events-none">
+              <span className="text-xs font-semibold text-warn-weak-ink bg-cam-chip border border-cam-border px-3 py-1 rounded-full text-center max-w-[280px] pointer-events-none">
                 {tr('scanner.captureHint')}
               </span>
             )}
             <button
               onClick={handleManualCaptureClick}
               disabled={captureBusy}
-              className={`pointer-events-auto flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-bold transition-all backdrop-blur-sm border disabled:opacity-50 ${
+              className={`pointer-events-auto flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-bold transition-all border disabled:opacity-50 ${
                 showCaptureHint
                   ? 'bg-warn text-canvas border-warn animate-pulse shadow-lg scale-105'
                   : 'bg-cam-chip text-cam-ink border-cam-border'

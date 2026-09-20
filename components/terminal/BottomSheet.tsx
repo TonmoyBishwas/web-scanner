@@ -206,14 +206,45 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
     setFooterHidden(!fits);
   }, []);
 
+  /**
+   * Mid-drag height, written straight to the DOM. A drag produces a
+   * pointermove per frame; routing each one through `setHeight` re-rendered
+   * the whole sheet (scan list, footer, tool dock) at that rate, and on a 4 GB
+   * Android phone the sheet visibly trailed the finger. So while the finger is
+   * down only three style writes happen per move — the sheet's height, the
+   * `--sheet-h` variable the scan frame follows, and the footer's display —
+   * and React state catches up once on release (see `settle`).
+   */
+  const writeLiveHeight = useCallback((h: number, animate: boolean) => {
+    const root = rootRef.current;
+    if (!root) return;
+    root.style.transition = animate ? 'height .26s cubic-bezier(.4,0,.2,1)' : 'none';
+    root.style.height = `${h}px`;
+    const host = (root.offsetParent as HTMLElement | null) ?? hostRef.current;
+    if (host) {
+      host.style.setProperty('--sheet-h', `${h}px`);
+      host.style.setProperty('--sheet-h-dur', animate ? '.26s' : '0s');
+    }
+    const footerEl = footerRef.current;
+    if (footerEl) {
+      const fits = h >= baseChromeRef.current + footerHRef.current - 1;
+      footerEl.style.display = fits ? '' : 'none';
+    }
+  }, []);
+
   const settle = useCallback(
     (i: number) => {
       const clamped = Math.max(0, Math.min(2, i));
       snapIndexRef.current = clamped;
       setSnapIndex(clamped);
-      applyHeight(snapPx(clamped));
+      const h = snapPx(clamped);
+      // Written to the DOM as well as to state: after a drag the DOM holds
+      // the finger's last position, and if the snap lands on the height React
+      // already has, no re-render would ever move it back.
+      if (!sideRef.current) writeLiveHeight(h, true);
+      applyHeight(h);
     },
-    [snapPx, applyHeight],
+    [snapPx, applyHeight, writeLiveHeight],
   );
 
   const nearestSnap = useCallback(
@@ -342,9 +373,9 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
         d.lastY = e.clientY;
         d.lastT = e.timeStamp;
       }
-      applyHeight(Math.max(snapPx(0), Math.min(snapPx(2), d.startH + delta)));
+      writeLiveHeight(Math.max(snapPx(0), Math.min(snapPx(2), d.startH + delta)), false);
     },
-    [snapPx, applyHeight],
+    [snapPx, writeLiveHeight],
   );
 
   const onPointerUp = useCallback(
