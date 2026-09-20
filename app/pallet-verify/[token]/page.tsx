@@ -391,6 +391,12 @@ export default function PalletVerifyPage({
   // Same question in the loose-box phase: the answer expands into N rows.
   const [pendingLooseLabelPrompt, setPendingLooseLabelPrompt] = useState<LabelPrompt | null>(null);
   const pendingLooseLabelPromptRef = useRef<LabelPrompt | null>(null);
+  // Products (by name key) already asked in the loose phase — answered or
+  // declined. Keyed on the NAME, not the barcode: a second capture of the
+  // same label can OCR a slightly different digit string (2026-09-20:
+  // 7290001456835 vs 7290004456825) and must not ask again.
+  const looseLabelAskedRef = useRef<Set<string>>(new Set());
+  const looseLabelSubmittingRef = useRef(false);
   useEffect(() => { pendingLooseLabelPromptRef.current = pendingLooseLabelPrompt; }, [pendingLooseLabelPrompt]);
   // The worker confirmed the pallet is mix ("other products too"), or used the
   // "fewer than 4 boxes" escape. Suppresses the single-vs-mix prompt and lets
@@ -1297,26 +1303,38 @@ export default function PalletVerifyPage({
   function handleLooseLabelCountSubmit() {
     const p = pendingLooseLabelPrompt;
     if (!p) return;
+    // Enter + tap, or a fast double-tap, land here twice before React has
+    // cleared the prompt — the second run must be a no-op, or the pile is
+    // expanded twice (2026-09-20: "the same boxes duplicated 50 times").
+    if (looseLabelSubmittingRef.current) return;
     const n = parseInt(labelCountInput, 10);
     if (isNaN(n) || n < 1) {
       setLabelCountError(tr('palletVerify.uniformInvalidCount'));
       return;
     }
+    looseLabelSubmittingRef.current = true;
+    // Keys are minted HERE, once, so the state updater stays pure (React may
+    // run an updater twice) and every copy is registered exactly once.
+    const keys: string[] = [];
+    for (let i = 1; i < n; i += 1) {
+      const key = repeatKey(p.barcode, looseProcessedRef.current);
+      looseProcessedRef.current.add(key);
+      keys.push(key);
+    }
     setLooseBoxes((prev) => {
       const idx = prev.findIndex((b) => b.barcode === p.barcode);
       if (idx === -1) return prev;
+      if (prev.some((b) => b.barcode !== p.barcode && baseBarcode(b.barcode) === p.barcode)) return prev; // already expanded
       const src = prev[idx];
-      const copies: BoxScan[] = [];
-      for (let i = 1; i < n; i += 1) {
-        const key = repeatKey(p.barcode, looseProcessedRef.current);
-        looseProcessedRef.current.add(key);
-        copies.push({ ...src, barcode: key, image_data: undefined, scanned_at: new Date().toISOString() });
-      }
+      const copies: BoxScan[] = keys.map((key) => ({
+        ...src, barcode: key, image_data: undefined, scanned_at: new Date().toISOString(),
+      }));
       return [...prev.slice(0, idx + 1), ...copies, ...prev.slice(idx + 1)];
     });
     setPendingLooseLabelPrompt(null);
     setLabelCountInput('');
     setLabelCountError(null);
+    setTimeout(() => { looseLabelSubmittingRef.current = false; }, 0);
   }
 
   function handleLooseLabelDecline() {
@@ -1701,7 +1719,7 @@ export default function PalletVerifyPage({
     src.forEach((b, i) => {
       const nm = b.item_name_hebrew || b.item_name || '—';
       lines.push(
-        `${i + 1}. ${nm}${b.weight > 0 ? ` · ${b.weight.toFixed(3)} kg` : ''}${b.barcode ? ` · ${b.barcode}` : ''}`,
+        `${i + 1}. ${nm}${b.weight > 0 ? ` · ${b.weight.toFixed(3)} kg` : ''}${b.barcode ? ` · ${baseBarcode(b.barcode)}` : ''}`,
       );
     });
     const text = lines.join('\n');
@@ -1946,15 +1964,16 @@ export default function PalletVerifyPage({
             };
           });
         });
-        // Shared product label in the loose pile → ask once how many.
+        // Shared product label in the loose pile → ask once per PRODUCT how many.
         setLooseBoxes((prev) => {
           if (pendingLooseLabelPromptRef.current) return prev;
           const box = prev.find((b) => b.ocr_status === 'done' && !isPerCartonUnique(b.barcode)
             && digitsOnly(b.barcode) === digitsOnly(manual ? digitsOnly(data.ocr_data.barcode_digits) : lookupKey)
             && !REPEAT_SUFFIX_RE.test(b.barcode));
           const p = box ? labelPromptFor(box, new Map()) : null;
-          // Only if no other row already carries this label (a copy exists ⇒ answered).
-          if (p && !prev.some((b) => b.barcode !== p.barcode && baseBarcode(b.barcode) === p.barcode)) {
+          if (p && !looseLabelAskedRef.current.has(p.name_key)
+              && !prev.some((b) => b.barcode !== p.barcode && baseBarcode(b.barcode) === p.barcode)) {
+            looseLabelAskedRef.current.add(p.name_key);
             setLabelCountInput('');
             setLabelCountError(null);
             setPendingLooseLabelPrompt(p);
@@ -2772,7 +2791,7 @@ export default function PalletVerifyPage({
                     name={looseActive.item_name_hebrew || looseActive.item_name || '—'}
                     value={looseActive.weight > 0 ? looseActive.weight.toFixed(2) : '—'}
                     unit={tr('common.kg')}
-                    barcode={looseActive.barcode}
+                    barcode={baseBarcode(looseActive.barcode)}
                     expiry={looseActive.expiry || undefined}
                     status={
                       looseActive.ocr_status === 'processing'
@@ -2794,7 +2813,7 @@ export default function PalletVerifyPage({
                     key={box.barcode + i}
                     index={looseBoxes.length - 1 - i}
                     name={box.item_name_hebrew || box.item_name || '—'}
-                    barcode={box.barcode}
+                    barcode={baseBarcode(box.barcode)}
                     weight={box.weight > 0 ? box.weight.toFixed(2) : undefined}
                     unitLabel={tr('common.kg')}
                     status={
@@ -3247,7 +3266,7 @@ export default function PalletVerifyPage({
                   name={activeBox.item_name_hebrew || activeBox.item_name || '—'}
                   value={activeBox.weight > 0 ? activeBox.weight.toFixed(2) : '—'}
                   unit={tr('common.kg')}
-                  barcode={activeBox.barcode}
+                  barcode={baseBarcode(activeBox.barcode)}
                   expiry={activeBox.expiry || undefined}
                   status={
                     activeBox.ocr_status === 'processing'
@@ -3270,7 +3289,7 @@ export default function PalletVerifyPage({
                   key={box.barcode + i}
                   index={scannedBoxes.length - 1 - i}
                   name={box.item_name_hebrew || box.item_name || '—'}
-                  barcode={box.barcode}
+                  barcode={baseBarcode(box.barcode)}
                   weight={box.weight > 0 ? box.weight.toFixed(2) : undefined}
                   unitLabel={tr('common.kg')}
                   status={
