@@ -203,19 +203,30 @@ interface PalletScanSnapshot {
   /** Products whose label prompt the worker answered "each box has its own
    *  barcode" — never ask again on this pallet. Optional: older snapshots. */
   labelDeclined?: string[];
+  /** Product-level barcodes the worker opted in to scan box by box (see
+   *  LabelPrompt). Optional: older snapshots. */
+  labelAllowed?: string[];
 }
 
 /**
- * The ONE place the "all boxes share this barcode" question lives (2026-09-20).
+ * The ONE place the "all boxes share this barcode" question lives
+ * (2026-09-20; rebuilt the same night).
  *
  * A fixed-weight product (kebabonim, fish, produce cartons) prints the same
  * EAN-13 on every carton, so the scanner can only ever accept the first one
- * — the second read is, correctly, "already scanned". Instead of counting
- * repeat reads (fragile: a phone left pointing at one box would count it
- * again every 3 s) the scanner asks ONCE, right after the first carton of
- * such a product finishes OCR: "how many boxes of this on the pallet?". The
- * answer locks a uniform group exactly like the existing single-item
- * shortcut, so nothing downstream learns a new shape.
+ * — the second read is, correctly, "already scanned". The first version of
+ * this prompt asked for a COUNT and cloned the first carton's OCR into N
+ * identical rows; Tonmoy saw one scan turn into 17 rows and every label in
+ * the pile carries its own printed text, so cloning one box's data was wrong.
+ *
+ * Now the scanner asks ONCE, right after the first carton of such a product
+ * finishes OCR: "scan each box one by one?". Opting in only lifts the
+ * duplicate refusal for THAT barcode: every later read is a new carton with
+ * its own photo and its own OCR, stored under a `-B`, `-C`, … key that is
+ * stripped before the wire. Nothing is ever counted without a scan, and the
+ * scanner only accepts a repeat once the barcode has LEFT the frame
+ * (`SmartScanner.allowRepeat`), so a phone left pointing at one box books it
+ * once. Declining keeps the refusal as it was.
  *
  * It is raised only when the carton's barcode is a product-level label
  * (≤ 14 digits — see isPerCartonUnique). A 31-digit catch-weight meat sticker
@@ -231,6 +242,8 @@ interface LabelPrompt {
 interface LooseScanSnapshot {
   v: 1;
   looseBoxes: BoxScan[];
+  /** Product-level barcodes opted in for box-by-box scanning in the pile. */
+  labelAllowed?: string[];
 }
 const stripImage = (b: BoxScan): BoxScan => {
   const { image_data: _img, ...rest } = b;
@@ -264,35 +277,20 @@ const UNIFORM_WEIGHT_TOLERANCE = 0.0001;
 const UNIFORM_MIN_SAMPLES = 2;
 
 /** Footer card for the shared-label count question (pallet + loose phases). */
-function LabelCountPrompt(props: {
-  name: string; weight: number; value: string; error: string | null;
-  title: string; hint: string; setLabel: string; declineLabel: string; placeholder: string;
-  onChange: (v: string) => void; onSubmit: () => void; onDecline: () => void;
+function LabelRepeatPrompt(props: {
+  title: string; hint: string; allowLabel: string; declineLabel: string;
+  onAllow: () => void; onDecline: () => void;
 }) {
   return (
     <div className="space-y-2">
       <label className="block text-xs text-ink-body font-medium">{props.title}</label>
       <p className="text-[11px] text-ink-muted">{props.hint}</p>
-      <div className="flex gap-2">
-        <input
-          type="number"
-          inputMode="numeric"
-          min={1}
-          value={props.value}
-          onChange={(e) => props.onChange(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && props.onSubmit()}
-          placeholder={props.placeholder}
-          className="flex-1 min-w-0 text-center text-xl font-black font-mono text-ink bg-sunken border-2 border-line-strong rounded-[12px] py-2 px-3 transition outline-none focus:border-brand focus:ring-4 focus:ring-brand/20 placeholder:text-ink-muted placeholder:font-medium placeholder:text-base placeholder:font-sans"
-          autoFocus
-        />
-        <button
-          onClick={props.onSubmit}
-          className="shrink-0 px-5 py-2 rounded-[12px] bg-brand text-ink-inverse font-black text-sm"
-        >
-          {props.setLabel}
-        </button>
-      </div>
-      {props.error && <p className="text-danger-weak-ink text-xs">{props.error}</p>}
+      <button
+        onClick={props.onAllow}
+        className="flex items-center justify-center gap-[6px] w-full py-3 rounded-[13px] font-black text-[14px] bg-brand text-ink-inverse"
+      >
+        <MI name="repeat" size={18} /> {props.allowLabel}
+      </button>
       <button onClick={props.onDecline} className="w-full text-xs text-ink-muted underline pt-1">
         {props.declineLabel}
       </button>
@@ -379,24 +377,30 @@ export default function PalletVerifyPage({
   // Uniform-pair state (per pallet — reset between pallets).
   const [uniformGroups, setUniformGroups] = useState<Map<string, UniformGroup>>(new Map());
   const [pendingUniformPrompt, setPendingUniformPrompt] = useState<UniformPrompt | null>(null);
-  // Shared-label product waiting for its count (pallet phase) — see LabelPrompt.
+  // Shared-label product waiting for its opt-in (pallet phase) — see LabelPrompt.
   const [pendingLabelPrompt, setPendingLabelPrompt] = useState<LabelPrompt | null>(null);
-  const [labelCountInput, setLabelCountInput] = useState('');
-  const [labelCountError, setLabelCountError] = useState<string | null>(null);
   const [labelDeclined, setLabelDeclined] = useState<Set<string>>(new Set());
   const labelDeclinedRef = useRef<Set<string>>(new Set());
   useEffect(() => { labelDeclinedRef.current = labelDeclined; }, [labelDeclined]);
+  // Product-level barcodes (base digits) whose repeats are accepted as new
+  // cartons on this pallet. Read from the detect callback via the ref.
+  const [labelAllowed, setLabelAllowed] = useState<Set<string>>(new Set());
+  const labelAllowedRef = useRef<Set<string>>(new Set());
+  useEffect(() => { labelAllowedRef.current = labelAllowed; }, [labelAllowed]);
+  // Products (by name key) already asked on this pallet. Keyed on the NAME,
+  // not the barcode: a second capture of the same label can OCR a slightly
+  // different digit string (2026-09-20: 7290001456835 vs 7290004456825) and
+  // must not ask again.
+  const labelAskedRef = useRef<Set<string>>(new Set());
   const pendingLabelPromptRef = useRef<LabelPrompt | null>(null);
   useEffect(() => { pendingLabelPromptRef.current = pendingLabelPrompt; }, [pendingLabelPrompt]);
-  // Same question in the loose-box phase: the answer expands into N rows.
+  // Same question in the loose-box phase.
   const [pendingLooseLabelPrompt, setPendingLooseLabelPrompt] = useState<LabelPrompt | null>(null);
   const pendingLooseLabelPromptRef = useRef<LabelPrompt | null>(null);
-  // Products (by name key) already asked in the loose phase — answered or
-  // declined. Keyed on the NAME, not the barcode: a second capture of the
-  // same label can OCR a slightly different digit string (2026-09-20:
-  // 7290001456835 vs 7290004456825) and must not ask again.
+  const [looseLabelAllowed, setLooseLabelAllowed] = useState<Set<string>>(new Set());
+  const looseLabelAllowedRef = useRef<Set<string>>(new Set());
+  useEffect(() => { looseLabelAllowedRef.current = looseLabelAllowed; }, [looseLabelAllowed]);
   const looseLabelAskedRef = useRef<Set<string>>(new Set());
-  const looseLabelSubmittingRef = useRef(false);
   useEffect(() => { pendingLooseLabelPromptRef.current = pendingLooseLabelPrompt; }, [pendingLooseLabelPrompt]);
   // The worker confirmed the pallet is mix ("other products too"), or used the
   // "fewer than 4 boxes" escape. Suppresses the single-vs-mix prompt and lets
@@ -642,15 +646,19 @@ export default function PalletVerifyPage({
         forcedMix,
         detectedType,
         labelDeclined: Array.from(labelDeclined),
+        labelAllowed: Array.from(labelAllowed),
       };
       savePalletScans(token, currentPallet, snap);
     } else if (phase === 'loose_scanning') {
-      const snap: LooseScanSnapshot = { v: 1, looseBoxes: looseBoxes.map(stripImage) };
+      const snap: LooseScanSnapshot = {
+        v: 1, looseBoxes: looseBoxes.map(stripImage), labelAllowed: Array.from(looseLabelAllowed),
+      };
       saveLooseScans(token, snap);
     }
   }, [
     token, currentPallet, phase, scannedBoxes, looseBoxes, uniformGroups,
     acceptedMerges, confirmedBoxCount, boxCountInput, forcedMix, detectedType, labelDeclined,
+    labelAllowed, looseLabelAllowed,
   ]);
 
   useEffect(() => {
@@ -707,6 +715,7 @@ export default function PalletVerifyPage({
               setLooseBoxes(cachedLoose.looseBoxes);
               cachedLoose.looseBoxes.forEach((b) => b.barcode && looseProcessedRef.current.add(b.barcode));
             }
+            if (cachedLoose?.labelAllowed?.length) setLooseLabelAllowed(new Set(cachedLoose.labelAllowed));
             setPhase('loose_scanning');
           } else {
             setPhase('job');
@@ -722,6 +731,7 @@ export default function PalletVerifyPage({
             setLooseBoxes(cachedLoose.looseBoxes);
             cachedLoose.looseBoxes.forEach((b) => b.barcode && looseProcessedRef.current.add(b.barcode));
           }
+          if (cachedLoose?.labelAllowed?.length) setLooseLabelAllowed(new Set(cachedLoose.labelAllowed));
           setPhase('loose_scanning');
           return;
         }
@@ -797,6 +807,7 @@ export default function PalletVerifyPage({
         setLooseBoxes(cachedLoose.looseBoxes);
         cachedLoose.looseBoxes.forEach((b) => b.barcode && looseProcessedRef.current.add(b.barcode));
       }
+      if (cachedLoose?.labelAllowed?.length) setLooseLabelAllowed(new Set(cachedLoose.labelAllowed));
       setPhase('loose_scanning');
     }
   }, [phase, session, workerChatId, token]);
@@ -818,13 +829,17 @@ export default function PalletVerifyPage({
           { digits: read }));
         return;
       }
-      const barcode = read;
+      let barcode = read;
       if (processedRef.current.has(read)) {
         // Already scanned — for a catch-weight sticker that is the same
-        // carton; for a shared product label the count was (or will be)
-        // declared once via the label prompt, so a repeat read adds nothing.
-        scanDuplicateFeedback();
-        return;
+        // carton. For a shared product label the worker may have opted in
+        // (LabelPrompt): then this read is the NEXT carton and gets its own
+        // row, photo and OCR under a repeat key.
+        if (isPerCartonUnique(read) || !labelAllowedRef.current.has(baseBarcode(read))) {
+          scanDuplicateFeedback();
+          return;
+        }
+        barcode = repeatKey(read, processedRef.current);
       }
 
       // Split-mode duplicate-box guard (Task 16): refuse a box already
@@ -838,7 +853,7 @@ export default function PalletVerifyPage({
       // box. findDuplicateOwner itself no-ops for single-scanner / non-meat
       // sessions, so this is a no-op cost for the unaffected common case.
       const activeSession = sessionRef.current;
-      if (activeSession) {
+      if (activeSession && isPerCartonUnique(read)) {
         const clash = findDuplicateOwner(activeSession, read, currentPalletRef.current);
         if (clash) {
           const lang = activeSession.language || 'English';
@@ -1241,53 +1256,51 @@ export default function PalletVerifyPage({
   }
 
   // Raised from the OCR-success path for the carton that just finished. One
-  // question per product per pallet: once answered (count locked, or
-  // "each box is different"), never again.
+  // question per product per pallet: once answered (opted in, or "each box
+  // has its own barcode"), never again.
   function maybeTriggerLabelPrompt(box: BoxScan) {
     if (pendingLabelPromptRef.current) return;
+    if (REPEAT_SUFFIX_RE.test(box.barcode)) return;          // a repeat: already opted in
     const p = labelPromptFor(box, acceptedMerges);
     if (!p) return;
     if (uniformGroupsRef.current.has(p.name_key)) return;   // count already declared
+    if (labelAllowedRef.current.has(p.barcode)) return;     // already opted in
     if (labelDeclinedRef.current.has(p.name_key)) return;   // worker said: each box different
-    setLabelCountInput('');
-    setLabelCountError(null);
+    if (labelAskedRef.current.has(p.name_key)) return;      // asked under other digits
+    labelAskedRef.current.add(p.name_key);
     setPendingLabelPrompt(p);
   }
 
   function restoreLabelPrompt(cached: PalletScanSnapshot) {
     const declined = new Set(cached.labelDeclined || []);
     setLabelDeclined(declined);
+    const allowed = new Set(cached.labelAllowed || []);
+    setLabelAllowed(allowed);
     const locked = new Map(cached.uniformGroups || []);
     const merges = new Map(cached.acceptedMerges || []);
     for (const b of cached.scannedBoxes || []) {
+      if (REPEAT_SUFFIX_RE.test(b.barcode)) continue;
       const p = labelPromptFor(b, merges);
-      if (p && !locked.has(p.name_key) && !declined.has(p.name_key)) {
+      if (!p) continue;
+      if (allowed.has(p.barcode) || declined.has(p.name_key)) {
+        labelAskedRef.current.add(p.name_key);
+        continue;
+      }
+      if (!locked.has(p.name_key) && !labelAskedRef.current.has(p.name_key)) {
+        labelAskedRef.current.add(p.name_key);
         setPendingLabelPrompt(p);
         return;
       }
     }
   }
 
-  function handleLabelCountSubmit() {
+  // Opt in: repeats of this barcode are new cartons from now on. Nothing is
+  // counted here — the worker still scans every box.
+  function handleLabelAllow() {
     const p = pendingLabelPrompt;
     if (!p) return;
-    const n = parseInt(labelCountInput, 10);
-    if (isNaN(n) || n < 1) {
-      setLabelCountError(tr('palletVerify.uniformInvalidCount'));
-      return;
-    }
-    const group: UniformGroup = {
-      name_key: p.name_key,
-      item_name: p.item_name,
-      item_name_hebrew: p.item_name_hebrew,
-      avg_weight: p.weight,
-      total_count: n,
-      sample_barcodes: [p.barcode],
-    };
-    setUniformGroups((groups) => new Map(groups).set(group.name_key, group));
+    setLabelAllowed((prev) => new Set(prev).add(baseBarcode(p.barcode)));
     setPendingLabelPrompt(null);
-    setLabelCountInput('');
-    setLabelCountError(null);
   }
 
   function handleLabelDecline() {
@@ -1297,44 +1310,15 @@ export default function PalletVerifyPage({
     setPendingLabelPrompt(null);
   }
 
-  // Loose phase: the answer becomes N identical rows (each a real carton the
-  // bot books as its own box_inventory row). Keys `<code>`, `<code>-B`, … keep
-  // the rows apart on the page; the wire gets the plain code.
-  function handleLooseLabelCountSubmit() {
+  // Loose phase: same opt-in. Each later read of this barcode is one more
+  // loose box with its own photo and OCR (`<code>-B`, `-C`, … keys on the
+  // page; the wire gets the plain code). Never expands into copies — the
+  // 2026-09-20 count-and-clone version put one box's data on 16 rows.
+  function handleLooseLabelAllow() {
     const p = pendingLooseLabelPrompt;
     if (!p) return;
-    // Enter + tap, or a fast double-tap, land here twice before React has
-    // cleared the prompt — the second run must be a no-op, or the pile is
-    // expanded twice (2026-09-20: "the same boxes duplicated 50 times").
-    if (looseLabelSubmittingRef.current) return;
-    const n = parseInt(labelCountInput, 10);
-    if (isNaN(n) || n < 1) {
-      setLabelCountError(tr('palletVerify.uniformInvalidCount'));
-      return;
-    }
-    looseLabelSubmittingRef.current = true;
-    // Keys are minted HERE, once, so the state updater stays pure (React may
-    // run an updater twice) and every copy is registered exactly once.
-    const keys: string[] = [];
-    for (let i = 1; i < n; i += 1) {
-      const key = repeatKey(p.barcode, looseProcessedRef.current);
-      looseProcessedRef.current.add(key);
-      keys.push(key);
-    }
-    setLooseBoxes((prev) => {
-      const idx = prev.findIndex((b) => b.barcode === p.barcode);
-      if (idx === -1) return prev;
-      if (prev.some((b) => b.barcode !== p.barcode && baseBarcode(b.barcode) === p.barcode)) return prev; // already expanded
-      const src = prev[idx];
-      const copies: BoxScan[] = keys.map((key) => ({
-        ...src, barcode: key, image_data: undefined, scanned_at: new Date().toISOString(),
-      }));
-      return [...prev.slice(0, idx + 1), ...copies, ...prev.slice(idx + 1)];
-    });
+    setLooseLabelAllowed((prev) => new Set(prev).add(baseBarcode(p.barcode)));
     setPendingLooseLabelPrompt(null);
-    setLabelCountInput('');
-    setLabelCountError(null);
-    setTimeout(() => { looseLabelSubmittingRef.current = false; }, 0);
   }
 
   function handleLooseLabelDecline() {
@@ -1379,10 +1363,15 @@ export default function PalletVerifyPage({
           { digits: read }));
         return;
       }
-      const barcode = read;
+      let barcode = read;
       if (looseProcessedRef.current.has(read)) {
-        scanDuplicateFeedback(); // already scanned (or already counted via the label prompt)
-        return;
+        // Already scanned — unless the worker opted in for this shared label,
+        // in which case this is the next loose box (own row, photo, OCR).
+        if (isPerCartonUnique(read) || !looseLabelAllowedRef.current.has(baseBarcode(read))) {
+          scanDuplicateFeedback();
+          return;
+        }
+        barcode = repeatKey(read, looseProcessedRef.current);
       }
       looseProcessedRef.current.add(barcode);
       scanSuccessFeedback(); // good scan — box added below
@@ -1972,10 +1961,8 @@ export default function PalletVerifyPage({
             && !REPEAT_SUFFIX_RE.test(b.barcode));
           const p = box ? labelPromptFor(box, new Map()) : null;
           if (p && !looseLabelAskedRef.current.has(p.name_key)
-              && !prev.some((b) => b.barcode !== p.barcode && baseBarcode(b.barcode) === p.barcode)) {
+              && !looseLabelAllowedRef.current.has(p.barcode)) {
             looseLabelAskedRef.current.add(p.name_key);
-            setLabelCountInput('');
-            setLabelCountError(null);
             setPendingLooseLabelPrompt(p);
           }
           return prev;
@@ -2661,18 +2648,12 @@ export default function PalletVerifyPage({
       <>
         {error && <p className="text-danger-weak-ink text-sm text-center mb-2">{error}</p>}
         {pendingLooseLabelPrompt ? (
-          <LabelCountPrompt
-            name={pendingLooseLabelPrompt.item_name_hebrew || pendingLooseLabelPrompt.item_name}
-            weight={pendingLooseLabelPrompt.weight}
-            value={labelCountInput}
-            error={labelCountError}
-            title={tr('palletVerify.labelCountTitleLoose', { name: pendingLooseLabelPrompt.item_name_hebrew || pendingLooseLabelPrompt.item_name })}
-            hint={tr('palletVerify.labelCountHint', { weight: pendingLooseLabelPrompt.weight.toFixed(3) })}
-            setLabel={tr('palletVerify.uniformSet')}
-            declineLabel={tr('palletVerify.labelCountDecline')}
-            placeholder={tr('palletVerify.uniformPlaceholder')}
-            onChange={(v) => { setLabelCountInput(v); setLabelCountError(null); }}
-            onSubmit={handleLooseLabelCountSubmit}
+          <LabelRepeatPrompt
+            title={tr('palletVerify.labelRepeatTitleLoose', { name: pendingLooseLabelPrompt.item_name_hebrew || pendingLooseLabelPrompt.item_name })}
+            hint={tr('palletVerify.labelRepeatHint')}
+            allowLabel={tr('palletVerify.labelRepeatAllow')}
+            declineLabel={tr('palletVerify.labelRepeatDecline')}
+            onAllow={handleLooseLabelAllow}
             onDecline={handleLooseLabelDecline}
           />
         ) : canConfirmLoose && phase !== 'loose_confirming' ? (
@@ -2757,6 +2738,7 @@ export default function PalletVerifyPage({
               onManualCapture={handleLooseManualCapture}
               onDuplicateFlash={(fn) => { looseDupFlashRef.current = fn; }}
               isDuplicateBarcode={(b) => looseProcessedRef.current.has(b.trim())}
+              allowRepeat={(b) => !isPerCartonUnique(b) && looseLabelAllowedRef.current.has(baseBarcode(b.trim()))}
               scannedBarcodes={new Map()}
               ocrResults={new Map()}
             />
@@ -2966,18 +2948,12 @@ export default function PalletVerifyPage({
       )}
 
       {pendingLabelPrompt ? (
-        <LabelCountPrompt
-          name={pendingLabelPrompt.item_name_hebrew || pendingLabelPrompt.item_name}
-          weight={pendingLabelPrompt.weight}
-          value={labelCountInput}
-          error={labelCountError}
-          title={tr('palletVerify.labelCountTitle', { name: pendingLabelPrompt.item_name_hebrew || pendingLabelPrompt.item_name })}
-          hint={tr('palletVerify.labelCountHint', { weight: pendingLabelPrompt.weight.toFixed(3) })}
-          setLabel={tr('palletVerify.uniformSet')}
-          declineLabel={tr('palletVerify.labelCountDecline')}
-          placeholder={tr('palletVerify.uniformPlaceholder')}
-          onChange={(v) => { setLabelCountInput(v); setLabelCountError(null); }}
-          onSubmit={handleLabelCountSubmit}
+        <LabelRepeatPrompt
+          title={tr('palletVerify.labelRepeatTitle', { name: pendingLabelPrompt.item_name_hebrew || pendingLabelPrompt.item_name })}
+          hint={tr('palletVerify.labelRepeatHint')}
+          allowLabel={tr('palletVerify.labelRepeatAllow')}
+          declineLabel={tr('palletVerify.labelRepeatDecline')}
+          onAllow={handleLabelAllow}
           onDecline={handleLabelDecline}
         />
       ) : pendingUniformPrompt?.mode === 'single_or_mix' ? (
@@ -3174,6 +3150,9 @@ export default function PalletVerifyPage({
             // confirmed, so the scanner paints red rather than green for the
             // ~400ms before handleBarcodeDetected below reaches the same verdict.
             isDuplicateBarcode={(b) => processedRef.current.has(b.trim())}
+            // A shared label the worker opted in for: a repeat is the next
+            // carton — but only once the barcode has left the frame.
+            allowRepeat={(b) => !isPerCartonUnique(b) && labelAllowedRef.current.has(baseBarcode(b.trim()))}
             scannedBarcodes={new Map()}
             ocrResults={new Map()}
           />
