@@ -224,11 +224,6 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.doneScanning': 'סיימת לסרוק? הזן את סך הקופסאות',
   'palletVerify.uniformPlaceholder': 'הזן כמות',
   'palletVerify.uniformSet': 'קבע',
-  'palletVerify.labelRepeatTitle': '{name}: לכל הקרטונים של המוצר הזה יש אותו ברקוד. לסרוק כל קרטון בנפרד?',
-  'palletVerify.labelRepeatTitleLoose': '{name}: לכל הקרטונים של המוצר הזה יש אותו ברקוד. לסרוק כל קרטון בודד בנפרד?',
-  'palletVerify.labelRepeatHint': 'כל סריקה מוסיפה קרטון אחד עם תמונה משלו. אחרי כל סימון ירוק העבר את המצלמה לקרטון הבא — קרטון שנשאר מול המצלמה לא נספר פעמיים.',
-  'palletVerify.labelRepeatAllow': 'כן — אסרוק כל קרטון',
-  'palletVerify.labelRepeatDecline': 'לא — לכל קרטון ברקוד משלו',
   'palletVerify.confirmPalletBtn': 'אשר משטח {current}',
 
   'palletVerify.scanMoreToContinue': 'סרוק עוד {count} קופסאות כדי להמשיך',

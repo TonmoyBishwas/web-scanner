@@ -221,11 +221,6 @@ export const en = {
   'palletVerify.doneScanning': 'Done scanning? Enter the pallet total',
   'palletVerify.uniformPlaceholder': 'Enter count',
   'palletVerify.uniformSet': 'Set',
-  'palletVerify.labelRepeatTitle': '{name}: every box of this product carries the same barcode. Scan each box one by one?',
-  'palletVerify.labelRepeatTitleLoose': '{name}: every box of this product carries the same barcode. Scan each loose box one by one?',
-  'palletVerify.labelRepeatHint': 'Every scan adds one box with its own photo. Move the camera to the next box after each green tick — a box that stays in view is never counted twice.',
-  'palletVerify.labelRepeatAllow': 'Yes — I will scan every box',
-  'palletVerify.labelRepeatDecline': 'No — each box has its own barcode',
   'palletVerify.confirmPalletBtn': 'Confirm Pallet {current}',
 
   'palletVerify.scanMoreToContinue': 'Scan {count} more boxes to continue',
