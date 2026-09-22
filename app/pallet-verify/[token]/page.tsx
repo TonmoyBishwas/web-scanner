@@ -2655,6 +2655,7 @@ export default function PalletVerifyPage({
                     onToggleExpand={() => setActiveExpanded((v) => !v)}
                     onEdit={() => openEdit(looseActive, true)}
                     onDelete={() => { rescanLooseBox(looseActive.barcode); setSelectedBarcode(null); }}
+                    onIdentical={canDeclareIdentical(looseActive) ? () => setIdenticalFor({ box: looseActive, loose: true }) : undefined}
                     onRetry={looseActive.ocr_status === 'failed' ? () => retryLooseOcr(looseActive.barcode) : undefined}
                     onViewImage={looseActive.image_data ? () => setViewingImage(looseActive.image_data!) : undefined}
                   />
@@ -3123,6 +3124,7 @@ export default function PalletVerifyPage({
                   onToggleExpand={() => setActiveExpanded((v) => !v)}
                   onEdit={() => openEdit(activeBox)}
                   onDelete={() => { rescanPalletBox(activeBox.barcode); setSelectedBarcode(null); }}
+                  onIdentical={canDeclareIdentical(activeBox) ? () => setIdenticalFor({ box: activeBox, loose: false }) : undefined}
                   onRetry={activeBox.ocr_status === 'failed' ? () => retryPalletOcr(activeBox.barcode) : undefined}
                   onViewImage={activeBox.image_data ? () => setViewingImage(activeBox.image_data!) : undefined}
                 />
