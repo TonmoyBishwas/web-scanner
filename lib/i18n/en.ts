@@ -91,6 +91,8 @@ export const en = {
   'scanner.cameraErrorTitle': 'Camera error',
   'scanner.cameraErrorHint': 'Common fixes: open the link in Chrome/Safari (not WhatsApp\'s in-app browser), check Settings Site permissions Camera, then tap Retry.',
 
+  'scanner.reading': 'Reading barcode…',
+  'scanner.holdStill': 'Hold still',
   'scanner.boxSaved': 'Box {n} saved',
   'scanner.boxCaptured': 'Captured',
   'scanner.scanRejected': 'Rejected',
