@@ -90,6 +90,18 @@ In corner mode the capture-progress `<rect>` is stroked in the **frame's own
 hue** (brand blue), not `--ok` green; stroking green over a blue frame is what
 the floor reported as "the green mixes with the blue".
 
+#### "Reading…" — the first of the two required reads (2026-09-22)
+
+A decode needs **2 consecutive identical reads**. Between the first and the
+second the only signal used to be that 3px stroke creeping half-way round the
+frame — the floor reported it as "a tiny line, hard to see it filling". While
+`captureCount > 0` the frame now **lights up**: the fill goes from 5% to 28%
+brand blue with an outer glow, the trail stroke is 7px, a solid brand pill
+`Reading barcode…` / `קורא ברקוד…` (+ `Hold still`) sits in the frame, and the
+status chip turns solid blue with the same words. A first read that never gets
+its second (barcode left the frame) drops back to idle after **1.5s** (a
+`captureCount === 1` effect), so the loud state can't stay half-lit.
+
 #### Post-scan hold — green "saved" vs red "rejected"
 
 A confirmed decode starts a **3-second hold** in which further decodes are
@@ -102,8 +114,12 @@ The hold is now coloured by `scanOutcome`:
 
 | outcome | frame | label |
 |---|---|---|
-| `saved` | green border + `bg-ok/10`, `Check` icon | `Box N saved` (or `Captured`) |
-| `duplicate` | red border | `Already scanned` (or `Rejected`) |
+| `saved` | **6px** green border, 45% green fill + glow, white `Check`, **whole camera tinted `bg-ok/20`**, chip solid green `✓ 3s` | `Box N saved` (or `Captured`) in a solid green pill |
+| `duplicate` | 6px red border, 45% red fill + glow, white `X`, whole camera tinted `bg-danger/20`, chip solid red `✕ 3s` | `Already scanned` (or `Rejected`) in a solid red pill |
+
+(Rebuilt 2026-09-22: the 3px border + 10% tint of the first version was
+invisible against a bright carton. The green camera flash now fades over its
+full 420ms instead of snapping.)
 
 Two props make that possible:
 

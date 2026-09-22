@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback, type PointerEvent as ReactPointerEvent } from 'react';
-import { AlertTriangle, ScanLine, Camera, Check } from 'lucide-react';
+import { AlertTriangle, ScanLine, Camera, Check, X } from 'lucide-react';
 import type { ParsedBarcode, BoxStickerOCR } from '@/types';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
 import { useT } from '@/lib/i18n';
@@ -452,6 +452,15 @@ export function SmartScanner({
   const [isInCooldown, setIsInCooldown] = useState(false);
   const [cooldownTimeLeft, setCooldownTimeLeft] = useState(0);
   const [captureCount, setCaptureCount] = useState(0); // 0 | 1 | 2 | 3
+  // A first read that never gets its confirming second read (the barcode left
+  // the frame) used to leave the trail half-lit until the next decode. Now
+  // that "reading" is loud, it must also let go: back to idle after 1.5s
+  // unless the second read landed (captureCount moved on).
+  useEffect(() => {
+    if (captureCount !== 1) return;
+    const t = setTimeout(() => setCaptureCount((c) => (c === 1 ? 0 : c)), 1500);
+    return () => clearTimeout(t);
+  }, [captureCount]);
   const [isDuplicate, setIsDuplicate] = useState(false);
   const duplicateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1404,9 +1413,20 @@ export function SmartScanner({
           className={`absolute inset-0 pointer-events-none ${flashColor === 'green' ? 'bg-ok/70' : 'bg-danger/70'
             }`}
           style={{
-            animation: 'cameraFlash 0.2s ease-out',
+            animation: `cameraFlash ${flashColor === 'green' ? '0.42s' : '0.2s'} ease-out forwards`,
             zIndex: 10
           }}
+        />
+      )}
+
+      {/* Whole-camera tint for the post-scan hold. The frame alone is a small
+          box in the middle of a busy video; tinting everything green (or red)
+          for the full 3s is what makes the outcome readable from arm's length.
+          Decodes are ignored during the hold anyway, so nothing is lost. */}
+      {isInCooldown && (
+        <div
+          className={`absolute inset-0 pointer-events-none ${scanOutcome === 'saved' ? 'bg-ok/20' : 'bg-danger/20'}`}
+          style={{ zIndex: 5 }}
         />
       )}
 
@@ -1515,41 +1535,63 @@ export function SmartScanner({
             {/* === POST-SCAN HOLD — green "saved" or red "already scanned" === */}
             {isInCooldown && (
               <>
+                {/* Thick border + a near-solid fill: the 3px line + 10% tint
+                    it replaced was invisible against a bright carton. */}
                 <div
-                  className={`absolute inset-0 border-[3px] rounded-xl ${
-                    scanOutcome === 'saved' ? 'border-ok bg-ok/10' : 'border-danger'
+                  className={`absolute inset-0 border-[6px] rounded-xl ${
+                    scanOutcome === 'saved' ? 'border-ok' : 'border-danger'
                   }`}
+                  style={{
+                    background: scanOutcome === 'saved' ? 'rgba(34,197,94,.45)' : 'rgba(239,68,68,.45)',
+                    boxShadow: scanOutcome === 'saved'
+                      ? '0 0 0 4px rgba(34,197,94,.35), 0 0 32px rgba(34,197,94,.6)'
+                      : '0 0 0 4px rgba(239,68,68,.35), 0 0 32px rgba(239,68,68,.6)',
+                    animation: 'scanHoldIn .32s cubic-bezier(.2,1.3,.4,1)',
+                  }}
                 />
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5">
                   {scanOutcome === 'saved' ? (
                     <>
                       <Check
-                        className={frame === 'corner' ? 'w-14 h-14 text-ok' : 'w-16 h-16 text-ok'}
-                        strokeWidth={3.5}
-                        style={{ animation: 'scanSavedPop .28s cubic-bezier(.2,1.3,.4,1)' }}
+                        className={frame === 'corner' ? 'w-16 h-16 text-white' : 'w-20 h-20 text-white'}
+                        strokeWidth={4}
+                        style={{
+                          animation: 'scanSavedPop .28s cubic-bezier(.2,1.3,.4,1)',
+                          filter: 'drop-shadow(0 2px 6px rgba(0,0,0,.5))',
+                        }}
                       />
-                      <span className="text-[13px] font-black tracking-[.4px] text-ok-weak-ink uppercase">
+                      <span className="px-4 py-1.5 rounded-full bg-ok text-canvas text-base font-black tracking-[.3px] uppercase shadow-lg">
                         {holdClaim === 'saved'
                           ? tr('scanner.boxSaved', { n: savedCount })
                           : tr('scanner.boxCaptured')}
                       </span>
                     </>
                   ) : (
-                    <span className="text-base font-bold text-danger-weak-ink">
-                      {/* "Already scanned" is only true where a decode IS the
-                          save. On /issue a rejection can equally be not-found,
-                          already-issued or a network error — the toast says
-                          which, so the frame stays neutral. */}
-                      {holdClaim === 'saved'
-                        ? tr('scanner.alreadyScanned')
-                        : tr('scanner.scanRejected')}
-                    </span>
+                    <>
+                      <X
+                        className={frame === 'corner' ? 'w-16 h-16 text-white' : 'w-20 h-20 text-white'}
+                        strokeWidth={4}
+                        style={{
+                          animation: 'scanSavedPop .28s cubic-bezier(.2,1.3,.4,1)',
+                          filter: 'drop-shadow(0 2px 6px rgba(0,0,0,.5))',
+                        }}
+                      />
+                      <span className="px-4 py-1.5 rounded-full bg-danger text-white text-base font-black tracking-[.3px] uppercase shadow-lg">
+                        {/* "Already scanned" is only true where a decode IS the
+                            save. On /issue a rejection can equally be not-found,
+                            already-issued or a network error — the toast says
+                            which, so the frame stays neutral. */}
+                        {holdClaim === 'saved'
+                          ? tr('scanner.alreadyScanned')
+                          : tr('scanner.scanRejected')}
+                      </span>
+                    </>
                   )}
                   {/* The wait is still real — the scanner ignores decodes for
                       3s — but it no longer shouts. It was a full-height red
                       numeral, which is what made a good scan look like a fault. */}
                   <span
-                    className="font-mono text-[11px] font-bold text-cam-ink-muted"
+                    className="font-mono text-[11px] font-bold text-white/80"
                     dir="ltr"
                   >
                     {cooldownTimeLeft}
@@ -1561,9 +1603,12 @@ export function SmartScanner({
             {/* === DUPLICATE STATE (outside a hold) === */}
             {!isInCooldown && isDuplicate && (
               <>
-                <div className="absolute inset-0 border-[3px] border-danger rounded-xl" />
+                <div
+                  className="absolute inset-0 border-[6px] border-danger rounded-xl"
+                  style={{ background: 'rgba(239,68,68,.45)', boxShadow: '0 0 0 4px rgba(239,68,68,.35)' }}
+                />
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="text-base font-bold text-danger-weak-ink">{tr('scanner.alreadyScanned')}</span>
+                  <span className="px-4 py-1.5 rounded-full bg-danger text-white text-base font-black uppercase shadow-lg">{tr('scanner.alreadyScanned')}</span>
                 </div>
               </>
             )}
@@ -1576,7 +1621,13 @@ export function SmartScanner({
                     {/* Terminal corner frame: faint brand fill + 4 L-corners */}
                     <div
                       className="absolute inset-0 rounded-[12px]"
-                      style={{ border: '1px solid rgba(19,164,236,.2)', background: 'rgba(19,164,236,.05)' }}
+                      style={{
+                        border: '1px solid rgba(19,164,236,.2)',
+                        // Reading = the frame lights up, not just its outline.
+                        background: captureCount > 0 ? 'rgba(19,164,236,.28)' : 'rgba(19,164,236,.05)',
+                        boxShadow: captureCount > 0 ? '0 0 0 3px rgba(19,164,236,.35), 0 0 28px rgba(19,164,236,.55)' : 'none',
+                        transition: 'background .15s ease-out, box-shadow .15s ease-out',
+                      }}
                     />
                     <span className="absolute -top-px -left-px w-6 h-6 border-t-4 border-l-4 border-brand rounded-tl-[10px]" />
                     <span className="absolute -top-px -right-px w-6 h-6 border-t-4 border-r-4 border-brand rounded-tr-[10px]" />
@@ -1606,7 +1657,8 @@ export function SmartScanner({
                     rx="10"
                     fill="none"
                     stroke={frame === 'corner' ? 'var(--brand)' : 'var(--ok)'}
-                    strokeWidth="3"
+                    strokeWidth="7"
+                    strokeLinecap="round"
                     pathLength="1"
                     strokeDasharray="1"
                     strokeDashoffset={
@@ -1618,6 +1670,25 @@ export function SmartScanner({
                     }}
                   />
                 </svg>
+
+                {/* "Reading…" — a decode is in progress (first of the two
+                    required reads landed). The worker's question at this
+                    moment is "is it seeing the barcode?", and a 3px stroke
+                    creeping round the frame did not answer it. */}
+                {captureCount > 0 && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 pointer-events-none">
+                    <span
+                      className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand text-white text-base font-black uppercase shadow-lg"
+                      style={{ animation: 'scanSavedPop .18s ease-out' }}
+                    >
+                      <span className="w-2.5 h-2.5 rounded-full bg-white animate-pulse" />
+                      {tr('scanner.reading')}
+                    </span>
+                    <span className="text-[11px] font-semibold text-white/85" style={{ textShadow: '0 1px 3px rgba(0,0,0,.7)' }}>
+                      {tr('scanner.holdStill')}
+                    </span>
+                  </div>
+                )}
               </>
             )}
 
@@ -1628,14 +1699,24 @@ export function SmartScanner({
             red fill was a loud block of colour sitting right beside the brand
             frame. */}
         <div className="absolute top-2 left-2">
-          <div className="flex items-center gap-1 px-2 py-1 rounded-full border border-cam-border bg-cam-chip">
+          <div className={`flex items-center gap-1 px-2 py-1 rounded-full border ${
+            isInCooldown
+              ? scanOutcome === 'saved' ? 'bg-ok border-ok' : 'bg-danger border-danger'
+              : captureCount > 0
+                ? 'bg-brand border-brand'
+                : 'border-cam-border bg-cam-chip'
+          }`}>
             <div className={`w-2 h-2 rounded-full ${
-              (isDuplicate || (isInCooldown && scanOutcome === 'duplicate'))
-                ? 'bg-danger'
-                : 'bg-ok animate-pulse'
+              isInCooldown || captureCount > 0
+                ? 'bg-white'
+                : isDuplicate ? 'bg-danger' : 'bg-ok animate-pulse'
             }`}></div>
             {isInCooldown ? (
-              <span className="text-cam-ink text-xs font-mono font-bold" dir="ltr">{cooldownTimeLeft}s</span>
+              <span className={`text-xs font-bold ${scanOutcome === 'saved' ? 'text-canvas' : 'text-white'}`} dir="ltr">
+                {scanOutcome === 'saved' ? '✓' : '✕'} {cooldownTimeLeft}s
+              </span>
+            ) : captureCount > 0 ? (
+              <span className="text-white text-xs font-bold">{tr('scanner.reading')}</span>
             ) : isDuplicate ? (
               <span className="text-cam-ink text-xs font-bold">{tr('scanner.duplicateBadge')}</span>
             ) : (
@@ -1724,6 +1805,10 @@ export function SmartScanner({
         @keyframes scanSavedPop {
           0%   { transform: scale(.5); opacity: 0; }
           100% { transform: scale(1);  opacity: 1; }
+        }
+        @keyframes scanHoldIn {
+          0%   { transform: scale(.92); opacity: .3; }
+          100% { transform: scale(1);   opacity: 1; }
         }
       `}</style>
     </div>
