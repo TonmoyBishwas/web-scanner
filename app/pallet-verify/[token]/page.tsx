@@ -28,6 +28,9 @@ import { useDrawerHost } from '@/components/terminal/DrawerHost';
 import { PalletsBrowser } from '@/components/terminal/PalletsBrowser';
 import { CartonCreator } from '@/components/terminal/CartonCreator';
 import { LabelsBrowser } from '@/components/terminal/LabelsBrowser';
+import { IdenticalBoxesForm } from '@/components/terminal/IdenticalBoxesForm';
+import { expandIdenticalBoxes, type IdenticalForm } from '@/lib/identical-boxes';
+import type { CartonLabel } from '@/types';
 import SplitJobScreen, { SPLIT_CLAIM_ERROR_KEYS } from '@/components/terminal/SplitJobScreen';
 import { installDebugLogCapture } from '@/lib/debug-log';
 import { LanguageContext, useLangDir, t } from '@/lib/i18n';
@@ -98,6 +101,12 @@ interface BoxScan extends MultiPalletBoxScan {
   // parser validated on 67 cartons from two suppliers must not be able to
   // stop a delivery. This only warns and offers the value.
   barcode_conflict?: BarcodeConflict;
+  // Minted by "all boxes identical" (lib/identical-boxes.ts): the worker
+  // declared every carton of this product the same, and this row's barcode
+  // is a warehouse-printed label, not a supplier sticker. Such rows are
+  // never offered the single-item shortcut — their count is already exact.
+  minted?: boolean;
+  label_batch_id?: string;
 }
 
 // Digits-only normaliser for comparing the full printed barcode number across
@@ -430,6 +439,9 @@ export default function PalletVerifyPage({
   // with none. Both are label-only: no stock is written here, the printed
   // sticker is scanned onto the pallet through the normal flow.
   const [showCartonCreator, setShowCartonCreator] = useState(false);
+  // "All boxes identical" — the captured row the worker tapped it on, and
+  // which phase's list it belongs to. See IdenticalBoxesForm.
+  const [identicalFor, setIdenticalFor] = useState<{ box: BoxScan; loose: boolean } | null>(null);
   const [showLabels, setShowLabels] = useState(false);
   const [activeExpanded, setActiveExpanded] = useState(false);
   const [pendingNextPallet, setPendingNextPallet] = useState<number | null>(null);
@@ -1096,6 +1108,8 @@ export default function PalletVerifyPage({
     merges: Map<string, string> = acceptedMerges,
   ): Omit<UniformPrompt, 'mode'> | null {
     if (done.length < UNIFORM_MIN_SAMPLES) return null;
+    // Minted rows already carry their exact count — nothing to multiply.
+    if (done.some((b) => b.minted)) return null;
     const keyOf = (b: BoxScan) => merges.get(groupKeyForBox(b)) ?? groupKeyForBox(b);
     const distinct = new Set(done.map(keyOf));
     if (distinct.size !== 1) return null;            // multiple products -> mix path
@@ -1530,6 +1544,62 @@ export default function PalletVerifyPage({
   }
 
   // Terminal tool dock: locked chips (no backend) + the real actions.
+  // ── "All boxes identical" → N minted rows ──
+  //
+  // The batch already exists in carton_labels (the overlay POSTed it). Here
+  // the sample row becomes one row per minted barcode in the SAME list the
+  // sample sat in, so the completion routes and the bot see N ordinary
+  // scanned boxes. The minted codes join the dedup set: scanning a printed
+  // sticker back in during this job is a duplicate (that box is on the list),
+  // and the supplier code stays in the set too — the worker said every carton
+  // carries it, so a further read of it adds nothing.
+  function handleIdenticalCreated(
+    target: { box: BoxScan; loose: boolean },
+    labels: CartonLabel[],
+    form: IdenticalForm,
+  ) {
+    const rows: BoxScan[] = expandIdenticalBoxes(
+      target.box,
+      labels.map((l) => ({ barcode: l.barcode, batch_id: l.batch_id })),
+      form,
+    );
+    const replaceSample = (prev: BoxScan[]): BoxScan[] => {
+      const idx = prev.findIndex((b) => b.barcode === target.box.barcode);
+      return idx === -1 ? [...prev, ...rows] : [...prev.slice(0, idx), ...rows, ...prev.slice(idx + 1)];
+    };
+    if (target.loose) {
+      for (const r of rows) looseProcessedRef.current.add(r.barcode);
+      setLooseBoxes(replaceSample);
+    } else {
+      for (const r of rows) processedRef.current.add(r.barcode);
+      const next = replaceSample(scannedBoxes);
+      setScannedBoxes(next);
+      setDetectedType(detectType(next, acceptedMerges));
+      // A single-vs-mix question raised by the sample is moot now (retracts).
+      maybeTriggerUniformPrompt(next, '');
+      // The pallet total is usually just what is on the list now — offer it,
+      // still editable, instead of making the worker retype the count.
+      if (confirmedBoxCount === 0 && !boxCountInput) {
+        let total = 0;
+        for (const b of next) {
+          const k = acceptedMerges.get(groupKeyForBox(b)) ?? groupKeyForBox(b);
+          if (!uniformGroups.has(k)) total += 1;
+        }
+        for (const g of uniformGroups.values()) total += g.total_count;
+        setBoxCountInput(String(total));
+      }
+    }
+    setSelectedBarcode(null);
+    showToast(tr('identical.added', { count: rows.length }), 'label');
+  }
+
+  /** The action is offered on a captured row with a real supplier barcode
+   *  that is not itself minted and not still in OCR. */
+  function canDeclareIdentical(box: BoxScan): boolean {
+    return box.ocr_status !== 'processing' && !box.minted
+      && !isProvisional(box.barcode) && !box.barcode.startsWith(NO_BARCODE_PREFIX);
+  }
+
   function buildDockChips(opts: { gap: () => void }): ToolChip[] {
     return [
       {
@@ -1579,6 +1649,27 @@ export default function PalletVerifyPage({
       )}
       {showLabels && (
         <LabelsBrowser token={token} onBack={() => setShowLabels(false)} />
+      )}
+      {identicalFor && (
+        <IdenticalBoxesForm
+          token={token}
+          language={session?.language || 'Hebrew'}
+          palletNumber={identicalFor.loose ? 0 : currentPallet}
+          sample={{
+            barcode: identicalFor.box.barcode,
+            item_code: matchInvoiceItem(
+              identicalFor.box.item_name_hebrew, identicalFor.box.item_name, session?.ocr_data,
+            )?.item_code ?? null,
+            item_name: identicalFor.box.item_name || '',
+            item_name_hebrew: identicalFor.box.item_name_hebrew || '',
+            weight: identicalFor.box.weight,
+            expiry: identicalFor.box.expiry || '',
+            production_date: identicalFor.box.production_date || '',
+          }}
+          onBack={() => setIdenticalFor(null)}
+          onCreated={(labels, form) => handleIdenticalCreated(identicalFor, labels, form)}
+          onDone={() => setIdenticalFor(null)}
+        />
       )}
     </>
   );
@@ -2414,6 +2505,14 @@ export default function PalletVerifyPage({
           >
             <MI name="edit" size={16} /> {tr('palletVerify.editScan')}
           </button>
+          {canDeclareIdentical(box) && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setIdenticalFor({ box, loose: true }); }}
+              className={`${ROW_ACTION_BTN} bg-sunken border border-line text-ink-body`}
+            >
+              <MI name="content_copy" size={16} /> {tr('identical.action')}
+            </button>
+          )}
           <button
             onClick={(e) => { e.stopPropagation(); rescanLooseBox(box.barcode); setSelectedBarcode(null); }}
             className={`${ROW_ACTION_BTN} bg-danger-weak border border-danger/45 text-danger-weak-ink`}
@@ -2687,6 +2786,14 @@ export default function PalletVerifyPage({
         >
           <MI name="edit" size={16} /> {tr('palletVerify.editScan')}
         </button>
+        {canDeclareIdentical(box) && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setIdenticalFor({ box, loose: false }); }}
+            className={`${ROW_ACTION_BTN} bg-sunken border border-line text-ink-body`}
+          >
+            <MI name="content_copy" size={16} /> {tr('identical.action')}
+          </button>
+        )}
         <button
           onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
           className={`${ROW_ACTION_BTN} bg-danger-weak border border-danger/45 text-danger-weak-ink`}
@@ -2737,7 +2844,7 @@ export default function PalletVerifyPage({
             <MI name="add" size={18} /> {tr('palletVerify.uniformContinueMix')}
           </button>
         </div>
-      ) : (confirmedBoxCount === 0 && !anyProcessing && (doneCount >= 4 || forcedMix || !!pendingSingleGroup)) ? (
+      ) : (confirmedBoxCount === 0 && !anyProcessing && (doneCount >= 4 || forcedMix || !!pendingSingleGroup || scannedBoxes.some((b) => b.minted))) ? (
         <div className="space-y-2">
           <label className="block text-xs text-ink-body font-medium">
             {tr('palletVerify.deferredCountTitle')}
