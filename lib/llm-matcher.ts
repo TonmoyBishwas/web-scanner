@@ -1,13 +1,14 @@
 /**
  * LLM-based cross-validation for invoice item matching
  *
- * Uses Gemini 2.5 Flash to intelligently match scanned product names
+ * Uses a Gemini flash model to intelligently match scanned product names
  * (from box OCR) against invoice items when string matching is ambiguous.
  *
  * This provides a semantic understanding of product name variations,
  * especially useful for Hebrew text where OCR can produce different
  * spellings, punctuation, or word order.
  */
+import { complete } from '@/lib/llm-client';
 
 interface MatchCandidate {
   item_index: number;
@@ -43,38 +44,17 @@ export async function validateMatchWithLLM(
   const prompt = buildMatchingPrompt(product_name_hebrew, product_name_english, invoice_items);
 
   try {
-    // Call OpenRouter API with Gemini 2.5 Flash
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://scanner.vercel.app',
-        'X-Title': 'Warehouse Scanner - Invoice Matching'
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash-lite',
-        messages: [
-          {
-            role: 'user',
-            content: prompt
-          }
-        ],
+    // Gemini direct or OpenRouter — decided by LLM_PROVIDER (lib/llm-client.ts).
+    const content = await complete(
+      'google/gemini-3.1-flash-lite',
+      [{ role: 'user', content: prompt }],
+      {
         temperature: 0.1, // Low temperature for consistent results
-      })
-    });
-
-    if (!response.ok) {
-      console.error('[LLM Matcher] API call failed:', response.statusText);
-      return {
-        matched_index: null,
-        confidence: 'none',
-        reasoning: `LLM API call failed: ${response.statusText}`
-      };
-    }
-
-    const result = await response.json();
-    const content = result.choices[0].message.content;
+        timeoutMs: 20_000,
+        referer: process.env.NEXT_PUBLIC_APP_URL || 'https://scanner.vercel.app',
+        title: 'Warehouse Scanner - Invoice Matching',
+      },
+    );
 
     // Parse the JSON response
     const matchResult = parseMatchResponse(content);
