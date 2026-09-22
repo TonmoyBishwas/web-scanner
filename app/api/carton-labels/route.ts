@@ -7,6 +7,7 @@ import {
   LABEL_SIZES,
   type LabelSize,
 } from '@/lib/carton-labels';
+import type { CartonLabelOrigin } from '@/types';
 
 const unauthorized = () =>
   NextResponse.json({ success: false, error: 'Invalid or expired session' }, { status: 401 });
@@ -91,6 +92,19 @@ export async function POST(request: NextRequest) {
 
     const labelSize: LabelSize = LABEL_SIZES.includes(body.label_size) ? body.label_size : '10x15';
 
+    // "All boxes identical" (pallet-verify) vs the New carton chip. The
+    // identical path also records which supplier barcode the batch stands in
+    // for and which pallet it was minted on (0 = loose pile).
+    const origin: CartonLabelOrigin = body.origin === 'identical' ? 'identical' : 'new_carton';
+    const sourceBarcode =
+      typeof body.source_barcode === 'string' ? body.source_barcode.replace(/\D/g, '').slice(0, 40) || null : null;
+    const rawPallet = body.pallet_number;
+    const palletNumber =
+      rawPallet === null || rawPallet === undefined || rawPallet === '' ? null : Number(rawPallet);
+    if (palletNumber !== null && (!Number.isInteger(palletNumber) || palletNumber < 0)) {
+      return NextResponse.json({ success: false, error: 'invalid pallet_number' }, { status: 400 });
+    }
+
     const labels = await createCartonBatch({
       sessionToken: token,
       documentNumber: context.documentNumber,
@@ -105,6 +119,9 @@ export async function POST(request: NextRequest) {
       printBarcode: body.print_barcode !== false,
       labelSize,
       createdByChatId: context.chatId,
+      origin,
+      sourceBarcode,
+      palletNumber,
     });
 
     return NextResponse.json({ success: true, labels, batch_id: labels[0]?.batch_id ?? null });

@@ -457,4 +457,16 @@ export interface CartonLabel {
   print_count: number;
   printed_at: string | null;
   created_at: string;
+  /**
+   * `new_carton` — the New carton chip (label only, books no stock).
+   * `identical` — the "all boxes identical" action on pallet-verify: the
+   * batch is booked as stock, one box_inventory row per minted barcode.
+   */
+  origin: CartonLabelOrigin;
+  /** The supplier barcode read off the sample carton (shared by every box). */
+  source_barcode: string | null;
+  /** Pallet the batch was minted on; 0 = the loose pile. */
+  pallet_number: number | null;
 }
+
+export type CartonLabelOrigin = 'new_carton' | 'identical';

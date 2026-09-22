@@ -10,7 +10,7 @@
  * Service-role client (see lib/supabase.ts) — server only.
  */
 import { supabase } from './supabase';
-import type { CartonLabel, LabelSize } from '@/types';
+import type { CartonLabel, CartonLabelOrigin, LabelSize } from '@/types';
 
 export type { CartonLabel, LabelSize };
 
@@ -18,7 +18,7 @@ export const LABEL_SIZES: LabelSize[] = ['10x10', '10x15', 'a4'];
 
 /** Every column the UI and the print sheet read. */
 const COLUMNS =
-  'id, batch_id, barcode, serial, session_token, document_number, item_code, item_name_hebrew, item_name_english, weight_kg, quantity, production_date, expiry_date, notes, print_barcode, label_size, status, print_count, printed_at, created_at';
+  'id, batch_id, barcode, serial, session_token, document_number, item_code, item_name_hebrew, item_name_english, weight_kg, quantity, production_date, expiry_date, notes, print_barcode, label_size, status, print_count, printed_at, created_at, origin, source_barcode, pallet_number';
 
 function yymmdd(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0');
@@ -60,6 +60,10 @@ export interface CreateCartonBatchInput {
   printBarcode: boolean;
   labelSize: LabelSize;
   createdByChatId?: number | null;
+  /** Default `new_carton`. `identical` = booked as stock by pallet-verify. */
+  origin?: CartonLabelOrigin;
+  sourceBarcode?: string | null;
+  palletNumber?: number | null;
 }
 
 /**
@@ -94,6 +98,9 @@ export async function createCartonBatch(input: CreateCartonBatchInput): Promise<
       print_barcode: input.printBarcode,
       label_size: input.labelSize,
       created_by_chat_id: input.createdByChatId ?? null,
+      origin: input.origin ?? 'new_carton',
+      source_barcode: input.sourceBarcode ?? null,
+      pallet_number: input.palletNumber ?? null,
     }));
 
     const { data, error } = await supabase.from('carton_labels').insert(rows).select(COLUMNS);
