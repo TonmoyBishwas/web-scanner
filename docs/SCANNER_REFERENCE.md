@@ -4150,6 +4150,17 @@ Request `CloudinaryUploadRequest`. Response `{success:true, secure_url, public_i
 ---
 
 ## Chapter 7 — Drawer browsers, carton labels and Code 128, the LPN sticker pages, and printing
+
+> **Addendum 2026-09-22 — "All boxes identical".** The carton-label stack described
+> below now has a second entry point that DOES book stock: the row action
+> `כל הקרטונים זהים` on pallet-verify (`components/terminal/IdenticalBoxesForm.tsx`,
+> `lib/identical-boxes.ts`). `POST /api/carton-labels` accepts `origin`
+> (`new_carton` | `identical`), `source_barcode` and `pallet_number`; `carton_labels`
+> carries the same three columns. The N minted rows become ordinary `scanned_boxes`
+> entries, so the completion routes and the bot are unchanged. The 2026-09-17/20
+> shared-label opt-in (`LabelPrompt`, `lib/repeat-gate.ts`, `SmartScanner.allowRepeat`,
+> `-B/-C` repeat keys) was reverted the same day; `lib/carton-barcode.ts` keeps only
+> `classifyRead` (SCN-13). See `docs/ARCHITECTURE.md` § "All boxes identical".
 _Scope:_ `scanner: lib/documents.ts`, `lib/pallet-browser.ts`, `lib/carton-labels.ts`, `lib/code128.ts`, `lib/code128.test.ts`, `app/api/documents/route.ts`, `app/api/documents/detail/route.ts`, `app/api/pallets/route.ts`, `app/api/pallets/detail/route.ts`, `app/api/carton-labels/route.ts`, `app/api/carton-labels/print/route.ts`, `app/labels/print/page.tsx`, `app/labels/print/LabelSheet.tsx`, `app/pallet/[lpn]/page.tsx`, `app/pallet/[lpn]/PrintButton.tsx`, `app/sticker/v1/[lpn]/page.tsx`, `components/terminal/DocumentsBrowser.tsx`, `components/terminal/PalletsBrowser.tsx`, `components/terminal/LabelsBrowser.tsx`, `components/terminal/CartonCreator.tsx`, `components/terminal/CartonSticker.tsx`, `components/terminal/Barcode128.tsx` · _Repo state:_ bot whatsapp@3621f46 · scanner preview@e46d9b9 · _Written:_ 2026-09-08
 
 All paths below are relative to the **scanner** repo (`web-scanner/`) unless prefixed `bot:`. Every file in scope was read in full. Out-of-scope files were consulted only to establish callers and contracts (`lib/session-guard.ts`, `lib/lpn-signature.ts`, `lib/lpn-constants.ts`, `types/index.ts`, `components/terminal/DrawerHost.tsx`, `LockedScreen.tsx`, `Toast.tsx`, `lib/use-back-close.ts`, the three scanner pages' dock-chip arrays, `lib/i18n/{en,he}.ts`, `vitest.config.ts`, `bot: pallet_service.py`, `bot: pallet_issue_handler.py`, `bot: pallet_handler.py`).

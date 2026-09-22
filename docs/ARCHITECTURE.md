@@ -520,6 +520,46 @@ Where they render:
   31-digit barcode; the barcode had no clamp, so the three collided. The barcode
   now ellipsises and the buttons get a full-width line of their own.
 
+## "All boxes identical" → one printed label per carton (2026-09-22)
+
+Some products print **one barcode on every carton** (fixed-weight goods:
+kebabonim, fish, produce cartons), and for those the name, weight and expiry
+are the same on every carton too. The scanner dedupes on the barcode, so only
+one of N could ever be booked — and on the way out N boxes sharing a code
+cannot be told apart. Two automatic fixes were tried on 2026-09-17/20 (count
+repeat reads; a ≤14-digit "shared-label" opt-in with a repeat gate) and both
+were reverted on 2026-09-22: **the system never decides a product is
+shared-label. The worker does.**
+
+- On any captured row (the newest-scan card or a history row, pallet phase and
+  loose phase alike) a third action **כל הקרטונים זהים / All boxes identical**
+  opens `components/terminal/IdenticalBoxesForm.tsx`: count (required), weight
+  per carton (required, prefilled from the OCR), production/expiry dates, a
+  live `CartonSticker` preview. Hidden on `MANUAL-`/`NOBC-` rows, on rows still
+  in OCR, and on rows that are themselves minted.
+- Create → `POST /api/carton-labels` with `origin: 'identical'`,
+  `source_barcode` (the supplier code off the sample), `pallet_number` (0 =
+  loose). The existing minting stack (`lib/carton-labels.ts`: `28` + YYMMDD +
+  8 random digits, unique index) returns N rows; a **Print N labels** button
+  opens the existing `/labels/print` sheet (10×15), reprint from the Labels chip.
+- `lib/identical-boxes.ts` → `expandIdenticalBoxes(sample, labels, form)`
+  replaces the sample row by N ordinary `BoxScan`s: `barcode` = minted code,
+  `sku` = the sample's 13-digit prefix (`sourceSku`), weight/dates from the
+  form, `minted: true`, `label_batch_id`; the sticker photo stays on the first
+  row, `image_url` on all. The minted codes (and the supplier code) sit in the
+  dedup set, so scanning a printed sticker back in is refused as a duplicate.
+- **Booked directly.** The rows travel through `/api/multi-pallet-complete` /
+  `/api/multi-pallet-loose-complete` unchanged and the bot writes one
+  `box_inventory` row per minted barcode (`box_sku` = supplier prefix).
+  Outbound photographs the printed sticker → `find_box_by_barcode` → that row.
+- Minted rows never raise the single-item shortcut (`uniformCandidateFrom`
+  returns null when any row is minted — their count is already exact), and
+  the pallet-total input is prefilled with the list's count (still editable).
+- `carton_labels` columns added: `origin`, `source_barcode`, `pallet_number`
+  (`docs/migrations/2026-09-22-carton-labels-identical.sql`). Tests:
+  `lib/identical-boxes.test.ts`; `lib/carton-barcode.ts` keeps only the SCN-13
+  misread refusal (`classifyRead`).
+
 ## Barcode cross-check (`lib/barcode-parser.ts`)
 
 `parseIsraeliBarcode` still treats every barcode as an **ID only** — that rule
