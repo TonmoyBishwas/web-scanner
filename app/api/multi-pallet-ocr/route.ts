@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { touchSession } from '@/lib/redis';
 
 /**
  * POST /api/multi-pallet-ocr
@@ -14,7 +15,13 @@ import { NextRequest, NextResponse } from 'next/server';
  */
 export async function POST(request: NextRequest) {
   try {
-    const { image, barcode, candidates } = await request.json();
+    const { image, barcode, candidates, token } = await request.json();
+
+    // Every scan is activity: keep the session alive while the worker is
+    // working on it (SCN-24). Fire-and-forget — OCR must not wait on it.
+    if (typeof token === 'string' && token) {
+      touchSession(token).catch((err) => console.warn('[multi-pallet-ocr] touch failed:', err));
+    }
 
     if (!image) {
       return NextResponse.json({ success: false, error: 'Missing image' }, { status: 400 });

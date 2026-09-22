@@ -19,6 +19,10 @@ describe('carton-barcode', () => {
     expect(classifyRead('15928481')).toEqual({ ok: false, reason: 'too_short' });
     expect(classifyRead('7290001456825')).toEqual({ ok: false, reason: 'checksum' });
     expect(classifyRead('7290004456825')).toEqual({ ok: true });
+    // Baladi's shipping-pallet label: pallet identity, never a carton (MEV-10).
+    expect(classifyRead('1000000000513550')).toEqual({ ok: false, reason: 'pallet_label' });
+    expect(classifyRead('1000000000529677')).toEqual({ ok: false, reason: 'pallet_label' });
+    expect(classifyRead('1000000000513')).toEqual({ ok: false, reason: 'checksum' });
     expect(classifyRead('7290003570867015320158115072027')).toEqual({ ok: true });
     // A warehouse-minted label (28 + YYMMDD + 8 digits) is 16 digits: accepted.
     expect(classifyRead('2826091622630531')).toEqual({ ok: true });

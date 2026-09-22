@@ -33,7 +33,18 @@ export function gtinCheckDigitValid(digits: string): boolean {
 
 export type ReadVerdict =
   | { ok: true }
-  | { ok: false; reason: 'too_short' | 'checksum' };
+  | { ok: false; reason: 'too_short' | 'checksum' | 'pallet_label' };
+
+/**
+ * The supplier's own SHIPPING-PALLET label (MEV-10, 2026-09-22): Baladi prints
+ * a 16-digit `1000000000…` number on the pallet and as משטח שילוח on the note
+ * (1000000000529677 on IN264171048; 1000000000513550 scanned on IN264172698
+ * and counted as a sixth carton). It is the pallet's identity, never a carton.
+ */
+export const SUPPLIER_PALLET_LABEL = /^1000000000\d{6}$/;
+export function isSupplierPalletLabel(digits: string): boolean {
+  return SUPPLIER_PALLET_LABEL.test(digits);
+}
 
 /**
  * Can this read be a carton barcode?
@@ -46,6 +57,7 @@ export type ReadVerdict =
  */
 export function classifyRead(barcode: string): ReadVerdict {
   const d = digitsOf(barcode);
+  if (isSupplierPalletLabel(d)) return { ok: false, reason: 'pallet_label' };
   if (d.length < 12) return { ok: false, reason: 'too_short' };
   if (d.length <= 14 && !gtinCheckDigitValid(d)) return { ok: false, reason: 'checksum' };
   return { ok: true };

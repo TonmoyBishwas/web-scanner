@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nanoid } from 'nanoid';
-import { getRedisClient } from '@/lib/redis';
+import { getRedisClient, touchSession } from '@/lib/redis';
 import type { MultiPalletSession } from '@/types';
 
 const SESSION_TTL = 7200; // 2 hours
@@ -117,6 +117,8 @@ export async function GET(request: NextRequest) {
 
     const session: MultiPalletSession =
       typeof raw === 'string' ? JSON.parse(raw) : (raw as MultiPalletSession);
+    // Opening / reloading the page is activity too (SCN-24).
+    touchSession(token).catch((err) => console.warn('[multi-pallet-session] touch failed:', err));
     return NextResponse.json(session);
   } catch (error) {
     console.error('[multi-pallet-session] GET error:', error);

@@ -635,6 +635,8 @@ export const he: Record<TranslationKey, string> = {
   'terminal.barcodeNoneSet': 'נקלט ללא ברקוד',
   'terminal.barcodeDuplicate': 'לקרטון אחר על המשטח כבר יש ברקוד זה',
   'terminal.barcodeMisread': 'הברקוד נקרא לא נכון ({digits}) — ספרת הביקורת שגויה. סרוק שוב.',
+  'terminal.duplicateOf': 'כבר נסרק — זה קרטון מס׳ {n} ברשימה ({time}).',
+  'terminal.palletLabelRead': 'תווית משטח השילוח {digits} נרשמה כמספר המשטח — לא נספרת כקרטון.',
   'terminal.barcodeTooShort': 'נקרא רק חלק מהברקוד ({digits}). כוון לברקוד הארוך וסרוק שוב.',
   'terminal.stickerPhoto': 'תמונת המדבקה',
   'terminal.noStickerPhoto': 'אין תמונה לקרטון זה',

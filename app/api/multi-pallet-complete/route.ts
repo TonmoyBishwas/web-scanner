@@ -132,8 +132,10 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { token, scanned_boxes, box_count, uniform_groups, merge_map, nonmeat_items,
-      manual_declared, manual_items, worker_chat_id } = body as {
+      manual_declared, manual_items, worker_chat_id, supplier_pallet_ref } = body as {
       token: string;
+      /** The supplier's shipping-pallet label the worker scanned (MEV-10). */
+      supplier_pallet_ref?: string;
       scanned_boxes: MultiPalletBoxScan[];
       box_count: number;
       uniform_groups?: UniformGroupOverride[];
@@ -694,6 +696,9 @@ export async function POST(request: NextRequest) {
     // second split job while an earlier one's webhook is still in flight).
     // Additive only — the bot already tolerates the field being absent.
     webhookPayload.token = session.token;
+    if (supplier_pallet_ref) {
+      webhookPayload.supplier_pallet_ref = String(supplier_pallet_ref).replace(/\D/g, '').slice(0, 32);
+    }
     webhookPayload.worker_chat_id = workerChatId;
     webhookPayload.owner_chat_id = session.owner_chat_id ?? session.chat_id;
     webhookPayload.is_final = isFinal;
