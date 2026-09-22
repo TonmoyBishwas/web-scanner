@@ -836,6 +836,21 @@ export const he: Record<TranslationKey, string> = {
   'carton.sessionExpired': 'הפעילות פגה. בקש קישור חדש.',
   'carton.printedNote': 'הדפס את המדבקה, הדבק על הקרטון, ואז סרוק אותו כמו כל ארגז אחר.',
 
+  // "כל הקרטונים זהים" (pallet-verify row action)
+  'identical.action': 'כל הקרטונים זהים',
+  'identical.title': 'כל הקרטונים זהים',
+  'identical.intro': 'לכל הקרטונים של המוצר הזה אותו ברקוד, שם, משקל ותאריכים. כל קרטון מקבל מדבקה מודפסת משלו ונקלט כקופסה נפרדת — אין צורך לסרוק עוד מהמוצר הזה.',
+  'identical.quantity': 'כמה קרטונים מהמוצר הזה',
+  'identical.quantityHint': 'ספור את הקרטונים על המשטח. כל אחד מקבל ברקוד ייחודי.',
+  'identical.weightInvalid': 'הזן את משקל הקרטון הבודד בק"ג.',
+  'identical.printedNote': 'הדפס את המדבקות והדבק אחת על כל קרטון. בניפוק סורקים את המדבקה המודפסת.',
+  'identical.create': 'צור {count} מדבקות',
+  'identical.createdTitle': '{count} קופסאות נקלטו עם ברקוד משלהן',
+  'identical.createdHint': '{name}: הדפס את המדבקות עכשיו, או מאוחר יותר מ"מדבקות". הדבק מדבקה אחת על כל קרטון.',
+  'identical.print': 'הדפס {count} מדבקות',
+  'identical.added': '{count} קופסאות נוספו — הדפס את המדבקות',
+  'identical.error': 'לא ניתן ליצור את המדבקות. נסה שוב.',
+
   // ── מדבקות — תור ההדפסה של המדבקות שנוצרו ──
   'labels.title': 'מדבקות',
   'labels.size': 'גודל מדבקה',

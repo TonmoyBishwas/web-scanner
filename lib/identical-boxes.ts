@@ -59,11 +59,13 @@ type SampleRow = MultiPalletBoxScan & {
  * large), while the uploaded `image_url` is kept on all of them so each
  * box_inventory row still points at the sticker it was booked from.
  */
+export type MintedRow<T> = T & { minted: true; label_batch_id: string };
+
 export function expandIdenticalBoxes<T extends SampleRow>(
   sample: T,
   labels: MintedLabelRef[],
   form: IdenticalForm,
-): T[] {
+): MintedRow<T>[] {
   const sku = sourceSku(sample.barcode);
   const now = new Date().toISOString();
   return labels.map((label, i) => ({
@@ -77,7 +79,7 @@ export function expandIdenticalBoxes<T extends SampleRow>(
     image_data: i === 0 ? sample.image_data : undefined,
     needs_review: undefined,
     barcode_conflict: undefined,
-    minted: true,
+    minted: true as const,
     label_batch_id: label.batch_id,
   }));
 }
