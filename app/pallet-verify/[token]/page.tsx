@@ -199,6 +199,14 @@ interface UniformGroup {
 // Shape persisted to localStorage so a reload restores in-progress scans.
 // `image_data` (base64) is stripped from boxes before saving to stay under the
 // localStorage quota — the OCR fields are what matter on restore.
+/** HH:MM of a scan's ISO timestamp, for the duplicate message (SCN-21). */
+function fmtScanTime(iso?: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 interface PalletScanSnapshot {
   v: 1;
   scannedBoxes: BoxScan[];
@@ -208,6 +216,8 @@ interface PalletScanSnapshot {
   boxCountInput: string;
   forcedMix: boolean;
   detectedType: DetectedType;
+  /** The supplier's shipping-pallet label scanned on this pallet (MEV-10). */
+  supplierPalletRef?: string;
 }
 interface LooseScanSnapshot {
   v: 1;
@@ -289,6 +299,15 @@ export default function PalletVerifyPage({
 
   const processedRef = useRef<Set<string>>(new Set());
   const [looseBoxes, setLooseBoxes] = useState<BoxScan[]>([]);
+  // Mirrors of the two scan lists for the frozen-closure detect handlers, so a
+  // duplicate can be NAMED (which carton, when) instead of just buzzed (SCN-21).
+  const scannedBoxesRef = useRef<BoxScan[]>([]);
+  const looseBoxesRef = useRef<BoxScan[]>([]);
+  useEffect(() => { scannedBoxesRef.current = scannedBoxes; }, [scannedBoxes]);
+  useEffect(() => { looseBoxesRef.current = looseBoxes; }, [looseBoxes]);
+  // The supplier's own shipping-pallet number, when its label was scanned on
+  // this pallet. Pallet identity — never a carton (MEV-10).
+  const [supplierPalletRef, setSupplierPalletRef] = useState<string>('');
 
   // Hydrate the Sound / Vibration settings from localStorage so scan-feedback
   // honours the worker's toggles (defaults to ON until hydrated).
@@ -576,6 +595,7 @@ export default function PalletVerifyPage({
         boxCountInput,
         forcedMix,
         detectedType,
+        supplierPalletRef: supplierPalletRef || undefined,
       };
       savePalletScans(token, currentPallet, snap);
     } else if (phase === 'loose_scanning') {
@@ -583,7 +603,7 @@ export default function PalletVerifyPage({
       saveLooseScans(token, snap);
     }
   }, [
-    token, currentPallet, phase, scannedBoxes, looseBoxes, uniformGroups,
+    token, currentPallet, phase, scannedBoxes, looseBoxes, uniformGroups, supplierPalletRef,
     acceptedMerges, confirmedBoxCount, boxCountInput, forcedMix, detectedType,
   ]);
 
@@ -628,6 +648,7 @@ export default function PalletVerifyPage({
               if (cached.confirmedBoxCount > 0) setConfirmedBoxCount(cached.confirmedBoxCount);
               if (cached.boxCountInput) setBoxCountInput(cached.boxCountInput);
               setForcedMix(!!cached.forcedMix);
+          if (cached.supplierPalletRef) setSupplierPalletRef(cached.supplierPalletRef);
               if (cached.detectedType) setDetectedType(cached.detectedType);
               restoreUniformPrompt(cached);
               cached.scannedBoxes.forEach((b) => b.barcode && processedRef.current.add(b.barcode));
@@ -675,6 +696,7 @@ export default function PalletVerifyPage({
           if (cached.confirmedBoxCount > 0) setConfirmedBoxCount(cached.confirmedBoxCount);
           if (cached.boxCountInput) setBoxCountInput(cached.boxCountInput);
           setForcedMix(!!cached.forcedMix);
+          if (cached.supplierPalletRef) setSupplierPalletRef(cached.supplierPalletRef);
           if (cached.detectedType) setDetectedType(cached.detectedType);
           restoreUniformPrompt(cached);
           // Repopulate the dedup set so a re-scan of a restored sticker is caught.
@@ -749,6 +771,14 @@ export default function PalletVerifyPage({
       const verdict = classifyRead(read);
       trace('ui', 'scan_detected', { barcode: read, pallet: currentPalletRef.current, ok: verdict.ok, reason: verdict.ok ? undefined : verdict.reason, duplicate: processedRef.current.has(read), has_image: !!imageData });
       if (!verdict.ok) {
+        if (verdict.reason === 'pallet_label') {
+          // The supplier's shipping-pallet label: keep it as the pallet's
+          // identity, never as a carton (MEV-10 — IN264172698 booked it as
+          // a sixth carton). Neutral cue, no red hold.
+          setSupplierPalletRef(read);
+          showToast(t(sessionRef.current?.language || 'English', 'terminal.palletLabelRead', { digits: read }), 'local_shipping');
+          return;
+        }
         dupFlashRef.current?.();
         scanDuplicateFeedback();
         setError(t(sessionRef.current?.language || 'English',
@@ -759,6 +789,12 @@ export default function PalletVerifyPage({
       const barcode = read;
       if (processedRef.current.has(read)) {
         scanDuplicateFeedback(); // already scanned this sticker
+        // Name the conflicting scan (SCN-21): which carton in the list, when.
+        const list = scannedBoxesRef.current;
+        const n = list.findIndex((b) => b.barcode === read) + 1;
+        setError(t(sessionRef.current?.language || 'English', 'terminal.duplicateOf', {
+          n: n || '?', time: fmtScanTime(list[n - 1]?.scanned_at),
+        }));
         return;
       }
 
@@ -962,7 +998,7 @@ export default function PalletVerifyPage({
     fetch('/api/multi-pallet-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey, candidates }),
+      body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey, candidates, token }),
     })
       .then((r) => r.json())
       .then((data) => {
@@ -1193,6 +1229,10 @@ export default function PalletVerifyPage({
       const verdict = classifyRead(read);
       trace('ui', 'loose_scan_detected', { barcode: read, ok: verdict.ok, reason: verdict.ok ? undefined : verdict.reason, duplicate: looseProcessedRef.current.has(read), has_image: !!imageData });
       if (!verdict.ok) {
+        if (verdict.reason === 'pallet_label') {
+          showToast(t(sessionRef.current?.language || 'English', 'terminal.palletLabelRead', { digits: read }), 'local_shipping');
+          return;
+        }
         looseDupFlashRef.current?.();
         scanDuplicateFeedback();
         setError(t(sessionRef.current?.language || 'English',
@@ -1203,6 +1243,11 @@ export default function PalletVerifyPage({
       const barcode = read;
       if (looseProcessedRef.current.has(read)) {
         scanDuplicateFeedback(); // already scanned this loose box
+        const list = looseBoxesRef.current;
+        const n = list.findIndex((b) => b.barcode === read) + 1;
+        setError(t(sessionRef.current?.language || 'English', 'terminal.duplicateOf', {
+          n: n || '?', time: fmtScanTime(list[n - 1]?.scanned_at),
+        }));
         return;
       }
       looseProcessedRef.current.add(barcode);
@@ -1801,7 +1846,7 @@ export default function PalletVerifyPage({
     fetch('/api/multi-pallet-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey }),
+      body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey, token }),
     })
       .then((r) => r.json())
       .then((data) => {
@@ -2123,6 +2168,7 @@ export default function PalletVerifyPage({
     setRejectedMergePairs(new Set());
     setPendingMerge(null);
     setManualMode(false); // damaged mode is per-pallet — reset for the next
+    setSupplierPalletRef('');
     setActiveExpanded(false);
   }
 
@@ -2197,6 +2243,9 @@ export default function PalletVerifyPage({
           box_count: declaredCount,
           uniform_groups: uniformGroupsPayload,
           merge_map: mergeMapPayload,
+          // The supplier's shipping-pallet number, when its label was scanned
+          // (MEV-10) — stored on pallets.supplier_pallet_ref by the bot.
+          supplier_pallet_ref: supplierPalletRef || undefined,
           // Split jobs only: which worker is finishing this pallet. Ignored
           // server-side on a single-scanner session (the cursor's owner is
           // always session.chat_id there).

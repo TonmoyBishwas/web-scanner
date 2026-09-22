@@ -620,3 +620,13 @@ Removed in the migration: `KV_REST_API_URL`, `KV_REST_API_TOKEN`, and all `AIRTA
 ---
 
 **Last Updated**: 2026-08-14 (documented the split-assignment, drawer-browser and consolidate-items routes; route count 18 → 25) | Working branch: `preview` | Production branch: `main`
+
+
+## 2026-09-22 additions
+
+- `POST /api/multi-pallet-ocr` accepts an optional `token`; when present the scan session's
+  `expires_at` is slid forward (`touchSession`, `lib/redis.ts`) — every scan is activity (SCN-24).
+  `GET /api/multi-pallet-session` touches the session too.
+- `POST /api/multi-pallet-complete` accepts `supplier_pallet_ref` (digits, ≤32): the supplier's
+  shipping-pallet label the worker scanned (`classifyRead` → `pallet_label`, `1000000000dddddd`).
+  Forwarded on the bot webhook and stored in `pallets.supplier_pallet_ref`. Never counted as a carton.

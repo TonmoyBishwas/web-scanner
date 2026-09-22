@@ -634,6 +634,8 @@ export const en = {
   'terminal.barcodeNoneSet': 'Booked without a barcode',
   'terminal.barcodeDuplicate': 'Another carton on this pallet already has that barcode',
   'terminal.barcodeMisread': 'Barcode misread ({digits}) — the check digit is wrong. Scan it again.',
+  'terminal.duplicateOf': 'Already scanned — this is carton #{n} in the list ({time}).',
+  'terminal.palletLabelRead': 'Shipping-pallet label {digits} noted as the pallet number — not counted as a carton.',
   'terminal.barcodeTooShort': 'Only part of the barcode was read ({digits}). Aim at the long barcode and scan again.',
   'terminal.stickerPhoto': 'Sticker photo',
   'terminal.noStickerPhoto': 'No photo for this carton',

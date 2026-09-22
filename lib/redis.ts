@@ -76,6 +76,27 @@ async function readSession(kind: SessionKind, token: string): Promise<unknown | 
   return data ? (data.data as unknown) : null;
 }
 
+/**
+ * Slide a live session's expiry forward (SCN-24, 2026-09-22): the TTL used
+ * to be fixed at the last WRITE, and in-progress scans are not writes — so a
+ * pallet the worker was still scanning expired two hours after the previous
+ * pallet closed. Called from every scanner activity that reaches the server.
+ * Never resurrects an already-expired row; failures are the caller's to ignore.
+ */
+export async function touchSession(token: string, ttlSeconds: number = PALLET_TTL): Promise<void> {
+  const now = nowISO();
+  const next = expiresAtISO(ttlSeconds);
+  const { error } = await supabase
+    .from('scan_sessions')
+    .update({ expires_at: next })
+    .eq('token', token)
+    .gt('expires_at', now)
+    .lt('expires_at', next);
+  if (error) {
+    throw new Error(`scan_sessions touch failed (${token}): ${error.message}`);
+  }
+}
+
 async function writeSession(
   kind: SessionKind,
   token: string,
