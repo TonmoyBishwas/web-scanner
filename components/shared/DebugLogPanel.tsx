@@ -9,6 +9,7 @@ import {
   subscribeDebugLogs,
   type LogEntry,
 } from '@/lib/debug-log';
+import { isTracing, subscribeTracing } from '@/lib/scanner-trace';
 
 /**
  * Floating bug-report widget. Tap the bug button to open a fullscreen modal
@@ -22,6 +23,10 @@ export function DebugLogPanel() {
   const [open, setOpen] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>(() => [...getDebugLogs()]);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  // Red dot on the bug button while this user's session is being recorded
+  // server-side (lib/scanner-trace.ts) — so a tester can see it is on.
+  const [tracing, setTracing] = useState(() => isTracing());
+  useEffect(() => subscribeTracing(setTracing), []);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Keep the rendered list in sync with the buffer.
@@ -72,11 +77,14 @@ export function DebugLogPanel() {
       <button
         onClick={() => setOpen(true)}
         aria-label="Open debug logs"
-        title="Open debug logs"
+        title={tracing ? 'Open debug logs (session is being recorded)' : 'Open debug logs'}
         style={{ bottom: 'calc(env(safe-area-inset-bottom) + 0.75rem)' }}
         className="fixed left-3 z-20 w-9 h-9 rounded-full bg-raised/85 hover:bg-raised text-ink-muted shadow-md backdrop-blur-sm border border-line flex items-center justify-center"
       >
         <Bug className="w-4 h-4" />
+        {tracing && (
+          <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-danger border border-canvas" />
+        )}
       </button>
 
       {open && (

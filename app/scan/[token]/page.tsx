@@ -44,6 +44,7 @@ import type {
   ManualEntryData,
 } from '@/types';
 import { useLangDir, LanguageContext, t } from '@/lib/i18n';
+import { startScannerTrace, trace } from '@/lib/scanner-trace';
 
 // Phase enum for flow control
 type ScanPhase =
@@ -76,6 +77,8 @@ export default function ScanPage({
     [language],
   );
   const [phase, setPhase] = useState<ScanPhase>('loading');
+  startScannerTrace({ token, page: 'scan' });
+  useEffect(() => { trace('phase', phase); }, [phase]);
   const [error, setError] = useState<string | null>(null);
 
   // Scan tracking
@@ -564,6 +567,7 @@ export default function ScanPage({
 
   // ── Undo Last Scan ─────────────────────────────────────────────
   const handleUndoScan = useCallback(async (barcode: string) => {
+    trace('ui', 'undo_scan', { barcode });
     try {
       const res = await fetch('/api/scan', {
         method: 'DELETE',
@@ -609,6 +613,7 @@ export default function ScanPage({
     imageData?: string
   ) => {
     const isValidBarcode = /^[A-Za-z0-9]+$/.test(barcode);
+    trace('ui', 'scan_detected', { barcode, valid: isValidBarcode, duplicate: processedBarcodesRef.current.has(barcode), has_image: !!imageData });
     if (!isValidBarcode) {
       addErrorLog(`Ignored invalid barcode: ${barcode}`);
       return;
@@ -703,6 +708,7 @@ export default function ScanPage({
   // ── Manual Capture Handler ────────────────────────────────────
   const handleManualCapture = useCallback(async (imageData: string) => {
     const tempBarcode = `manual_${Date.now()}`;
+    trace('ui', 'manual_capture', { tempBarcode, image_chars: imageData.length });
 
     addErrorLog(`Manual capture: Image captured (${Math.round(imageData.length / 1024)}KB)`);
 
@@ -738,6 +744,7 @@ export default function ScanPage({
   // ── Force Confirm ─────────────────────────────────────────────
   const handleForceConfirmEntry = useCallback(async (entry: ManualEntryData) => {
     const tempBarcode = `force_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    trace('ui', 'force_confirm_entry', { tempBarcode, item_name: entry.item_name, weight: entry.weight, expiry: entry.expiry });
 
     let imageUrl = '';
     let publicId = '';
@@ -778,6 +785,7 @@ export default function ScanPage({
     barcode: string,
     resolved: { item_name?: string; weight?: number; expiry?: string }
   ) => {
+    trace('ui', 'issue_resolve', { barcode, resolved });
     resolvedBarcodesRef.current.add(barcode);
 
     try {
@@ -826,6 +834,7 @@ export default function ScanPage({
 
   // ── Final Confirm ─────────────────────────────────────────────
   const handleConfirm = useCallback(async () => {
+    trace('ui', 'confirm_session');
     setPhase('confirming');
     try {
       const res = await fetch('/api/complete', {

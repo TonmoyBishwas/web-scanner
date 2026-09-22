@@ -19,6 +19,7 @@ const MAX_LOGS = 300;
 
 const buffer: LogEntry[] = [];
 const listeners = new Set<() => void>();
+const entryListeners = new Set<(entry: LogEntry) => void>();
 let installed = false;
 
 function notify(): void {
@@ -32,9 +33,29 @@ function notify(): void {
 }
 
 function push(level: LogLevel, msg: string): void {
-  buffer.push({ ts: Date.now(), level, msg });
+  const entry: LogEntry = { ts: Date.now(), level, msg };
+  buffer.push(entry);
   if (buffer.length > MAX_LOGS) buffer.shift();
+  for (const fn of entryListeners) {
+    try {
+      fn(entry);
+    } catch {
+      /* never let a listener crash the capture */
+    }
+  }
   notify();
+}
+
+/**
+ * Per-entry listener (the scanner trace forwards every line to the server
+ * for traced users). Unlike `subscribeDebugLogs` it receives the entry
+ * itself, so it keeps working when the ring buffer has wrapped.
+ */
+export function onDebugLogEntry(fn: (entry: LogEntry) => void): () => void {
+  entryListeners.add(fn);
+  return () => {
+    entryListeners.delete(fn);
+  };
 }
 
 function formatArgs(args: unknown[]): string {
