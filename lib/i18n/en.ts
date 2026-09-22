@@ -221,11 +221,6 @@ export const en = {
   'palletVerify.doneScanning': 'Done scanning? Enter the pallet total',
   'palletVerify.uniformPlaceholder': 'Enter count',
   'palletVerify.uniformSet': 'Set',
-  'palletVerify.labelRepeatTitle': '{name}: every box of this product carries the same barcode. Scan each box one by one?',
-  'palletVerify.labelRepeatTitleLoose': '{name}: every box of this product carries the same barcode. Scan each loose box one by one?',
-  'palletVerify.labelRepeatHint': 'Every scan adds one box with its own photo. Move the camera to the next box after each green tick — a box that stays in view is never counted twice.',
-  'palletVerify.labelRepeatAllow': 'Yes — I will scan every box',
-  'palletVerify.labelRepeatDecline': 'No — each box has its own barcode',
   'palletVerify.confirmPalletBtn': 'Confirm Pallet {current}',
 
   'palletVerify.scanMoreToContinue': 'Scan {count} more boxes to continue',
@@ -841,6 +836,21 @@ export const en = {
   'carton.error': 'Could not create the stickers. Try again.',
   'carton.sessionExpired': 'This session has expired. Ask for a fresh link.',
   'carton.printedNote': 'Print the sticker, stick it on the carton, then scan it like any other box.',
+
+  // "All boxes identical → print labels" (pallet-verify row action)
+  'identical.action': 'All boxes identical',
+  'identical.title': 'All boxes identical',
+  'identical.intro': 'Every carton of this product carries the same barcode, name, weight and dates. Each one gets its own printed sticker and is booked as its own box — no more scanning for this product.',
+  'identical.quantity': 'How many cartons of this product',
+  'identical.quantityHint': 'Count the cartons on this pallet. Each one gets a unique barcode.',
+  'identical.weightInvalid': 'Enter the weight of one carton in kg.',
+  'identical.printedNote': 'Print the stickers and put one on each carton. Outbound reads the printed sticker.',
+  'identical.create': 'Create {count} labels',
+  'identical.createdTitle': '{count} boxes booked with their own barcodes',
+  'identical.createdHint': '{name}: print the stickers now, or later from Labels. Put one sticker on each carton.',
+  'identical.print': 'Print {count} labels',
+  'identical.added': '{count} boxes added — print the stickers',
+  'identical.error': 'Could not create the labels. Try again.',
 
   // ── מדבקות / Labels — print queue for the created stickers ──
   'labels.title': 'Labels',

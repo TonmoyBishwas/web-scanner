@@ -21,6 +21,9 @@ interface ActiveScanCardProps {
   /** Failed-OCR only: re-run OCR / look at the captured frame. */
   onRetry?: () => void;
   onViewImage?: () => void;
+  /** "All boxes identical" — the worker declares every carton of this product
+   *  the same and mints a printed label per carton (pallet-verify only). */
+  onIdentical?: () => void;
   tone?: 'brand' | 'warn';
 }
 
@@ -35,7 +38,7 @@ interface ActiveScanCardProps {
 export function ActiveScanCard({
   index, name, value, unit, barcode, expiry,
   status = 'done', expanded, onToggleExpand,
-  onEdit, onDelete, onRetry, onViewImage, tone = 'brand',
+  onEdit, onDelete, onRetry, onViewImage, onIdentical, tone = 'brand',
 }: ActiveScanCardProps) {
   const tr = useT();
   const borderColor = status === 'failed' ? '#ef4444' : tone === 'warn' ? '#f59e0b' : '#13a4ec';
@@ -121,6 +124,15 @@ export function ActiveScanCard({
             >
               <MI name="edit" size={15} />
               {tr('terminal.edit')}
+            </button>
+          )}
+          {onIdentical && (
+            <button
+              onClick={onIdentical}
+              className="flex items-center gap-[4px] bg-white/6 border border-white/18 text-ink-inverse rounded-[9px] px-[10px] py-[5px] text-[11px] font-extrabold"
+            >
+              <MI name="content_copy" size={15} />
+              {tr('identical.action')}
             </button>
           )}
         </div>

@@ -99,6 +99,9 @@ export function CartonCreator({ token, items, onBack, onCreated }: CartonCreator
     print_count: 0,
     printed_at: null,
     created_at: new Date().toISOString(),
+    origin: 'new_carton',
+    source_barcode: null,
+    pallet_number: null,
   };
 
   async function handleCreate() {
