@@ -17,17 +17,17 @@
  * they corrupt the Airtable Pallet Items rows downstream.
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { complete, usableModels } from '@/lib/llm-client';
 
-// Same OpenRouter fallback chain the bot uses for OCR.
+// Same fallback chain the bot uses for OCR. Provider (Gemini direct /
+// OpenRouter) is chosen by LLM_PROVIDER — see lib/llm-client.ts.
 const MODELS = [
   'google/gemini-3.1-flash-lite',
-  'google/gemini-2.5-flash-lite',
+  'google/gemini-3.5-flash-lite',
   'google/gemini-3-flash-preview',
   'anthropic/claude-haiku-4.5',
-  'x-ai/grok-4.1-fast',
+  'x-ai/grok-4.3', // grok-4.1-fast was retired on OpenRouter (404, 2026-09-22)
 ];
-
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 interface IncomingGroup {
   key: string;
@@ -116,41 +116,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ suggested_merges: [] });
     }
 
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) {
-      console.warn('[consolidate-items] OPENROUTER_API_KEY unset; skipping');
+    const models = usableModels(MODELS);
+    if (models.length === 0) {
+      console.warn('[consolidate-items] no LLM key set (GEMINI_API_KEY / OPENROUTER_API_KEY); skipping');
       return NextResponse.json({ suggested_merges: [] });
     }
 
     const prompt = buildPrompt(groups);
     const validKeys = new Set(groups.map((g) => g.key));
 
-    for (const model of MODELS) {
+    for (const model of models) {
       try {
-        const resp = await fetch(OPENROUTER_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
-            'HTTP-Referer': 'https://web-scanner.warehouse.local',
-            'X-Title': 'Hebrew Warehouse Scanner',
-          },
-          body: JSON.stringify({
-            model,
-            messages: [{ role: 'user', content: prompt }],
-          }),
-          // 12s budget per model — this is a background call and the worker
-          // is still scanning. If every model times out, banner just won't
-          // appear; Layer A grouping still works.
-          signal: AbortSignal.timeout(12_000),
+        // 12s budget per model — this is a background call and the worker
+        // is still scanning. If every model times out, banner just won't
+        // appear; Layer A grouping still works.
+        let content = await complete(model, [{ role: 'user', content: prompt }], {
+          timeoutMs: 12_000,
         });
-
-        if (!resp.ok) {
-          console.warn(`[consolidate-items] model ${model} HTTP ${resp.status}`);
-          continue;
-        }
-        const data = await resp.json();
-        let content = (data.choices?.[0]?.message?.content ?? '').trim();
         // Models occasionally wrap JSON in ```json fences despite the prompt.
         if (content.startsWith('```')) {
           content = content.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '').trim();
