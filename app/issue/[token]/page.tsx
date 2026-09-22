@@ -25,6 +25,7 @@ import { PalletsBrowser } from '@/components/terminal/PalletsBrowser';
 import { LabelsBrowser } from '@/components/terminal/LabelsBrowser';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
+import { startScannerTrace, trace } from '@/lib/scanner-trace';
 
 type IssuePhase =
   | 'loading'
@@ -43,6 +44,8 @@ export default function IssuePage({
 
   const [session, setSession] = useState<ScanSession | null>(null);
   const [phase, setPhase] = useState<IssuePhase>('loading');
+  startScannerTrace({ token, page: 'issue' });
+  useEffect(() => { trace('phase', phase); }, [phase]);
   const language = (session?.language as Language) || 'English';
   useLangDir(language);
   const [error, setError] = useState<string | null>(null);
@@ -152,6 +155,7 @@ export default function IssuePage({
   // Handle barcode detected from scanner
   const handleBarcodeDetected = useCallback(
     async (barcode: string, _data: ParsedBarcode) => {
+      trace('ui', 'scan_detected', { barcode, phase, busy: lookupInProgress.current, duplicate: scannedBarcodes.has(barcode) });
       if (phase !== 'scanning' || lookupInProgress.current) return;
 
       // Check local dedup
@@ -202,6 +206,7 @@ export default function IssuePage({
 
   // Confirm issue
   const handleConfirmIssue = useCallback(async () => {
+    trace('ui', 'confirm_issue', { box: currentBox, busy: isConfirming });
     if (!currentBox || isConfirming) return;
 
     setIsConfirming(true);
@@ -284,12 +289,14 @@ export default function IssuePage({
 
   // Cancel box detail
   const handleCancelDetail = useCallback(() => {
+    trace('ui', 'cancel_detail');
     setCurrentBox(null);
     setPhase('scanning');
   }, []);
 
   // Complete session
   const handleComplete = useCallback(async () => {
+    trace('ui', 'complete_issue', { issued: issuedBoxes.length });
     if (issuedBoxes.length === 0) {
       showToast(t(language, 'issue.noBoxesYet'), 'error');
       return;

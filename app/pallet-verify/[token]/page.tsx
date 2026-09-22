@@ -33,6 +33,7 @@ import { expandIdenticalBoxes, type IdenticalForm } from '@/lib/identical-boxes'
 import type { CartonLabel } from '@/types';
 import SplitJobScreen, { SPLIT_CLAIM_ERROR_KEYS } from '@/components/terminal/SplitJobScreen';
 import { installDebugLogCapture } from '@/lib/debug-log';
+import { startScannerTrace, trace } from '@/lib/scanner-trace';
 import { LanguageContext, useLangDir, t } from '@/lib/i18n';
 import type { Language, MultiPalletSession, MultiPalletBoxScan, ParsedBarcode } from '@/types';
 import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
@@ -267,6 +268,9 @@ export default function PalletVerifyPage({
   const workerChatId = typeof window !== 'undefined'
     ? new URLSearchParams(window.location.search).get('w') ?? ''
     : '';
+  // Scanner trace (debugging trail, per-user opt-in; see lib/scanner-trace.ts).
+  // Idempotent per page load; must precede the session fetch below.
+  startScannerTrace({ token, page: 'pallet-verify', workerChatId });
 
   const [phase, setPhase] = useState<Phase>('loading');
   const [session, setSession] = useState<MultiPalletSession | null>(null);
@@ -292,6 +296,10 @@ export default function PalletVerifyPage({
   useEffect(() => {
     hydrateSettings();
   }, [hydrateSettings]);
+
+  useEffect(() => {
+    trace('phase', phase, { pallet: currentPallet });
+  }, [phase, currentPallet]);
 
   // SmartScanner hands us a fn to flash its red "already scanned" indicator.
   // Used when a manually-captured box is rejected as a duplicate after OCR.
@@ -613,6 +621,7 @@ export default function PalletVerifyPage({
             setCurrentPallet(mine.n);
             const cached = loadPalletScans<PalletScanSnapshot>(token, mine.n);
             if (cached?.scannedBoxes?.length) {
+              trace('ui', 'restored_from_cache', { pallet: mine.n, boxes: cached.scannedBoxes.length, confirmedBoxCount: cached.confirmedBoxCount, forcedMix: !!cached.forcedMix });
               setScannedBoxes(cached.scannedBoxes);
               setUniformGroups(new Map(cached.uniformGroups || []));
               setAcceptedMerges(new Map(cached.acceptedMerges || []));
@@ -629,6 +638,7 @@ export default function PalletVerifyPage({
             // pinned by the manager at plan time, or claimed before a reload).
             const cachedLoose = loadLooseScans<LooseScanSnapshot>(token);
             if (cachedLoose?.looseBoxes?.length) {
+      trace('ui', 'restored_loose_from_cache', { boxes: cachedLoose.looseBoxes.length });
               setLooseBoxes(cachedLoose.looseBoxes);
               cachedLoose.looseBoxes.forEach((b) => b.barcode && looseProcessedRef.current.add(b.barcode));
             }
@@ -644,6 +654,7 @@ export default function PalletVerifyPage({
         if (data.current_pallet > data.pallet_count && (data.loose_box_count || 0) > 0) {
           const cachedLoose = loadLooseScans<LooseScanSnapshot>(token);
           if (cachedLoose?.looseBoxes?.length) {
+      trace('ui', 'restored_loose_from_cache', { boxes: cachedLoose.looseBoxes.length });
             setLooseBoxes(cachedLoose.looseBoxes);
             cachedLoose.looseBoxes.forEach((b) => b.barcode && looseProcessedRef.current.add(b.barcode));
           }
@@ -657,6 +668,7 @@ export default function PalletVerifyPage({
         // the individual boxes live only here.
         const cached = loadPalletScans<PalletScanSnapshot>(token, data.current_pallet);
         if (cached?.scannedBoxes?.length) {
+          trace('ui', 'restored_from_cache', { pallet: data.current_pallet, boxes: cached.scannedBoxes.length, confirmedBoxCount: cached.confirmedBoxCount, forcedMix: !!cached.forcedMix });
           setScannedBoxes(cached.scannedBoxes);
           setUniformGroups(new Map(cached.uniformGroups || []));
           setAcceptedMerges(new Map(cached.acceptedMerges || []));
@@ -718,6 +730,7 @@ export default function PalletVerifyPage({
     if (session.loose?.owner === workerChatId && session.loose?.status === 'claimed') {
       const cachedLoose = loadLooseScans<LooseScanSnapshot>(token);
       if (cachedLoose?.looseBoxes?.length) {
+      trace('ui', 'restored_loose_from_cache', { boxes: cachedLoose.looseBoxes.length });
         setLooseBoxes(cachedLoose.looseBoxes);
         cachedLoose.looseBoxes.forEach((b) => b.barcode && looseProcessedRef.current.add(b.barcode));
       }
@@ -734,6 +747,7 @@ export default function PalletVerifyPage({
       // A read that cannot be a carton barcode (a fragment, a failed check
       // digit) is a misread: show the digits, store nothing (SCN-13).
       const verdict = classifyRead(read);
+      trace('ui', 'scan_detected', { barcode: read, pallet: currentPalletRef.current, ok: verdict.ok, reason: verdict.ok ? undefined : verdict.reason, duplicate: processedRef.current.has(read), has_image: !!imageData });
       if (!verdict.ok) {
         dupFlashRef.current?.();
         scanDuplicateFeedback();
@@ -814,6 +828,7 @@ export default function PalletVerifyPage({
 
   const handleManualCapture = useCallback((imageData: string) => {
     const provisional = `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    trace('ui', 'manual_capture', { provisional, pallet: currentPalletRef.current, image_chars: imageData.length });
     const box: BoxScan = {
       barcode: provisional,
       sku: provisional,
@@ -834,6 +849,7 @@ export default function PalletVerifyPage({
   // ── Retry / Rescan helpers (pallet phase) ──
 
   function retryPalletOcr(barcode: string) {
+    trace('ui', 'retry_ocr', { barcode });
     setScannedBoxes((prev) => {
       const target = prev.find((b) => b.barcode === barcode);
       if (!target?.image_data) return prev;
@@ -849,6 +865,7 @@ export default function PalletVerifyPage({
   }
 
   function rescanPalletBox(barcode: string) {
+    trace('ui', 'delete_box', { barcode, pallet: currentPallet });
     setScannedBoxes((prev) => {
       const target = prev.find((b) => b.barcode === barcode);
       const filtered = prev.filter((b) => b.barcode !== barcode);
@@ -1174,6 +1191,7 @@ export default function PalletVerifyPage({
     (_barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
       const read = _barcode.trim();
       const verdict = classifyRead(read);
+      trace('ui', 'loose_scan_detected', { barcode: read, ok: verdict.ok, reason: verdict.ok ? undefined : verdict.reason, duplicate: looseProcessedRef.current.has(read), has_image: !!imageData });
       if (!verdict.ok) {
         looseDupFlashRef.current?.();
         scanDuplicateFeedback();
@@ -1211,6 +1229,7 @@ export default function PalletVerifyPage({
   // Manual capture for the loose phase — same fallback as the pallet phase.
   const handleLooseManualCapture = useCallback((imageData: string) => {
     const provisional = `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    trace('ui', 'loose_manual_capture', { provisional, image_chars: imageData.length });
     const box: BoxScan = {
       barcode: provisional, sku: provisional, item_name: '', item_name_hebrew: '',
       weight: 0, expiry: '', scanned_at: new Date().toISOString(),
@@ -1224,6 +1243,7 @@ export default function PalletVerifyPage({
   // ── Retry / Rescan helpers (loose phase) ──
 
   function retryLooseOcr(barcode: string) {
+    trace('ui', 'loose_retry_ocr', { barcode });
     setLooseBoxes((prev) => {
       const target = prev.find((b) => b.barcode === barcode);
       if (!target?.image_data) return prev;
@@ -1237,6 +1257,7 @@ export default function PalletVerifyPage({
   }
 
   function rescanLooseBox(barcode: string) {
+    trace('ui', 'loose_delete_box', { barcode });
     setLooseBoxes((prev) => prev.filter((b) => b.barcode !== barcode));
     looseProcessedRef.current.delete(barcode);
   }
@@ -1249,6 +1270,7 @@ export default function PalletVerifyPage({
   // this moment in the new deferred-count flow.
   function handleCompleteAsSingle() {
     const p = pendingUniformPrompt;
+    trace('ui', 'complete_as_single', { pallet: currentPallet, prompt: p });
     if (!p || p.mode !== 'single_or_mix') return;
     setPendingSingleGroup({
       name_key: p.name_key,
@@ -1265,12 +1287,14 @@ export default function PalletVerifyPage({
   // Worker backed out of "Single-item" choice → drop the captured group
   // and let the regular footer count input show (mix path).
   function handleCancelSingleConfirm() {
+    trace('ui', 'cancel_single_confirm', { pallet: currentPallet });
     setPendingSingleGroup(null);
     setBoxCountInput('');
     setPalletCountError(null);
   }
 
   function handleContinueAsMix() {
+    trace('ui', 'continue_as_mix', { pallet: currentPallet, scanned: scannedBoxes.length });
     setForcedMix(true);            // pallet is mix → show pallet-total input, scan all
     setPendingUniformPrompt(null);
   }
@@ -1281,6 +1305,7 @@ export default function PalletVerifyPage({
   // tells handleSaveEdit which collection (scannedBoxes vs looseBoxes) the
   // box lives in — the modal itself is shared between both phases.
   function openEdit(box: BoxScan, isLoose = false) {
+    trace('ui', 'edit_open', { barcode: box.barcode, isLoose, name_he: box.item_name_hebrew, weight: box.weight, expiry: box.expiry });
     setSelectedBarcode(null);
     setMintingBarcode(false);
     setMintFailed(false);
@@ -1316,6 +1341,7 @@ export default function PalletVerifyPage({
   // be scanned again on the way out.
   async function handleCreateBarcode() {
     if (!editForm || mintingBarcode) return;
+    trace('ui', 'create_barcode', { barcode: editForm.barcode, isLoose: editForm.isLoose });
     const nameHe = editForm.name_he.trim();
     const nameEn = editForm.name_en.trim();
     if (!nameHe && !nameEn) {
@@ -1369,6 +1395,7 @@ export default function PalletVerifyPage({
   // a barcode, and that route is impossible for it anyway.
   function handleNoBarcode() {
     if (!editForm) return;
+    trace('ui', 'no_barcode', { barcode: editForm.barcode, isLoose: editForm.isLoose });
     const list = editForm.isLoose ? looseBoxes : scannedBoxes;
     const n = list.findIndex((b) => b.barcode === editForm.barcode) + 1;
     setEditForm({
@@ -1385,6 +1412,7 @@ export default function PalletVerifyPage({
     const expiry = editForm.expiry.trim();
     const batch = editForm.batch.trim();
     const w = parseFloat(editForm.weight);
+    trace('ui', 'edit_save', { barcode, isLoose, name_he, name_en, weight: w, expiry, batch, barcodeInput: editForm.barcodeInput, forcedId: editForm.forcedId, unidentified: editForm.unidentified });
 
     // ── Identity for a manual capture ──
     // `resolvedId` is what this row's barcode BECOMES. For an already-identified
@@ -1558,6 +1586,7 @@ export default function PalletVerifyPage({
     labels: CartonLabel[],
     form: IdenticalForm,
   ) {
+    trace('ui', 'identical_created', { barcode: target.box.barcode, loose: target.loose, labels: labels.length, form });
     const rows: BoxScan[] = expandIdenticalBoxes(
       target.box,
       labels.map((l) => ({ barcode: l.barcode, batch_id: l.batch_id })),
@@ -1874,6 +1903,7 @@ export default function PalletVerifyPage({
   // ── Confirm loose boxes ──
 
   async function handleConfirmLooseBoxes() {
+    trace('ui', 'confirm_loose', { boxes: looseBoxes.length, declared: session?.loose_box_count });
     setPhase('loose_confirming');
     setError(null);
     try {
@@ -1950,6 +1980,7 @@ export default function PalletVerifyPage({
 
   function handlePalletCountSubmit() {
     const count = parseInt(boxCountInput, 10);
+    trace('ui', 'count_submit', { pallet: currentPallet, input: boxCountInput, scanned: scannedBoxes.length });
     if (isNaN(count) || count < 1) {
       setPalletCountError(tr('palletVerify.invalidBoxNumber'));
       return;
@@ -2007,6 +2038,7 @@ export default function PalletVerifyPage({
     palletTypeLabel: 'single' | 'mix',
     boxCount: number,
   ) {
+    trace('ui', 'pallet_completed', { pallet: currentPallet, lpn: data.lpn, type: palletTypeLabel, boxCount, next_pallet: data.next_pallet, all_done: data.all_done });
     setLpn(data.lpn || '');
     setLpnUrl(data.lpn_url || '');
 
@@ -2097,6 +2129,7 @@ export default function PalletVerifyPage({
   // Reset all per-pallet state and start scanning the next pallet. Fired by
   // the swipe on the pallet_done overlay.
   function advanceToNextPallet() {
+    trace('ui', 'next_pallet', { from: currentPallet, to: pendingNextPallet ?? currentPallet + 1 });
     setCurrentPallet(pendingNextPallet ?? currentPallet + 1);
     setPendingNextPallet(null);
     resetPalletUiState();
@@ -2112,6 +2145,7 @@ export default function PalletVerifyPage({
   // SplitJobScreen has no prop for an injected message, so the page's own
   // toast (already rendered alongside it) is what the worker actually sees.
   function handlePalletReleased() {
+    trace('ui', 'pallet_released', { pallet: currentPallet });
     clearPalletScans(token, currentPallet);
     resetPalletUiState();
     showToast(tr('split.palletReleased'), 'report_problem', '#f8a3a3');
@@ -2127,6 +2161,7 @@ export default function PalletVerifyPage({
     boxCount: number;
     groups: Map<string, UniformGroup>;
   }) {
+    trace('ui', 'confirm_pallet', { pallet: currentPallet, scanned: scannedBoxes.length, confirmedBoxCount, override: override ? { boxCount: override.boxCount, groups: override.groups } : undefined, forcedMix, detectedType });
     if (scannedBoxes.length < 2) return;
     setPhase('confirming');
     setError(null);
