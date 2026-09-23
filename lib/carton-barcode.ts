@@ -59,6 +59,33 @@ export function classifyRead(barcode: string): ReadVerdict {
   const d = digitsOf(barcode);
   if (isSupplierPalletLabel(d)) return { ok: false, reason: 'pallet_label' };
   if (d.length < 12) return { ok: false, reason: 'too_short' };
-  if (d.length <= 14 && !gtinCheckDigitValid(d)) return { ok: false, reason: 'checksum' };
+  if (d.length <= 14 && !gtinCheckDigitValid(d) && !isInHouseCode(d)) {
+    return { ok: false, reason: 'checksum' };
+  }
   return { ok: true };
+}
+
+/**
+ * GS1 "restricted circulation" prefixes 20–29 (and 02) are in-house codes:
+ * the supplier numbers them himself and owes nobody a GTIN check digit.
+ * Baladi's carton label `2000090300667` (= "20000" + his item 90300667) has
+ * a check digit of 7 where GS1 arithmetic says 8, and on 2026-09-23 every
+ * one of 70 cartons was refused as a misread — the camera read it right 25
+ * times. A 13-digit code starting with 2 is taken as printed.
+ */
+export function isInHouseCode(digits: string): boolean {
+  return digits.length === 13 && /^(2|02)/.test(digits);
+}
+
+/**
+ * The same checksum-failing digits, confirmed on three SEPARATE captures
+ * (each already three identical frames), are not a camera guess: the label
+ * really prints them. Mechanical gate, per session — the worker never has
+ * to type a number the camera keeps reading.
+ */
+export const REPEATED_READ_ACCEPT_AT = 3;
+export function noteRepeatedRead(counts: Map<string, number>, digits: string): boolean {
+  const n = (counts.get(digits) || 0) + 1;
+  counts.set(digits, n);
+  return n >= REPEATED_READ_ACCEPT_AT;
 }

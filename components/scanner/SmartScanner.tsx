@@ -7,6 +7,9 @@ import { parseIsraeliBarcode } from '@/lib/barcode-parser';
 import { useT } from '@/lib/i18n';
 import { useSettingsStore } from '@/stores/settings-store';
 
+/** Why a read was rejected — decides the label on the red hold. */
+export type RejectKind = 'duplicate' | 'rejected';
+
 interface SmartScannerProps {
   onBarcodeDetected: (barcode: string, data: ParsedBarcode, imageData?: string) => void;
   onManualCapture?: (imageData: string) => void;
@@ -14,7 +17,7 @@ interface SmartScannerProps {
   ocrResults: Map<string, BoxStickerOCR>;
   onError?: (error: string) => void;
   onScannerTypeDetected?: (type: 'native' | 'fallback') => void;
-  onDuplicateFlash?: (triggerFn: () => void) => void;
+  onDuplicateFlash?: (triggerFn: (kind?: RejectKind) => void) => void;
   /**
    * Synchronous "have I already got this one?", asked the instant a barcode is
    * confirmed — BEFORE the ~400ms sharpest-frame capture that runs ahead of
@@ -462,6 +465,10 @@ export function SmartScanner({
     return () => clearTimeout(t);
   }, [captureCount]);
   const [isDuplicate, setIsDuplicate] = useState(false);
+  // Why the parent rejected the read: a duplicate says "already scanned";
+  // a misread (bad check digit, fragment) must NOT — on 2026-09-23 a worker
+  // was told "already scanned" on his first carton with zero counted.
+  const [rejectKind, setRejectKind] = useState<RejectKind>('duplicate');
   const duplicateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /**
@@ -808,7 +815,8 @@ export function SmartScanner({
   // another worker already has. If it lands inside a hold we are currently
   // painting as "saved", correct that hold (and take the box back off the
   // label count) so it can never end on a green "saved" for a rejected box.
-  const triggerRedFlash = useCallback(() => {
+  const triggerRedFlash = useCallback((kind: RejectKind = 'duplicate') => {
+    setRejectKind(kind);
     if (inCooldownRef.current && outcomeRef.current === 'saved') {
       outcomeRef.current = 'duplicate';
       setScanOutcome('duplicate');
@@ -1257,6 +1265,7 @@ export function SmartScanner({
           const isDup = isDupRef.current?.(barcode) ?? false;
           outcomeRef.current = isDup ? 'duplicate' : 'saved';
           setScanOutcome(outcomeRef.current);
+          if (isDup) setRejectKind('duplicate');
           if (!isDup && holdClaimRef.current === 'saved') {
             savedCountRef.current += 1;
             setSavedCount(savedCountRef.current);
@@ -1582,7 +1591,7 @@ export function SmartScanner({
                             already-issued or a network error — the toast says
                             which, so the frame stays neutral. */}
                         {holdClaim === 'saved'
-                          ? tr('scanner.alreadyScanned')
+                          ? tr(rejectKind === 'duplicate' ? 'scanner.alreadyScanned' : 'scanner.badRead')
                           : tr('scanner.scanRejected')}
                       </span>
                     </>
@@ -1608,7 +1617,7 @@ export function SmartScanner({
                   style={{ background: 'rgba(239,68,68,.45)', boxShadow: '0 0 0 4px rgba(239,68,68,.35)' }}
                 />
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="px-4 py-1.5 rounded-full bg-danger text-white text-base font-black uppercase shadow-lg">{tr('scanner.alreadyScanned')}</span>
+                  <span className="px-4 py-1.5 rounded-full bg-danger text-white text-base font-black uppercase shadow-lg">{tr(rejectKind === 'duplicate' ? 'scanner.alreadyScanned' : 'scanner.badRead')}</span>
                 </div>
               </>
             )}

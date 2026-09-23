@@ -40,7 +40,7 @@ import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
 import { matchInvoiceItem } from '@/lib/invoice-match';
 import { isSplitSession } from '@/lib/session-mode';
 import { findDuplicateOwner } from '@/lib/duplicate-guard';
-import { classifyRead } from '@/lib/carton-barcode';
+import { classifyRead, noteRepeatedRead } from '@/lib/carton-barcode';
 import { useBackClose } from '@/lib/use-back-close';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
@@ -322,8 +322,11 @@ export default function PalletVerifyPage({
 
   // SmartScanner hands us a fn to flash its red "already scanned" indicator.
   // Used when a manually-captured box is rejected as a duplicate after OCR.
-  const dupFlashRef = useRef<(() => void) | null>(null);
-  const looseDupFlashRef = useRef<(() => void) | null>(null);
+  const dupFlashRef = useRef<((kind?: 'duplicate' | 'rejected') => void) | null>(null);
+  // Checksum-refused digits seen so far (per page load): the third identical
+  // capture is accepted as printed (lib/carton-barcode.ts).
+  const refusedReadsRef = useRef<Map<string, number>>(new Map());
+  const looseDupFlashRef = useRef<((kind?: 'duplicate' | 'rejected') => void) | null>(null);
 
   // Language flows from the bot via the session payload. Set the
   // <html dir="rtl"> + lang attribute so Tailwind logical utilities
@@ -779,12 +782,17 @@ export default function PalletVerifyPage({
           showToast(t(sessionRef.current?.language || 'English', 'terminal.palletLabelRead', { digits: read }), 'local_shipping');
           return;
         }
-        dupFlashRef.current?.();
-        scanDuplicateFeedback();
-        setError(t(sessionRef.current?.language || 'English',
-          verdict.reason === 'too_short' ? 'terminal.barcodeTooShort' : 'terminal.barcodeMisread',
-          { digits: read }));
-        return;
+        const acceptAnyway = verdict.reason === 'checksum' && noteRepeatedRead(refusedReadsRef.current, read);
+        if (!acceptAnyway) {
+          dupFlashRef.current?.('rejected');
+          scanDuplicateFeedback();
+          setError(t(sessionRef.current?.language || 'English',
+            verdict.reason === 'too_short' ? 'terminal.barcodeTooShort' : 'terminal.barcodeMisread',
+            { digits: read }));
+          return;
+        }
+        trace('ui', 'scan_accepted_as_printed', { barcode: read, pallet: currentPalletRef.current });
+        showToast(t(sessionRef.current?.language || 'English', 'terminal.barcodeAcceptedAsPrinted', { digits: read }), 'check');
       }
       const barcode = read;
       if (processedRef.current.has(read)) {
@@ -1233,12 +1241,17 @@ export default function PalletVerifyPage({
           showToast(t(sessionRef.current?.language || 'English', 'terminal.palletLabelRead', { digits: read }), 'local_shipping');
           return;
         }
-        looseDupFlashRef.current?.();
-        scanDuplicateFeedback();
-        setError(t(sessionRef.current?.language || 'English',
-          verdict.reason === 'too_short' ? 'terminal.barcodeTooShort' : 'terminal.barcodeMisread',
-          { digits: read }));
-        return;
+        const acceptAnyway = verdict.reason === 'checksum' && noteRepeatedRead(refusedReadsRef.current, read);
+        if (!acceptAnyway) {
+          looseDupFlashRef.current?.('rejected');
+          scanDuplicateFeedback();
+          setError(t(sessionRef.current?.language || 'English',
+            verdict.reason === 'too_short' ? 'terminal.barcodeTooShort' : 'terminal.barcodeMisread',
+            { digits: read }));
+          return;
+        }
+        trace('ui', 'loose_scan_accepted_as_printed', { barcode: read });
+        showToast(t(sessionRef.current?.language || 'English', 'terminal.barcodeAcceptedAsPrinted', { digits: read }), 'check');
       }
       const barcode = read;
       if (looseProcessedRef.current.has(read)) {
