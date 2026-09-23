@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyRead, digitsOf, gtinCheckDigitValid } from './carton-barcode';
+import { classifyRead, digitsOf, gtinCheckDigitValid, isInHouseCode, noteRepeatedRead } from './carton-barcode';
 
 describe('carton-barcode', () => {
   it('digitsOf strips everything but digits', () => {
@@ -26,5 +26,22 @@ describe('carton-barcode', () => {
     expect(classifyRead('7290003570867015320158115072027')).toEqual({ ok: true });
     // A warehouse-minted label (28 + YYMMDD + 8 digits) is 16 digits: accepted.
     expect(classifyRead('2826091622630531')).toEqual({ ok: true });
+  });
+
+  it('an in-house (prefix 2) 13-digit label is taken as printed (IN264175143, 2026-09-23)', () => {
+    expect(gtinCheckDigitValid('2000090300667')).toBe(false); // GS1 says 8, Baladi prints 7
+    expect(isInHouseCode('2000090300667')).toBe(true);
+    expect(classifyRead('2000090300667')).toEqual({ ok: true });
+    // A 729… (Israel GS1) misread is still refused.
+    expect(isInHouseCode('7290001456825')).toBe(false);
+    expect(classifyRead('7290001456825')).toEqual({ ok: false, reason: 'checksum' });
+  });
+
+  it('the same refused digits on a third capture are accepted', () => {
+    const counts = new Map<string, number>();
+    expect(noteRepeatedRead(counts, '7290001456825')).toBe(false);
+    expect(noteRepeatedRead(counts, '7290001456825')).toBe(false);
+    expect(noteRepeatedRead(counts, '7290001456825')).toBe(true);
+    expect(noteRepeatedRead(counts, '7290001456826')).toBe(false);
   });
 });
