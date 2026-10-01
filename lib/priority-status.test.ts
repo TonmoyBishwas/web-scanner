@@ -133,6 +133,22 @@ describe('derivePriorityStatus — precedence', () => {
     expect(derivePriorityStatus(input({ outbox: liveRow({ status: 'expired' }) })).state).toBe('expired');
   });
 
+  it('unconfirmed (Make answered "Accepted" / timed out / 5xx) → unconfirmed, not unknown', () => {
+    const row = liveRow({
+      status: 'unconfirmed', sent_at: minutesAgo(3), status_code: 200, response_body: 'Accepted',
+    });
+    expect(derivePriorityStatus(input({ outbox: row })).state).toBe('unconfirmed');
+    // It was sent: switching the push off or the delivery moving on does not hide that.
+    expect(derivePriorityStatus(input({ outbox: row, config: { on: false } })).state).toBe('unconfirmed');
+    expect(derivePriorityStatus(input({ outbox: row, deliveryStatus: 'In Progress' })).state).toBe('unconfirmed');
+  });
+
+  it('unconfirmed, then the scenario\'s write-back lands → received', () => {
+    const row = liveRow({ status: 'unconfirmed', sent_at: minutesAgo(20) });
+    expect(derivePriorityStatus(input({ outbox: row, receipts: [gr()] })))
+      .toEqual({ state: 'received', docno: 'GR26000040' });
+  });
+
   it('waiting: unmapped items carry their codes', () => {
     const r = derivePriorityStatus(input({
       outbox: liveRow({ status: 'waiting', not_ready_reason: 'items_unmapped', unmapped_codes: ['819987', '880012'] }),
@@ -270,7 +286,8 @@ describe('polling', () => {
     for (const s of ['received', 'cancelled', 'already', 'failed', 'expired', 'test', 'off'] as const) {
       expect(isFinalPriorityState(s)).toBe(true);
     }
-    for (const s of ['checking', 'closing', 'sending', 'awaiting', 'waiting', 'waitingPo', 'held', 'unknown'] as const) {
+    // unconfirmed keeps polling: a late reply or the write-back can still confirm it.
+    for (const s of ['checking', 'closing', 'sending', 'awaiting', 'unconfirmed', 'waiting', 'waitingPo', 'held', 'unknown'] as const) {
       expect(isFinalPriorityState(s)).toBe(false);
     }
   });

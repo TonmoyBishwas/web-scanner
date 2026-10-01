@@ -619,6 +619,7 @@ export const en = {
   'priority.closing': 'Closing the delivery — then it goes to Priority automatically',
   'priority.sending': 'Sending to Priority automatically…',
   'priority.awaiting': 'Sent — waiting for Priority to confirm',
+  'priority.unconfirmed': 'Sent, but no confirmation from Priority — ask the office to check',
   'priority.received': 'In Priority as draft {docno}',
   'priority.receivedFinal': 'In Priority, confirmed: {docno}',
   'priority.cancelled': 'Receipt {docno} was cancelled in Priority',

@@ -15,10 +15,15 @@
  * Written against BOTH outbox schemas:
  *   - live today: statuses queued / sent / delivered / failed (+ skipped from
  *     the Test-user gate), no readiness columns, config = url + enabled only;
- *   - after docs/migrations/2026-10-01-priority-push-autofire.sql: adds the
- *     statuses waiting / already_in_priority / expired, the outbox columns
- *     not_ready_reason / unmapped_codes / released_at, and the config columns
- *     enabled_since / categories / category_since / po_grace_minutes.
+ *   - after docs/migrations/2026-10-01-priority-push-autofire.sql, whose full
+ *     status set is queued, waiting, sent, delivered, failed, unconfirmed,
+ *     skipped, already_in_priority, expired: it adds waiting / unconfirmed /
+ *     already_in_priority / expired, the outbox columns not_ready_reason /
+ *     unmapped_codes / released_at, and the config columns enabled_since /
+ *     categories / category_since / po_grace_minutes. 'unconfirmed' = sent,
+ *     but Make never confirmed it (its default "Accepted", a 5xx, a 120 s
+ *     timeout, a lost reply): a draft MAY exist, nothing re-sends it, and it
+ *     waits for a person to check in Priority.
  * A column that does not exist arrives as `undefined` (the route selects
  * `*`), and the check that needs it is skipped rather than guessed.
  */
@@ -42,6 +47,10 @@ export type PriorityState =
   | 'sending'
   /** Make accepted it a while ago; Priority has not confirmed yet. */
   | 'awaiting'
+  /** Sent, but Make never confirmed it — a draft MAY exist. Not re-sent; the
+   *  office checks in Priority. The scenario's write-back can still turn it
+   *  into received, so this is not final. */
+  | 'unconfirmed'
   /** Priority has the goods receipt (`docno`). */
   | 'received'
   /** The Priority goods receipt was cancelled in Priority. */
@@ -219,8 +228,9 @@ function queued(input: PriorityStatusInput, outbox: Record<string, unknown>): Pr
 /**
  * The one state to show. First match wins:
  *   1. Priority has a receipt for it (beats any outbox status, even failed).
- *   2. Outbox end states: already_in_priority, skipped (Test user, else
- *      held), failed, expired, waiting.
+ *   2. Outbox states that stand whatever the config or delivery now say:
+ *      already_in_priority, skipped (Test user, else held), failed,
+ *      unconfirmed, expired, waiting.
  *   3. No outbox row and a Test user → test.
  *   4. Push switched off → off.
  *   5. No delivery row → unknown; still In Progress → closing.
@@ -252,6 +262,8 @@ export function derivePriorityStatus(input: PriorityStatusInput): PriorityStatus
           : { state: 'held' };
       case 'failed':
         return { state: 'failed' };
+      case 'unconfirmed':
+        return { state: 'unconfirmed' };
       case 'expired':
         return { state: 'expired' };
       case 'waiting':

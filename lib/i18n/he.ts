@@ -621,6 +621,7 @@ export const he: Record<TranslationKey, string> = {
   'priority.closing': 'סוגר את התעודה — אחר כך היא נשלחת לפריוריטי אוטומטית',
   'priority.sending': 'נשלח לפריוריטי אוטומטית…',
   'priority.awaiting': 'נשלח — ממתין לאישור מפריוריטי',
+  'priority.unconfirmed': 'נשלח, אבל אין אישור מפריוריטי — נא לבקש מהמשרד לבדוק',
   'priority.received': 'נקלט בפריוריטי כטיוטה {docno}',
   'priority.receivedFinal': 'נקלט ואושר בפריוריטי: {docno}',
   'priority.cancelled': 'קבלה {docno} בוטלה בפריוריטי',
