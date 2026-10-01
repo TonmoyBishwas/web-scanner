@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { getRedisClient, sessionStorage } from '@/lib/redis';
 import { t } from '@/lib/i18n/server';
 import type { MultiPalletSession, MultiPalletBoxScan, Language } from '@/types';
@@ -99,34 +99,41 @@ export async function POST(request: NextRequest) {
         isFinal = true;
       }
 
-      // Fire-and-forget to bot webhook
+      // To the bot once the response is out. after() keeps the function
+      // alive until the call is made (a bare fire-and-forget fetch could be
+      // cut off), and it now goes out after the session below is persisted.
+      // When loose boxes are the last piece, this call closes the delivery
+      // and starts the automatic Priority push.
       const boxes: MultiPalletBoxScan[] = scanned_boxes || [];
-      fetch(`${botUrl}/webhook/loose-boxes-complete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          // Lets the bot detect a stale plan the same way pallet-complete
-          // does. Additive only — the bot already tolerates the field being
-          // absent.
-          token: session.token,
-          chat_id: session.chat_id,
-          document_number: session.document_number,
-          receipt_id: session.receipt_id,
-          scanned_boxes: boxes,
-          worker_chat_id: workerChatId,
-          owner_chat_id: session.owner_chat_id ?? session.chat_id,
-          is_final: isFinal,
-          // Loose boxes can be the final piece of a delivery — when they are,
-          // this call is the one that triggers finalization, and in split
-          // mode the bot has no local copy of the completed pallets/roster to
-          // fall back on. Send the same two fields the pallet route sends on
-          // its final call, so the manager's summary and each worker's
-          // close-out aren't empty just because the last thing scanned was
-          // loose boxes instead of a pallet.
-          all_completed_pallets: isFinal ? updatedSession.completed_pallets : undefined,
-          roster_chat_ids: isFinal ? (session.roster ?? []).map((r) => r.chat_id) : undefined,
-        }),
-      }).catch((err) => console.error('[multi-pallet-loose-complete] bot webhook error:', err));
+      const botBody = JSON.stringify({
+        // Lets the bot detect a stale plan the same way pallet-complete
+        // does. Additive only — the bot already tolerates the field being
+        // absent.
+        token: session.token,
+        chat_id: session.chat_id,
+        document_number: session.document_number,
+        receipt_id: session.receipt_id,
+        scanned_boxes: boxes,
+        worker_chat_id: workerChatId,
+        owner_chat_id: session.owner_chat_id ?? session.chat_id,
+        is_final: isFinal,
+        // Loose boxes can be the final piece of a delivery — when they are,
+        // this call is the one that triggers finalization, and in split
+        // mode the bot has no local copy of the completed pallets/roster to
+        // fall back on. Send the same two fields the pallet route sends on
+        // its final call, so the manager's summary and each worker's
+        // close-out aren't empty just because the last thing scanned was
+        // loose boxes instead of a pallet.
+        all_completed_pallets: isFinal ? updatedSession.completed_pallets : undefined,
+        roster_chat_ids: isFinal ? (session.roster ?? []).map((r) => r.chat_id) : undefined,
+      });
+      after(() =>
+        fetch(`${botUrl}/webhook/loose-boxes-complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: botBody,
+        }).catch((err) => console.error('[multi-pallet-loose-complete] bot webhook error:', err)),
+      );
 
       // Persist session (marks completed when this was the final piece)
       await redis.set(sessionKey(token), JSON.stringify(updatedSession), { ex: SESSION_TTL });

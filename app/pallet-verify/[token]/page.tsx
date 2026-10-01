@@ -24,6 +24,7 @@ import { EditPanel } from '@/components/terminal/EditPanel';
 import { findBarcodeConflict, type BarcodeConflict } from '@/lib/barcode-parser';
 import { DoneOverlay } from '@/components/terminal/DoneOverlay';
 import { Toast, useLockToast } from '@/components/terminal/Toast';
+import { PriorityPushStatus } from '@/components/terminal/PriorityPushStatus';
 import { useDrawerHost } from '@/components/terminal/DrawerHost';
 import { PalletsBrowser } from '@/components/terminal/PalletsBrowser';
 import { CartonCreator } from '@/components/terminal/CartonCreator';
@@ -2483,9 +2484,12 @@ export default function PalletVerifyPage({
     const completed = session?.completed_pallets || [];
     const totalBoxes = completed.reduce((s, p) => s + (p.box_count || 0), 0);
     const langSuffix = language === 'Hebrew' ? '&lang=Hebrew' : '';
-    // Terminal design "כל המשטחים נקלטו" card: stats, real per-pallet sticker
-    // links (the design's primary "ניפוק מדבקות" action), and the ERP-finalize
-    // button rendered LOCKED (no scanner→Priority integration exists).
+    // Terminal design "כל המשטחים נקלטו" card: stats, where the automatic
+    // Priority push stands, real per-pallet sticker links (the design's primary
+    // "ניפוק מדבקות" action) and a way back to the carton Labels screen.
+    // Priority needs no step here: the bot closes the delivery at the last LPN
+    // and the DB outbox sends it, so the old "סגירה ושליחה לפריוריטי" button is
+    // gone — PriorityPushStatus is a status row that updates by itself.
     return withLang(
       <div className="h-dvh relative bg-canvas overflow-hidden">
         <div className="absolute inset-0 z-[70] bg-[rgba(5,8,10,.74)] backdrop-blur-[3px] flex items-center justify-center p-[22px]">
@@ -2511,6 +2515,10 @@ export default function PalletVerifyPage({
                 <div className="text-[9px] font-bold text-ink-muted mt-[2px]">{tr('terminal.statCartons')}</div>
               </div>
             </div>
+
+            {/* Right under the stats so it is in view without scrolling on a
+                long pallet list. */}
+            <PriorityPushStatus token={token} />
 
             {/* Real: per-pallet sticker links (design list-row style) */}
             {completed.length > 0 && (
@@ -2540,21 +2548,22 @@ export default function PalletVerifyPage({
               </div>
             )}
 
+            {/* The carton stickers minted with New carton / identical boxes,
+                for a reprint after the job (opens the Labels screen). */}
+            <button
+              type="button"
+              onClick={() => setShowLabels(true)}
+              className="flex items-center justify-center gap-[7px] w-full mt-4 border border-[#35516a] text-[#e8eef2] text-[12px] font-extrabold rounded-[11px] py-[11px]"
+            >
+              <MI name="label" size={17} className="text-brand-weak-ink" />
+              {tr('terminal.reprintLabels')}
+            </button>
+
             {looseCount > 0 && (
               <div className="mt-3 bg-warn-weak border border-warn/30 rounded-[11px] p-3 text-[11px] font-semibold text-warn-weak-ink">
                 {tr('palletVerify.looseBoxesNote', { count: looseCount })}
               </div>
             )}
-
-            {/* Locked: ERP finalize (design's "סגירה ושליחה לפריוריטי") */}
-            <button
-              onClick={showLockToast}
-              className="flex items-center justify-center gap-[7px] w-full mt-4 border border-[#35516a] text-[#e8eef2] text-[12px] font-extrabold rounded-[11px] py-[11px] opacity-60"
-            >
-              <MI name="lock" size={15} style={{ color: '#f6b45a' }} />
-              <MI name="cloud_sync" size={17} className="text-brand-weak-ink" />
-              {tr('terminal.sendToPriority')}
-            </button>
 
             <p className="text-[10px] text-ink-muted text-center mt-3">
               {tr('palletVerify.expiryNote')}
@@ -2562,6 +2571,7 @@ export default function PalletVerifyPage({
           </div>
         </div>
         <Toast toast={toast} />
+        {cartonOverlays}
         {debugPanel}
       </div>
     );

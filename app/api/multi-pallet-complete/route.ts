@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { getRedisClient, sessionStorage } from '@/lib/redis';
 import { t } from '@/lib/i18n/server';
 import type { MultiPalletSession, MultiPalletBoxScan, Language } from '@/types';
@@ -290,11 +290,18 @@ export async function POST(request: NextRequest) {
 
       const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
       if (botUrl) {
-        fetch(`${botUrl}/webhook/pallet-complete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(nmPayload),
-        }).catch((err) => console.error('[multi-pallet-complete] Bot webhook (non_meat) failed:', err));
+        // after(): Vercel keeps the function alive until the bot has the
+        // call. A bare fire-and-forget fetch could be cut off when the
+        // response returned — and the last pallet's call is the one that
+        // closes the delivery and starts the Priority push.
+        const botBody = JSON.stringify(nmPayload); // serialized now, sent after the response
+        after(() =>
+          fetch(`${botUrl}/webhook/pallet-complete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: botBody,
+          }).catch((err) => console.error('[multi-pallet-complete] Bot webhook (non_meat) failed:', err)),
+        );
       }
 
       // Accumulate committed cartons per item so a later pallet pre-fills the
@@ -470,11 +477,15 @@ export async function POST(request: NextRequest) {
 
       const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
       if (botUrl) {
-        fetch(`${botUrl}/webhook/pallet-complete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(mPayload),
-        }).catch((err) => console.error('[multi-pallet-complete] Bot webhook (manual) failed:', err));
+        // after(): see the non-meat branch — the call must not be lost.
+        const botBody = JSON.stringify(mPayload); // serialized now, sent after the response
+        after(() =>
+          fetch(`${botUrl}/webhook/pallet-complete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: botBody,
+          }).catch((err) => console.error('[multi-pallet-complete] Bot webhook (manual) failed:', err)),
+        );
       }
 
       const redisM = getRedisClient();
@@ -717,11 +728,18 @@ export async function POST(request: NextRequest) {
 
     const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
     if (botUrl) {
-      fetch(`${botUrl}/webhook/pallet-complete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(webhookPayload),
-      }).catch((err) => console.error('[multi-pallet-complete] Bot webhook failed:', err));
+      // after(): Vercel keeps the function alive until the bot has the call
+      // instead of freezing it mid-request once the response is out. The
+      // last pallet's call is the one that closes the delivery, and the
+      // automatic Priority push starts from that close.
+      const botBody = JSON.stringify(webhookPayload); // serialized now, sent after the response
+      after(() =>
+        fetch(`${botUrl}/webhook/pallet-complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: botBody,
+        }).catch((err) => console.error('[multi-pallet-complete] Bot webhook failed:', err)),
+      );
     }
 
     const redis = getRedisClient();
