@@ -1156,7 +1156,7 @@ export default function ScanPage({
           onCreated={(count) => {
             // Saved only — back to the scanner; print later from Labels.
             setShowCartonCreator(false);
-            showInfoToast(tr('carton.saved', { count }), 'save');
+            showInfoToast(count === 1 ? tr('carton.savedOne') : tr('carton.saved', { count }), 'save');
           }}
         />
       )}

@@ -420,8 +420,8 @@ export function PalletsBrowser({ token, onBack, initialPalletId }: PalletsBrowse
       {(detail || detailLoading) && (
         <div className="absolute inset-0 z-30 bg-canvas flex flex-col">
           <div className="h-14 flex-none flex items-center gap-2 px-2 border-b border-[#101821] bg-header">
-            <button onClick={closeDetail} className="tap-target flex-none flex items-center justify-center text-[#e8eef2]" aria-label="back">
-              <MI name="arrow_forward_ios" size={22} />
+            <button onClick={closeDetail} className="tap-target flex-none flex items-center justify-center text-[#e8eef2]" aria-label={tr('common.back')}>
+              <MI name="arrow_forward_ios" size={22} flip={language !== 'Hebrew'} />
             </button>
             <h2 className="flex-1 text-[15px] font-extrabold text-ink-inverse m-0">
               {tr('terminal.palletsDetailTitle')}

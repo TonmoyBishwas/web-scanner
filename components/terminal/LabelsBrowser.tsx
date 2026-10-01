@@ -220,7 +220,10 @@ export function LabelsBrowser({
       return;
     }
     trace('ui', 'labels_print_opened', { batch_ids: batchIds, count: totalSelectedLabels, size });
-    showToast(tr('labels.printSent', { count: totalSelectedLabels }), 'print');
+    showToast(
+      totalSelectedLabels === 1 ? tr('labels.printSentOne') : tr('labels.printSent', { count: totalSelectedLabels }),
+      'print',
+    );
     setSelected(new Set());
   }
 
@@ -240,7 +243,10 @@ export function LabelsBrowser({
         return;
       }
       trace('ui', 'labels_marked_printed', { batch_id: batch.batch_id, count: batch.count });
-      showToast(tr('labels.markedPrinted', { count: batch.count }), 'task_alt');
+      showToast(
+        batch.count === 1 ? tr('labels.markedPrintedOne') : tr('labels.markedPrinted', { count: batch.count }),
+        'task_alt',
+      );
       setConfirm(null);
       void load(true);
       onChanged?.();
@@ -462,7 +468,9 @@ export function LabelsBrowser({
                   <div className="border-t border-line">
                     <p className="flex items-start gap-[6px] px-[11px] pt-[9px] text-[11px] font-bold text-ink-inverse leading-[1.45]">
                       <MI name="task_alt" size={15} className="flex-none text-ok-weak-ink mt-[1px]" />
-                      {tr('labels.markPrintedConfirm', { count: batch.count })}
+                      {batch.count === 1
+                        ? tr('labels.markPrintedConfirmOne')
+                        : tr('labels.markPrintedConfirm', { count: batch.count })}
                     </p>
                     <div className="flex items-center">
                       <button
@@ -488,7 +496,11 @@ export function LabelsBrowser({
                       <p className="flex items-start gap-[6px] px-[11px] pt-[9px] text-[11px] font-bold text-danger-weak-ink leading-[1.45]">
                         <MI name="warning" size={15} className="flex-none mt-[1px]" />
                         {onList.place === 'loose'
-                          ? tr('labels.deleteAlsoRemovesLoose', { count: onList.count })
+                          ? onList.count === 1
+                            ? tr('labels.deleteAlsoRemovesLooseOne')
+                            : tr('labels.deleteAlsoRemovesLoose', { count: onList.count })
+                          : onList.count === 1
+                          ? tr('labels.deleteAlsoRemovesOne', { n: onList.place })
                           : tr('labels.deleteAlsoRemoves', { count: onList.count, n: onList.place })}
                       </p>
                     ) : null}
@@ -544,6 +556,8 @@ export function LabelsBrowser({
           <MI name="print" size={20} />
           {totalSelectedLabels === 0
             ? tr('labels.printNone')
+            : totalSelectedLabels === 1
+            ? tr('labels.printOne')
             : tr('labels.print', { count: totalSelectedLabels })}
         </button>
       </div>

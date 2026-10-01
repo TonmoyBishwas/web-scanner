@@ -2134,7 +2134,7 @@ export default function PalletVerifyPage({
             trace('ui', 'labels_saved', {
               origin: 'new_carton', count, batch_id: batchId, pallet: looseCartonPhase ? 0 : currentPallet,
             });
-            showToast(tr('carton.saved', { count }), 'save');
+            showToast(count === 1 ? tr('carton.savedOne') : tr('carton.saved', { count }), 'save');
           }}
         />
       )}
@@ -3279,7 +3279,9 @@ export default function PalletVerifyPage({
             className="flex items-center justify-center gap-[6px] w-full py-3 rounded-[13px] font-black text-[14px] bg-warn text-canvas"
           >
             <MI name="report_problem" size={18} />
-            {tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })}
+            {unresolvedLooseWarnings === 1
+              ? tr('palletVerify.warningsBlockConfirmOne')
+              : tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })}
           </button>
           ) : (
           <button
@@ -3296,7 +3298,10 @@ export default function PalletVerifyPage({
         )}
         {hasUnresolvedLooseWarnings && (
           <p className="flex items-center justify-center gap-1 text-[11px] text-warn-weak-ink text-center mt-1.5">
-            <AlertTriangle className="w-3 h-3 shrink-0" /> {tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })}
+            <AlertTriangle className="w-3 h-3 shrink-0" />{' '}
+            {unresolvedLooseWarnings === 1
+              ? tr('palletVerify.warningsBlockConfirmOne')
+              : tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })}
           </p>
         )}
       </>
@@ -3545,6 +3550,11 @@ export default function PalletVerifyPage({
     || (!anyProcessing && (doneCount >= 4 || forcedMix || !!pendingSingleGroup || scannedBoxes.some((b) => b.minted)))
   );
 
+  // "Done scanning? Enter the pallet total" — the way off a pallet the
+  // scanner can't classify on its own (1–3 read boxes, no total yet).
+  const showDoneScanning =
+    confirmedBoxCount === 0 && !forcedMix && !pendingSingleGroup && doneCount < 4 && doneCount >= 1 && !anyProcessing;
+
   // Footer — priority-ordered modes:
   // (1) single_or_mix uniform prompt (Complete / Continue),
   // (2) deferred pallet box-count input,
@@ -3693,8 +3703,16 @@ export default function PalletVerifyPage({
               className="flex items-center justify-center gap-[6px] w-full py-3 rounded-[13px] font-black text-[14px] bg-warn text-canvas"
             >
               <MI name="report_problem" size={18} />
-              {tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })}
+              {unresolvedWarnings === 1
+                ? tr('palletVerify.warningsBlockConfirmOne')
+                : tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })}
             </button>
+            ) : showDoneScanning ? (
+            // No grey placeholder while "Done scanning?" is offered: it only
+            // repeated the status line ("Enter pallet total below" twice) and
+            // cost ~56px, which on a 568–641px phone pushed the newest card's
+            // actions under the footer even at the tall snap.
+            null
             ) : (
             <button
               disabled
@@ -3703,23 +3721,27 @@ export default function PalletVerifyPage({
               {canConfirm
                 ? tr('palletVerify.confirmPalletBtn', { current: currentPallet })
                 : committed < 2
-                ? tr('palletVerify.scanMoreToContinue', { count: 2 - committed })
+                ? (committed === 1
+                  ? tr('palletVerify.scanMoreToContinueOne')
+                  : tr('palletVerify.scanMoreToContinue', { count: 2 - committed }))
                 : confirmedBoxCount === 0
                 ? // No total declared yet, so nothing is outstanding — the old
                   // fallback rendered a flat "0 more boxes needed" here.
                   tr('palletVerify.setTotalBelow')
-                : tr('palletVerify.boxesNeeded', { count: Math.max(0, confirmedBoxCount - committed) })}
+                : shortCount === 1
+                ? tr('palletVerify.boxesNeededOne')
+                : tr('palletVerify.boxesNeeded', { count: shortCount })}
             </button>
             )
           )}
-          {confirmedBoxCount === 0 && !forcedMix && !pendingSingleGroup && doneCount < 4 && doneCount >= 1 && !anyProcessing && (
+          {showDoneScanning && (
             // The way off a pallet the scanner can't classify on its own —
             // a handful of boxes that aren't all one uniform item. It used to
             // be a thin grey underline that workers missed, so it now carries
             // the same weight as the other footer actions.
             <button
               onClick={() => setForcedMix(true)}
-              className="flex items-center justify-center gap-[6px] w-full mt-2 py-3 rounded-[13px] font-extrabold text-[14px] bg-tile border-2 border-brand text-brand-weak-ink"
+              className={`flex items-center justify-center gap-[6px] w-full ${hasUnresolvedWarnings ? 'mt-2' : ''} py-3 rounded-[13px] font-extrabold text-[14px] bg-tile border-2 border-brand text-brand-weak-ink`}
             >
               <MI name="done_all" size={18} /> {tr('palletVerify.doneScanning')}
             </button>
@@ -3729,6 +3751,8 @@ export default function PalletVerifyPage({
               <AlertTriangle className="w-3 h-3 shrink-0" />{' '}
               {softWarnings
                 ? tr('palletVerify.unreadableSoftNote', { count: unresolvedWarnings })
+                : unresolvedWarnings === 1
+                ? tr('palletVerify.warningsBlockConfirmOne')
                 : tr('palletVerify.warningsBlockConfirm', { count: unresolvedWarnings })}
             </p>
           )}

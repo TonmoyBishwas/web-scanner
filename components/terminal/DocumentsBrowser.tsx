@@ -12,12 +12,12 @@
  * by the page's live session token. Pallet rows hand off to PalletsBrowser.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { MI } from './MI';
 import { ScreenOverlay } from './ScreenOverlay';
 import { Toast, useToast } from './Toast';
 import { PalletsBrowser } from './PalletsBrowser';
-import { useT } from '@/lib/i18n';
+import { LanguageContext, useT } from '@/lib/i18n';
 import { useBackClose } from '@/lib/use-back-close';
 
 interface DocumentCard {
@@ -122,6 +122,7 @@ interface DocumentsBrowserProps {
 
 export function DocumentsBrowser({ token, onBack }: DocumentsBrowserProps) {
   const tr = useT();
+  const isHe = useContext(LanguageContext) === 'Hebrew';
   const { toast, showToast } = useToast();
 
   const [query, setQuery] = useState('');
@@ -413,8 +414,8 @@ export function DocumentsBrowser({ token, onBack }: DocumentsBrowserProps) {
       {(detail || detailLoading) && (
         <div className="absolute inset-0 z-30 bg-canvas flex flex-col">
           <div className="h-14 flex-none flex items-center gap-2 px-2 border-b border-[#101821] bg-header">
-            <button onClick={() => setDetail(null)} className="tap-target flex-none flex items-center justify-center text-[#e8eef2]" aria-label="back">
-              <MI name="arrow_forward_ios" size={22} />
+            <button onClick={() => setDetail(null)} className="tap-target flex-none flex items-center justify-center text-[#e8eef2]" aria-label={tr('common.back')}>
+              <MI name="arrow_forward_ios" size={22} flip={!isHe} />
             </button>
             <h2 className="flex-1 text-[15px] font-extrabold text-ink-inverse m-0">
               {tr('terminal.docsDetailTitle')}

@@ -728,9 +728,10 @@ Evaluated in order (2026-10-01):
    - `!canConfirm && canForceConfirm` → outlined amber **Fewer cartons arrived? Close with N** (`closeShortBtn`) / **Unreadable cartons? Close with N** (`closeUnreadBtn`) → close-short modal;
    - `canConfirm && phase!=='confirming'` → blue **SwipeConfirm** `swipeConfirmPallet` ("Slide to confirm · Pallet {current}");
    - unresolved warnings → a live amber button `warningsBlockConfirm {count}` that opens the first flagged carton's editor;
+   - `showDoneScanning` → nothing here (the escape below is the next step; the grey bar only repeated the status line, and its ~56px pushed the newest card's actions under the footer at the tall snap on a 568–641px phone);
    - otherwise a disabled grey button: `confirmPalletBtn` / `scanMoreToContinue {2−committed}` / `setTotalBelow` / `boxesNeeded {declared−committed}`.
 
-   Plus the **Done scanning? Enter the pallet total** escape (blue, `setForcedMix(true)`) when `confirmedBoxCount===0 && !forcedMix && !pendingSingleGroup && 1<=doneCount<4 && !anyProcessing`, and the warnings note (`unreadableSoftNote` when soft, else `warningsBlockConfirm`).
+   Plus the **Done scanning? Enter the pallet total** escape (blue, `setForcedMix(true)`) when `showDoneScanning` = `confirmedBoxCount===0 && !forcedMix && !pendingSingleGroup && 1<=doneCount<4 && !anyProcessing`, and the warnings note (`unreadableSoftNote` when soft, else `warningsBlockConfirm`). Count strings that can read 1 have a `…One` key (`scanMoreToContinueOne`, `boxesNeededOne`, `warningsBlockConfirmOne`; in Labels `printOne`, `printSentOne`, `markPrintedConfirmOne`, `markedPrintedOne`, `deleteAlsoRemoves(Loose)One`; `carton.savedOne`).
 5. Below everything: **Stickers damaged? Enter counts instead** link when `softWarnings && !manualMode && phase==='scanning'`.
 
 #### 2.4 One pallet, happy paths
