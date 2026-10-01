@@ -42,6 +42,7 @@ import { isMintedLabelBarcode, labelSheetUrl, liveRowPlaces, loadLabelSize, open
 import { blockingLabels, LABELS_NOT_PRINTED } from '@/lib/label-gate';
 import { useUnprintedLabels } from '@/lib/use-unprinted-labels';
 import { toIsoDate, normalizeExpiry } from '@/lib/expiry';
+import { itemOptions } from '@/lib/edit-panel-state';
 import type { CartonLabel } from '@/types';
 import SplitJobScreen, { SPLIT_CLAIM_ERROR_KEYS } from '@/components/terminal/SplitJobScreen';
 import { installDebugLogCapture } from '@/lib/debug-log';
@@ -2212,14 +2213,17 @@ export default function PalletVerifyPage({
   // time, and inside the sheet — under a live camera — the photo could only
   // ever be a thumbnail. Taking the screen also lets the camera pause, so
   // nothing gets scanned into the pallet while they are typing.
+  const editList = editForm ? (editForm.isLoose ? looseBoxes : scannedBoxes) : [];
+  const editIndex = editForm ? editList.findIndex((b) => b.barcode === editForm.barcode) : -1;
   const editPanelNode = editForm ? (
     <EditPanel
-      cartonNumber={(() => {
-        const list = editForm.isLoose ? looseBoxes : scannedBoxes;
-        const i = list.findIndex((b) => b.barcode === editForm.barcode);
-        return i >= 0 ? i + 1 : '—';
-      })()}
-      name={editForm.name_he}
+      // One mount per carton: the panel compares against the values it opened with.
+      key={editForm.barcode}
+      cartonNumber={editIndex >= 0 ? editIndex + 1 : '—'}
+      needsReview={editIndex >= 0 && !!editList[editIndex].needs_review}
+      saveError={error}
+      // An English-only OCR name is still a name — don't show it as missing.
+      name={editForm.name_he || editForm.name_en}
       weight={editForm.weight}
       expiry={editForm.expiry}
       barcode={editForm.forcedId || editForm.barcode}
@@ -2230,17 +2234,19 @@ export default function PalletVerifyPage({
       minting={mintingBarcode}
       onNoBarcode={handleNoBarcode}
       showNoBarcode={mintFailed}
-      itemChips={(session?.ocr_data ?? [])
-        .filter((it) => it.item_name_hebrew || it.item_name_english)
-        .map((it) => ({
-          label: it.item_name_hebrew || it.item_name_english,
-          active: editForm.name_he === it.item_name_hebrew && !!it.item_name_hebrew,
-          onPick: () =>
-            setEditForm({ ...editForm, name_he: it.item_name_hebrew, name_en: it.item_name_english }),
-        }))}
+      itemChips={itemOptions(session?.ocr_data ?? []).map((it) => ({
+        label: it.he || it.en,
+        code: it.codes.join(' · '),
+        active: editForm.name_he
+          ? editForm.name_he === it.he
+          : !!editForm.name_en && editForm.name_en === it.en,
+        onPick: () => setEditForm({ ...editForm, name_he: it.he, name_en: it.en }),
+      }))}
       imageData={editForm.image_data}
       onViewImage={editForm.image_data ? () => setViewingImage(editForm.image_data!) : undefined}
-      onNameChange={(v) => setEditForm({ ...editForm, name_he: v })}
+      // A typed name drops the OCR's English one, which may belong to another
+      // item and would otherwise be sent on as item_name.
+      onNameChange={(v) => setEditForm({ ...editForm, name_he: v, name_en: '' })}
       onWeightChange={(v) => setEditForm({ ...editForm, weight: v })}
       onExpiryChange={(v) => setEditForm({ ...editForm, expiry: v })}
       batch={editForm.batch}

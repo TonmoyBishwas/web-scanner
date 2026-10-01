@@ -643,14 +643,8 @@ export const en = {
   // Edit panel
   'terminal.editCarton': 'Carton #{n}',
   'terminal.save': 'Save',
-  'terminal.productData': 'Product data',
-  'terminal.netWeight': 'Net weight (kg)',
   'terminal.prodDate': 'Prod. date',
   'terminal.expiryDate': 'Expiry date',
-  'terminal.itemName': 'Item name',
-  'terminal.openCalendar': 'Open calendar',
-  // Supplier's own batch/lot code off the carton label — Priority carries it
-  // on the batch (מנה) for traceability and recalls.
   'terminal.barcodeMissingTitle': 'Barcode not read',
   'terminal.barcodeMissingHelp': 'Type the digits printed under the barcode',
   'terminal.barcodeDigitsCount': '{n} digits — need at least 13',
@@ -672,8 +666,6 @@ export const en = {
   'terminal.barcodeTooShort': 'Only part of the barcode was read ({digits}). Aim at the long barcode and scan again.',
   'terminal.stickerPhoto': 'Sticker photo',
   'terminal.noStickerPhoto': 'No photo for this carton',
-  'terminal.batchTag': 'BATCH',
-  'terminal.batchHint': 'Supplier batch / lot (optional)',
   // 31-digit carton barcodes carry the weight and expiry, so they are a free
   // second reading of the same sticker. Shown, never auto-applied.
   'terminal.barcodeSays': 'Barcode: {value}',
@@ -684,6 +676,36 @@ export const en = {
   'terminal.day': 'Day',
   'terminal.month': 'Month',
   'terminal.year': 'Year',
+  // Edit panel — field tiles, status line, item list (lib/edit-panel-state.ts)
+  'terminal.fieldItem': 'Item',
+  'terminal.fieldWeight': 'Weight (kg)',
+  'terminal.fieldExpiry': 'Expiry',
+  'terminal.missing': 'Missing',
+  'terminal.tapToEnter': 'tap to enter',
+  'terminal.missingList': 'Missing: {fields}',
+  'terminal.missingBarcode': 'barcode',
+  'terminal.missingItem': 'item',
+  'terminal.missingWeight': 'weight',
+  'terminal.missingExpiry': 'expiry',
+  'terminal.changesReady': '{n} changed — tap Save',
+  'terminal.changeReadyOne': '1 changed — tap Save',
+  'terminal.checkThenSave': 'Check the values, then tap Save',
+  'terminal.tapFieldToEdit': 'Tap a field to change it',
+  'terminal.whichItem': 'Which item is this carton?',
+  'terminal.notOnInvoice': 'Read from the sticker — not on the invoice',
+  'terminal.otherName': 'Different name — type it',
+  'terminal.typeName': 'Type the item name',
+  'terminal.weightHint': 'Type the net weight printed on the sticker',
+  'terminal.weightInvalid': 'Weight must be more than 0',
+  'terminal.pickExpiry': 'Pick the expiry date from the sticker',
+  'terminal.changeDate': 'Change date',
+  'terminal.expiryPast': 'Expires today or already expired — check the sticker',
+  'terminal.checkExpiry': 'Check the expiry date',
+  // Supplier's own batch/lot code off the carton label — Priority carries it
+  // on the batch (מנה) for traceability and recalls.
+  'terminal.batchLabel': 'Supplier batch / lot · optional',
+  'terminal.scannedBarcode': 'Scanned barcode',
+  'terminal.readOnly': "Can't be changed",
   // Documents screen (locked)
   'terminal.docsTitle': 'Documents',
   'terminal.docsSearch': 'Search invoice or delivery note',

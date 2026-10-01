@@ -10,6 +10,14 @@ interface CalendarPickerProps {
   fieldTitle: string;
   onPick: (iso: string) => void;
   onClose: () => void;
+  /**
+   * With no `value`, open with NO day chosen and keep OK disabled until the
+   * worker taps a day or Today. Without it an empty field opened on today and
+   * OK committed that: 64 tilapia cartons were booked with the day they were
+   * received as their expiry. Off by default, so the forms that want a
+   * today-default keep it.
+   */
+  requirePick?: boolean;
 }
 
 type Tab = 'day' | 'month' | 'year';
@@ -25,7 +33,7 @@ const pad = (n: number) => String(n).padStart(2, '0');
 
 // Design calendar picker: centered modal (z-81) with a day/month/year tab
 // segmented control, localized grids, selected=brand, "היום" + "אישור" footer.
-export function CalendarPicker({ value, fieldTitle, onPick, onClose }: CalendarPickerProps) {
+export function CalendarPicker({ value, fieldTitle, onPick, onClose, requirePick = false }: CalendarPickerProps) {
   const tr = useT();
   const language = useContext(LanguageContext);
   const locale = language === 'Hebrew' ? 'he' : 'en';
@@ -35,6 +43,8 @@ export function CalendarPicker({ value, fieldTitle, onPick, onClose }: CalendarP
   const [y, setY] = useState(init.y);
   const [m, setM] = useState(init.m);
   const [d, setD] = useState(init.d);
+  // Whether a day is actually chosen. Browsing months/years does not choose one.
+  const [picked, setPicked] = useState(!!value || !requirePick);
 
   const monthNames = useMemo(
     () => Array.from({ length: 12 }, (_, i) =>
@@ -88,8 +98,11 @@ export function CalendarPicker({ value, fieldTitle, onPick, onClose }: CalendarP
         <div className="flex items-center justify-between mb-3">
           <div>
             <div className="text-[9px] font-bold text-[#e8eef2] tracking-[.5px]">{fieldTitle}</div>
-            <div className="text-[15px] font-extrabold text-ink-inverse mt-[2px]" dir="ltr">
-              {`${pad(d)}/${pad(m + 1)}/${y}`}
+            <div
+              className={`text-[15px] font-extrabold mt-[2px] ${picked ? 'text-ink-inverse' : 'text-ink-muted'}`}
+              dir="ltr"
+            >
+              {picked ? `${pad(d)}/${pad(m + 1)}/${y}` : 'DD/MM/YYYY'}
             </div>
           </div>
           <button onClick={onClose} className="flex text-ink-inverse p-1" aria-label="close">
@@ -114,11 +127,11 @@ export function CalendarPicker({ value, fieldTitle, onPick, onClose }: CalendarP
               {Array.from({ length: firstDow }, (_, i) => <span key={`b${i}`} />)}
               {Array.from({ length: daysInMonth }, (_, i) => {
                 const day = i + 1;
-                const sel = day === d;
+                const sel = picked && day === d;
                 return (
                   <button
                     key={day}
-                    onClick={() => setD(day)}
+                    onClick={() => { setD(day); setPicked(true); }}
                     className="h-9 rounded-[9px] text-[12px] font-mono font-bold flex items-center justify-center"
                     style={sel
                       ? { background: '#13a4ec', color: '#04222f' }
@@ -173,6 +186,7 @@ export function CalendarPicker({ value, fieldTitle, onPick, onClose }: CalendarP
             onClick={() => {
               const now = new Date();
               setY(now.getFullYear()); setM(now.getMonth()); setD(now.getDate()); setTab('day');
+              setPicked(true);
             }}
             className="text-[12px] font-extrabold text-[#7cc9f2] py-2"
           >
@@ -180,7 +194,8 @@ export function CalendarPicker({ value, fieldTitle, onPick, onClose }: CalendarP
           </button>
           <button
             onClick={commit}
-            className="bg-brand text-ink-inverse text-[13px] font-black rounded-[11px] px-6 py-[10px]"
+            disabled={!picked}
+            className="bg-brand text-ink-inverse text-[13px] font-black rounded-[11px] px-6 py-[10px] disabled:bg-sunken disabled:text-ink-muted disabled:cursor-not-allowed"
           >
             {tr('terminal.ok')}
           </button>
