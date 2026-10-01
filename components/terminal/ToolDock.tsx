@@ -32,15 +32,21 @@ interface ToolDockProps {
   onLockedPress: () => void;
 }
 
-// Design tool dock: horizontal scroll row (row-reverse + dir=ltr so the first
-// chip sits at the RTL start), 60px columns of 44×44 r13 icon tiles + labels.
-// Locked chips keep the design look but carry a small amber lock badge and
-// route taps to the lock toast.
+// Design tool dock: horizontal scroll row, 60px columns of 44×44 r13 icon
+// tiles + labels. Chip order follows the page direction (<html dir>): in
+// Hebrew the first chip is at the right and the rest scroll in from the left,
+// in English the first chip is at the left and the rest scroll in from the
+// right. (It used to force dir=ltr + row-reverse, which kept the Hebrew order
+// in English sessions too, so the hidden chips hung off the LEFT edge, where
+// an English reader never looks.) The end edge fades out — the cue that more
+// chips are there. The 20px fade = the 12px end padding + the 8px blank on
+// each side of a tile in its 60px column, so once fully scrolled no tile is
+// faded. Locked chips keep the design look but carry a small amber lock badge
+// and route taps to the lock toast.
 export function ToolDock({ chips, onLockedPress }: ToolDockProps) {
   return (
     <div
-      dir="ltr"
-      className="flex flex-row-reverse items-start gap-[6px] overflow-x-auto overflow-y-hidden no-scrollbar px-3 pt-[2px] pb-[10px]"
+      className="flex items-start gap-[6px] overflow-x-auto overflow-y-hidden no-scrollbar px-3 pt-[2px] pb-[10px] [mask-image:linear-gradient(to_right,#000_calc(100%-20px),transparent)] rtl:[mask-image:linear-gradient(to_left,#000_calc(100%-20px),transparent)]"
       style={{ touchAction: 'pan-x', WebkitOverflowScrolling: 'touch' }}
     >
       {chips.map(chip => (

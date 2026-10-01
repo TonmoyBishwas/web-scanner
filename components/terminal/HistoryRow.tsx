@@ -13,9 +13,10 @@ interface HistoryRowProps {
   status?: 'done' | 'pending' | 'failed';
   onClick?: () => void;
   /**
-   * Row actions (edit / delete / retry). Rendered as a full-width row BELOW
-   * the summary line — squeezing them in beside the weight collided with the
-   * 31-digit barcode and left both unreadable.
+   * Row actions — normally a <ScanActions/> bar, which lays out (and wraps)
+   * its own buttons. Rendered full-width BELOW the summary line — squeezing
+   * them in beside the weight collided with the 31-digit barcode and left
+   * both unreadable.
    */
   actions?: ReactNode;
   dimmed?: boolean;
@@ -72,9 +73,7 @@ export function HistoryRow({
         </div>
       </div>
 
-      {actions && (
-        <div className="flex items-center gap-2 mt-[10px] pt-[10px] border-t border-line">{actions}</div>
-      )}
+      {actions && <div className="mt-[10px] pt-[10px] border-t border-line">{actions}</div>}
     </div>
   );
 }

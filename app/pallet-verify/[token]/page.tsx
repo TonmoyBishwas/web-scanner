@@ -19,6 +19,7 @@ import { ProgressHeader } from '@/components/terminal/ProgressHeader';
 import { BottomSheet, type BottomSheetHandle } from '@/components/terminal/BottomSheet';
 import { ToolDock, type ToolChip } from '@/components/terminal/ToolDock';
 import { ActiveScanCard } from '@/components/terminal/ActiveScanCard';
+import { ScanActions } from '@/components/terminal/ScanActions';
 import { HistoryRow } from '@/components/terminal/HistoryRow';
 import { EditPanel } from '@/components/terminal/EditPanel';
 import { findBarcodeConflict, type BarcodeConflict } from '@/lib/barcode-parser';
@@ -242,12 +243,6 @@ const UNIFORM_WEIGHT_TOLERANCE = 0.0001;
 // is why maybeTriggerUniformPrompt retracts an open prompt the moment a later
 // box contradicts it.
 const UNIFORM_MIN_SAMPLES = 2;
-
-// Shared look for the per-scan row actions (edit / delete / retry / view).
-// They share a full-width line under the row, so each one is a real target —
-// the old inline pills were 10px text crammed beside a 31-digit barcode.
-const ROW_ACTION_BTN =
-  'flex-1 min-w-0 flex items-center justify-center gap-[5px] py-2 rounded-[10px] text-[12px] font-extrabold';
 
 // ── Page state machine ──
 
@@ -2596,60 +2591,29 @@ export default function PalletVerifyPage({
     const looseActive = looseNewestFirst[0];
     const looseRest = looseNewestFirst.slice(1);
 
-    // Two-step row actions (tap row → tap action). They render on their own
-    // line under the row, so they get real tap targets instead of competing
-    // with the barcode and weight for the same line.
+    // Two-step row actions (tap row → tap action). The shared ScanActions bar
+    // renders on its own line under the row, so the buttons get real tap
+    // targets instead of competing with the barcode and weight, and it wraps
+    // rather than overflowing a narrow phone. Each tap stops propagation, so
+    // it does not also collapse the row.
     const looseRowActions = (box: BoxScan) => {
       if (selectedBarcode !== box.barcode) return undefined;
+      const onDelete = () => { rescanLooseBox(box.barcode); setSelectedBarcode(null); };
       if (box.ocr_status === 'failed') {
         return (
-          <>
-            {box.image_data && (
-              <button
-                onClick={(e) => { e.stopPropagation(); setViewingImage(box.image_data!); }}
-                className={`${ROW_ACTION_BTN} bg-sunken border border-line text-ink-body`}
-              >
-                <MI name="image" size={16} /> {tr('ocr.view')}
-              </button>
-            )}
-            <button
-              onClick={(e) => { e.stopPropagation(); retryLooseOcr(box.barcode); }}
-              className={`${ROW_ACTION_BTN} bg-brand-weak border border-brand/40 text-brand-weak-ink`}
-            >
-              <MI name="refresh" size={16} /> {tr('ocr.retry')}
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); rescanLooseBox(box.barcode); setSelectedBarcode(null); }}
-              className={`${ROW_ACTION_BTN} bg-danger-weak border border-danger/45 text-danger-weak-ink`}
-            >
-              <MI name="delete" size={16} /> {tr('common.delete')}
-            </button>
-          </>
+          <ScanActions
+            onViewImage={box.image_data ? () => setViewingImage(box.image_data!) : undefined}
+            onRetry={() => retryLooseOcr(box.barcode)}
+            onDelete={onDelete}
+          />
         );
       }
       return (
-        <>
-          <button
-            onClick={(e) => { e.stopPropagation(); openEdit(box, true); }}
-            className={`${ROW_ACTION_BTN} bg-brand-weak border border-brand/40 text-brand-weak-ink`}
-          >
-            <MI name="edit" size={16} /> {tr('palletVerify.editScan')}
-          </button>
-          {canDeclareIdentical(box) && (
-            <button
-              onClick={(e) => { e.stopPropagation(); setIdenticalFor({ box, loose: true }); }}
-              className={`${ROW_ACTION_BTN} bg-sunken border border-line text-ink-body`}
-            >
-              <MI name="content_copy" size={16} /> {tr('identical.action')}
-            </button>
-          )}
-          <button
-            onClick={(e) => { e.stopPropagation(); rescanLooseBox(box.barcode); setSelectedBarcode(null); }}
-            className={`${ROW_ACTION_BTN} bg-danger-weak border border-danger/45 text-danger-weak-ink`}
-          >
-            <MI name="delete" size={16} /> {tr('common.delete')}
-          </button>
-        </>
+        <ScanActions
+          onEdit={() => openEdit(box, true)}
+          onIdentical={canDeclareIdentical(box) ? () => setIdenticalFor({ box, loose: true }) : undefined}
+          onDelete={onDelete}
+        />
       );
     };
 
@@ -2884,60 +2848,29 @@ export default function PalletVerifyPage({
   const activeBox = newestFirst[0];
   const restBoxes = newestFirst.slice(1);
 
-  // Two-step row actions (tap row → tap action). They render on their own
-  // line under the row, so they get real tap targets instead of competing
-  // with the barcode and weight for the same line.
+  // Two-step row actions (tap row → tap action). The shared ScanActions bar
+  // renders on its own line under the row, so the buttons get real tap
+  // targets instead of competing with the barcode and weight, and it wraps
+  // rather than overflowing a narrow phone. Each tap stops propagation, so
+  // it does not also collapse the row.
   const palletRowActions = (box: BoxScan) => {
     if (selectedBarcode !== box.barcode) return undefined;
+    const onDelete = () => { rescanPalletBox(box.barcode); setSelectedBarcode(null); };
     if (box.ocr_status === 'failed') {
       return (
-        <>
-          {box.image_data && (
-            <button
-              onClick={(e) => { e.stopPropagation(); setViewingImage(box.image_data!); }}
-              className={`${ROW_ACTION_BTN} bg-sunken border border-line text-ink-body`}
-            >
-              <MI name="image" size={16} /> {tr('ocr.view')}
-            </button>
-          )}
-          <button
-            onClick={(e) => { e.stopPropagation(); retryPalletOcr(box.barcode); }}
-            className={`${ROW_ACTION_BTN} bg-brand-weak border border-brand/40 text-brand-weak-ink`}
-          >
-            <MI name="refresh" size={16} /> {tr('ocr.retry')}
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
-            className={`${ROW_ACTION_BTN} bg-danger-weak border border-danger/45 text-danger-weak-ink`}
-          >
-            <MI name="delete" size={16} /> {tr('common.delete')}
-          </button>
-        </>
+        <ScanActions
+          onViewImage={box.image_data ? () => setViewingImage(box.image_data!) : undefined}
+          onRetry={() => retryPalletOcr(box.barcode)}
+          onDelete={onDelete}
+        />
       );
     }
     return (
-      <>
-        <button
-          onClick={(e) => { e.stopPropagation(); openEdit(box); }}
-          className={`${ROW_ACTION_BTN} bg-brand-weak border border-brand/40 text-brand-weak-ink`}
-        >
-          <MI name="edit" size={16} /> {tr('palletVerify.editScan')}
-        </button>
-        {canDeclareIdentical(box) && (
-          <button
-            onClick={(e) => { e.stopPropagation(); setIdenticalFor({ box, loose: false }); }}
-            className={`${ROW_ACTION_BTN} bg-sunken border border-line text-ink-body`}
-          >
-            <MI name="content_copy" size={16} /> {tr('identical.action')}
-          </button>
-        )}
-        <button
-          onClick={(e) => { e.stopPropagation(); rescanPalletBox(box.barcode); setSelectedBarcode(null); }}
-          className={`${ROW_ACTION_BTN} bg-danger-weak border border-danger/45 text-danger-weak-ink`}
-        >
-          <MI name="delete" size={16} /> {tr('common.delete')}
-        </button>
-      </>
+      <ScanActions
+        onEdit={() => openEdit(box)}
+        onIdentical={canDeclareIdentical(box) ? () => setIdenticalFor({ box, loose: false }) : undefined}
+        onDelete={onDelete}
+      />
     );
   };
 

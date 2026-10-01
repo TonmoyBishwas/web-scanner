@@ -1,6 +1,7 @@
 'use client';
 
 import { MI } from './MI';
+import { ScanActions } from './ScanActions';
 import { useT } from '@/lib/i18n';
 
 interface ActiveScanCardProps {
@@ -28,8 +29,9 @@ interface ActiveScanCardProps {
 }
 
 // Design "active scan" summary card: #0a0f14 on 2px brand border, mono index
-// badge, green live dot + "נסרק כרגע", big Roboto Mono value, פרטים expander
-// + action row, expandable barcode/expiry rows.
+// badge, green live dot + "נסרק כרגע", big Roboto Mono value + chevron (the
+// summary line itself expands the barcode/expiry rows), and the shared
+// ScanActions bar, which wraps instead of running off a narrow phone.
 //
 // Sizing note: every metric here is one step below the original design spec.
 // The card is pinned above the history list inside a sheet that also has to
@@ -51,15 +53,22 @@ export function ActiveScanCard({
       className="bg-header rounded-[14px] px-3 py-[9px] shadow-[inset_0_2px_10px_rgba(0,0,0,.4)]"
       style={{ border: `2px solid ${borderColor}` }}
     >
-      <div className="flex justify-between items-center gap-2">
-        <div className="flex items-center gap-[9px] min-w-0">
-          <div
+      {/* The whole summary line is the details expander (as on a history
+          row) — the separate "Details" toggle took room the actions needed. */}
+      <button
+        type="button"
+        onClick={onToggleExpand}
+        aria-expanded={expanded}
+        className="w-full flex justify-between items-center gap-2 text-start"
+      >
+        <span className="flex items-center gap-[9px] min-w-0">
+          <span
             className="flex-none w-[33px] h-[33px] rounded-[9px] flex items-center justify-center font-mono font-black text-[15px] text-ink-inverse"
             style={{ background: badgeBg, border: `1px solid ${borderColor}` }}
           >
             {index}
-          </div>
-          <div className="min-w-0">
+          </span>
+          <span className="block min-w-0">
             <span
               className="inline-flex items-center gap-1 text-[8.5px] font-black tracking-[1px] mb-[2px]"
               style={{ color: accentInk }}
@@ -70,72 +79,28 @@ export function ActiveScanCard({
               />
               {failed ? tr('terminal.notRecognized') : tr('terminal.scanningNow')}
             </span>
-            <div className="text-[14px] font-extrabold text-ink-inverse whitespace-nowrap overflow-hidden text-ellipsis">
+            <span className="block text-[14px] font-extrabold text-ink-inverse whitespace-nowrap overflow-hidden text-ellipsis">
               {name}
-            </div>
-          </div>
-        </div>
-        <div className="flex items-baseline gap-[2px] justify-end flex-none" dir="ltr">
-          <span className="font-mono font-black text-[23px] leading-none text-ink-inverse">{value}</span>
-          <span className="text-[12px] font-extrabold" style={{ color: accentInk }}>{unit}</span>
-        </div>
-      </div>
+            </span>
+          </span>
+        </span>
+        <span className="flex items-center gap-[6px] flex-none">
+          <span className="flex items-baseline gap-[2px]" dir="ltr">
+            <span className="font-mono font-black text-[23px] leading-none text-ink-inverse">{value}</span>
+            <span className="text-[12px] font-extrabold" style={{ color: accentInk }}>{unit}</span>
+          </span>
+          <MI name={expanded ? 'expand_less' : 'expand_more'} size={18} className="text-[#e8eef2]" />
+        </span>
+      </button>
 
-      <div className="flex items-center justify-between gap-2 mt-2 border-t border-white/8 pt-[7px]">
-        <button
-          onClick={onToggleExpand}
-          className="flex-none flex items-center gap-[4px] text-[#e8eef2] text-[11px] font-bold py-[2px]"
-        >
-          {tr('terminal.details')}
-          <MI name={expanded ? 'expand_less' : 'expand_more'} size={17} />
-        </button>
-        <div className="flex items-center gap-[6px] flex-none">
-          {failed && onViewImage && (
-            <button
-              onClick={onViewImage}
-              className="flex items-center gap-[4px] bg-white/6 border border-white/18 text-ink-inverse rounded-[9px] px-[10px] py-[5px] text-[11px] font-extrabold"
-            >
-              <MI name="image" size={15} />
-              {tr('ocr.view')}
-            </button>
-          )}
-          {failed && onRetry && (
-            <button
-              onClick={onRetry}
-              className="flex items-center gap-[4px] bg-brand-weak border border-brand/40 text-brand-weak-ink rounded-[9px] px-[10px] py-[5px] text-[11px] font-extrabold"
-            >
-              <MI name="refresh" size={15} />
-              {tr('ocr.retry')}
-            </button>
-          )}
-          {onDelete && (
-            <button
-              onClick={onDelete}
-              className="flex items-center gap-[4px] bg-danger-weak border border-danger/45 text-danger-weak-ink rounded-[9px] px-[10px] py-[5px] text-[11px] font-extrabold"
-            >
-              <MI name="delete" size={15} />
-              {tr('common.delete')}
-            </button>
-          )}
-          {onEdit && (
-            <button
-              onClick={onEdit}
-              className="flex items-center gap-[4px] bg-white/6 border border-white/18 text-ink-inverse rounded-[9px] px-[10px] py-[5px] text-[11px] font-extrabold"
-            >
-              <MI name="edit" size={15} />
-              {tr('terminal.edit')}
-            </button>
-          )}
-          {onIdentical && (
-            <button
-              onClick={onIdentical}
-              className="flex items-center gap-[4px] bg-white/6 border border-white/18 text-ink-inverse rounded-[9px] px-[10px] py-[5px] text-[11px] font-extrabold"
-            >
-              <MI name="content_copy" size={15} />
-              {tr('identical.action')}
-            </button>
-          )}
-        </div>
+      <div className="mt-2 border-t border-white/8 pt-[7px]">
+        <ScanActions
+          onViewImage={failed ? onViewImage : undefined}
+          onRetry={failed ? onRetry : undefined}
+          onEdit={onEdit}
+          onIdentical={onIdentical}
+          onDelete={onDelete}
+        />
       </div>
 
       {expanded && (
