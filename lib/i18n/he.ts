@@ -927,4 +927,11 @@ export const he: Record<TranslationKey, string> = {
   'labels.sheetEmpty': 'אין מדבקות להדפסה.',
   'labels.sheetPrint': 'הדפס',
   'labels.sheetBack': 'הודפס · חזרה לסורק',
+  // The print gate: no LPN / loose finish while saved labels are unprinted.
+  'labels.gateHint': 'יש מדבקות שמורות שעוד לא הודפסו. הדפס אותן כדי ליצור LPN — או מחק במסך "מדבקות" את מה שלא צריך.',
+  'labels.gateHintLoose': 'יש מדבקות שמורות שעוד לא הודפסו. הדפס אותן כדי לסיים את הקופסאות הבודדות — או מחק במסך "מדבקות" את מה שלא צריך.',
+  'labels.gateButton': 'קודם הדפס {count} מדבקות',
+  'labels.gateButtonOne': 'קודם הדפס מדבקה אחת',
+  'labels.gateOpenList': 'בחר במסך מדבקות',
+  'labels.gateHintManual': 'קודם הדפס את המדבקות השמורות — חזור ופתח את מסך "מדבקות".',
 };

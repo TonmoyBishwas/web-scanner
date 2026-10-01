@@ -929,6 +929,13 @@ export const en = {
   'labels.sheetEmpty': 'No labels to print.',
   'labels.sheetPrint': 'Print',
   'labels.sheetBack': 'Printed · back to scanner',
+  // The print gate: no LPN / loose finish while saved labels are unprinted.
+  'labels.gateHint': "Saved labels aren't printed yet. Print them to create the LPN — or delete the ones you don't need in Labels.",
+  'labels.gateHintLoose': "Saved labels aren't printed yet. Print them to finish the loose boxes — or delete the ones you don't need in Labels.",
+  'labels.gateButton': 'Print {count} labels first',
+  'labels.gateButtonOne': 'Print 1 label first',
+  'labels.gateOpenList': 'Choose in Labels',
+  'labels.gateHintManual': 'Print the saved labels first — go back and open Labels.',
 } as const;
 
 export type TranslationKey = keyof typeof en;

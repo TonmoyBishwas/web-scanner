@@ -13,7 +13,7 @@
  * Service-role client (see lib/supabase.ts) — server only.
  */
 import { supabase } from './supabase';
-import { sessionBookedBarcodes } from './label-batches';
+import { sessionBookedBarcodes, toUnprintedLabels, type UnprintedLabel } from './label-batches';
 import type { CartonLabel, CartonLabelOrigin, LabelSize } from '@/types';
 
 export type { CartonLabel, LabelSize };
@@ -188,6 +188,23 @@ export async function getCartonLabelsByBatches(batchIds: string[]): Promise<Cart
     .order('serial', { ascending: true });
   if (error) throw new Error(`carton_labels read failed: ${error.message}`);
   return (data ?? []) as unknown as CartonLabel[];
+}
+
+/**
+ * Every label this scanner session saved and has not printed yet — what the
+ * completion routes' print gate (lib/label-gate.ts) decides on. Normalised the
+ * same way the page's badge reads them (`toUnprintedLabels`), so the page and
+ * the server can never disagree on what blocks.
+ */
+export async function findUnprintedForSession(sessionToken: string): Promise<UnprintedLabel[]> {
+  if (!sessionToken) return [];
+  const { data, error } = await supabase
+    .from('carton_labels')
+    .select('barcode, batch_id, origin, pallet_number, status')
+    .eq('session_token', sessionToken)
+    .eq('status', 'created');
+  if (error) throw new Error(`carton_labels read failed: ${error.message}`);
+  return toUnprintedLabels(data ?? []);
 }
 
 /**

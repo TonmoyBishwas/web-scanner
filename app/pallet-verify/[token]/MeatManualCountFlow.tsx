@@ -23,6 +23,7 @@ import { LanguageContext, t } from '@/lib/i18n';
 import type { Language, MultiPalletSession } from '@/types';
 import { nonMeatItemKey } from '@/lib/nonmeat-key';
 import { splitErrorKey } from '@/components/terminal/SplitJobScreen';
+import { LABELS_NOT_PRINTED } from '@/lib/label-gate';
 
 /** Result shape returned by POST /api/multi-pallet-complete. */
 export interface PalletCompleteResult {
@@ -135,6 +136,15 @@ export function MeatManualCountFlow({
         // the job screen via the parent's shared handler rather than
         // stranding the worker on this screen with now-orphaned counts.
         onReleased();
+        return;
+      }
+
+      if (data.error === LABELS_NOT_PRINTED) {
+        // The print gate (lib/label-gate.ts): saved labels are unprinted, so
+        // this pallet was not booked. Printing happens on the scanner, not
+        // here — say where, never the raw code.
+        setError(tr('labels.gateHintManual'));
+        setSaving(false);
         return;
       }
 

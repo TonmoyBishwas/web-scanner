@@ -5,6 +5,8 @@ import type { MultiPalletSession, MultiPalletBoxScan, Language } from '@/types';
 import { isComplete } from '@/lib/pallet-slots';
 import { isSplitSession, splitStateOf, applySplitState } from '@/lib/session-mode';
 import { normalizeBoxExpiries } from '@/lib/expiry';
+import { findUnprintedForSession } from '@/lib/carton-labels';
+import { blockingLabels, barcodesBeingBooked, labelGateError } from '@/lib/label-gate';
 
 const SESSION_TTL = 7200;
 
@@ -97,6 +99,20 @@ export async function POST(request: NextRequest) {
       } else {
         updatedSession = { ...session, status: 'completed' };
         isFinal = true;
+      }
+
+      // Print gate: the loose boxes cannot be finished while saved labels are
+      // unprinted — a label of a carton on this loose list, or any New carton
+      // label in the session (lib/label-gate.ts). Before the session is saved
+      // and before the webhook, so a 409 leaves the session active and sends
+      // nothing to the bot: no close, no Priority push.
+      const labelGate = blockingLabels(
+        await findUnprintedForSession(token),
+        barcodesBeingBooked({ scanned_boxes }),
+      );
+      if (labelGate.count > 0) {
+        errorResult = { status: 409, body: labelGateError(labelGate) };
+        return;
       }
 
       // To the bot once the response is out. after() keeps the function

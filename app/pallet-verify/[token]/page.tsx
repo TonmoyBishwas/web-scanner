@@ -38,7 +38,8 @@ import {
   sourceStillListed,
   type IdenticalForm,
 } from '@/lib/identical-boxes';
-import { isMintedLabelBarcode, liveRowPlaces, openListsForPhase } from '@/lib/label-batches';
+import { isMintedLabelBarcode, labelSheetUrl, liveRowPlaces, loadLabelSize, openListsForPhase } from '@/lib/label-batches';
+import { blockingLabels, LABELS_NOT_PRINTED } from '@/lib/label-gate';
 import { useUnprintedLabels } from '@/lib/use-unprinted-labels';
 import { toIsoDate, normalizeExpiry } from '@/lib/expiry';
 import type { CartonLabel } from '@/types';
@@ -475,6 +476,15 @@ export default function PalletVerifyPage({
   // amber badge on the Labels chip and the marker on each unprinted row.
   const unprinted = useUnprintedLabels(token);
   const unprintedBarcodes = new Set(unprinted.labels.map((l) => l.barcode));
+  // The print gate (lib/label-gate.ts): the unprinted labels that stop the
+  // list in front of the worker from being booked — its own cartons' labels,
+  // plus every New carton label. While it is non-empty the confirm slide
+  // becomes an amber "Print N labels first", and the confirm handlers refuse.
+  // The completion routes enforce the same rule with a 409; this is the UX.
+  const labelGate = blockingLabels(
+    unprinted.labels,
+    (openListsForPhase(phase).loose ? looseBoxes : scannedBoxes).map((b) => b.barcode),
+  );
   const [activeExpanded, setActiveExpanded] = useState(false);
   const [pendingNextPallet, setPendingNextPallet] = useState<number | null>(null);
   // "Scan pallet N" on the pallet_done card is a plain tap (moving on books
@@ -1919,6 +1929,37 @@ export default function PalletVerifyPage({
     </>
   );
 
+  // The print gate's footer, in place of the confirm slide (or the "Create
+  // LPN anyway" button) while saved labels block the list (`labelGate`).
+  // Amber = needs attention, never red: nothing failed. One tap opens the
+  // print sheet for exactly the blocking batches; the link opens Labels on
+  // "Not printed" to print some, mark them printed or delete unneeded ones.
+  const labelGateFooter = (loose: boolean) => (
+    <div className="space-y-2">
+      <p className="flex items-start gap-1.5 text-[11px] font-bold leading-snug text-warn-weak-ink">
+        <MI name="print_disabled" size={15} className="shrink-0 mt-px" />
+        <span className="min-w-0">{tr(loose ? 'labels.gateHintLoose' : 'labels.gateHint')}</span>
+      </p>
+      <button
+        onClick={handlePrintBlockingLabels}
+        disabled={phase === 'confirming' || phase === 'loose_confirming'}
+        className="flex items-center justify-center gap-[6px] w-full py-3 rounded-[13px] font-black text-[14px] bg-warn text-canvas disabled:bg-sunken disabled:text-ink-muted"
+      >
+        <MI name="print" size={18} />
+        {labelGate.count === 1 ? tr('labels.gateButtonOne') : tr('labels.gateButton', { count: labelGate.count })}
+      </button>
+      <button
+        onClick={() => {
+          trace('ui', 'labels_gate_open_list', { count: labelGate.count });
+          setShowLabels(true);
+        }}
+        className="flex items-center justify-center gap-1 w-full py-1 text-xs font-extrabold text-warn-weak-ink underline"
+      >
+        <MI name="label" size={14} /> {tr('labels.gateOpenList')}
+      </button>
+    </div>
+  );
+
   // Full-screen captured-image viewer (used for OCR-failed Diagnostics).
   // fixed/inset-0 means it overlays whatever phase is currently rendering.
   const imageModal = viewingImage ? (
@@ -2121,10 +2162,49 @@ export default function PalletVerifyPage({
       });
   }
 
+  // ── Print gate ──
+
+  /**
+   * A confirm reached while saved labels block it (the uniform auto-confirm,
+   * the shortfall modal's slide, or the server's 409): book nothing and say
+   * why. The footer already shows the amber "Print N labels first" by then.
+   */
+  function refuseForLabels(count: number, batchIds: string[], by: 'page' | 'server') {
+    trace('ui', 'labels_gate_blocked', { count, batch_ids: batchIds, by });
+    showToast(
+      count === 1 ? tr('labels.gateButtonOne') : tr('labels.gateButton', { count }),
+      'print_disabled',
+      '#fbbf5c',
+    );
+  }
+
+  /**
+   * "Print N labels first": the print sheet for exactly the blocking batches.
+   * Opened synchronously inside the click — a window.open after an await is
+   * what pop-up blockers kill. The sheet marks what it prints, and the gate
+   * lifts when this tab is visible again (useUnprintedLabels refetches).
+   */
+  function handlePrintBlockingLabels() {
+    if (!labelGate.batchIds.length) return;
+    const win = window.open(
+      labelSheetUrl({ token, batchIds: labelGate.batchIds, size: loadLabelSize(), language }),
+      '_blank',
+    );
+    if (!win) {
+      showToast(tr('labels.printBlocked'), 'error', '#ef8a8a');
+      return;
+    }
+    trace('ui', 'labels_print_opened', { batch_ids: labelGate.batchIds, count: labelGate.count, from: 'gate' });
+  }
+
   // ── Confirm loose boxes ──
 
   async function handleConfirmLooseBoxes() {
     trace('ui', 'confirm_loose', { boxes: looseBoxes.length, declared: session?.loose_box_count });
+    if (labelGate.count > 0) {
+      refuseForLabels(labelGate.count, labelGate.batchIds, 'page');
+      return;
+    }
     setPhase('loose_confirming');
     setError(null);
     try {
@@ -2148,6 +2228,14 @@ export default function PalletVerifyPage({
         }),
       });
       const data = await res.json();
+      if (res.status === 409 && data.error === LABELS_NOT_PRINTED) {
+        // The server's print gate: nothing was booked and nothing was sent.
+        // Re-read the labels so the footer shows the gate, not an error.
+        refuseForLabels(Number(data.unprinted) || 0, Array.isArray(data.batch_ids) ? data.batch_ids : [], 'server');
+        unprinted.refresh();
+        setPhase('loose_scanning');
+        return;
+      }
       if (!data.success) {
         // loose_not_claimed / not_your_loose_task arrive as raw reason codes
         // (split-only, added by Task 7's guard) — everything else the server
@@ -2391,6 +2479,12 @@ export default function PalletVerifyPage({
   }) {
     trace('ui', 'confirm_pallet', { pallet: currentPallet, scanned: scannedBoxes.length, confirmedBoxCount, override: override ? { boxCount: override.boxCount, groups: override.groups } : undefined, forcedMix, detectedType });
     if (scannedBoxes.length < 2) return;
+    // Every way into the LPN passes here — the slide, the shortfall modal,
+    // the gap chip and the single-item auto-confirm — so the gate sits here.
+    if (labelGate.count > 0) {
+      refuseForLabels(labelGate.count, labelGate.batchIds, 'page');
+      return;
+    }
     setPhase('confirming');
     setError(null);
 
@@ -2438,6 +2532,15 @@ export default function PalletVerifyPage({
 
       if (res.status === 409 && data.error === 'no_claimed_pallet') {
         handlePalletReleased();
+        return;
+      }
+
+      if (res.status === 409 && data.error === LABELS_NOT_PRINTED) {
+        // The server's print gate: no LPN, nothing written, no webhook.
+        // Re-read the labels so the footer shows the gate, not an error.
+        refuseForLabels(Number(data.unprinted) || 0, Array.isArray(data.batch_ids) ? data.batch_ids : [], 'server');
+        unprinted.refresh();
+        setPhase('scanning');
         return;
       }
 
@@ -2770,7 +2873,10 @@ export default function PalletVerifyPage({
     const looseFooter = (
       <>
         {error && <p className="text-danger-weak-ink text-sm text-center mb-2">{error}</p>}
-        {canConfirmLoose && phase !== 'loose_confirming' ? (
+        {canConfirmLoose && labelGate.count > 0 ? (
+          // Ready to finish, but saved labels are unprinted: print first.
+          labelGateFooter(true)
+        ) : canConfirmLoose && phase !== 'loose_confirming' ? (
           // Brand (blue) slide: this books the loose cartons like any normal
           // confirm. Amber slides are kept for booking WITH a shortfall.
           <SwipeConfirm
@@ -3115,7 +3221,10 @@ export default function PalletVerifyPage({
         </div>
       ) : (
         <>
-          {!canConfirm && canForceConfirm ? (
+          {(canConfirm || canForceConfirm) && labelGate.count > 0 ? (
+            // Ready for the LPN, but saved labels are unprinted: print first.
+            labelGateFooter(false)
+          ) : !canConfirm && canForceConfirm ? (
             <button
               onClick={() => setPendingForceConfirm(true)}
               disabled={phase === 'confirming'}
@@ -3260,7 +3369,9 @@ export default function PalletVerifyPage({
             <ToolDock
               chips={buildDockChips({
                 gap: () =>
-                  canForceConfirm
+                  canForceConfirm && labelGate.count > 0
+                    ? refuseForLabels(labelGate.count, labelGate.batchIds, 'page')
+                    : canForceConfirm
                     ? setPendingForceConfirm(true)
                     : showToast(tr('terminal.gapNotApplicable'), 'report_problem', '#fbbf5c'),
               })}

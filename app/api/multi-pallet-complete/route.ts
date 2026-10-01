@@ -8,6 +8,8 @@ import { nonMeatItemKey } from '@/lib/nonmeat-key';
 import { markDone, isComplete } from '@/lib/pallet-slots';
 import { isSplitSession, splitStateOf, applySplitState } from '@/lib/session-mode';
 import { normalizeBoxExpiries } from '@/lib/expiry';
+import { findUnprintedForSession } from '@/lib/carton-labels';
+import { blockingLabels, barcodesBeingBooked, labelGateError } from '@/lib/label-gate';
 
 const SESSION_TTL = 7200;
 // "Same weight" means the printed weights are EXACTLY equal — a fixed-weight
@@ -203,6 +205,23 @@ export async function POST(request: NextRequest) {
       return;
     }
     const palletNumber = split ? claimedSlot!.n : session.current_pallet;
+
+    // ── Print gate: no LPN while saved labels are unprinted ──────────────────
+    // An unprinted label blocks when its carton is on THIS pallet's list, or
+    // when it is a New carton label anywhere in the session (lib/label-gate.ts).
+    // Checked here, inside the lock and before all three paths (non-meat,
+    // damaged-sticker, scan-every-box), so nothing is written, the cursor does
+    // not move and no bot webhook fires — and with no webhook, the last pallet
+    // cannot close the delivery or start the Priority push. The page shows its
+    // amber "Print N labels first" for this code, never the raw string.
+    const labelGate = blockingLabels(
+      await findUnprintedForSession(token),
+      barcodesBeingBooked({ scanned_boxes, nonmeat_items, manual_items }),
+    );
+    if (labelGate.count > 0) {
+      errorResult = { status: 409, body: labelGateError(labelGate) };
+      return;
+    }
 
     // ── Weight-based non-meat (Type A): invoice-authoritative math ──────────
     // The worker scanned one box per item on this pallet; the total for each
