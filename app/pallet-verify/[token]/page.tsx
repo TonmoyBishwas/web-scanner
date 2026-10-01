@@ -1255,7 +1255,9 @@ export default function PalletVerifyPage({
               // FULL printed number — not the SKU, which repeats per product.
               // The notice was raised above; this only catches a row the ref
               // had not caught up with yet, so a carton is never counted twice.
-              const dup = prev.some((b, i) => i !== idx && digitsOnly(b.barcode) === digits);
+              // Same lookup as the notice: a label an identical batch stands
+              // in for counts as on the list.
+              const dup = findCountedCartonByDigits(prev, digits, lookupKey) !== null;
               if (dup) {
                 dupFlashRef.current?.('duplicate');
                 return prev.filter((_, i) => i !== idx); // drop the provisional box
@@ -2333,7 +2335,7 @@ export default function PalletVerifyPage({
             if (digits.length >= 13) {
               // The notice was raised above; this only catches a row the ref
               // had not caught up with yet.
-              const dup = prev.some((b, i) => i !== idx && digitsOnly(b.barcode) === digits);
+              const dup = findCountedCartonByDigits(prev, digits, lookupKey) !== null;
               if (dup) {
                 looseDupFlashRef.current?.('duplicate');
                 return prev.filter((_, i) => i !== idx);
@@ -3878,6 +3880,11 @@ export default function PalletVerifyPage({
         // figure is the total the worker typed, not the delivery note; the
         // copy now says what it is and what happens. The slide stays — this
         // books stock (one slide per booking); "Keep scanning" changes nothing.
+        // The slide books exactly the {committed} it names: without the
+        // override the typed total goes out as box_count, and a one-product
+        // pallet whose cartons all weigh the same is booked at that total
+        // (the route's uniform-single path) — 15, not the 9 counted. A locked
+        // single group already has committed == its total.
         <div className="fixed inset-0 z-[72] bg-[rgba(5,8,10,0.74)] backdrop-blur-[3px] flex items-center justify-center p-[22px]">
           <div className="w-full max-w-[330px] bg-amber-card border border-[rgba(245,158,11,0.5)] rounded-[20px] px-5 py-[22px] shadow-[0_26px_64px_rgba(0,0,0,0.72)] animate-doneRise">
             <div className="flex justify-center mb-[13px]">
@@ -3890,7 +3897,7 @@ export default function PalletVerifyPage({
             </h2>
             <p className="text-center text-xs font-semibold text-[#d8c9a0] mt-1 leading-snug">
               {shortCount > 0
-                ? tr('palletVerify.closeShortBody', { declared: confirmedBoxCount, committed, short: shortCount })
+                ? tr('palletVerify.closeShortBody', { declared: confirmedBoxCount, committed })
                 : tr('palletVerify.unreadableSoftNote', { count: unresolvedWarnings })}
             </p>
             <div className="flex gap-2 mt-4">
@@ -3911,7 +3918,7 @@ export default function PalletVerifyPage({
               <SwipeConfirm
                 variant="warn"
                 label={tr('palletVerify.closeShortConfirm', { committed })}
-                onConfirm={() => { setPendingForceConfirm(false); handleConfirmPallet(); }}
+                onConfirm={() => { setPendingForceConfirm(false); handleConfirmPallet({ boxCount: committed, groups: uniformGroups }); }}
               />
             </div>
             <button

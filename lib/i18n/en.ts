@@ -234,7 +234,7 @@ export const en = {
   'palletVerify.closeUnreadBtn': 'Unreadable cartons? Close with {committed}',
   'palletVerify.closeShortTitle': 'Close the pallet with missing cartons?',
   'palletVerify.closeUnreadTitle': 'Close the pallet with unreadable cartons?',
-  'palletVerify.closeShortBody': 'You entered {declared}. {committed} are counted. {short} will be recorded as missing.',
+  'palletVerify.closeShortBody': 'You entered {declared}. {committed} are counted. Only the counted cartons are booked.',
   'palletVerify.closeShortCounted': 'Counted',
   'palletVerify.closeShortYourTotal': 'Your total',
   'palletVerify.closeShortMissing': 'Missing',

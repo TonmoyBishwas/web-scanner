@@ -94,6 +94,11 @@ export function findCountedCarton<T extends CountedRow>(rows: ReadonlyArray<T>, 
  * number against every other row's barcode digits — never the 13-digit SKU,
  * which repeats on every carton of one product. `exceptBarcode` is the
  * capture's own provisional row.
+ *
+ * Like findCountedCarton, a supplier code an identical batch stands in for
+ * points at the batch's first row — otherwise a photo of a label the batch
+ * already covers would be booked as one more carton, silently, while a
+ * bar-scan of the very same label says it is counted.
  */
 export function findCountedCartonByDigits<T extends CountedRow>(
   rows: ReadonlyArray<T>,
@@ -101,7 +106,8 @@ export function findCountedCartonByDigits<T extends CountedRow>(
   exceptBarcode?: string,
 ): CountedCarton<T> | null {
   if (!digits) return null;
-  const i = rows.findIndex((r) => r.barcode !== exceptBarcode && r.barcode.replace(/\D/g, '') === digits);
+  const same = (code: string | undefined) => !!code && code.replace(/\D/g, '') === digits;
+  const i = rows.findIndex((r) => r.barcode !== exceptBarcode && (same(r.barcode) || same(r.source_barcode)));
   return i === -1 ? null : { n: i + 1, row: rows[i] };
 }
 

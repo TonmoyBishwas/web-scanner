@@ -106,6 +106,17 @@ describe('findCountedCartonByDigits', () => {
   it('empty digits → null', () => {
     expect(findCountedCartonByDigits(rows, '')).toBeNull();
   });
+
+  it('a label an identical batch stands in for points at the batch\'s first row, like a bar-scan', () => {
+    const batched = [
+      { barcode: C8 },
+      { barcode: '2826092400000001', source_barcode: C9 },
+      { barcode: '2826092400000002', source_barcode: C9 },
+      { barcode: 'MANUAL-1727190556000-ab12cd' },
+    ];
+    expect(findCountedCartonByDigits(batched, C9, 'MANUAL-1727190556000-ab12cd')).toEqual({ n: 2, row: batched[1] });
+    expect(findCountedCartonByDigits(batched, C9)?.n).toBe(findCountedCarton(batched, C9)?.n);
+  });
 });
 
 describe('canOfferDifferentCarton', () => {

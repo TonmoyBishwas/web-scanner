@@ -237,7 +237,7 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.closeUnreadBtn': 'קרטונים לא קריאים? סגור עם {committed}',
   'palletVerify.closeShortTitle': 'לסגור את המשטח עם קרטונים חסרים?',
   'palletVerify.closeUnreadTitle': 'לסגור את המשטח עם קרטונים לא קריאים?',
-  'palletVerify.closeShortBody': 'הזנת {declared}. נספרו {committed}. {short} יירשמו כחסרים.',
+  'palletVerify.closeShortBody': 'הזנת {declared}. נספרו {committed}. רק הקרטונים שנספרו ייקלטו.',
   'palletVerify.closeShortCounted': 'נספרו',
   'palletVerify.closeShortYourTotal': 'הסה״כ שלך',
   'palletVerify.closeShortMissing': 'חסרים',
