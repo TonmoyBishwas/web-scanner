@@ -6,6 +6,7 @@ import { MI } from './MI';
 import { Keypad } from './Keypad';
 import { CalendarPicker } from './CalendarPicker';
 import { useT } from '@/lib/i18n';
+import { toIsoDate, isoToDdmmyyyy } from '@/lib/expiry';
 
 export interface EditItemChip {
   label: string;
@@ -18,7 +19,7 @@ interface EditPanelProps {
   name: string;
   /** Weight as the raw editable string, e.g. "18.45" */
   weight: string;
-  /** Expiry as free text (DD/MM/YYYY) */
+  /** Expiry as ISO `YYYY-MM-DD` ('' when unknown). Shown as DD/MM/YYYY. */
   expiry: string;
   /** Supplier's own batch/lot code, free text. Often blank — see below. */
   batch: string;
@@ -75,17 +76,6 @@ type Field = 'weight' | 'name' | 'expiry';
 
 /** A real carton barcode is at least a 13-digit GS1 prefix. */
 const MIN_BARCODE_DIGITS = 13;
-
-const ddmmyyyyToIso = (v: string): string => {
-  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(v.trim());
-  if (!m) return '';
-  return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
-};
-const isoToDdmmyyyy = (iso: string): string => {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  if (!m) return iso;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
 
 /**
  * Full-screen carton editor.
@@ -286,7 +276,7 @@ export function EditPanel({
           <div className="flex gap-[7px]">
             {tab('weight', tr('terminal.netWeight'), `${weight || '0'} ${tr('common.kg')}`, true, 'flex-[1.15]')}
             {tab('name', tr('terminal.itemName'), name || '—', false, 'flex-1')}
-            {tab('expiry', tr('terminal.expiryDate'), expiry || '—', true, 'flex-1')}
+            {tab('expiry', tr('terminal.expiryDate'), isoToDdmmyyyy(expiry) || '—', true, 'flex-1')}
           </div>
         </div>
 
@@ -347,7 +337,7 @@ export function EditPanel({
                   <span className="text-[9px] font-bold text-[#e8eef2] tracking-[.5px]">{tr('terminal.expiryDate')}</span>
                 </span>
                 <span className="block text-[17px] font-extrabold text-ink-inverse font-mono" dir="ltr">
-                  {expiry || 'DD/MM/YYYY'}
+                  {isoToDdmmyyyy(expiry) || 'DD/MM/YYYY'}
                 </span>
                 <span className="block text-[10px] font-extrabold text-brand-weak-ink">{tr('terminal.openCalendar')}</span>
               </button>
@@ -398,9 +388,10 @@ export function EditPanel({
 
       {calOpen && (
         <CalendarPicker
-          value={ddmmyyyyToIso(expiry)}
+          value={toIsoDate(expiry)}
           fieldTitle={tr('terminal.expiryDate')}
-          onPick={iso => { onExpiryChange(isoToDdmmyyyy(iso)); setCalOpen(false); }}
+          // Stored as ISO; only the tiles above show DD/MM/YYYY.
+          onPick={iso => { onExpiryChange(iso); setCalOpen(false); }}
           onClose={() => setCalOpen(false)}
         />
       )}

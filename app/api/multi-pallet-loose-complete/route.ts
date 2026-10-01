@@ -4,6 +4,7 @@ import { t } from '@/lib/i18n/server';
 import type { MultiPalletSession, MultiPalletBoxScan, Language } from '@/types';
 import { isComplete } from '@/lib/pallet-slots';
 import { isSplitSession, splitStateOf, applySplitState } from '@/lib/session-mode';
+import { normalizeBoxExpiries } from '@/lib/expiry';
 
 const SESSION_TTL = 7200;
 
@@ -20,7 +21,12 @@ export async function POST(request: NextRequest) {
   try {
     // worker_chat_id: split jobs only — which worker scanned the loose-box
     // task. Ignored on single sessions (owner is always session.chat_id).
-    const { token, scanned_boxes, worker_chat_id } = await request.json();
+    const { token, scanned_boxes: rawScannedBoxes, worker_chat_id } = await request.json();
+    // Every expiry goes to the bot as ISO, including rows from an older
+    // client or an old browser cache still carrying DD/MM/YYYY (lib/expiry.ts).
+    const scanned_boxes: MultiPalletBoxScan[] = normalizeBoxExpiries(
+      Array.isArray(rawScannedBoxes) ? rawScannedBoxes : [],
+    );
 
     if (!token) {
       return NextResponse.json({ success: false, error: t(undefined, 'errors.missingToken') }, { status: 400 });

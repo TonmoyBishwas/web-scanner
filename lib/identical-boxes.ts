@@ -21,7 +21,7 @@ import type { MultiPalletBoxScan } from '@/types';
 /** What the confirmation form settles for the whole batch. */
 export interface IdenticalForm {
   weight: number;
-  /** As the OCR/edit panel stores it (`YYYY-MM-DD`, or '' when unknown). */
+  /** ISO `YYYY-MM-DD` like every scan row ('' when unknown) — see lib/expiry.ts. */
   expiry: string;
   production_date: string;
 }

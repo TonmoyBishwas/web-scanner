@@ -24,6 +24,7 @@ import { CartonSticker } from './CartonSticker';
 import { Toast, useToast } from './Toast';
 import { useT } from '@/lib/i18n';
 import type { IdenticalForm } from '@/lib/identical-boxes';
+import { toIsoDate, isoToDdmmyyyy } from '@/lib/expiry';
 import type { CartonLabel, Language } from '@/types';
 
 export interface IdenticalSample {
@@ -32,7 +33,7 @@ export interface IdenticalSample {
   item_name: string;
   item_name_hebrew: string;
   weight: number;
-  /** `DD/MM/YYYY` as the scan row stores it ('' when unknown). */
+  /** `YYYY-MM-DD` as the scan row stores it; `DD/MM/YYYY` tolerated ('' when unknown). */
   expiry: string;
   /** `YYYY-MM-DD` ('' when unknown). */
   production_date: string;
@@ -53,16 +54,6 @@ interface IdenticalBoxesFormProps {
 
 type DateField = 'production' | 'expiry';
 
-const ddmmyyyyToIso = (v: string): string => {
-  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec((v || '').trim());
-  if (!m) return /^\d{4}-\d{2}-\d{2}$/.test((v || '').trim()) ? v.trim() : '';
-  return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
-};
-const isoToDdmmyyyy = (iso: string): string => {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
-};
-
 export function IdenticalBoxesForm({
   token, language, palletNumber, sample, onBack, onCreated, onDone,
 }: IdenticalBoxesFormProps) {
@@ -71,8 +62,8 @@ export function IdenticalBoxesForm({
 
   const [quantity, setQuantity] = useState('');
   const [weight, setWeight] = useState(sample.weight > 0 ? String(sample.weight) : '');
-  const [productionDate, setProductionDate] = useState(ddmmyyyyToIso(sample.production_date));
-  const [expiryDate, setExpiryDate] = useState(ddmmyyyyToIso(sample.expiry));
+  const [productionDate, setProductionDate] = useState(toIsoDate(sample.production_date));
+  const [expiryDate, setExpiryDate] = useState(toIsoDate(sample.expiry));
   const [calendarFor, setCalendarFor] = useState<DateField | null>(null);
   const [saving, setSaving] = useState(false);
   const [created, setCreated] = useState<CartonLabel[] | null>(null);
@@ -144,7 +135,9 @@ export function IdenticalBoxesForm({
       setCreated(labels);
       onCreated(labels, {
         weight: weightKg,
-        expiry: expiryDate ? isoToDdmmyyyy(expiryDate) : '',
+        // ISO, like every scan row. This line used to write DD/MM/YYYY, which
+        // the bot stored as box_expiry NULL — see lib/expiry.ts.
+        expiry: expiryDate || '',
         production_date: productionDate || '',
       });
     } catch {

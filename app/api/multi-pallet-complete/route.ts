@@ -7,6 +7,7 @@ import { matchInvoiceItem } from '@/lib/invoice-match';
 import { nonMeatItemKey } from '@/lib/nonmeat-key';
 import { markDone, isComplete } from '@/lib/pallet-slots';
 import { isSplitSession, splitStateOf, applySplitState } from '@/lib/session-mode';
+import { normalizeBoxExpiries } from '@/lib/expiry';
 
 const SESSION_TTL = 7200;
 // "Same weight" means the printed weights are EXACTLY equal — a fixed-weight
@@ -131,7 +132,7 @@ type UniformGroupOverride = {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { token, scanned_boxes, box_count, uniform_groups, merge_map, nonmeat_items,
+    const { token, scanned_boxes: rawScannedBoxes, box_count, uniform_groups, merge_map, nonmeat_items,
       manual_declared, manual_items, worker_chat_id, supplier_pallet_ref } = body as {
       token: string;
       /** The supplier's shipping-pallet label the worker scanned (MEV-10). */
@@ -158,6 +159,13 @@ export async function POST(request: NextRequest) {
       // sessions (the cursor's owner is always session.chat_id there).
       worker_chat_id?: string;
     };
+
+    // Every expiry goes to the bot as ISO. A row from an older client, or one
+    // restored from a browser cache written before the fix, can still carry
+    // DD/MM/YYYY — which the bot stored as box_expiry NULL (lib/expiry.ts).
+    const scanned_boxes = Array.isArray(rawScannedBoxes)
+      ? normalizeBoxExpiries(rawScannedBoxes)
+      : rawScannedBoxes;
 
     if (!token) {
       return NextResponse.json({ success: false, error: t(undefined, 'errors.missingToken') }, { status: 400 });

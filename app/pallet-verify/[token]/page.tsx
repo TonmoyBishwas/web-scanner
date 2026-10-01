@@ -30,6 +30,7 @@ import { CartonCreator } from '@/components/terminal/CartonCreator';
 import { LabelsBrowser } from '@/components/terminal/LabelsBrowser';
 import { IdenticalBoxesForm } from '@/components/terminal/IdenticalBoxesForm';
 import { expandIdenticalBoxes, type IdenticalForm } from '@/lib/identical-boxes';
+import { toIsoDate, normalizeExpiry } from '@/lib/expiry';
 import type { CartonLabel } from '@/types';
 import SplitJobScreen, { SPLIT_CLAIM_ERROR_KEYS } from '@/components/terminal/SplitJobScreen';
 import { installDebugLogCapture } from '@/lib/debug-log';
@@ -153,19 +154,6 @@ function stripProvisionalIds<T extends { barcode: string; sku?: string }>(
       ? { ...b, barcode: noBarcodeId(doc, pallet, i + 1), sku: b.sku && !isProvisional(b.sku) ? b.sku : '' }
       : b,
   );
-}
-
-/**
- * Normalise whatever is in the editor's expiry field to ISO.
- *
- * It can be either: the OCR writes `YYYY-MM-DD` straight through, while the
- * panel's calendar picker hands back `DD/MM/YYYY`. Anything else returns ''.
- */
-function toIsoDate(v: string): string {
-  const raw = (v || '').trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(raw);
-  return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : '';
 }
 
 /** `2027-06-16` → `16/06/27`, for a toast that has to stay one short line. */
@@ -1373,7 +1361,8 @@ export default function PalletVerifyPage({
       name_he: box.item_name_hebrew || '',
       name_en: box.item_name || '',
       weight: box.weight > 0 ? String(box.weight) : '',
-      expiry: box.expiry || '',
+      // Always ISO in the editor, whatever an older row carries — see lib/expiry.ts.
+      expiry: normalizeExpiry(box.expiry),
       batch: box.supplier_batch || '',
       conflict: box.barcode_conflict,
       image_data: box.image_data,
@@ -1467,7 +1456,8 @@ export default function PalletVerifyPage({
   function handleSaveEdit() {
     if (!editForm) return;
     const { barcode, name_he, name_en, isLoose } = editForm;
-    const expiry = editForm.expiry.trim();
+    // Stored as ISO: a DD/MM/YYYY here reached the bot as box_expiry NULL.
+    const expiry = normalizeExpiry(editForm.expiry);
     const batch = editForm.batch.trim();
     const w = parseFloat(editForm.weight);
     trace('ui', 'edit_save', { barcode, isLoose, name_he, name_en, weight: w, expiry, batch, barcodeInput: editForm.barcodeInput, forcedId: editForm.forcedId, unidentified: editForm.unidentified });
