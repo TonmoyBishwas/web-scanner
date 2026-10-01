@@ -1,14 +1,23 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback, type PointerEvent as ReactPointerEvent } from 'react';
-import { AlertTriangle, ScanLine, Camera, Check, X } from 'lucide-react';
+import { AlertTriangle, ScanLine, Camera, Check, CheckCheck, X } from 'lucide-react';
 import type { ParsedBarcode, BoxStickerOCR } from '@/types';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
 import { useT } from '@/lib/i18n';
 import { useSettingsStore } from '@/stores/settings-store';
 
-/** Why a read was rejected — decides the label on the red hold. */
-export type RejectKind = 'duplicate' | 'rejected';
+/**
+ * Why the parent turned a read down — decides the colour and label of the hold.
+ *
+ * - 'duplicate': the carton is already on the list. Not a failure (on a pallet
+ *   scanned in place it is the most common read there is), so where a decode
+ *   IS the save (`holdClaim` 'saved') the hold is BLUE "Already counted".
+ * - 'rejected': a misread (bad check digit, a fragment) — red, scan again.
+ * - 'clash': another worker already has this carton (split jobs) — red; the
+ *   page says whose pallet it is on.
+ */
+export type RejectKind = 'duplicate' | 'rejected' | 'clash';
 
 interface SmartScannerProps {
   onBarcodeDetected: (barcode: string, data: ParsedBarcode, imageData?: string) => void;
@@ -47,6 +56,12 @@ interface SmartScannerProps {
    * floating sheet leaves visible (see CORNER_* below).
    */
   frame?: 'square' | 'corner';
+  /**
+   * Keep the "Capture anyway" control calm: no pulse, no hint. Set by the page
+   * while the worker is busy in the sheet (typing the pallet total), where an
+   * orange pulse would only shout at a pause that is not a stuck barcode.
+   */
+  nudgeSuppressed?: boolean;
   /**
    * Freeze the scanner without tearing the camera down.
    *
@@ -93,15 +108,43 @@ const CONTROL_BAND_PX = 56;
  * enough that this term never wins and the frame stays exactly where it was.
  */
 const CONTROL_STACK_PX = 100;
+/**
+ * When "Capture anyway" may pulse orange: a misread in the last NUDGE_REFUSED_MS
+ * (the barcode really is fighting the camera), or no decode at all for
+ * NUDGE_IDLE_MS. It used to pulse after 3.5 s of idle alone, so it shouted
+ * whenever the worker paused to read the screen or type.
+ */
+const NUDGE_REFUSED_MS = 10_000;
+const NUDGE_IDLE_MS = 6_000;
 
 const CORNER_W = 320;
 const CORNER_H = 196;
 const CORNER_BAND_PX = 240;
 
-// Declare BarcodeDetector types
+/** The post-scan hold's fill and glow by tone: green saved, blue already
+ *  counted, red rejected. */
+const HOLD_FILL = {
+  ok: 'rgba(34,197,94,.45)',
+  info: 'rgba(19,164,236,.35)',
+  danger: 'rgba(239,68,68,.45)',
+} as const;
+const HOLD_GLOW = {
+  ok: '0 0 0 4px rgba(34,197,94,.35), 0 0 32px rgba(34,197,94,.6)',
+  info: '0 0 0 4px rgba(19,164,236,.35), 0 0 32px rgba(19,164,236,.6)',
+  danger: '0 0 0 4px rgba(239,68,68,.35), 0 0 32px rgba(239,68,68,.6)',
+} as const;
+
+// The slice of the Shape Detection API's BarcodeDetector this file uses.
+interface NativeBarcodeDetector {
+  detect(source: HTMLCanvasElement | ImageBitmap): Promise<Array<{ rawValue: string }>>;
+}
+interface NativeBarcodeDetectorCtor {
+  new (options: { formats: string[] }): NativeBarcodeDetector;
+  getSupportedFormats?: () => Promise<string[]>;
+}
 declare global {
   interface Window {
-    BarcodeDetector: any;
+    BarcodeDetector: NativeBarcodeDetectorCtor;
   }
 }
 
@@ -426,7 +469,8 @@ export function SmartScanner({
   holdClaim = 'saved',
   className,
   frame = 'square',
-  paused = false
+  paused = false,
+  nudgeSuppressed = false,
 }: SmartScannerProps) {
   const tr = useT();
   // Tap anywhere on the camera = capture the label. Default ON — a torn or
@@ -451,7 +495,7 @@ export function SmartScanner({
   const lastScannedRef = useRef<string>('');
   const lastScanTimeRef = useRef<number>(0);
   const isMountedRef = useRef(true);
-  const [flashColor, setFlashColor] = useState<'green' | 'red' | null>(null);
+  const [flashColor, setFlashColor] = useState<'green' | 'blue' | 'red' | null>(null);
   const [isInCooldown, setIsInCooldown] = useState(false);
   const [cooldownTimeLeft, setCooldownTimeLeft] = useState(0);
   const [captureCount, setCaptureCount] = useState(0); // 0 | 1 | 2 | 3
@@ -519,6 +563,10 @@ export function SmartScanner({
   // tracks the last confirmed decode (or mount); when no decode has happened in
   // a few seconds the "capture anyway" button surfaces prominently.
   const lastActivityRef = useRef<number>(Date.now());
+  // Last misread the parent refused ('rejected'): the strongest sign that the
+  // label needs the photo path. 0 = none yet.
+  const lastRefusedRef = useRef<number>(0);
+  const rootRef = useRef<HTMLDivElement>(null);
   const [showCaptureHint, setShowCaptureHint] = useState(false);
   const [captureBusy, setCaptureBusy] = useState(false);
   // Visible diagnostic state — surfaces silent camera failures to the user.
@@ -817,6 +865,7 @@ export function SmartScanner({
   // label count) so it can never end on a green "saved" for a rejected box.
   const triggerRedFlash = useCallback((kind: RejectKind = 'duplicate') => {
     setRejectKind(kind);
+    if (kind === 'rejected') lastRefusedRef.current = Date.now();
     if (inCooldownRef.current && outcomeRef.current === 'saved') {
       outcomeRef.current = 'duplicate';
       setScanOutcome('duplicate');
@@ -833,18 +882,30 @@ export function SmartScanner({
   // Expose flash trigger to parent
   useEffect(() => {
     if (onDuplicateFlash) {
-      onDuplicateFlash(triggerRedFlash as any);
+      onDuplicateFlash(triggerRedFlash);
     }
   }, [onDuplicateFlash, triggerRedFlash]);
 
-  // Surface the "capture anyway" button prominently once a few seconds pass
-  // with no successful decode (worker is fighting glare / a damaged barcode).
+  // Surface the "capture anyway" button prominently when the barcode looks
+  // like it is fighting the camera: a misread just now, or a long spell with
+  // no decode at all (glare / a damaged barcode). Never while the page says
+  // the worker is busy in the sheet, and never while the sheet is pulled up
+  // over the camera — the worker is reading the list, not aiming.
   useEffect(() => {
     const id = setInterval(() => {
-      setShowCaptureHint(!isInCooldown && Date.now() - lastActivityRef.current > 3500);
+      const now = Date.now();
+      const root = rootRef.current;
+      const sheetPx = root ? parseFloat(getComputedStyle(root).getPropertyValue('--sheet-h')) || 0 : 0;
+      const sheetOverCamera = !!root && root.clientHeight - sheetPx < CORNER_BAND_PX;
+      setShowCaptureHint(
+        !isInCooldown && !nudgeSuppressed && !sheetOverCamera && (
+          now - lastRefusedRef.current < NUDGE_REFUSED_MS
+          || now - lastActivityRef.current >= NUDGE_IDLE_MS
+        ),
+      );
     }, 1000);
     return () => clearInterval(id);
-  }, [isInCooldown]);
+  }, [isInCooldown, nudgeSuppressed]);
 
   // Manual OCR capture: grab the sharpest full frame and hand it to the parent
   // WITHOUT a decoded barcode. OCR then reads the name/weight AND the printed
@@ -1289,9 +1350,10 @@ export function SmartScanner({
           }, 1000);
 
           // Long enough to register as a deliberate confirmation rather than a
-          // blink. A rejected scan keeps the old short red blink — the red
-          // frame behind it is what carries that message.
-          setFlashColor(isDup ? 'red' : 'green');
+          // blink. A re-read keeps the old short blink — blue where a decode
+          // is the save ("already counted"), red where it is a rejection
+          // (/issue) — and the frame behind it carries the message.
+          setFlashColor(isDup ? (holdClaimRef.current === 'saved' ? 'blue' : 'red') : 'green');
           setTimeout(() => setFlashColor(null), isDup ? 200 : 420);
 
           // Vibration handled by parent component with settings check
@@ -1384,9 +1446,25 @@ export function SmartScanner({
     );
   }
 
+  // How a rejection reads. "Already counted" (a duplicate where a decode IS
+  // the save) is information, not a failure: blue. A misread, a clash with
+  // another worker, and any rejection on /issue stay red.
+  const rejectTone: 'info' | 'danger' = rejectKind === 'duplicate' && holdClaim === 'saved' ? 'info' : 'danger';
+  const holdTone: 'ok' | 'info' | 'danger' = scanOutcome === 'saved' ? 'ok' : rejectTone;
+  const rejectLabel = holdClaim !== 'saved'
+    ? tr('scanner.scanRejected')
+    : rejectKind === 'duplicate'
+      ? tr('scanner.alreadyCounted')
+      : rejectKind === 'rejected'
+        ? tr('scanner.badRead')
+        : tr('scanner.alreadyScanned');
+  // Calm unless the page lets it nudge (see `nudgeSuppressed`) — derived here
+  // so a suppression takes effect at once, not at the next interval tick.
+  const nudge = showCaptureHint && !nudgeSuppressed;
+
   // Native scanner
   return (
-    <div className={`relative w-full bg-black rounded-xl overflow-hidden ${className || 'aspect-square'}`}>
+    <div ref={rootRef} className={`relative w-full bg-black rounded-xl overflow-hidden ${className || 'aspect-square'}`}>
       <video
         ref={videoRef}
         className="absolute inset-0 w-full h-full object-cover"
@@ -1419,7 +1497,7 @@ export function SmartScanner({
       {/* Camera flash overlay */}
       {flashColor && (
         <div
-          className={`absolute inset-0 pointer-events-none ${flashColor === 'green' ? 'bg-ok/70' : 'bg-danger/70'
+          className={`absolute inset-0 pointer-events-none ${flashColor === 'green' ? 'bg-ok/70' : flashColor === 'blue' ? 'bg-brand/70' : 'bg-danger/70'
             }`}
           style={{
             animation: `cameraFlash ${flashColor === 'green' ? '0.42s' : '0.2s'} ease-out forwards`,
@@ -1434,7 +1512,7 @@ export function SmartScanner({
           Decodes are ignored during the hold anyway, so nothing is lost. */}
       {isInCooldown && (
         <div
-          className={`absolute inset-0 pointer-events-none ${scanOutcome === 'saved' ? 'bg-ok/20' : 'bg-danger/20'}`}
+          className={`absolute inset-0 pointer-events-none ${holdTone === 'ok' ? 'bg-ok/20' : holdTone === 'info' ? 'bg-brand/20' : 'bg-danger/20'}`}
           style={{ zIndex: 5 }}
         />
       )}
@@ -1541,25 +1619,24 @@ export function SmartScanner({
             style={frame === 'corner' ? { maxWidth: CORNER_W, height: CORNER_H } : { width: 240, height: 240 }}
           >
 
-            {/* === POST-SCAN HOLD — green "saved" or red "already scanned" === */}
+            {/* === POST-SCAN HOLD — green "saved", blue "already counted", or
+                red "misread / rejected" === */}
             {isInCooldown && (
               <>
                 {/* Thick border + a near-solid fill: the 3px line + 10% tint
                     it replaced was invisible against a bright carton. */}
                 <div
                   className={`absolute inset-0 border-[6px] rounded-xl ${
-                    scanOutcome === 'saved' ? 'border-ok' : 'border-danger'
+                    holdTone === 'ok' ? 'border-ok' : holdTone === 'info' ? 'border-brand' : 'border-danger'
                   }`}
                   style={{
-                    background: scanOutcome === 'saved' ? 'rgba(34,197,94,.45)' : 'rgba(239,68,68,.45)',
-                    boxShadow: scanOutcome === 'saved'
-                      ? '0 0 0 4px rgba(34,197,94,.35), 0 0 32px rgba(34,197,94,.6)'
-                      : '0 0 0 4px rgba(239,68,68,.35), 0 0 32px rgba(239,68,68,.6)',
+                    background: HOLD_FILL[holdTone],
+                    boxShadow: HOLD_GLOW[holdTone],
                     animation: 'scanHoldIn .32s cubic-bezier(.2,1.3,.4,1)',
                   }}
                 />
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5">
-                  {scanOutcome === 'saved' ? (
+                  {holdTone === 'ok' ? (
                     <>
                       <Check
                         className={frame === 'corner' ? 'w-16 h-16 text-white' : 'w-20 h-20 text-white'}
@@ -1577,22 +1654,35 @@ export function SmartScanner({
                     </>
                   ) : (
                     <>
-                      <X
-                        className={frame === 'corner' ? 'w-16 h-16 text-white' : 'w-20 h-20 text-white'}
-                        strokeWidth={4}
-                        style={{
-                          animation: 'scanSavedPop .28s cubic-bezier(.2,1.3,.4,1)',
-                          filter: 'drop-shadow(0 2px 6px rgba(0,0,0,.5))',
-                        }}
-                      />
-                      <span className="px-4 py-1.5 rounded-full bg-danger text-white text-base font-black tracking-[.3px] uppercase shadow-lg">
-                        {/* "Already scanned" is only true where a decode IS the
+                      {holdTone === 'info' ? (
+                        <CheckCheck
+                          className={frame === 'corner' ? 'w-16 h-16 text-white' : 'w-20 h-20 text-white'}
+                          strokeWidth={4}
+                          style={{
+                            animation: 'scanSavedPop .28s cubic-bezier(.2,1.3,.4,1)',
+                            filter: 'drop-shadow(0 2px 6px rgba(0,0,0,.5))',
+                          }}
+                        />
+                      ) : (
+                        <X
+                          className={frame === 'corner' ? 'w-16 h-16 text-white' : 'w-20 h-20 text-white'}
+                          strokeWidth={4}
+                          style={{
+                            animation: 'scanSavedPop .28s cubic-bezier(.2,1.3,.4,1)',
+                            filter: 'drop-shadow(0 2px 6px rgba(0,0,0,.5))',
+                          }}
+                        />
+                      )}
+                      <span
+                        className={`px-4 py-1.5 rounded-full text-white text-base font-black tracking-[.3px] uppercase shadow-lg ${
+                          holdTone === 'info' ? 'bg-brand' : 'bg-danger'
+                        }`}
+                      >
+                        {/* "Already counted" is only true where a decode IS the
                             save. On /issue a rejection can equally be not-found,
                             already-issued or a network error — the toast says
-                            which, so the frame stays neutral. */}
-                        {holdClaim === 'saved'
-                          ? tr(rejectKind === 'duplicate' ? 'scanner.alreadyScanned' : 'scanner.badRead')
-                          : tr('scanner.scanRejected')}
+                            which, so the frame stays a neutral "Rejected". */}
+                        {rejectLabel}
                       </span>
                     </>
                   )}
@@ -1609,15 +1699,25 @@ export function SmartScanner({
               </>
             )}
 
-            {/* === DUPLICATE STATE (outside a hold) === */}
+            {/* === REJECTION OUTSIDE A HOLD (a manual capture turned down) === */}
             {!isInCooldown && isDuplicate && (
               <>
                 <div
-                  className="absolute inset-0 border-[6px] border-danger rounded-xl"
-                  style={{ background: 'rgba(239,68,68,.45)', boxShadow: '0 0 0 4px rgba(239,68,68,.35)' }}
+                  className={`absolute inset-0 border-[6px] rounded-xl ${rejectTone === 'info' ? 'border-brand' : 'border-danger'}`}
+                  style={{
+                    background: HOLD_FILL[rejectTone],
+                    boxShadow: rejectTone === 'info' ? '0 0 0 4px rgba(19,164,236,.35)' : '0 0 0 4px rgba(239,68,68,.35)',
+                  }}
                 />
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="px-4 py-1.5 rounded-full bg-danger text-white text-base font-black uppercase shadow-lg">{tr(rejectKind === 'duplicate' ? 'scanner.alreadyScanned' : 'scanner.badRead')}</span>
+                  <span
+                    className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-white text-base font-black uppercase shadow-lg ${
+                      rejectTone === 'info' ? 'bg-brand' : 'bg-danger'
+                    }`}
+                  >
+                    {rejectTone === 'info' && <CheckCheck className="w-5 h-5" strokeWidth={3} />}
+                    {rejectLabel}
+                  </span>
                 </div>
               </>
             )}
@@ -1710,7 +1810,7 @@ export function SmartScanner({
         <div className="absolute top-2 left-2">
           <div className={`flex items-center gap-1 px-2 py-1 rounded-full border ${
             isInCooldown
-              ? scanOutcome === 'saved' ? 'bg-ok border-ok' : 'bg-danger border-danger'
+              ? holdTone === 'ok' ? 'bg-ok border-ok' : holdTone === 'info' ? 'bg-brand border-brand' : 'bg-danger border-danger'
               : captureCount > 0
                 ? 'bg-brand border-brand'
                 : 'border-cam-border bg-cam-chip'
@@ -1718,16 +1818,18 @@ export function SmartScanner({
             <div className={`w-2 h-2 rounded-full ${
               isInCooldown || captureCount > 0
                 ? 'bg-white'
-                : isDuplicate ? 'bg-danger' : 'bg-ok animate-pulse'
+                : isDuplicate ? (rejectTone === 'info' ? 'bg-brand' : 'bg-danger') : 'bg-ok animate-pulse'
             }`}></div>
             {isInCooldown ? (
-              <span className={`text-xs font-bold ${scanOutcome === 'saved' ? 'text-canvas' : 'text-white'}`} dir="ltr">
-                {scanOutcome === 'saved' ? '✓' : '✕'} {cooldownTimeLeft}s
+              <span className={`text-xs font-bold ${holdTone === 'ok' ? 'text-canvas' : 'text-white'}`} dir="ltr">
+                {holdTone === 'danger' ? '✕' : '✓'} {cooldownTimeLeft}s
               </span>
             ) : captureCount > 0 ? (
               <span className="text-white text-xs font-bold">{tr('scanner.reading')}</span>
             ) : isDuplicate ? (
-              <span className="text-cam-ink text-xs font-bold">{tr('scanner.duplicateBadge')}</span>
+              <span className="text-cam-ink text-xs font-bold">
+                {rejectTone === 'info' ? tr('scanner.alreadyCounted') : tr('scanner.duplicateBadge')}
+              </span>
             ) : (
               <ScanLine className="w-3 h-3 text-cam-ink" />
             )}
@@ -1753,8 +1855,8 @@ export function SmartScanner({
         )}
 
         {/* Manual OCR-capture fallback — registers a box whose barcode won't
-            decode (glare / folded / torn). Subtle by default; pulses once a few
-            seconds pass with no decode.
+            decode (glare / folded / torn). Subtle by default; pulses after a
+            misread or a long spell with no decode (see NUDGE_*).
 
             Anchored to the top of the BOTTOM SHEET, not to the bottom of this
             element. The camera runs full height *behind* the floating sheet on
@@ -1767,39 +1869,52 @@ export function SmartScanner({
             for this control means sliding straight back under the sheet — the
             exact bug being fixed. Here the offset tracks the sheet outright and
             the min() only stops it running off the TOP of the camera region.
-            The 0px fallback leaves a sheetless page exactly as it was. */}
+            The 0px fallback leaves a sheetless page exactly as it was.
+
+            The hint above the button is all-or-nothing. The stack is a
+            column-reverse box from the camera's top edge down to the button,
+            and it wraps: when the strip is too short for the hint (a tall
+            sheet clamps the button near the top), the hint drops into a second
+            flex line, which starts one full width to the side and is clipped
+            by overflow-hidden. It used to stick out over the progress header,
+            showing only "…camera to capture the label". The padding keeps the
+            button exactly where it was (12px above the sheet, 56px band). */}
         {onManualCapture && !isInCooldown && (
           <div
-            className="absolute inset-x-0 flex flex-col items-center gap-2 px-4"
+            className="absolute inset-x-0 top-0 flex flex-col-reverse flex-wrap content-start gap-2 pt-2 pb-3 overflow-hidden"
             style={{
-              bottom: `min(calc(var(--sheet-h, 0px) + 12px), calc(100% - ${CONTROL_BAND_PX}px))`,
+              bottom: `min(var(--sheet-h, 0px), calc(100% - ${CONTROL_BAND_PX + 12}px))`,
               transition: 'bottom var(--sheet-h-dur, 0s) cubic-bezier(.4,0,.2,1)',
             }}
           >
-            {showCaptureHint && (
-              <span className="text-xs font-semibold text-warn-weak-ink bg-cam-chip border border-cam-border px-3 py-1 rounded-full text-center max-w-[280px] pointer-events-none">
-                {tr('scanner.captureHint')}
-              </span>
-            )}
-            <button
-              onClick={handleManualCaptureClick}
-              disabled={captureBusy}
-              className={`pointer-events-auto flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-bold transition-all border disabled:opacity-50 ${
-                showCaptureHint
-                  ? 'bg-warn text-canvas border-warn animate-pulse shadow-lg scale-105'
-                  : 'bg-cam-chip text-cam-ink border-cam-border'
-              }`}
-            >
-              <Camera className="w-4 h-4" /> {tr('scanner.captureAnyway')}
-              {/* Tap-anywhere is the default, so it needs no badge — the hint
-                  above says it when it matters. The remote is opt-in hardware,
-                  and a worker who paired one wants to see the page listening. */}
-              {hardwareTriggerEnabled && (
-                <span className={`ms-1 text-[10px] font-semibold ${showCaptureHint ? 'text-canvas/80' : 'text-ok-weak-ink'}`}>
-                  {tr('scanner.hardwareTriggerOn')}
+            <div className="w-full flex justify-center px-4">
+              <button
+                onClick={handleManualCaptureClick}
+                disabled={captureBusy}
+                className={`pointer-events-auto flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-bold transition-all border disabled:opacity-50 ${
+                  nudge
+                    ? 'bg-warn text-canvas border-warn animate-pulse shadow-lg scale-105'
+                    : 'bg-cam-chip text-cam-ink border-cam-border'
+                }`}
+              >
+                <Camera className="w-4 h-4" /> {tr('scanner.captureAnyway')}
+                {/* Tap-anywhere is the default, so it needs no badge — the hint
+                    above says it when it matters. The remote is opt-in hardware,
+                    and a worker who paired one wants to see the page listening. */}
+                {hardwareTriggerEnabled && (
+                  <span className={`ms-1 text-[10px] font-semibold ${nudge ? 'text-canvas/80' : 'text-ok-weak-ink'}`}>
+                    {tr('scanner.hardwareTriggerOn')}
+                  </span>
+                )}
+              </button>
+            </div>
+            {nudge && (
+              <div className="w-full flex justify-center px-4">
+                <span className="text-xs font-semibold text-warn-weak-ink bg-cam-chip border border-cam-border px-3 py-1 rounded-full text-center max-w-[280px]">
+                  {tr('scanner.captureHint')}
                 </span>
-              )}
-            </button>
+              </div>
+            )}
           </div>
         )}
 

@@ -1,7 +1,8 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { MI } from './MI';
+import { nearestScrollTop } from '@/lib/scan-notice';
 
 interface HistoryRowProps {
   index: number | string;
@@ -24,6 +25,18 @@ interface HistoryRowProps {
   unprinted?: boolean;
   /** Spoken / long-press text for the unprinted marker. */
   unprintedLabel?: string;
+  /** A re-read just named this carton ("already counted"): blue ring + pulse
+   *  and a double tick for a moment, and the list scrolls it into view. */
+  highlight?: boolean;
+}
+
+/** The nearest ancestor that scrolls vertically — the sheet's list. */
+function scrollParent(el: HTMLElement): HTMLElement | null {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const oy = getComputedStyle(p).overflowY;
+    if (oy === 'auto' || oy === 'scroll') return p;
+  }
+  return null;
 }
 
 // Design history row: rgba(10,15,20,.5) on #1e2a35 hairline, 40px mono index
@@ -31,15 +44,32 @@ interface HistoryRowProps {
 export function HistoryRow({
   index, name, barcode, weight, unitLabel = 'ק"ג',
   status = 'done', onClick, actions, dimmed = false, unprinted = false, unprintedLabel,
+  highlight = false,
 }: HistoryRowProps) {
-  const statusIcon = status === 'failed' ? 'error' : status === 'pending' ? 'hourglass_empty' : 'check_circle';
-  const statusColor = status === 'failed' ? '#ef4444' : status === 'pending' ? '#fbbf5c' : '#22c55e';
+  const statusIcon = highlight ? 'done_all' : status === 'failed' ? 'error' : status === 'pending' ? 'hourglass_empty' : 'check_circle';
+  const statusColor = highlight ? '#13a4ec' : status === 'failed' ? '#ef4444' : status === 'pending' ? '#fbbf5c' : '#22c55e';
   const open = Boolean(actions);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // Bring the named carton into view — but only scroll the sheet's own list,
+  // and only when it is open far enough to show it (nearestScrollTop). A
+  // plain scrollIntoView would also scroll the overflow-hidden page shells
+  // around the sheet, which is how a camera layout gets knocked sideways.
+  useEffect(() => {
+    if (!highlight) return;
+    const el = rootRef.current;
+    const list = el && scrollParent(el);
+    if (!el || !list) return;
+    const top = el.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop;
+    const to = nearestScrollTop(top, el.offsetHeight, list.scrollTop, list.clientHeight);
+    if (to !== null) list.scrollTo({ top: to, behavior: 'smooth' });
+  }, [highlight]);
 
   return (
     <div
+      ref={rootRef}
       onClick={onClick}
-      className={`bg-[rgba(10,15,20,.5)] border rounded-[13px] px-[13px] py-[11px] transition-opacity ${open ? 'border-line-strong' : 'border-line'} ${onClick ? 'cursor-pointer' : ''} ${dimmed ? 'opacity-50' : ''}`}
+      className={`bg-[rgba(10,15,20,.5)] border rounded-[13px] px-[13px] py-[11px] transition-opacity ${highlight ? 'border-brand animate-markerPulse' : open ? 'border-line-strong' : 'border-line'} ${onClick ? 'cursor-pointer' : ''} ${dimmed ? 'opacity-50' : ''}`}
     >
       <div className="flex justify-between items-center gap-[10px]">
         <div className="flex items-center gap-[11px] min-w-0">

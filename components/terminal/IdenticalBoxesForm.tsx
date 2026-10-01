@@ -16,6 +16,12 @@
  * later step from the Labels chip (amber badge until it happens): the floor
  * saves several products and prints them together, any time before the
  * pallet is closed.
+ *
+ * Also opened from "Different carton?" on an already-counted notice
+ * (`anotherOf`): the carton in hand carries a label byte-identical to a
+ * carton already on the list. Same form and same save, prefilled to ONE
+ * carton and worded for that case; the page adds the new row and keeps the
+ * counted one.
  */
 
 import { useState } from 'react';
@@ -47,6 +53,11 @@ interface IdenticalBoxesFormProps {
   /** Pallet the batch is minted on; 0 = the loose pile. */
   palletNumber: number;
   sample: IdenticalSample;
+  /**
+   * "Different carton?": the list number of the counted carton this one's
+   * label matches. Starts the count at 1 and says what is happening.
+   */
+  anotherOf?: number;
   onBack: () => void;
   /**
    * The batch is saved in carton_labels (unprinted). The page expands the
@@ -58,12 +69,12 @@ interface IdenticalBoxesFormProps {
 type DateField = 'production' | 'expiry';
 
 export function IdenticalBoxesForm({
-  token, palletNumber, sample, onBack, onCreated,
+  token, palletNumber, sample, anotherOf, onBack, onCreated,
 }: IdenticalBoxesFormProps) {
   const tr = useT();
   const { toast, showToast } = useToast();
 
-  const [quantity, setQuantity] = useState('');
+  const [quantity, setQuantity] = useState(anotherOf ? '1' : '');
   const [weight, setWeight] = useState(sample.weight > 0 ? String(sample.weight) : '');
   const [productionDate, setProductionDate] = useState(toIsoDate(sample.production_date));
   const [expiryDate, setExpiryDate] = useState(toIsoDate(sample.expiry));
@@ -156,7 +167,7 @@ export function IdenticalBoxesForm({
   const tile = 'bg-tile border border-line rounded-[12px]';
 
   return (
-    <ScreenOverlay title={tr('identical.title')} onBack={onBack}>
+    <ScreenOverlay title={anotherOf ? tr('identical.anotherTitle') : tr('identical.title')} onBack={onBack}>
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 flex flex-col gap-[13px]">
         <div className={`${tile} px-3 py-[12px]`}>
           <span className="block text-[15px] font-extrabold text-ink-inverse truncate">{name}</span>
@@ -164,13 +175,13 @@ export function IdenticalBoxesForm({
             {sample.barcode}
           </span>
           <span className="block text-[11px] font-semibold text-ink-muted mt-[6px] leading-[1.45]">
-            {tr('identical.intro')}
+            {anotherOf ? tr('identical.anotherIntro', { n: anotherOf }) : tr('identical.intro')}
           </span>
         </div>
 
         {/* Count */}
         <div>
-          <div className={fieldLabel}>{tr('identical.quantity')}</div>
+          <div className={fieldLabel}>{anotherOf ? tr('identical.anotherQuantity') : tr('identical.quantity')}</div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setQuantity(String(Math.max(1, count - 1)))}
@@ -195,9 +206,11 @@ export function IdenticalBoxesForm({
               <MI name="add" size={22} />
             </button>
           </div>
-          <p className="text-[10.5px] font-semibold text-ink-muted mt-[6px] mx-[2px] leading-[1.45]">
-            {tr('identical.quantityHint')}
-          </p>
+          {!anotherOf && (
+            <p className="text-[10.5px] font-semibold text-ink-muted mt-[6px] mx-[2px] leading-[1.45]">
+              {tr('identical.quantityHint')}
+            </p>
+          )}
         </div>
 
         {/* Weight */}
@@ -259,7 +272,7 @@ export function IdenticalBoxesForm({
           className="w-full h-[50px] rounded-[12px] bg-brand text-white text-[14px] font-black flex items-center justify-center gap-2 disabled:opacity-50"
         >
           <MI name="save" size={20} />
-          {saving ? tr('carton.saving') : tr('identical.save', { count })}
+          {saving ? tr('carton.saving') : count === 1 ? tr('identical.saveOne') : tr('identical.save', { count })}
         </button>
       </div>
 
