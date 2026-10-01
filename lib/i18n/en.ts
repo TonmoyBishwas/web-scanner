@@ -605,7 +605,7 @@ export const en = {
   'terminal.statPallet': 'Pallet',
   'terminal.statCartons': 'Cartons',
   'terminal.statWeight': 'Weight',
-  'terminal.swipeNextPallet': 'Slide to confirm · receive next pallet',
+  'terminal.nextPalletBtn': 'Scan pallet {n} of {total}',
   'terminal.issuePalletLabels': 'Print label for this pallet',
   'terminal.commitAndIssue': 'Add to stock & print labels',
   'terminal.sendToPriority': 'Close & send to Priority',

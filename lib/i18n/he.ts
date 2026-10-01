@@ -608,7 +608,7 @@ export const he: Record<TranslationKey, string> = {
   'terminal.statPallet': 'משטח',
   'terminal.statCartons': 'קרטונים',
   'terminal.statWeight': 'משקל',
-  'terminal.swipeNextPallet': 'החלק לאישור · קליטת משטח הבא',
+  'terminal.nextPalletBtn': 'סרוק משטח {n} מתוך {total}',
   'terminal.issuePalletLabels': 'נפק מדבקות למשטח זה',
   'terminal.commitAndIssue': 'הכנסה למלאי וניפוק מדבקות',
   'terminal.sendToPriority': 'סגירה ושליחה לפריוריטי',

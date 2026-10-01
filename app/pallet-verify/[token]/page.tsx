@@ -447,7 +447,8 @@ export default function PalletVerifyPage({
   // warning modal before the pallet is confirmed with the actual scanned count.
   const [pendingForceConfirm, setPendingForceConfirm] = useState(false);
   // Terminal chrome: bottom-sheet handle, side drawer host, lock/info toast,
-  // active-card expand state, and the swipe-gated next-pallet number.
+  // active-card expand state, and the next-pallet number the pallet_done
+  // card's "Scan pallet N" button advances to.
   const sheetRef = useRef<BottomSheetHandle>(null);
   const looseSheetRef = useRef<BottomSheetHandle>(null);
   const drawer = useDrawerHost(token);
@@ -463,6 +464,32 @@ export default function PalletVerifyPage({
   const [showLabels, setShowLabels] = useState(false);
   const [activeExpanded, setActiveExpanded] = useState(false);
   const [pendingNextPallet, setPendingNextPallet] = useState<number | null>(null);
+  // "Scan pallet N" on the pallet_done card is a plain tap (moving on books
+  // nothing — the server cursor already advanced inside multi-pallet-complete),
+  // so it arms only 500 ms after the card appears: the tail of the confirm
+  // slide that just booked the pallet must not land on it as a tap. Disarmed
+  // again in the cleanup when the phase leaves pallet_done, so the next card
+  // starts dimmed too.
+  const [nextArmed, setNextArmed] = useState(false);
+  useEffect(() => {
+    if (phase !== 'pallet_done') return;
+    const id = setTimeout(() => setNextArmed(true), 500);
+    return () => {
+      clearTimeout(id);
+      setNextArmed(false);
+    };
+  }, [phase]);
+  // The other half of a double-tap on "Scan pallet N": the card is gone by
+  // the time the second tap lands, and at 360 px the button sits exactly over
+  // the tool dock (Delete / Pallets / New carton …) of the scanning screen. A
+  // transparent shield over that screen swallows taps for 400 ms after the
+  // advance, so a double-tap does one thing.
+  const [advanceShield, setAdvanceShield] = useState(false);
+  useEffect(() => {
+    if (!advanceShield) return;
+    const id = setTimeout(() => setAdvanceShield(false), 400);
+    return () => clearTimeout(id);
+  }, [advanceShield]);
 
   // Device Back dismisses the full-screen image viewer instead of unloading
   // the scan session. The decision modals below (uniform count, force-confirm,
@@ -2078,9 +2105,10 @@ export default function PalletVerifyPage({
   // ── Confirm pallet ──
 
   // Shared post-success advance: mirror what the API persisted, then either
-  // finish (all_done / loose phase) or roll to the next pallet after a 4s
-  // confirmation pause. Used by BOTH the normal confirm and the damaged-sticker
-  // manual-count flow so the two paths stay in lockstep.
+  // finish (all_done / loose phase) or show the pallet_done card, where the
+  // worker taps "Scan pallet N" to roll to the next pallet. Used by BOTH the
+  // normal confirm and the damaged-sticker manual-count flow so the two paths
+  // stay in lockstep.
   function applyCompletion(
     data: PalletCompleteResult,
     palletTypeLabel: 'single' | 'mix',
@@ -2092,8 +2120,8 @@ export default function PalletVerifyPage({
 
     if (session && isSplitSession(session)) {
       // Split jobs: this worker just finished the ONE slot they claimed —
-      // there is no cursor to advance and no "next pallet" number to swipe
-      // into (next_pallet/all_done are cursor-derived and meaningless per
+      // there is no cursor to advance and no "next pallet" number to move
+      // on to (next_pallet/all_done are cursor-derived and meaningless per
       // worker here, per the API route's own comment). Hand back to the job
       // screen so they can claim whatever's next, which might not even be a
       // pallet at all, or might go to someone else entirely. Clear this
@@ -2141,9 +2169,11 @@ export default function PalletVerifyPage({
         body: JSON.stringify({ token, current_box_count: 0 }),
       }).catch(() => {});
       clearPalletScans(token, currentPallet);
-      // Terminal design: the worker swipes "קליטת משטח הבא" on the done
-      // overlay to advance (replaces the old 4s auto-advance timer — gives
-      // time to print the sticker first).
+      // The worker taps "Scan pallet N" on the done card to advance. Not an
+      // auto-advance: the camera would come back on still pointed at the
+      // pallet just booked, and single mode has no cross-pallet duplicate
+      // guard (lib/duplicate-guard.ts) — the tap lets them turn to the next
+      // pallet (and print this one's sticker) first.
       setPendingNextPallet(typeof data.next_pallet === 'number' ? data.next_pallet : currentPallet + 1);
     }
   }
@@ -2176,12 +2206,15 @@ export default function PalletVerifyPage({
   }
 
   // Reset all per-pallet state and start scanning the next pallet. Fired by
-  // the swipe on the pallet_done overlay.
+  // the worker tapping "Scan pallet N" on the pallet_done card. The phase
+  // guard makes a double-tap advance exactly one pallet.
   function advanceToNextPallet() {
-    trace('ui', 'next_pallet', { from: currentPallet, to: pendingNextPallet ?? currentPallet + 1 });
+    if (phase !== 'pallet_done') return;
+    trace('ui', 'next_pallet', { from: currentPallet, to: pendingNextPallet ?? currentPallet + 1, via: 'tap' });
     setCurrentPallet(pendingNextPallet ?? currentPallet + 1);
     setPendingNextPallet(null);
     resetPalletUiState();
+    setAdvanceShield(true);
     setPhase('scanning');
   }
 
@@ -2614,8 +2647,9 @@ export default function PalletVerifyPage({
       <>
         {error && <p className="text-danger-weak-ink text-sm text-center mb-2">{error}</p>}
         {canConfirmLoose && phase !== 'loose_confirming' ? (
+          // Brand (blue) slide: this books the loose cartons like any normal
+          // confirm. Amber slides are kept for booking WITH a shortfall.
           <SwipeConfirm
-            variant="warn"
             onConfirm={handleConfirmLooseBoxes}
             label={tr('palletVerify.swipeConfirmLoose', { count: scanned })}
           />
@@ -2782,8 +2816,10 @@ export default function PalletVerifyPage({
   }
 
   if (phase === 'pallet_done') {
-    // Terminal design done overlay: stats + swipe "קליטת משטח הבא" (replaces
-    // the old 4s auto-advance) + real sticker deep-link for THIS pallet.
+    // Terminal design done overlay: stats + real sticker deep-link for THIS
+    // pallet + a one-tap "Scan pallet N of M". The pallet is already booked
+    // (the confirm slide did that), so moving on is a tap, not a second slide;
+    // it sits last, in the thumb zone, and arms 500 ms after the card appears.
     const doneBoxCount =
       session?.completed_pallets?.[session.completed_pallets.length - 1]?.box_count || committed;
     const doneWeight = scannedBoxes.reduce((s, b) => s + (b.weight > 0 ? b.weight : 0), 0);
@@ -2804,22 +2840,25 @@ export default function PalletVerifyPage({
             },
           ]}
         >
-          <div className="mt-4">
-            <SwipeConfirm
-              onConfirm={advanceToNextPallet}
-              label={tr('terminal.swipeNextPallet')}
-            />
-          </div>
           {lpnUrl && (
             <a
               href={`${lpnUrl}?token=${encodeURIComponent(token)}${language === 'Hebrew' ? '&lang=Hebrew' : ''}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center gap-[7px] w-full mt-[9px] border border-[#35516a] text-[#e8eef2] text-[12px] font-extrabold rounded-[11px] py-[11px]"
+              className="flex items-center justify-center gap-[7px] w-full mt-4 border border-[#35516a] text-[#e8eef2] text-[12px] font-extrabold rounded-[11px] py-[11px]"
             >
               <MI name="print" size={17} className="text-brand-weak-ink" /> {tr('terminal.issuePalletLabels')}
             </a>
           )}
+          <button
+            type="button"
+            onClick={advanceToNextPallet}
+            disabled={!nextArmed}
+            className="flex items-center justify-center gap-[7px] w-full h-[54px] mt-4 rounded-[13px] bg-brand text-[#04222f] font-black text-[15px] disabled:opacity-60"
+          >
+            <MI name="qr_code_scanner" size={20} />
+            {tr('terminal.nextPalletBtn', { n: pendingNextPallet ?? currentPallet + 1, total: pallet_count })}
+          </button>
         </DoneOverlay>
         {debugPanel}
       </div>
@@ -3301,6 +3340,10 @@ export default function PalletVerifyPage({
           </div>
         </div>
       )}
+      {/* Swallows the second tap of a double-tap on "Scan pallet N" (see
+          advanceShield) — above the dock, the sheet and the camera's
+          tap-to-capture layer. */}
+      {advanceShield && <div className="fixed inset-0 z-[130]" aria-hidden />}
       {debugPanel}
     </div>
   );
