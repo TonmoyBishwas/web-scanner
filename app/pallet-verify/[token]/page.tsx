@@ -453,6 +453,12 @@ export default function PalletVerifyPage({
   // book-without-a-barcode escape. Hidden otherwise: it is a worse outcome
   // than a real sticker and should not be an equal-weight choice.
   const [mintFailed, setMintFailed] = useState(false);
+  // The edit panel's own red strip (typed barcode too short / duplicate, no
+  // name to mint with, mint failed). Kept apart from the page-level `error`,
+  // which is the scan footer's: a panel error belongs to one carton and goes
+  // when the panel closes, instead of turning up under the camera afterwards
+  // with nothing to say which carton it meant.
+  const [editError, setEditError] = useState<string | null>(null);
   // Edit-a-scan: the box (by barcode) currently being edited + its in-flight
   // name/weight values. Null when no edit modal is open. Reset between pallets.
   const [editForm, setEditForm] = useState<
@@ -1593,6 +1599,7 @@ export default function PalletVerifyPage({
     setMintingBarcode(false);
     setMintFailed(false);
     setError(null);
+    setEditError(null);
     clearScanNotice();
     setEditForm({
       barcode: box.barcode,
@@ -1632,11 +1639,11 @@ export default function PalletVerifyPage({
     if (!nameHe && !nameEn) {
       // The label has to say what it is. Send them to the name field rather
       // than minting a sticker that identifies nothing.
-      setError(t(session?.language || 'English', 'terminal.barcodeNeedName'));
+      setEditError(t(session?.language || 'English', 'terminal.barcodeNeedName'));
       return;
     }
     setMintingBarcode(true);
-    setError(null);
+    setEditError(null);
     try {
       const list = editForm.isLoose ? looseBoxes : scannedBoxes;
       const box = list.find((b) => b.barcode === editForm.barcode);
@@ -1670,7 +1677,7 @@ export default function PalletVerifyPage({
       // Never strand the worker on a failed network call — offer the
       // book-without-a-barcode route instead, as a second, explicit tap.
       setMintFailed(true);
-      setError(t(session?.language || 'English', 'terminal.barcodeMintFailed'));
+      setEditError(t(session?.language || 'English', 'terminal.barcodeMintFailed'));
     } finally {
       setMintingBarcode(false);
     }
@@ -1688,6 +1695,8 @@ export default function PalletVerifyPage({
     trace('ui', 'no_barcode', { barcode: editForm.barcode, isLoose: editForm.isLoose });
     const list = editForm.isLoose ? looseBoxes : scannedBoxes;
     const n = list.findIndex((b) => b.barcode === editForm.barcode) + 1;
+    // The worker took the way out the mint failure offered: its error is answered.
+    setEditError(null);
     setEditForm({
       ...editForm,
       forcedId: noBarcodeId(session?.document_number || '', currentPallet, n || list.length + 1),
@@ -1723,13 +1732,13 @@ export default function PalletVerifyPage({
         // captured, so refuse rather than silently create a second row.
         const others = (isLoose ? looseBoxes : scannedBoxes).filter((b) => b.barcode !== barcode);
         if (others.some((b) => digitsOnly(b.barcode) === typed)) {
-          setError(t(session?.language || 'English', 'terminal.barcodeDuplicate'));
+          setEditError(t(session?.language || 'English', 'terminal.barcodeDuplicate'));
           return;
         }
         resolvedId = typed;
       } else if (editForm.barcodeInput.trim()) {
         // Started typing but stopped short — that is a slip, not a decision.
-        setError(
+        setEditError(
           t(session?.language || 'English', 'terminal.barcodeDigitsCount', {
             n: typed.length,
           }),
@@ -1785,6 +1794,8 @@ export default function PalletVerifyPage({
       setSelectedBarcode((cur) => (cur === barcode ? resolvedId : cur));
     }
 
+    // Saved: the panel closes, and a strip from an earlier try goes with it.
+    setEditError(null);
     if (isLoose) {
       setLooseBoxes((prev) => prev.map(patch));
       setEditForm(null);
@@ -2221,7 +2232,9 @@ export default function PalletVerifyPage({
       key={editForm.barcode}
       cartonNumber={editIndex >= 0 ? editIndex + 1 : '—'}
       needsReview={editIndex >= 0 && !!editList[editIndex].needs_review}
-      saveError={error}
+      // The panel's own error, never the footer's `error`: a scan clash from a
+      // background OCR is not this carton's save error.
+      saveError={editError}
       // An English-only OCR name is still a name — don't show it as missing.
       name={editForm.name_he || editForm.name_en}
       weight={editForm.weight}
@@ -2229,7 +2242,9 @@ export default function PalletVerifyPage({
       barcode={editForm.forcedId || editForm.barcode}
       barcodeEditable={editForm.unidentified}
       barcodeInput={editForm.barcodeInput}
-      onBarcodeChange={(v) => { setEditForm({ ...editForm, barcodeInput: v }); setError(null); }}
+      // Each error goes when the worker changes what it is about: the barcode
+      // ones here, "set the item name first" on a name pick or typed name.
+      onBarcodeChange={(v) => { setEditForm({ ...editForm, barcodeInput: v }); setEditError(null); }}
       onCreateBarcode={handleCreateBarcode}
       minting={mintingBarcode}
       onNoBarcode={handleNoBarcode}
@@ -2240,13 +2255,16 @@ export default function PalletVerifyPage({
         active: editForm.name_he
           ? editForm.name_he === it.he
           : !!editForm.name_en && editForm.name_en === it.en,
-        onPick: () => setEditForm({ ...editForm, name_he: it.he, name_en: it.en }),
+        onPick: () => {
+          setEditForm({ ...editForm, name_he: it.he, name_en: it.en });
+          setEditError(null);
+        },
       }))}
       imageData={editForm.image_data}
       onViewImage={editForm.image_data ? () => setViewingImage(editForm.image_data!) : undefined}
       // A typed name drops the OCR's English one, which may belong to another
       // item and would otherwise be sent on as item_name.
-      onNameChange={(v) => setEditForm({ ...editForm, name_he: v, name_en: '' })}
+      onNameChange={(v) => { setEditForm({ ...editForm, name_he: v, name_en: '' }); setEditError(null); }}
       onWeightChange={(v) => setEditForm({ ...editForm, weight: v })}
       onExpiryChange={(v) => setEditForm({ ...editForm, expiry: v })}
       batch={editForm.batch}
@@ -2281,6 +2299,7 @@ export default function PalletVerifyPage({
         // be an orphan label; drop it while it is still unprinted.
         if (editForm.forcedId) discardSavedLabel(editForm.forcedId);
         setEditForm(null);
+        setEditError(null);
       }}
     />
   ) : null;
@@ -2717,6 +2736,7 @@ export default function PalletVerifyPage({
     setForcedMix(false);
     setSelectedBarcode(null);
     setEditForm(null);
+    setEditError(null);
     setPendingSingleGroup(null);
     setPalletCountError(null);
     setAcceptedMerges(new Map());
@@ -3344,6 +3364,10 @@ export default function PalletVerifyPage({
         {drawer.node}
         {palletsBrowser}
         {cartonOverlays}
+        {/* The loose cartons' editor — Edit on a row and the amber "Fix N
+            warnings" open it here. Without it the camera paused under an
+            editor that never appeared, and Finish loose stayed blocked. */}
+        {editPanelNode}
         {imageModal}
         {debugPanel}
       </div>
