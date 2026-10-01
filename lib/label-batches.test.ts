@@ -8,6 +8,9 @@ import {
   labelTags,
   sortUnprintedFirst,
   rowsOnList,
+  openListsForPhase,
+  liveRowPlaces,
+  sessionBookedBarcodes,
   loadLabelSize,
   labelSheetUrl,
   type LiveRowPlace,
@@ -108,6 +111,53 @@ describe('rowsOnList', () => {
     expect(rowsOnList(['X', 'Y'], live)).toEqual({ count: 0, place: null });
     expect(rowsOnList(['A'], undefined)).toEqual({ count: 0, place: null });
     expect(rowsOnList(['A'], new Map())).toEqual({ count: 0, place: null });
+  });
+});
+
+describe('openListsForPhase / liveRowPlaces', () => {
+  const pallet = [{ barcode: 'A' }, { barcode: 'B' }];
+  const loose = [{ barcode: 'L1' }];
+
+  it('maps the open pallet list to the current pallet while it is scanned', () => {
+    for (const phase of ['scanning', 'confirming']) {
+      expect(openListsForPhase(phase)).toEqual({ pallet: true, loose: false });
+      expect(liveRowPlaces({ phase, currentPallet: 3, pallet, loose })).toEqual(new Map([['A', 3], ['B', 3]]));
+    }
+  });
+
+  it('maps only the loose pile during the loose phase (the last pallet is booked)', () => {
+    for (const phase of ['loose_scanning', 'loose_confirming']) {
+      expect(openListsForPhase(phase)).toEqual({ pallet: false, loose: true });
+      expect(liveRowPlaces({ phase, currentPallet: 3, pallet, loose })).toEqual(new Map([['L1', 'loose']]));
+    }
+  });
+
+  it('maps nothing once the rows are booked (pallet_done, all_done) or before scanning', () => {
+    for (const phase of ['pallet_done', 'all_done', 'job', 'loading', 'error']) {
+      expect(openListsForPhase(phase)).toEqual({ pallet: false, loose: false });
+      expect(liveRowPlaces({ phase, currentPallet: 3, pallet, loose }).size).toBe(0);
+    }
+  });
+});
+
+describe('sessionBookedBarcodes', () => {
+  it('collects every completed pallet\'s barcodes and the loose pile\'s', () => {
+    const booked = sessionBookedBarcodes({
+      completed_pallets: [
+        { pallet_number: 1, barcodes: ['2826100100000001', '7290004456825'] },
+        { pallet_number: 2 }, // a non-meat / declared-count pallet records none
+        { pallet_number: 3, barcodes: ['2826100100000002', '', 7] },
+      ],
+      loose_barcodes: ['2826100100000003'],
+    });
+    expect([...booked].sort()).toEqual(['2826100100000001', '2826100100000002', '2826100100000003', '7290004456825']);
+  });
+
+  it('is empty for a session with nothing booked or a malformed payload', () => {
+    expect(sessionBookedBarcodes({ completed_pallets: [] }).size).toBe(0);
+    expect(sessionBookedBarcodes({ completed_pallets: 'x', loose_barcodes: {} }).size).toBe(0);
+    expect(sessionBookedBarcodes(null).size).toBe(0);
+    expect(sessionBookedBarcodes('{"completed_pallets":[]}').size).toBe(0);
   });
 });
 

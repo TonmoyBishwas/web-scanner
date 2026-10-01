@@ -50,6 +50,7 @@ type SampleRow = MultiPalletBoxScan & {
   barcode_conflict?: unknown;
   minted?: boolean;
   label_batch_id?: string;
+  source_barcode?: string;
 };
 
 /**
@@ -58,8 +59,12 @@ type SampleRow = MultiPalletBoxScan & {
  * on the first row only (it is the same picture N times over, and it is
  * large), while the uploaded `image_url` is kept on all of them so each
  * box_inventory row still points at the sticker it was booked from.
+ *
+ * `source_barcode` keeps the full supplier code the batch stands in for (`sku`
+ * holds only its first 13 digits). The page keeps that code in its dedup set
+ * while any row standing in for it is still on the list (`releasedSources`).
  */
-export type MintedRow<T> = T & { minted: true; label_batch_id: string };
+export type MintedRow<T> = T & { minted: true; label_batch_id: string; source_barcode: string };
 
 export function expandIdenticalBoxes<T extends SampleRow>(
   sample: T,
@@ -81,5 +86,46 @@ export function expandIdenticalBoxes<T extends SampleRow>(
     barcode_conflict: undefined,
     minted: true as const,
     label_batch_id: label.batch_id,
+    source_barcode: sample.barcode,
   }));
+}
+
+/** The fields the dedup bookkeeping below reads off a list row. */
+type ListedRow = { barcode: string; source_barcode?: string };
+
+/**
+ * Every code a list's rows hold in the page's dedup set: each row's own
+ * barcode, plus the supplier code a minted row stands in for. Used to refill
+ * the set from the browser cache after a reload, so a re-read of the sample
+ * carton is still caught exactly as it was before the reload.
+ */
+export function dedupCodes(rows: ReadonlyArray<ListedRow>): string[] {
+  const out = new Set<string>();
+  for (const r of rows) {
+    if (r.barcode) out.add(r.barcode);
+    if (r.source_barcode) out.add(r.source_barcode);
+  }
+  return [...out];
+}
+
+/** True while some row on the list is, or stands in for, this supplier code. */
+export function sourceStillListed(rows: ReadonlyArray<ListedRow>, source: string): boolean {
+  return rows.some((r) => r.barcode === source || r.source_barcode === source);
+}
+
+/**
+ * The supplier codes to take out of the dedup set when the rows in `gone`
+ * leave this list: those of a deleted minted row that no row left behind is,
+ * or stands in for. Deleting every row of an identical batch one by one then
+ * frees the sample carton for a fresh scan, exactly like deleting the batch
+ * in Labels does; deleting only some of them keeps it blocked.
+ */
+export function releasedSources(rows: ReadonlyArray<ListedRow>, gone: ReadonlySet<string>): string[] {
+  const remaining = rows.filter((r) => !gone.has(r.barcode));
+  const out = new Set<string>();
+  for (const r of rows) {
+    if (!gone.has(r.barcode) || !r.source_barcode) continue;
+    if (!sourceStillListed(remaining, r.source_barcode)) out.add(r.source_barcode);
+  }
+  return [...out];
 }

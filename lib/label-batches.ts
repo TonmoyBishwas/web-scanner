@@ -142,6 +142,63 @@ export function rowsOnList(
   return { count, place };
 }
 
+/**
+ * Which of the scanner page's lists are still open — scanned but not yet
+ * booked — in this phase. The page keeps a list's rows after it books them
+ * (pallet_done shows their weight; the last pallet's rows and the loose rows
+ * linger into the loose phase and all_done), so the rows alone do not say
+ * whether they are still on a list or already on an LPN.
+ */
+export function openListsForPhase(phase: string): { pallet: boolean; loose: boolean } {
+  return {
+    pallet: phase === 'scanning' || phase === 'confirming',
+    loose: phase === 'loose_scanning' || phase === 'loose_confirming',
+  };
+}
+
+/**
+ * Where each row of the OPEN lists sits, for the Labels screen's "this also
+ * removes N boxes from pallet P" warning. Rows of a list already booked are
+ * left out: deleting a batch can no longer take them off anything.
+ */
+export function liveRowPlaces(opts: {
+  phase: string;
+  currentPallet: number;
+  pallet: Iterable<{ barcode: string }>;
+  loose: Iterable<{ barcode: string }>;
+}): Map<string, LiveRowPlace> {
+  const open = openListsForPhase(opts.phase);
+  const rows = new Map<string, LiveRowPlace>();
+  if (open.pallet) for (const b of opts.pallet) rows.set(b.barcode, opts.currentPallet);
+  if (open.loose) for (const b of opts.loose) rows.set(b.barcode, 'loose');
+  return rows;
+}
+
+/**
+ * Every carton barcode a scanner session itself recorded as booked: each
+ * completed pallet's `barcodes` and the loose pile's `loose_barcodes`. The
+ * completion routes write these into the session BEFORE they answer, while
+ * box_inventory is written later by the bot (its webhook goes out after the
+ * response, and may fail) — so this is what says "booked" in the meantime.
+ * `data` is the raw scan_sessions jsonb; anything malformed counts as none.
+ */
+export function sessionBookedBarcodes(data: unknown): Set<string> {
+  const out = new Set<string>();
+  if (!data || typeof data !== 'object') return out;
+  const d = data as { completed_pallets?: unknown; loose_barcodes?: unknown };
+  const add = (codes: unknown) => {
+    if (!Array.isArray(codes)) return;
+    for (const c of codes) if (typeof c === 'string' && c) out.add(c);
+  };
+  if (Array.isArray(d.completed_pallets)) {
+    for (const p of d.completed_pallets) {
+      if (p && typeof p === 'object') add((p as { barcodes?: unknown }).barcodes);
+    }
+  }
+  add(d.loose_barcodes);
+  return out;
+}
+
 // ── Print sheet ─────────────────────────────────────────────────────────────
 
 export const DEFAULT_LABEL_SIZE: LabelSize = '10x15';

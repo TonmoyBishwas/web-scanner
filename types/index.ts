@@ -332,13 +332,19 @@ export interface MultiPalletSession {
     pallet_type: string;
     box_count: number;
     /** Every box barcode registered on this pallet. Feeds the cross-worker
-     *  duplicate guard; meat only, where catch-weight barcodes are unique. */
+     *  duplicate guard and Labels' "already booked" check; meat only, where
+     *  catch-weight barcodes are unique. */
     barcodes?: string[];
     /** Who scanned this pallet — the claimed slot's owner for split jobs,
      *  or the session's own chat_id for a single-scanner delivery. Always
      *  written (optional only because it predates this field). */
     worker_chat_id?: string;
   }>;
+  /** Every loose-box barcode booked by /api/multi-pallet-loose-complete — the
+   *  loose pile's counterpart of `completed_pallets[].barcodes`. Lets the
+   *  Labels screen refuse to delete a label whose carton is already booked
+   *  before the bot has written box_inventory (lib/carton-labels.ts). */
+  loose_barcodes?: string[];
   status: 'planning' | 'active' | 'completed';
   created_at: string;
   /** User's preferred language. Set by the bot when creating the session. */

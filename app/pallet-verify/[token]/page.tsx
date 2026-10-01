@@ -31,8 +31,14 @@ import { PalletsBrowser } from '@/components/terminal/PalletsBrowser';
 import { CartonCreator } from '@/components/terminal/CartonCreator';
 import { LabelsBrowser } from '@/components/terminal/LabelsBrowser';
 import { IdenticalBoxesForm } from '@/components/terminal/IdenticalBoxesForm';
-import { expandIdenticalBoxes, type IdenticalForm } from '@/lib/identical-boxes';
-import { isMintedLabelBarcode, type LiveRowPlace } from '@/lib/label-batches';
+import {
+  dedupCodes,
+  expandIdenticalBoxes,
+  releasedSources,
+  sourceStillListed,
+  type IdenticalForm,
+} from '@/lib/identical-boxes';
+import { isMintedLabelBarcode, liveRowPlaces, openListsForPhase } from '@/lib/label-batches';
 import { useUnprintedLabels } from '@/lib/use-unprinted-labels';
 import { toIsoDate, normalizeExpiry } from '@/lib/expiry';
 import type { CartonLabel } from '@/types';
@@ -113,6 +119,9 @@ interface BoxScan extends MultiPalletBoxScan {
   // never offered the single-item shortcut — their count is already exact.
   minted?: boolean;
   label_batch_id?: string;
+  // The supplier barcode a minted row stands in for. It stays in the dedup
+  // set while any row of that batch is on the list (lib/identical-boxes.ts).
+  source_barcode?: string;
 }
 
 // Digits-only normaliser for comparing the full printed barcode number across
@@ -673,7 +682,7 @@ export default function PalletVerifyPage({
           if (cached.supplierPalletRef) setSupplierPalletRef(cached.supplierPalletRef);
               if (cached.detectedType) setDetectedType(cached.detectedType);
               restoreUniformPrompt(cached);
-              cached.scannedBoxes.forEach((b) => b.barcode && processedRef.current.add(b.barcode));
+              for (const code of dedupCodes(cached.scannedBoxes)) processedRef.current.add(code);
             }
             setPhase('scanning');
           } else if (data.loose?.owner === workerChatId && data.loose?.status === 'claimed') {
@@ -683,7 +692,7 @@ export default function PalletVerifyPage({
             if (cachedLoose?.looseBoxes?.length) {
       trace('ui', 'restored_loose_from_cache', { boxes: cachedLoose.looseBoxes.length });
               setLooseBoxes(cachedLoose.looseBoxes);
-              cachedLoose.looseBoxes.forEach((b) => b.barcode && looseProcessedRef.current.add(b.barcode));
+              for (const code of dedupCodes(cachedLoose.looseBoxes)) looseProcessedRef.current.add(code);
             }
             setPhase('loose_scanning');
           } else {
@@ -699,7 +708,7 @@ export default function PalletVerifyPage({
           if (cachedLoose?.looseBoxes?.length) {
       trace('ui', 'restored_loose_from_cache', { boxes: cachedLoose.looseBoxes.length });
             setLooseBoxes(cachedLoose.looseBoxes);
-            cachedLoose.looseBoxes.forEach((b) => b.barcode && looseProcessedRef.current.add(b.barcode));
+            for (const code of dedupCodes(cachedLoose.looseBoxes)) looseProcessedRef.current.add(code);
           }
           setPhase('loose_scanning');
           return;
@@ -722,7 +731,7 @@ export default function PalletVerifyPage({
           if (cached.detectedType) setDetectedType(cached.detectedType);
           restoreUniformPrompt(cached);
           // Repopulate the dedup set so a re-scan of a restored sticker is caught.
-          cached.scannedBoxes.forEach((b) => b.barcode && processedRef.current.add(b.barcode));
+          for (const code of dedupCodes(cached.scannedBoxes)) processedRef.current.add(code);
         } else if (data.current_box_count && data.current_box_count > 0) {
           // Resumed session — count was set in a previous tab/refresh.
           setConfirmedBoxCount(data.current_box_count);
@@ -776,7 +785,7 @@ export default function PalletVerifyPage({
       if (cachedLoose?.looseBoxes?.length) {
       trace('ui', 'restored_loose_from_cache', { boxes: cachedLoose.looseBoxes.length });
         setLooseBoxes(cachedLoose.looseBoxes);
-        cachedLoose.looseBoxes.forEach((b) => b.barcode && looseProcessedRef.current.add(b.barcode));
+        for (const code of dedupCodes(cachedLoose.looseBoxes)) looseProcessedRef.current.add(code);
       }
       setPhase('loose_scanning');
     }
@@ -817,8 +826,10 @@ export default function PalletVerifyPage({
       if (processedRef.current.has(read)) {
         scanDuplicateFeedback(); // already scanned this sticker
         // Name the conflicting scan (SCN-21): which carton in the list, when.
+        // A supplier code an identical batch stands in for points at the
+        // batch's first row (no row carries the code itself any more).
         const list = scannedBoxesRef.current;
-        const n = list.findIndex((b) => b.barcode === read) + 1;
+        const n = list.findIndex((b) => b.barcode === read || b.source_barcode === read) + 1;
         setError(t(sessionRef.current?.language || 'English', 'terminal.duplicateOf', {
           n: n || '?', time: fmtScanTime(list[n - 1]?.scanned_at),
         }));
@@ -928,14 +939,19 @@ export default function PalletVerifyPage({
   }
 
   function rescanPalletBox(barcode: string) {
-    trace('ui', 'delete_box', { barcode, pallet: currentPallet });
-    dropPalletRows(new Set([barcode]));
+    const released = dropPalletRows(new Set([barcode]));
+    trace('ui', 'delete_box', { barcode, pallet: currentPallet, released: released.length ? released : undefined });
     discardSavedLabel(barcode);
   }
 
   // Take rows off the current pallet's list — one (the row's Delete) or a
-  // whole label batch (Labels → Delete) — and re-group what is left.
-  function dropPalletRows(gone: ReadonlySet<string>) {
+  // whole label batch (Labels → Delete) — and re-group what is left. When the
+  // last row standing in for a supplier code goes ("all boxes identical",
+  // deleted row by row), that code leaves the dedup set too, so the sample
+  // carton can be scanned again instead of reading as already scanned.
+  // Returns the supplier codes it released.
+  function dropPalletRows(gone: ReadonlySet<string>): string[] {
+    const released = releasedSources(scannedBoxesRef.current, gone);
     setScannedBoxes((prev) => {
       const removed = prev.filter((b) => gone.has(b.barcode));
       const filtered = prev.filter((b) => !gone.has(b.barcode));
@@ -971,6 +987,8 @@ export default function PalletVerifyPage({
       return filtered;
     });
     for (const code of gone) processedRef.current.delete(code);
+    for (const code of released) processedRef.current.delete(code);
+    return released;
   }
 
   // A deleted row's saved label goes with it while it is still unprinted —
@@ -1302,7 +1320,7 @@ export default function PalletVerifyPage({
       if (looseProcessedRef.current.has(read)) {
         scanDuplicateFeedback(); // already scanned this loose box
         const list = looseBoxesRef.current;
-        const n = list.findIndex((b) => b.barcode === read) + 1;
+        const n = list.findIndex((b) => b.barcode === read || b.source_barcode === read) + 1;
         setError(t(sessionRef.current?.language || 'English', 'terminal.duplicateOf', {
           n: n || '?', time: fmtScanTime(list[n - 1]?.scanned_at),
         }));
@@ -1360,9 +1378,13 @@ export default function PalletVerifyPage({
   }
 
   function rescanLooseBox(barcode: string) {
-    trace('ui', 'loose_delete_box', { barcode });
+    // Same release rule as dropPalletRows: the last row of an identical batch
+    // frees its supplier code.
+    const released = releasedSources(looseBoxesRef.current, new Set([barcode]));
+    trace('ui', 'loose_delete_box', { barcode, released: released.length ? released : undefined });
     setLooseBoxes((prev) => prev.filter((b) => b.barcode !== barcode));
     looseProcessedRef.current.delete(barcode);
+    for (const code of released) looseProcessedRef.current.delete(code);
     discardSavedLabel(barcode);
   }
 
@@ -1748,17 +1770,21 @@ export default function PalletVerifyPage({
   }
 
   // Labels → Delete removed a whole batch. Rows it stood for that are still
-  // on a list go too (the confirm said so): they would otherwise be booked
-  // under barcodes the ledger no longer knows. The supplier code an identical
-  // batch replaced is released, so the sample carton can be scanned again;
-  // and a pallet total that was just our own offer follows the list down.
+  // on an OPEN list go too (the confirm said so): they would otherwise be
+  // booked under barcodes the ledger no longer knows. A list already booked
+  // (the last pallet's rows after its LPN, the loose rows after they were
+  // sent) is left alone — those rows are on an LPN, not on a list. The
+  // supplier code an identical batch replaced is released, so the sample
+  // carton can be scanned again; and a pallet total that was just our own
+  // offer follows the list down.
   function handleLabelBatchDeleted(batchId: string, barcodes: string[], sourceBarcode: string | null) {
     const gone = new Set(barcodes);
     if (gone.size === 0) return;
+    const open = openListsForPhase(phase);
     const pallet = scannedBoxesRef.current;
     const loose = looseBoxesRef.current;
-    const palletHit = pallet.some((b) => gone.has(b.barcode));
-    const looseHit = loose.some((b) => gone.has(b.barcode));
+    const palletHit = open.pallet && pallet.some((b) => gone.has(b.barcode));
+    const looseHit = open.loose && loose.some((b) => gone.has(b.barcode));
     if (!palletHit && !looseHit) return;
     trace('ui', 'labels_batch_rows_dropped', { batch_id: batchId, count: gone.size, pallet: palletHit ? currentPallet : undefined, loose: looseHit });
     if (palletHit) {
@@ -1766,7 +1792,8 @@ export default function PalletVerifyPage({
       const before = String(listTotal(pallet));
       const after = listTotal(next);
       dropPalletRows(gone);
-      if (sourceBarcode && !next.some((b) => b.barcode === sourceBarcode)) {
+      // Rows cached before they carried source_barcode: the server's word.
+      if (sourceBarcode && !sourceStillListed(next, sourceBarcode)) {
         processedRef.current.delete(sourceBarcode);
       }
       if (confirmedBoxCount === 0) {
@@ -1774,9 +1801,12 @@ export default function PalletVerifyPage({
       }
     }
     if (looseHit) {
+      const next = loose.filter((b) => !gone.has(b.barcode));
+      const released = releasedSources(loose, gone);
       setLooseBoxes((prev) => prev.filter((b) => !gone.has(b.barcode)));
       for (const code of gone) looseProcessedRef.current.delete(code);
-      if (sourceBarcode && !loose.some((b) => !gone.has(b.barcode) && b.barcode === sourceBarcode)) {
+      for (const code of released) looseProcessedRef.current.delete(code);
+      if (sourceBarcode && !sourceStillListed(next, sourceBarcode)) {
         looseProcessedRef.current.delete(sourceBarcode);
       }
     }
@@ -1831,14 +1861,12 @@ export default function PalletVerifyPage({
   // צור קרטון + מדבקות overlays. Rendered next to `palletsBrowser` at every
   // phase return so they stay reachable from the dock in each phase.
   const looseCartonPhase = phase === 'loose_scanning' || phase === 'loose_confirming';
-  // Where each row on the live lists sits — Labels uses it to warn that
-  // deleting a batch also takes its boxes off the list.
-  const liveLabelRows = (): Map<string, LiveRowPlace> => {
-    const rows = new Map<string, LiveRowPlace>();
-    for (const b of scannedBoxes) rows.set(b.barcode, currentPallet);
-    for (const b of looseBoxes) rows.set(b.barcode, 'loose');
-    return rows;
-  };
+  // Where each row on the OPEN lists sits — Labels uses it to warn that
+  // deleting a batch also takes its boxes off the list. Rows already booked
+  // (they linger in state into pallet_done, the loose phase and all_done)
+  // are not on a list any more, so they never appear in that warning.
+  const liveLabelRows = () =>
+    liveRowPlaces({ phase, currentPallet, pallet: scannedBoxes, loose: looseBoxes });
   const cartonOverlays = (
     <>
       {showCartonCreator && (

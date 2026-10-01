@@ -13,6 +13,7 @@
  * Service-role client (see lib/supabase.ts) — server only.
  */
 import { supabase } from './supabase';
+import { sessionBookedBarcodes } from './label-batches';
 import type { CartonLabel, CartonLabelOrigin, LabelSize } from '@/types';
 
 export type { CartonLabel, LabelSize };
@@ -248,17 +249,43 @@ export async function deleteCartonBatch(batchId: string): Promise<DeletedBatch> 
 }
 
 /**
- * True when any carton of the batch is already stock (booked on an LPN).
- * Such labels are on a box in the warehouse: they can be reprinted, never
- * deleted — deleting would leave a box whose sticker the ledger forgot.
+ * True when any carton of the batch is already booked on an LPN. Such labels
+ * are on a box in the warehouse: they can be reprinted, never deleted —
+ * deleting would leave a box whose sticker the ledger forgot.
+ *
+ * Two places say "booked", and either one is enough:
+ *  1. The scanner session the batch was saved in. The completion routes write
+ *     every booked carton barcode into it (`completed_pallets[].barcodes`,
+ *     `loose_barcodes`) before they answer the page, so it is true the moment
+ *     the LPN exists.
+ *  2. box_inventory. The bot writes it from a webhook sent AFTER that answer —
+ *     seconds later, or never if the call fails — so on its own it would let
+ *     a just-booked batch be deleted in that gap.
+ * The session row is read whatever its expiry: an old batch falls through to
+ * box_inventory, which the bot has long since written by then.
  */
 export async function batchHasBookedBoxes(batchId: string): Promise<boolean> {
   const labels = await getCartonLabelsByBatches([batchId]);
   if (!labels.length) return false;
+  const barcodes = labels.map(l => l.barcode);
+
+  const tokens = [...new Set(labels.map(l => l.session_token).filter((t): t is string => !!t))];
+  if (tokens.length) {
+    const { data: sessions, error: sessionError } = await supabase
+      .from('scan_sessions')
+      .select('data')
+      .in('token', tokens);
+    if (sessionError) throw new Error(`scan_sessions read failed: ${sessionError.message}`);
+    for (const row of sessions ?? []) {
+      const booked = sessionBookedBarcodes((row as { data: unknown }).data);
+      if (barcodes.some(code => booked.has(code))) return true;
+    }
+  }
+
   const { data, error } = await supabase
     .from('box_inventory')
     .select('id')
-    .in('barcode', labels.map(l => l.barcode))
+    .in('barcode', barcodes)
     .limit(1);
   if (error) throw new Error(`box_inventory read failed: ${error.message}`);
   return (data ?? []).length > 0;

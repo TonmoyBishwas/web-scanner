@@ -135,6 +135,14 @@ export async function POST(request: NextRequest) {
         }).catch((err) => console.error('[multi-pallet-loose-complete] bot webhook error:', err)),
       );
 
+      // What was booked, recorded in the session now — box_inventory only
+      // follows once the bot has the call. Labels reads it to refuse deleting
+      // a label whose carton is already booked (lib/carton-labels.ts).
+      updatedSession.loose_barcodes = [
+        ...(session.loose_barcodes ?? []),
+        ...boxes.map((b) => b.barcode).filter((b): b is string => typeof b === 'string' && b !== ''),
+      ];
+
       // Persist session (marks completed when this was the final piece)
       await redis.set(sessionKey(token), JSON.stringify(updatedSession), { ex: SESSION_TTL });
 
