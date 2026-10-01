@@ -1,9 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { CartonSticker } from '@/components/terminal/CartonSticker';
+import { MI } from '@/components/terminal/MI';
 import { t } from '@/lib/i18n';
+import { isLabelSize } from '@/lib/label-batches';
+import { startScannerTrace, trace } from '@/lib/scanner-trace';
 import type { CartonLabel, Language, LabelSize } from '@/types';
 
 /**
@@ -27,10 +30,6 @@ const SHEETS: Record<LabelSize, { margin: string; w: string; maxH: number; cols:
 /** CSS px → mm (1 CSS px is 1/96 in by definition). */
 const pxToMm = (px: number) => (px / 96) * 25.4;
 
-function isLabelSize(v: string | null): v is LabelSize {
-  return v === '10x10' || v === '10x15' || v === 'a4';
-}
-
 export function LabelSheet() {
   const params = useSearchParams();
   const token = params.get('token') ?? '';
@@ -53,6 +52,17 @@ export function LabelSheet() {
   // The print dialog must fire once, and only after the stickers are on screen —
   // printing an empty page is worse than making the worker tap Print.
   const printedRef = useRef(false);
+  // The labels this sheet rendered are marked printed once per page load.
+  const markedRef = useRef(false);
+  // The print dialog closed (Print or Cancel — the browser does not say which).
+  const [dialogClosed, setDialogClosed] = useState(false);
+
+  // A traced worker's print tab is part of their trail too: the mark POST
+  // below (with its `via`) and the dialog closing are what a "the badge did
+  // not clear" report needs. Untraced users pay one small GET.
+  useEffect(() => {
+    if (token) startScannerTrace({ token, page: 'labels-print' });
+  }, [token]);
 
   useEffect(() => {
     let cancelled = false;
@@ -98,17 +108,68 @@ export function LabelSheet() {
     return () => observer.disconnect();
   }, [autoHeight, labels, sheet.maxH]);
 
+  /**
+   * "Printed" = THIS sheet rendered these exact labels and is about to open
+   * the print dialog. The sheet marks them itself (never its opener: "the tab
+   * opened" is not "the labels printed"), right before window.print(),
+   * because Android Chrome may never fire `afterprint` — a gate that waited
+   * for it could strand a worker. Once per page load; a reprint is a new
+   * load and bumps print_count. keepalive, so closing the tab straight after
+   * printing cannot cancel it. A failed mark re-arms, so the Print button
+   * below tries again; "Mark as printed" in Labels is the last resort.
+   */
+  const markPrinted = useCallback((): Promise<void> => {
+    if (markedRef.current || !token || !labels?.length) return Promise.resolve();
+    markedRef.current = true;
+    trace('ui', 'labels_sheet_print', { count: labels.length, size });
+    return fetch('/api/carton-labels/print', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, ids: labels.map(l => l.id), label_size: size, via: 'sheet' }),
+      keepalive: true,
+    })
+      .then(r => { if (!r.ok) markedRef.current = false; })
+      .catch(() => { markedRef.current = false; });
+  }, [token, labels, size]);
+
+  // The mark is given a moment to land BEFORE the dialog: desktop Chrome
+  // blocks this tab while the dialog is open, and the scanner tab re-reads
+  // its badge the moment the worker comes back — a mark still queued behind
+  // the dialog would leave the badge stale. Never waits more than 1.5 s.
+  const printNow = useCallback(() => {
+    void Promise.race([markPrinted(), new Promise(resolve => setTimeout(resolve, 1500))])
+      .then(() => window.print());
+  }, [markPrinted]);
+
   useEffect(() => {
     if (printedRef.current || !labels?.length) return;
     // Wait for the measured page height, otherwise the dialog opens against
     // the pre-measurement layout and prints the blank strip we just removed.
     if (autoHeight && pageHeightMm == null) return;
-    printedRef.current = true;
     // A beat for the webfonts — a sticker printed mid-font-swap comes out in
-    // the fallback face at the wrong metrics.
-    const timer = setTimeout(() => window.print(), 400);
+    // the fallback face at the wrong metrics. The once-only flag is set when
+    // the timer FIRES: a late re-measurement (fonts landing) re-runs this
+    // effect and cancels the pending timer, and setting the flag up front
+    // left the dialog never opening at all.
+    const timer = setTimeout(() => {
+      if (printedRef.current) return;
+      printedRef.current = true;
+      printNow();
+    }, 400);
     return () => clearTimeout(timer);
-  }, [labels, autoHeight, pageHeightMm]);
+  }, [labels, autoHeight, pageHeightMm, printNow]);
+
+  // After the dialog: offer the way back. The tab was opened by script, so
+  // window.close() is allowed and lands the worker on the scanner tab, which
+  // refreshes its badge on becoming visible.
+  useEffect(() => {
+    const onAfterPrint = () => {
+      trace('ui', 'labels_sheet_afterprint');
+      setDialogClosed(true);
+    };
+    window.addEventListener('afterprint', onAfterPrint);
+    return () => window.removeEventListener('afterprint', onAfterPrint);
+  }, []);
 
   const pageSize = autoHeight
     ? `${sheet.w} ${pageHeightMm ?? sheet.maxH}mm`
@@ -146,15 +207,39 @@ export function LabelSheet() {
         @media print { .no-print { display: none !important; } }
       `}</style>
 
-      <div className="no-print" style={{ padding: '12px', textAlign: 'center', fontFamily: "var(--font-app-sans), system-ui, sans-serif" }}>
+      <div
+        className="no-print"
+        style={{
+          padding: '12px', display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 10,
+          fontFamily: "var(--font-app-sans), system-ui, sans-serif",
+        }}
+      >
+        {dialogClosed ? (
+          // Green = done: the labels went to the printer.
+          <button
+            onClick={() => window.close()}
+            style={{
+              background: '#16a34a', color: '#fff', border: 'none', borderRadius: 12,
+              padding: '12px 20px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8,
+              fontFamily: 'var(--font-app-sans), system-ui, sans-serif', fontWeight: 900, fontSize: 15,
+            }}
+          >
+            <MI name="check_circle" size={20} />
+            {tr('labels.sheetBack')}
+          </button>
+        ) : null}
         <button
-          onClick={() => window.print()}
+          onClick={printNow}
           style={{
-            background: '#13a4ec', color: '#fff', border: 'none', borderRadius: 12,
-            padding: '12px 24px', cursor: 'pointer',
+            background: dialogClosed ? '#fff' : '#13a4ec',
+            color: dialogClosed ? '#0b6fa4' : '#fff',
+            border: dialogClosed ? '1.5px solid #13a4ec' : 'none',
+            borderRadius: 12, padding: '12px 24px', cursor: 'pointer',
+            display: 'inline-flex', alignItems: 'center', gap: 8,
             fontFamily: 'var(--font-app-sans), system-ui, sans-serif', fontWeight: 900, fontSize: 15,
           }}
         >
+          <MI name="print" size={20} />
           {tr('labels.sheetPrint')}
         </button>
       </div>

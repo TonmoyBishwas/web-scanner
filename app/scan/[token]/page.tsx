@@ -1151,11 +1151,12 @@ export default function ScanPage({
         <CartonCreator
           token={token}
           items={session.invoice_items}
+          palletNumber={null}
           onBack={() => setShowCartonCreator(false)}
           onCreated={(count) => {
+            // Saved only — back to the scanner; print later from Labels.
             setShowCartonCreator(false);
-            setShowLabels(true);
-            showInfoToast(tr('carton.created', { count }), 'label');
+            showInfoToast(tr('carton.saved', { count }), 'save');
           }}
         />
       )}

@@ -16,6 +16,11 @@ export interface ToolChip {
   locked?: boolean;
   onPress?: () => void;
   flip?: boolean;
+  /**
+   * Amber count pill on the tile's top-left corner (e.g. labels saved but not
+   * printed yet). Hidden at 0. The lock badge keeps the top-right corner.
+   */
+  badge?: number;
 }
 
 const TINT_BG: Record<ToolTint, string> = {
@@ -69,6 +74,14 @@ export function ToolDock({ chips, onLockedPress }: ToolDockProps) {
                 <MI name="lock" size={11} style={{ color: '#f6b45a' }} />
               </span>
             )}
+            {chip.badge && chip.badge > 0 ? (
+              <span
+                dir="ltr"
+                className="absolute -top-1 -left-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#f59e0b] text-[#0b1117] text-[10px] font-black leading-none flex items-center justify-center"
+              >
+                {chip.badge > 99 ? '99+' : chip.badge}
+              </span>
+            ) : null}
           </span>
           <span className="text-[9.5px] font-bold whitespace-nowrap">{chip.label}</span>
         </button>

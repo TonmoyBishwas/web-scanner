@@ -1,11 +1,14 @@
 /**
- * Server-side data layer for warehouse-minted carton stickers (New Carton /
- * צור קרטון) and the Labels screen that prints them.
+ * Server-side data layer for warehouse-minted carton labels (New Carton /
+ * צור קרטון, "all boxes identical", the edit panel's new barcode) and the
+ * Labels screen that prints them.
  *
- * Deliberately isolated from the receiving flow: creating a label books NO
- * stock and touches no delivery, pallet or box table. The worker prints the
- * sticker, puts it on the unlabelled carton, and scans it through the normal
- * inbound path — which is why every label carries a real, scannable barcode.
+ * Writes only `carton_labels`: creating a label books no stock and touches no
+ * delivery, pallet or box table. A New carton label is scanned in through the
+ * normal inbound path; an identical / receiving label stands for a scan row
+ * the page already holds, which the completion route books like any other.
+ * Labels are SAVED first and printed later — `status` stays 'created' until
+ * the print sheet (or the worker's "Mark as printed") flips it.
  *
  * Service-role client (see lib/supabase.ts) — server only.
  */
@@ -60,10 +63,16 @@ export interface CreateCartonBatchInput {
   printBarcode: boolean;
   labelSize: LabelSize;
   createdByChatId?: number | null;
-  /** Default `new_carton`. `identical` = booked as stock by pallet-verify. */
+  /** Default `new_carton`. `identical` / `receiving` = booked as stock by pallet-verify. */
   origin?: CartonLabelOrigin;
   sourceBarcode?: string | null;
   palletNumber?: number | null;
+  /**
+   * The client's id for this save (a UUID, made once per form open). A retry
+   * after a lost response sends the same one and gets the SAME batch back
+   * instead of a second set of labels.
+   */
+  batchId?: string | null;
 }
 
 /**
@@ -76,11 +85,23 @@ export interface CreateCartonBatchInput {
 export async function createCartonBatch(input: CreateCartonBatchInput): Promise<CartonLabel[]> {
   const quantity = Math.min(Math.max(Math.round(input.quantity), 1), 500);
 
+  // Idempotent retry: this session already saved this batch → hand it back.
+  // A batch id already used by ANOTHER session is never joined (it would mix
+  // two jobs' labels in one batch); that save simply gets a fresh id.
+  let batchId = input.batchId || crypto.randomUUID();
+  if (input.batchId) {
+    const existing = await getCartonLabelsByBatches([input.batchId]);
+    if (existing.length) {
+      if (existing.every(l => l.session_token === input.sessionToken)) return existing;
+      batchId = crypto.randomUUID();
+    }
+  }
+
   // One retry covers the astronomically unlikely barcode/serial collision;
-  // the unique indexes are what actually guarantee it.
+  // the unique indexes are what actually guarantee it. The batch id is kept
+  // across it, so the client's retry key still finds the batch.
   for (let attempt = 0; attempt < 2; attempt++) {
     const now = new Date();
-    const batchId = crypto.randomUUID();
     const rows = Array.from({ length: quantity }, () => ({
       batch_id: batchId,
       barcode: mintCartonBarcode(now),
@@ -171,9 +192,11 @@ export async function getCartonLabelsByBatches(batchIds: string[]): Promise<Cart
 /**
  * Flag labels as printed and bump their print count.
  *
- * Called when the worker hands the sheet to the browser's print dialog. The
- * browser never reports back whether paper actually came out, so this records
- * "sent to the printer" — a reprint simply increments the count again.
+ * Called by the print sheet itself, for exactly the labels it rendered, just
+ * before it opens the print dialog — or by the worker's "Mark as printed" in
+ * Labels. The browser never reports back whether paper actually came out, so
+ * this records "sent to the printer"; a reprint simply increments the count
+ * again and never un-prints a label.
  */
 export async function markCartonLabelsPrinted(ids: string[], labelSize?: LabelSize): Promise<number> {
   if (!ids.length) return 0;
@@ -200,12 +223,63 @@ export async function markCartonLabelsPrinted(ids: string[], labelSize?: LabelSi
   return updated;
 }
 
-/** Delete a whole batch — the undo for a mis-typed New Carton submission. */
-export async function deleteCartonBatch(batchId: string): Promise<number> {
+export interface DeletedBatch {
+  deleted: number;
+  /** The barcodes that went — the page drops their rows from its lists. */
+  barcodes: string[];
+  /** The supplier barcode an identical batch stood in for, when there was one. */
+  sourceBarcode: string | null;
+}
+
+/** Delete a whole batch — the undo for a mis-typed submission. */
+export async function deleteCartonBatch(batchId: string): Promise<DeletedBatch> {
   const { data, error } = await supabase
     .from('carton_labels')
     .delete()
     .eq('batch_id', batchId)
+    .select('id, barcode, source_barcode');
+  if (error) throw new Error(`carton_labels delete failed: ${error.message}`);
+  const rows = (data ?? []) as { id: string; barcode: string; source_barcode: string | null }[];
+  return {
+    deleted: rows.length,
+    barcodes: rows.map(r => r.barcode),
+    sourceBarcode: rows.find(r => r.source_barcode)?.source_barcode ?? null,
+  };
+}
+
+/**
+ * True when any carton of the batch is already stock (booked on an LPN).
+ * Such labels are on a box in the warehouse: they can be reprinted, never
+ * deleted — deleting would leave a box whose sticker the ledger forgot.
+ */
+export async function batchHasBookedBoxes(batchId: string): Promise<boolean> {
+  const labels = await getCartonLabelsByBatches([batchId]);
+  if (!labels.length) return false;
+  const { data, error } = await supabase
+    .from('box_inventory')
+    .select('id')
+    .in('barcode', labels.map(l => l.barcode))
+    .limit(1);
+  if (error) throw new Error(`box_inventory read failed: ${error.message}`);
+  return (data ?? []).length > 0;
+}
+
+/**
+ * Delete ONE label whose scan row the worker just removed from the list — so
+ * an "all boxes identical" or edit-panel label does not linger as an orphan
+ * (batch 0877ca78). Only while it is still unprinted (a printed sticker
+ * exists on paper, so its ledger row stays), only in this session, and never
+ * a New carton label: that one exists for itself, and removing its scan row
+ * just un-scans the carton.
+ */
+export async function deleteUnprintedLabelByBarcode(sessionToken: string, barcode: string): Promise<number> {
+  const { data, error } = await supabase
+    .from('carton_labels')
+    .delete()
+    .eq('barcode', barcode)
+    .eq('session_token', sessionToken)
+    .eq('status', 'created')
+    .neq('origin', 'new_carton')
     .select('id');
   if (error) throw new Error(`carton_labels delete failed: ${error.message}`);
   return (data ?? []).length;

@@ -26,6 +26,8 @@ interface ActiveScanCardProps {
    *  the same and mints a printed label per carton (pallet-verify only). */
   onIdentical?: () => void;
   tone?: 'brand' | 'warn';
+  /** This row's barcode is a saved label that has not been printed yet. */
+  unprinted?: boolean;
 }
 
 // Design "active scan" summary card: #0a0f14 on 2px brand border, mono index
@@ -40,7 +42,7 @@ interface ActiveScanCardProps {
 export function ActiveScanCard({
   index, name, value, unit, barcode, expiry,
   status = 'done', expanded, onToggleExpand,
-  onEdit, onDelete, onRetry, onViewImage, onIdentical, tone = 'brand',
+  onEdit, onDelete, onRetry, onViewImage, onIdentical, tone = 'brand', unprinted = false,
 }: ActiveScanCardProps) {
   const tr = useT();
   const borderColor = status === 'failed' ? '#ef4444' : tone === 'warn' ? '#f59e0b' : '#13a4ec';
@@ -77,7 +79,18 @@ export function ActiveScanCard({
                 className={`w-[6px] h-[6px] rounded-full inline-block ${status === 'reading' ? 'animate-shim' : ''}`}
                 style={{ background: failed ? '#ef4444' : '#22c55e' }}
               />
-              {failed ? tr('terminal.notRecognized') : tr('terminal.scanningNow')}
+              {failed ? (
+                tr('terminal.notRecognized')
+              ) : unprinted ? (
+                // Amber = needs attention: the carton is on the list, its
+                // label is saved but still has to come out of the printer.
+                <span className="inline-flex items-center gap-[3px] text-[#fbbf5c] tracking-normal whitespace-nowrap">
+                  <MI name="print_disabled" size={13} />
+                  {tr('terminal.labelNotPrinted')}
+                </span>
+              ) : (
+                tr('terminal.scanningNow')
+              )}
             </span>
             <span className="block text-[14px] font-extrabold text-ink-inverse whitespace-nowrap overflow-hidden text-ellipsis">
               {name}

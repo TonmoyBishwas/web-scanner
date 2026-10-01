@@ -461,6 +461,8 @@ export interface CartonLabel {
    * `new_carton` — the New carton chip (label only, books no stock).
    * `identical` — the "all boxes identical" action on pallet-verify: the
    * batch is booked as stock, one box_inventory row per minted barcode.
+   * `receiving` — minted from the edit panel for one carton whose printed
+   * barcode is destroyed; that scan row is booked under the minted code.
    */
   origin: CartonLabelOrigin;
   /** The supplier barcode read off the sample carton (shared by every box). */
@@ -469,4 +471,4 @@ export interface CartonLabel {
   pallet_number: number | null;
 }
 
-export type CartonLabelOrigin = 'new_carton' | 'identical';
+export type CartonLabelOrigin = 'new_carton' | 'identical' | 'receiving';

@@ -20,13 +20,17 @@ interface HistoryRowProps {
    */
   actions?: ReactNode;
   dimmed?: boolean;
+  /** This row's barcode is a saved label that has not been printed yet. */
+  unprinted?: boolean;
+  /** Spoken / long-press text for the unprinted marker. */
+  unprintedLabel?: string;
 }
 
 // Design history row: rgba(10,15,20,.5) on #1e2a35 hairline, 40px mono index
 // badge, green check + name, LTR mono barcode, 17px mono weight, chevron.
 export function HistoryRow({
   index, name, barcode, weight, unitLabel = 'ק"ג',
-  status = 'done', onClick, actions, dimmed = false,
+  status = 'done', onClick, actions, dimmed = false, unprinted = false, unprintedLabel,
 }: HistoryRowProps) {
   const statusIcon = status === 'failed' ? 'error' : status === 'pending' ? 'hourglass_empty' : 'check_circle';
   const statusColor = status === 'failed' ? '#ef4444' : status === 'pending' ? '#fbbf5c' : '#22c55e';
@@ -45,6 +49,12 @@ export function HistoryRow({
           <div className="min-w-0">
             <div className="flex items-center gap-[5px]">
               <MI name={statusIcon} size={14} style={{ color: statusColor }} />
+              {unprinted && (
+                // Amber = needs attention: label saved, not printed yet.
+                <span role="img" aria-label={unprintedLabel} title={unprintedLabel} className="flex-none inline-flex">
+                  <MI name="print_disabled" size={13} style={{ color: '#fbbf5c' }} />
+                </span>
+              )}
               <span className="text-[12px] font-extrabold text-ink-inverse whitespace-nowrap overflow-hidden text-ellipsis">
                 {name}
               </span>
