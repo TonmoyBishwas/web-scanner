@@ -13,9 +13,11 @@ interface CalendarPickerProps {
   /**
    * With no `value`, open with NO day chosen and keep OK disabled until the
    * worker taps a day or Today. Without it an empty field opened on today and
-   * OK committed that: 64 tilapia cartons were booked with the day they were
-   * received as their expiry. Off by default, so the forms that want a
-   * today-default keep it.
+   * OK committed that: 64 tilapia cartons (the All-boxes-identical form,
+   * batch f6a47cfc) were booked with the day they were received as their
+   * expiry. ON by default — every date this picker sets is read off a
+   * sticker (expiry, production date) — so a form that really wants a
+   * today-default must pass `requirePick={false}`.
    */
   requirePick?: boolean;
 }
@@ -33,7 +35,7 @@ const pad = (n: number) => String(n).padStart(2, '0');
 
 // Design calendar picker: centered modal (z-81) with a day/month/year tab
 // segmented control, localized grids, selected=brand, "היום" + "אישור" footer.
-export function CalendarPicker({ value, fieldTitle, onPick, onClose, requirePick = false }: CalendarPickerProps) {
+export function CalendarPicker({ value, fieldTitle, onPick, onClose, requirePick = true }: CalendarPickerProps) {
   const tr = useT();
   const language = useContext(LanguageContext);
   const locale = language === 'Hebrew' ? 'he' : 'en';

@@ -10,6 +10,7 @@
  */
 
 import type { CartonLabel, CartonLabelOrigin, Language, LabelSize } from '@/types';
+import { toIsoDate } from './expiry';
 
 /**
  * A warehouse-minted carton label: `28` + YYMMDD + 8 digits (see
@@ -55,6 +56,107 @@ export function newBatchId(): string {
   b[8] = (b[8] & 0x3f) | 0x80;
   const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+/**
+ * The batch id for THIS save's content. One id per distinct payload, kept for
+ * the life of the form: a retry of the same save (lost response) sends the
+ * same id and gets the same batch back, while a save whose content changed
+ * meanwhile (the count, the weight, a date, another item) gets an id of its
+ * own — it must never be answered with the first attempt's labels. `ids` is
+ * the form's own map (a ref); `payload` is everything the save sends except
+ * the id itself.
+ */
+export function batchIdForPayload(ids: Map<string, string>, payload: unknown): string {
+  const key = JSON.stringify(payload);
+  let id = ids.get(key);
+  if (!id) {
+    id = newBatchId();
+    ids.set(key, id);
+  }
+  return id;
+}
+
+/** What a save asks for: everything its labels print or the ledger keeps. */
+export interface BatchRequestContent {
+  itemCode?: string | null;
+  itemNameHebrew?: string | null;
+  itemNameEnglish?: string | null;
+  weightKg?: number | null;
+  /** Already clamped to what the server will write (1–500). */
+  quantity: number;
+  productionDate?: string | null;
+  expiryDate?: string | null;
+  notes?: string | null;
+  printBarcode: boolean;
+  origin?: CartonLabelOrigin;
+  sourceBarcode?: string | null;
+  palletNumber?: number | null;
+}
+
+type StoredBatchRow = Pick<
+  CartonLabel,
+  | 'item_code' | 'item_name_hebrew' | 'item_name_english' | 'weight_kg' | 'production_date'
+  | 'expiry_date' | 'notes' | 'print_barcode' | 'origin' | 'source_barcode' | 'pallet_number'
+>;
+
+const sameText = (a: string | null | undefined, b: string | null | undefined) =>
+  (a ?? '').trim() === (b ?? '').trim();
+
+const sameDate = (a: string | null | undefined, b: string | null | undefined) => {
+  const norm = (v: string | null | undefined) => {
+    const t = (v ?? '').trim();
+    return toIsoDate(t) || t;
+  };
+  return norm(a) === norm(b);
+};
+
+const sameNumber = (a: number | string | null | undefined, b: number | string | null | undefined) => {
+  const blank = (v: unknown) => v === null || v === undefined || v === '';
+  if (blank(a) || blank(b)) return blank(a) && blank(b);
+  return Math.abs(Number(a) - Number(b)) < 1e-6;
+};
+
+/**
+ * Is the batch already stored under a save's id the batch this request asks
+ * for? Only then may a retry be answered with it. Every row of a batch is
+ * written from one request, so the first row speaks for all of them; the
+ * count must match too. `label_size` is left out — printing rewrites it.
+ */
+export function batchMatchesRequest(stored: ReadonlyArray<StoredBatchRow>, req: BatchRequestContent): boolean {
+  const first = stored[0];
+  if (!first || stored.length !== req.quantity) return false;
+  return sameText(first.item_code, req.itemCode)
+    && sameText(first.item_name_hebrew, req.itemNameHebrew)
+    && sameText(first.item_name_english, req.itemNameEnglish)
+    && sameNumber(first.weight_kg, req.weightKg)
+    && sameDate(first.production_date, req.productionDate)
+    && sameDate(first.expiry_date, req.expiryDate)
+    && sameText(first.notes, req.notes)
+    && first.print_barcode === req.printBarcode
+    && (first.origin ?? 'new_carton') === (req.origin ?? 'new_carton')
+    && sameText(first.source_barcode, req.sourceBarcode)
+    && (first.pallet_number ?? null) === (req.palletNumber ?? null);
+}
+
+// ── Marking printed ─────────────────────────────────────────────────────────
+
+/** `items` in consecutive slices of at most `size`. */
+export function chunked<T>(items: ReadonlyArray<T>, size: number): T[][] {
+  const n = Math.max(1, Math.floor(size));
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += n) out.push(items.slice(i, i + n));
+  return out;
+}
+
+/**
+ * The print counts to bump, one UPDATE each (`… set print_count = c + 1
+ * where print_count = c`), highest first: bumping c to c + 1 first and then
+ * c - 1 to c never re-matches a row the previous step just moved. Normally a
+ * batch has one count (0 on its first print), so one statement marks it all.
+ */
+export function printCountSteps(counts: ReadonlyArray<number>): number[] {
+  return [...new Set(counts.filter((c) => Number.isInteger(c) && c >= 0))].sort((a, b) => b - a);
 }
 
 /** Accepted `origin` values; anything else is the New carton default. */

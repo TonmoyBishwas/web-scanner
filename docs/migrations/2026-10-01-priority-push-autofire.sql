@@ -64,7 +64,9 @@
 --       'already_in_priority'. Nothing is sent for them; they only make sure an
 --       old delivery has a row, so a later status change cannot queue it.
 --   * priority_push_plan()      NEW: STABLE, side-effect free. Returns one
---       decision per due outbox row. Safe to run any time:
+--       decision per due outbox row - including hold_same_invoice: a second
+--       deliveries row for a supplier note already in Priority (the bot forks
+--       them) is never sent by itself. Safe to run any time:
 --         select * from public.priority_push_plan();
 --   * priority_push_dispatch()  REPLACED: advisory lock (one run at a time);
 --       reads replies back AT MOST ONCE (see READ-BACK below): only a request
@@ -111,6 +113,32 @@
 --                        hand may be in flight).           dispatch: untouched
 --   hold_not_closed      the delivery is no longer Complete / Has Discrepancy.
 --                                                            dispatch: untouched
+--   hold_same_invoice    the SAME supplier note (document_number = Priority's
+--                        BOOKNUM) is already in Priority, or on its way, under
+--                        ANOTHER deliveries row - and released_at is NULL:
+--                        a. another outbox row whose delivery has this
+--                           document_number is sent / unconfirmed / delivered /
+--                           already_in_priority, or is queued / waiting and was
+--                           queued before this one (two forks closing together
+--                           send only the first); or
+--                        b. priority_goods_receipts has a row with origin <>
+--                           'warehouse_bot', booknum = this document_number and
+--                           a different (or no) delivery_id - which also sees a
+--                           receipt the office typed into Priority by hand, once
+--                           the client's pull has brought it in.
+--                        The bot forks deliveries for one note on purpose: a
+--                        re-photographed note whose delivery already closed (it
+--                        only looks for In Progress ones of the last 48 h), and
+--                        the "Separate delivery" button. Read live 2026-10-01:
+--                        251068506 (two Complete forks), 261048511 (GR26000036
+--                        on one fork, the other Has Discrepancy), IN264171048.
+--                        Matched on document_number ALONE (trimmed), within 90
+--                        days either side of this delivery: the forks of
+--                        251068506 carry different supplier_vat values (an OCR
+--                        difference), so a supplier match would miss a real
+--                        fork. A different supplier's note with the same number
+--                        is held too - the safe direction; release it by hand
+--                        (LATER).                           dispatch: untouched
 --   hold_pre_enable      queued_at < config.enabled_since (or enabled_since is
 --                        NULL, i.e. the push is off) and released_at is NULL.
 --                        Rows queued while the push was off are NEVER sent by
@@ -237,16 +265,40 @@
 --   -- WARNING: this does NOT send the non-meat rows queued while non_meat was off.
 --   -- They move from hold_category to hold_pre_category and wait for a release by
 --   -- hand, because the duplicate guard cannot see a receipt the office typed into
---   -- Priority by hand (origin 'priority' rows carry no delivery_id). Review them
---   -- before and after the switch:
+--   -- Priority by hand (origin 'priority' rows carry no delivery_id; hold_same_invoice
+--   -- sees one by its BOOKNUM only once the client's pull has brought it in). Review
+--   -- them before and after the switch:
 --   --   select p.outbox_id, o.document_number, o.queued_at, p.decision, p.reason
 --   --     from public.priority_push_plan() p
 --   --     join public.priority_push_outbox o on o.id = p.outbox_id
 --   --    where p.decision in ('hold_category', 'hold_pre_category')
 --   --    order by o.queued_at;
 --   --   update public.priority_push_config set categories = '{meat,non_meat}' where id = 1;
+--   -- released_at lifts EVERY hold at once - hold_same_invoice included. Before ANY
+--   -- release below, check that no other delivery of the same supplier note is in
+--   -- Priority or on its way (Priority: BOOKNUM = document_number, ANY status):
+--   --   select o.id, o.document_number, o2.id as other_outbox, o2.delivery_id as other_delivery,
+--   --          o2.status as other_status, g.docno as gr_for_same_note, g.origin, g.statdes
+--   --     from public.priority_push_outbox o
+--   --     join public.deliveries d on d.id = o.delivery_id
+--   --     left join public.deliveries d2
+--   --            on btrim(d2.document_number) = btrim(d.document_number) and d2.id <> d.id
+--   --     left join public.priority_push_outbox o2 on o2.delivery_id = d2.id
+--   --     left join public.priority_goods_receipts g
+--   --            on btrim(g.booknum) = btrim(d.document_number) and g.origin <> 'warehouse_bot'
+--   --           and g.delivery_id is distinct from d.id
+--   --    where o.id in (<ids>);
 --   -- send a held row on purpose, one by one, after checking in Priority that it is not there:
 --   --   select * from public.priority_push_plan() where decision in ('hold_pre_enable', 'hold_pre_category');
+--   --   update public.priority_push_outbox set released_at = now() where id in (<ids>);
+--   -- send a hold_same_invoice row on purpose - ONLY when it is genuinely a SECOND
+--   -- delivery of goods under the same supplier note (Priority then gets a second
+--   -- draft with the same BOOKNUM), or a different supplier whose note number is the
+--   -- same. Otherwise leave it held: the goods are already in the first draft.
+--   --   select p.outbox_id, o.document_number, o.queued_at, p.reason
+--   --     from public.priority_push_plan() p
+--   --     join public.priority_push_outbox o on o.id = p.outbox_id
+--   --    where p.decision = 'hold_same_invoice';
 --   --   update public.priority_push_outbox set released_at = now() where id in (<ids>);
 --   -- send a 'skipped' delivery on purpose (a marker "closed before autofire", or a
 --   -- Complete <-> Has Discrepancy change with no outbox row) - NEVER a Test-user row:
@@ -383,7 +435,7 @@ comment on column public.priority_push_outbox.not_ready_reason is
 comment on column public.priority_push_outbox.unmapped_codes is
   'Item codes wb_gr_priority_body could not map to a Priority PARTNAME.';
 comment on column public.priority_push_outbox.released_at is
-  'Set by hand to send a row on purpose that is otherwise never sent by itself: queued before the push was enabled (hold_pre_enable) or before its category was switched on (hold_pre_category), or a skipped / unconfirmed / failed row put back to queued. max_wait_days counts from it.';
+  'Set by hand to send a row on purpose that is otherwise never sent by itself: queued before the push was enabled (hold_pre_enable) or before its category was switched on (hold_pre_category), another delivery of the same supplier note already in Priority (hold_same_invoice), or a skipped / unconfirmed / failed row put back to queued. It lifts ALL of those holds at once. max_wait_days counts from it.';
 
 create index if not exists idx_priority_push_outbox_due
   on public.priority_push_outbox (queued_at)
@@ -588,6 +640,8 @@ declare
   v_reason    text;
   v_codes     text[];
   v_failed    text;
+  v_doc       text;
+  v_dup       text;
   v_evaluated integer := 0;
   c_batch     constant integer := 20;   -- readiness checks (= max sends) per run
 begin
@@ -598,7 +652,9 @@ begin
 
   for rw in
     select o.id, o.delivery_id, o.category, o.queued_at, o.released_at,
-           d.status::text as delivery_status_now
+           d.status::text as delivery_status_now,
+           nullif(btrim(coalesce(d.document_number, o.document_number)), '') as doc,
+           d.created_at as delivery_created_at
       from public.priority_push_outbox o
       left join public.deliveries d on d.id = o.delivery_id
      where o.status in ('queued', 'waiting')
@@ -612,6 +668,8 @@ begin
     codes       := null;
     v_gr        := null;
     v_draft     := null;
+    v_doc       := rw.doc;
+    v_dup       := null;
 
     -- (1) Duplicate guard: Priority already has a receipt for this delivery.
     select g.docno || ' (origin ' || g.origin || ', ' || coalesce(g.statdes, '?') || ')'
@@ -651,6 +709,50 @@ begin
                   || '; sent only while Complete / Has Discrepancy';
       return next;
       continue;
+    end if;
+
+    -- (3b) The same supplier note is (or is about to be) in Priority under
+    --      ANOTHER delivery row: a second draft for one BOOKNUM cannot be
+    --      undone from here. Keyed on document_number alone (see the header).
+    if v_doc is not null and rw.released_at is null then
+      -- a. another delivery of this note already went (or is going) out
+      select 'outbox row ' || o2.id || ' (delivery ' || o2.delivery_id || ', status ' || o2.status || ')'
+        into v_dup
+        from public.priority_push_outbox o2
+        join public.deliveries d2 on d2.id = o2.delivery_id
+       where o2.id <> rw.id
+         and o2.delivery_id <> rw.delivery_id
+         and btrim(coalesce(d2.document_number, o2.document_number)) = v_doc
+         and d2.created_at between rw.delivery_created_at - interval '90 days'
+                               and rw.delivery_created_at + interval '90 days'
+         and (o2.status in ('sent', 'unconfirmed', 'delivered', 'already_in_priority')
+              or (o2.status in ('queued', 'waiting')
+                  and (o2.queued_at, o2.id) < (rw.queued_at, rw.id)))
+       order by o2.queued_at, o2.id
+       limit 1;
+      -- b. Priority already has a receipt for this note (BOOKNUM) that is not
+      --    this delivery's - a push for another fork, or typed by the office
+      if v_dup is null then
+        select 'GR ' || g.docno || ' (origin ' || g.origin || ', ' || coalesce(g.statdes, '?')
+               || ', delivery ' || coalesce(g.delivery_id::text, 'none') || ')'
+          into v_dup
+          from public.priority_goods_receipts g
+         where btrim(g.booknum) = v_doc
+           and g.origin <> 'warehouse_bot'
+           and g.delivery_id is distinct from rw.delivery_id
+           and coalesce(g.curdate, g.synced_at) >= rw.delivery_created_at - interval '90 days'
+         order by g.synced_at desc
+         limit 1;
+      end if;
+      if v_dup is not null then
+        decision := 'hold_same_invoice';
+        reason   := 'supplier note ' || v_doc || ' is already in Priority or on its way under '
+                    || v_dup || '; a second draft for the same BOOKNUM is never sent by itself.'
+                    || ' Only if this is genuinely a second delivery of goods under the same note: '
+                    || 'update public.priority_push_outbox set released_at = now() where id = ' || rw.id;
+        return next;
+        continue;
+      end if;
     end if;
 
     -- (4) Queued while the push was off: never sent by itself.
@@ -753,7 +855,7 @@ end
 $function$;
 
 comment on function public.priority_push_plan() is
-  'Side-effect-free preview of priority_push_dispatch(): one decision per due outbox row (already_in_priority, hold_local_draft, hold_not_closed, hold_pre_enable, hold_category, hold_pre_category, wait_po, expired, error, not_ready, send). Calls the client''s wb_gr_priority_body read-only.';
+  'Side-effect-free preview of priority_push_dispatch(): one decision per due outbox row (already_in_priority, hold_local_draft, hold_not_closed, hold_same_invoice, hold_pre_enable, hold_category, hold_pre_category, wait_po, expired, error, not_ready, send). Calls the client''s wb_gr_priority_body read-only.';
 
 -- -----------------------------------------------------------------------------
 -- 6. Dispatch: read back, gate, fail closed, apply the plan
@@ -1091,9 +1193,14 @@ commit;
 -- select tgrelid::regclass, tgname, tgenabled from pg_trigger
 --  where tgname in ('trg_priority_push_enqueue', 'trg_priority_push_config_enabled_since');     -- 2 rows
 --
+-- -- 5b. The plan holds a second delivery of a note already in Priority.
+-- select pg_get_functiondef('public.priority_push_plan()'::regprocedure) ~ 'hold_same_invoice' as same_invoice_guard;  -- expect true
+--
 -- -- 6. The plan runs and writes nothing (it is STABLE). Right after the apply it
 -- --    returns no rows (the markers of check 10 are not queued); later, while the
--- --    push is off, every due row shows hold_pre_enable, or already_in_priority.
+-- --    push is off, every due row shows hold_pre_enable, already_in_priority, or
+-- --    hold_same_invoice (a second deliveries row for a note already in Priority -
+-- --    read 2026-10-01, fork e8f1d706 of 261048511 would show it, against GR26000036).
 -- select * from public.priority_push_plan();
 --
 -- -- 7. Categories resolve for recent closes (pallets first, else the invoice OCR archive).

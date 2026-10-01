@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   derivePriorityStatus,
+  heldBySameNote,
   summarizePushConfig,
   isFinalPriorityState,
   nextPollDelay,
@@ -278,6 +279,71 @@ describe('derivePriorityStatus — holds (migration schema)', () => {
   it('PO link unknown (read failed) → no waitingPo claim', () => {
     expect(derivePriorityStatus(input({ config: on(), outbox: row({ queued_at: minutesAgo(1) }), hasPoLink: null })).state)
       .toBe('sending');
+  });
+
+  it('another delivery of the same note is in Priority → held; a release lifts it; unknown → no claim', () => {
+    expect(derivePriorityStatus(input({ config: on(), outbox: row(), sameNote: true })).state).toBe('held');
+    expect(derivePriorityStatus(input({
+      config: on(), outbox: row({ queued_at: minutesAgo(120), released_at: minutesAgo(1) }), sameNote: true,
+    })).state).toBe('sending');
+    expect(derivePriorityStatus(input({ config: on(), outbox: row(), sameNote: null })).state).toBe('sending');
+  });
+});
+
+describe('heldBySameNote (plan() hold_same_invoice)', () => {
+  const created = minutesAgo(30);
+  const base = {
+    outboxId: 7,
+    queuedAt: minutesAgo(10),
+    deliveryId: 'fork-b',
+    deliveryCreatedAt: created,
+    siblings: [],
+    receipts: [],
+  };
+  const sib = (over: Record<string, unknown> = {}) => ({
+    id: 3, status: 'sent', queued_at: minutesAgo(60), delivery_created_at: minutesAgo(70), ...over,
+  }) as Parameters<typeof heldBySameNote>[0]['siblings'][number];
+  const rcpt = (over: Record<string, unknown> = {}) => ({
+    origin: 'priority_push', delivery_id: 'fork-a', curdate: minutesAgo(60), synced_at: minutesAgo(60), ...over,
+  }) as Parameters<typeof heldBySameNote>[0]['receipts'][number];
+
+  it('no other delivery of the note → not held', () => {
+    expect(heldBySameNote(base)).toBe(false);
+  });
+
+  it('a fork already sent / unconfirmed / delivered / already in Priority → held', () => {
+    for (const status of ['sent', 'unconfirmed', 'delivered', 'already_in_priority']) {
+      expect(heldBySameNote({ ...base, siblings: [sib({ status })] })).toBe(true);
+    }
+  });
+
+  it('a fork that failed, expired or was skipped never went out → not held', () => {
+    for (const status of ['failed', 'expired', 'skipped']) {
+      expect(heldBySameNote({ ...base, siblings: [sib({ status })] })).toBe(false);
+    }
+  });
+
+  it('two forks queued together: only the later one is held', () => {
+    expect(heldBySameNote({ ...base, siblings: [sib({ status: 'queued', queued_at: minutesAgo(20) })] })).toBe(true);
+    expect(heldBySameNote({ ...base, siblings: [sib({ status: 'waiting', queued_at: minutesAgo(5) })] })).toBe(false);
+    // same queued_at: the lower outbox id goes first
+    expect(heldBySameNote({ ...base, siblings: [sib({ id: 3, status: 'queued', queued_at: base.queuedAt })] })).toBe(true);
+    expect(heldBySameNote({ ...base, siblings: [sib({ id: 9, status: 'queued', queued_at: base.queuedAt })] })).toBe(false);
+  });
+
+  it('a Priority receipt with this BOOKNUM for another delivery, or typed by the office → held', () => {
+    expect(heldBySameNote({ ...base, receipts: [rcpt()] })).toBe(true);
+    expect(heldBySameNote({ ...base, receipts: [rcpt({ origin: 'priority', delivery_id: null })] })).toBe(true);
+  });
+
+  it('its own receipt, a local warehouse_bot draft, or an old same-number receipt → not held', () => {
+    expect(heldBySameNote({ ...base, receipts: [rcpt({ delivery_id: 'fork-b' })] })).toBe(false);
+    expect(heldBySameNote({ ...base, receipts: [rcpt({ origin: 'warehouse_bot' })] })).toBe(false);
+    expect(heldBySameNote({ ...base, receipts: [rcpt({ curdate: '2019-03-01T00:00:00Z' })] })).toBe(false);
+  });
+
+  it('a same-number fork outside the 90-day window → not held', () => {
+    expect(heldBySameNote({ ...base, siblings: [sib({ delivery_created_at: '2025-01-01T00:00:00Z' })] })).toBe(false);
   });
 });
 

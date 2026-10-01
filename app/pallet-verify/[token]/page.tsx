@@ -58,13 +58,17 @@ import { useBackClose } from '@/lib/use-back-close';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback, scanAlreadyCountedFeedback } from '@/lib/scan-feedback';
 import {
-  SCAN_NOTICE_MS,
+  SCAN_NOTICE_ACTION_MS,
   HIGHLIGHT_ROW_MS,
+  scanNoticeMs,
   shouldSoundDuplicate,
   clearDuplicateSounds,
   findCountedCarton,
   findCountedCartonByDigits,
   canOfferDifferentCarton,
+  isBatchStandIn,
+  standInCount,
+  type CountedCarton,
 } from '@/lib/scan-notice';
 import {
   savePalletScans,
@@ -209,7 +213,7 @@ interface UniformGroup {
 }
 
 /**
- * A routine scan outcome shown over the camera for SCAN_NOTICE_MS (see
+ * A routine scan outcome shown over the camera for scanNoticeMs() (see
  * lib/scan-notice.ts): blue "already counted" or amber "misread". Never a
  * failure — those stay in the page's red, persistent `error`.
  */
@@ -305,6 +309,9 @@ export default function PalletVerifyPage({
   const [manualMode, setManualMode] = useState(false);
   const [boxCountInput, setBoxCountInput] = useState('');
   const [confirmedBoxCount, setConfirmedBoxCount] = useState(0);
+  // For callbacks that finish after an await (the identical form's save).
+  const confirmedBoxCountRef = useRef(0);
+  useEffect(() => { confirmedBoxCountRef.current = confirmedBoxCount; }, [confirmedBoxCount]);
   const [scannedBoxes, setScannedBoxes] = useState<BoxScan[]>([]);
   const [detectedType, setDetectedType] = useState<DetectedType>('unknown');
   const [lpn, setLpn] = useState('');
@@ -315,6 +322,8 @@ export default function PalletVerifyPage({
   const [error, setError] = useState<string | null>(null);
   const [scanNotice, setScanNotice] = useState<ScanNotice | null>(null);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A finger is on the notice (touching "Different carton?"): no timeout.
+  const noticeHeldRef = useRef(false);
   // The carton a notice names, highlighted in the list for HIGHLIGHT_ROW_MS.
   const [flashBarcode, setFlashBarcode] = useState<string | null>(null);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -362,14 +371,39 @@ export default function PalletVerifyPage({
   // Plain functions over refs and state setters only, so the frozen-closure
   // detect handlers can call the first render's copies safely.
 
-  /** Show a notice; it replaces any current one and clears itself. */
-  function showScanNotice(notice: ScanNotice) {
+  /** (Re)start the timer that takes the notice down. */
+  function armNoticeTimer(ms: number) {
     if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
-    setScanNotice(notice);
     noticeTimerRef.current = setTimeout(() => {
       noticeTimerRef.current = null;
       setScanNotice(null);
-    }, SCAN_NOTICE_MS);
+    }, ms);
+  }
+
+  /** Show a notice; it replaces any current one and clears itself — unless
+   *  the worker's finger is on it (see holdScanNotice). */
+  function showScanNotice(notice: ScanNotice) {
+    setScanNotice(notice);
+    if (noticeHeldRef.current) {
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+      noticeTimerRef.current = null;
+    } else {
+      armNoticeTimer(scanNoticeMs(notice));
+    }
+  }
+
+  /** A finger is on the notice: it stays up until the finger lifts. */
+  function holdScanNotice() {
+    noticeHeldRef.current = true;
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = null;
+  }
+
+  /** The finger lifted without tapping the action: full time again. */
+  function releaseScanNotice() {
+    if (!noticeHeldRef.current) return;
+    noticeHeldRef.current = false;
+    armNoticeTimer(SCAN_NOTICE_ACTION_MS);
   }
 
   /** Take the notice down now: the worker did something that answers it. */
@@ -378,7 +412,38 @@ export default function PalletVerifyPage({
       clearTimeout(noticeTimerRef.current);
       noticeTimerRef.current = null;
     }
+    noticeHeldRef.current = false;
     setScanNotice(null);
+  }
+
+  /**
+   * The blue notice for a code (or a photo's printed digits) that is already
+   * on `rows`. Names the carton and may offer "Different carton?" — unless an
+   * "All boxes identical" batch stands in for the code: then every carton
+   * that carries it is already declared, so the notice says the saved labels
+   * cover it, names no single carton and offers nothing.
+   */
+  function countedNotice(
+    rows: BoxScan[],
+    code: string,
+    hit: CountedCarton<BoxScan> | null,
+    opts: { loose: boolean; photo: boolean },
+  ): ScanNotice {
+    const lang = sessionRef.current?.language || 'English';
+    if (hit && isBatchStandIn(code, hit.row)) {
+      const count = standInCount(rows, code);
+      return {
+        text: count === 1 ? t(lang, 'terminal.coveredByLabelOne') : t(lang, 'terminal.coveredByLabels', { count }),
+        tone: 'info',
+      };
+    }
+    return {
+      text: t(lang, opts.photo ? 'terminal.photoAlreadyCounted' : 'terminal.alreadyCounted', { n: hit?.n ?? '?' }),
+      tone: 'info',
+      different: hit && canOfferDifferentCarton(code, hit.row)
+        ? { box: { ...hit.row, barcode: code }, loose: opts.loose, n: hit.n }
+        : undefined,
+    };
   }
 
   /** Highlight the carton a notice names (its row rings and pulses blue). */
@@ -399,6 +464,7 @@ export default function PalletVerifyPage({
       clearTimeout(noticeTimerRef.current);
       noticeTimerRef.current = null;
     }
+    noticeHeldRef.current = false;
     setScanNotice(null);
     clearDuplicateSounds(dupSoundsRef.current);
   }, [phase]);
@@ -939,13 +1005,7 @@ export default function PalletVerifyPage({
         // different carton whose label is byte-identical.
         const hit = findCountedCarton(scannedBoxesRef.current, read);
         if (shouldSoundDuplicate(dupSoundsRef.current, read, Date.now())) scanAlreadyCountedFeedback();
-        showScanNotice({
-          text: t(sessionRef.current?.language || 'English', 'terminal.alreadyCounted', { n: hit?.n ?? '?' }),
-          tone: 'info',
-          different: hit && canOfferDifferentCarton(read, hit.row)
-            ? { box: { ...hit.row, barcode: read }, loose: false, n: hit.n }
-            : undefined,
-        });
+        showScanNotice(countedNotice(scannedBoxesRef.current, read, hit, { loose: false, photo: false }));
         if (hit) highlightRow(hit.row.barcode);
         return;
       }
@@ -1208,13 +1268,7 @@ export default function PalletVerifyPage({
             trace('ui', 'manual_capture_duplicate', { provisional: lookupKey, digits, of: hit.n });
             dupFlashRef.current?.('duplicate');
             scanAlreadyCountedFeedback();
-            showScanNotice({
-              text: t(sessionRef.current?.language || 'English', 'terminal.photoAlreadyCounted', { n: hit.n }),
-              tone: 'info',
-              different: canOfferDifferentCarton(digits, hit.row)
-                ? { box: { ...hit.row, barcode: digits }, loose: false, n: hit.n }
-                : undefined,
-            });
+            showScanNotice(countedNotice(scannedBoxesRef.current, digits, hit, { loose: false, photo: true }));
             highlightRow(hit.row.barcode);
             setScannedBoxes((prev) => prev.filter((b) => b.barcode !== lookupKey));
             return;
@@ -1476,13 +1530,7 @@ export default function PalletVerifyPage({
         // Already on the loose list — same blue notice as the pallet phase.
         const hit = findCountedCarton(looseBoxesRef.current, read);
         if (shouldSoundDuplicate(dupSoundsRef.current, read, Date.now())) scanAlreadyCountedFeedback();
-        showScanNotice({
-          text: t(sessionRef.current?.language || 'English', 'terminal.alreadyCounted', { n: hit?.n ?? '?' }),
-          tone: 'info',
-          different: hit && canOfferDifferentCarton(read, hit.row)
-            ? { box: { ...hit.row, barcode: read }, loose: true, n: hit.n }
-            : undefined,
-        });
+        showScanNotice(countedNotice(looseBoxesRef.current, read, hit, { loose: true, photo: false }));
         if (hit) highlightRow(hit.row.barcode);
         return;
       }
@@ -1907,16 +1955,23 @@ export default function PalletVerifyPage({
       setLooseBoxes(replaceSample);
     } else {
       for (const r of rows) processedRef.current.add(r.barcode);
-      const next = replaceSample(scannedBoxes);
-      setScannedBoxes(next);
-      setDetectedType(detectType(next, acceptedMerges));
-      // A single-vs-mix question raised by the sample is moot now (retracts).
-      maybeTriggerUniformPrompt(next, '');
-      // The pallet total is usually just what is on the list now — offer it,
-      // still editable, instead of making the worker retype the count.
-      if (confirmedBoxCount === 0 && !boxCountInput) {
-        setBoxCountInput(String(listTotal(next)));
-      }
+      // Functional: this runs after the label POST, from the render in which
+      // Save was tapped. Scans and OCR results that landed meanwhile are in
+      // `prev`, not in that render's list — writing the stale list back left
+      // a carton in OCR forever and dropped a fresh scan whose code stayed in
+      // the dedup set.
+      setScannedBoxes((prev) => {
+        const next = replaceSample(prev);
+        setDetectedType(detectType(next, acceptedMerges));
+        // A single-vs-mix question raised by the sample is moot now (retracts).
+        maybeTriggerUniformPrompt(next, '');
+        // The pallet total is usually just what is on the list now — offer it,
+        // still editable, instead of making the worker retype the count.
+        if (confirmedBoxCountRef.current === 0) {
+          setBoxCountInput((cur) => cur || String(listTotal(next)));
+        }
+        return next;
+      });
     }
     setSelectedBarcode(null);
     // Saved, not printed: straight back to the scanner. The labels wait in
@@ -2057,6 +2112,12 @@ export default function PalletVerifyPage({
   // are not on a list any more, so they never appear in that warning.
   const liveLabelRows = () =>
     liveRowPlaces({ phase, currentPallet, pallet: scannedBoxes, loose: looseBoxes });
+  // A full-screen form or list is over the camera (New carton, All boxes
+  // identical / Different carton?, Labels): the scanner reads nothing under
+  // it. A carton the camera happened to face would otherwise be added — with
+  // a success beep the worker cannot see — while they fill the form.
+  const overlayOpen = showCartonCreator || showLabels || !!identicalFor;
+
   const cartonOverlays = (
     <>
       {showCartonCreator && (
@@ -2152,43 +2213,53 @@ export default function PalletVerifyPage({
 
   // The current scan notice — blue "already counted" (nothing to do) or
   // amber "misread, scan again" — floating at the top of the camera, next to
-  // the hold that just lit up, and gone after SCAN_NOTICE_MS. Deliberately
+  // the hold that just lit up, and gone after scanNoticeMs(). Deliberately
   // NOT in the sheet footer: the footer sets the sheet's mid height, and on a
   // 360x641 phone the count input plus one more line no longer fits the room
   // BottomSheet leaves above the camera — it hides the whole footer (the
   // input with it) and, measuring a hidden footer as 0, never brings it back.
   // Up here a notice moves nothing. `--sheet-w` keeps it off a tablet's side
   // panel. It swallows taps (no capture under it); the link is the action.
+  // "Different carton?" is a full-width second line, 40 px tall — a glove has
+  // to hit it after lowering the phone — and the notice that carries it stays
+  // up for SCAN_NOTICE_ACTION_MS, with no timeout at all while a finger is on
+  // it (holdScanNotice / releaseScanNotice).
   const scanNoticeBanner = scanNotice ? (
     <div
       className="absolute top-2 z-[35] flex justify-center pointer-events-none"
       style={{ insetInlineStart: 12, insetInlineEnd: 'calc(var(--sheet-w, 0px) + 12px)' }}
     >
-      <p
+      <div
         role="status"
-        className={`pointer-events-auto max-w-[420px] rounded-[12px] border-2 px-3 py-[7px] text-xs font-bold leading-[1.45] text-center shadow-[0_10px_28px_rgba(0,0,0,.6)] animate-fadeIn ${
+        onPointerDown={scanNotice.different ? holdScanNotice : undefined}
+        onPointerUp={scanNotice.different ? releaseScanNotice : undefined}
+        onPointerCancel={scanNotice.different ? releaseScanNotice : undefined}
+        onPointerLeave={scanNotice.different ? releaseScanNotice : undefined}
+        className={`pointer-events-auto max-w-[420px] min-w-0 rounded-[12px] border-2 text-xs font-bold leading-[1.45] text-center shadow-[0_10px_28px_rgba(0,0,0,.6)] animate-fadeIn overflow-hidden ${
           scanNotice.tone === 'info'
             ? 'bg-overlay-card border-brand text-brand-weak-ink'
             : 'bg-amber-card border-warn/70 text-warn-weak-ink'
         }`}
       >
-        <MI
-          name={scanNotice.tone === 'info' ? 'done_all' : 'report_problem'}
-          size={15}
-          className="align-[-3px] me-1"
-        />
-        {scanNotice.text}
+        <p className="px-3 py-[7px] wrap-anywhere">
+          <MI
+            name={scanNotice.tone === 'info' ? 'done_all' : 'report_problem'}
+            size={15}
+            className="align-[-3px] me-1"
+          />
+          {scanNotice.text}
+        </p>
         {scanNotice.different && (
           <button
             type="button"
             onClick={() => openDifferentCarton(scanNotice.different!)}
-            className="inline-flex items-center gap-[3px] ms-1.5 -my-1 px-1 py-1 font-black whitespace-nowrap"
+            className="w-full min-h-[40px] flex items-center justify-center gap-[5px] border-t border-brand/40 bg-brand-weak px-3 py-2 font-black"
           >
-            <MI name="new_label" size={15} />
+            <MI name="new_label" size={17} className="flex-none" />
             <span className="underline underline-offset-2">{tr('terminal.differentCarton')}</span>
           </button>
         )}
-      </p>
+      </div>
     </div>
   ) : null;
 
@@ -2322,13 +2393,7 @@ export default function PalletVerifyPage({
             trace('ui', 'manual_capture_duplicate', { provisional: lookupKey, digits, of: hit.n, loose: true });
             looseDupFlashRef.current?.('duplicate');
             scanAlreadyCountedFeedback();
-            showScanNotice({
-              text: t(sessionRef.current?.language || 'English', 'terminal.photoAlreadyCounted', { n: hit.n }),
-              tone: 'info',
-              different: canOfferDifferentCarton(digits, hit.row)
-                ? { box: { ...hit.row, barcode: digits }, loose: true, n: hit.n }
-                : undefined,
-            });
+            showScanNotice(countedNotice(looseBoxesRef.current, digits, hit, { loose: true, photo: true }));
             highlightRow(hit.row.barcode);
             setLooseBoxes((prev) => prev.filter((b) => b.barcode !== lookupKey));
             return;
@@ -3174,6 +3239,7 @@ export default function PalletVerifyPage({
       if (box.ocr_status === 'failed') {
         return (
           <ScanActions
+            key={box.barcode}
             onViewImage={box.image_data ? () => setViewingImage(box.image_data!) : undefined}
             onRetry={() => retryLooseOcr(box.barcode)}
             onDelete={onDelete}
@@ -3182,6 +3248,7 @@ export default function PalletVerifyPage({
       }
       return (
         <ScanActions
+          key={box.barcode}
           onEdit={() => openEdit(box, true)}
           onIdentical={canDeclareIdentical(box) ? () => setIdenticalFor({ box, loose: true }) : undefined}
           onDelete={onDelete}
@@ -3271,7 +3338,7 @@ export default function PalletVerifyPage({
                 instead of the stale pallet-phase handler. */}
             <SmartScanner
               key="loose-scanner"
-              paused={!!editForm}
+              paused={!!editForm || overlayOpen}
               frame="corner"
               className="h-full"
               onBarcodeDetected={handleLooseBarcodeDetected}
@@ -3444,6 +3511,7 @@ export default function PalletVerifyPage({
     if (box.ocr_status === 'failed') {
       return (
         <ScanActions
+          key={box.barcode}
           onViewImage={box.image_data ? () => setViewingImage(box.image_data!) : undefined}
           onRetry={() => retryPalletOcr(box.barcode)}
           onDelete={onDelete}
@@ -3452,6 +3520,7 @@ export default function PalletVerifyPage({
     }
     return (
       <ScanActions
+        key={box.barcode}
         onEdit={() => openEdit(box)}
         onIdentical={canDeclareIdentical(box) ? () => setIdenticalFor({ box, loose: false }) : undefined}
         onDelete={onDelete}
@@ -3733,7 +3802,7 @@ export default function PalletVerifyPage({
             key={`pallet-scanner-${currentPallet}`}
             frame="corner"
             className="h-full"
-            paused={!!editForm}
+            paused={!!editForm || overlayOpen}
             onBarcodeDetected={handleBarcodeDetected}
             onManualCapture={handleManualCapture}
             onDuplicateFlash={(fn) => { dupFlashRef.current = fn; }}

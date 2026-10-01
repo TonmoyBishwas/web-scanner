@@ -24,7 +24,7 @@
  * counted one.
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { MI } from './MI';
 import { ScreenOverlay } from './ScreenOverlay';
 import { CalendarPicker } from './CalendarPicker';
@@ -33,7 +33,7 @@ import { Toast, useToast } from './Toast';
 import { useT } from '@/lib/i18n';
 import type { IdenticalForm } from '@/lib/identical-boxes';
 import { toIsoDate, isoToDdmmyyyy } from '@/lib/expiry';
-import { newBatchId } from '@/lib/label-batches';
+import { batchIdForPayload } from '@/lib/label-batches';
 import type { CartonLabel } from '@/types';
 
 export interface IdenticalSample {
@@ -80,9 +80,11 @@ export function IdenticalBoxesForm({
   const [expiryDate, setExpiryDate] = useState(toIsoDate(sample.expiry));
   const [calendarFor, setCalendarFor] = useState<DateField | null>(null);
   const [saving, setSaving] = useState(false);
-  // One id per form open: a retry after a lost response gets the batch the
-  // first attempt saved, never a second set of labels.
-  const [batchId] = useState(newBatchId);
+  // One batch id per distinct save content (lib/label-batches.ts): a retry
+  // of the same save after a lost response gets the batch the first attempt
+  // saved, never a second set of labels — and a save whose count, weight or
+  // dates changed meanwhile is never answered with the old labels.
+  const batchIdsRef = useRef(new Map<string, string>());
 
   const count = Math.min(Math.max(parseInt(quantity, 10) || 0, 0), 500);
   const weightKg = Number(weight);
@@ -120,24 +122,23 @@ export function IdenticalBoxesForm({
     if (!canSave) return;
     setSaving(true);
     try {
+      const payload = {
+        origin: 'identical',
+        source_barcode: sample.barcode,
+        pallet_number: palletNumber,
+        item_code: sample.item_code ?? null,
+        item_name_hebrew: sample.item_name_hebrew || null,
+        item_name_english: sample.item_name || null,
+        weight_kg: weightKg,
+        quantity: count,
+        production_date: productionDate || null,
+        expiry_date: expiryDate || null,
+        print_barcode: true,
+      };
       const res = await fetch('/api/carton-labels', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token,
-          batch_id: batchId,
-          origin: 'identical',
-          source_barcode: sample.barcode,
-          pallet_number: palletNumber,
-          item_code: sample.item_code ?? null,
-          item_name_hebrew: sample.item_name_hebrew || null,
-          item_name_english: sample.item_name || null,
-          weight_kg: weightKg,
-          quantity: count,
-          production_date: productionDate || null,
-          expiry_date: expiryDate || null,
-          print_barcode: true,
-        }),
+        body: JSON.stringify({ token, batch_id: batchIdForPayload(batchIdsRef.current, payload), ...payload }),
       });
       const data = await res.json();
       if (res.status === 401) {
@@ -280,6 +281,9 @@ export function IdenticalBoxesForm({
         <CalendarPicker
           value={calendarFor === 'production' ? productionDate : expiryDate}
           fieldTitle={calendarFor === 'production' ? tr('carton.production') : tr('carton.expiry')}
+          // Never a silent "today": an empty date opens with no day chosen
+          // and OK disabled until the worker picks one off the sticker.
+          requirePick
           onPick={(iso) => {
             if (calendarFor === 'production') setProductionDate(iso);
             else setExpiryDate(iso);

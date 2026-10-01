@@ -15,7 +15,7 @@
  * are untouched by this feature.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { MI } from './MI';
 import { ScreenOverlay } from './ScreenOverlay';
 import { CalendarPicker } from './CalendarPicker';
@@ -23,7 +23,7 @@ import { CartonSticker } from './CartonSticker';
 import { Toast, useToast } from './Toast';
 import { useT } from '@/lib/i18n';
 import { normalizeString } from '@/lib/string-utils';
-import { newBatchId } from '@/lib/label-batches';
+import { batchIdForPayload } from '@/lib/label-batches';
 import type { CartonLabel } from '@/types';
 
 /** The subset of an invoice line this screen needs, shared by both session shapes. */
@@ -71,9 +71,11 @@ export function CartonCreator({ token, items, palletNumber, onBack, onCreated }:
   const [printBarcode, setPrintBarcode] = useState(true);
   const [calendarFor, setCalendarFor] = useState<DateField | null>(null);
   const [saving, setSaving] = useState(false);
-  // One id per screen open: a retry after a lost response returns the batch
-  // the first attempt saved instead of minting a second one.
-  const [batchId] = useState(newBatchId);
+  // One batch id per distinct save content (lib/label-batches.ts): a retry
+  // of the same save after a lost response returns the batch the first
+  // attempt saved instead of minting a second one — and a save for another
+  // item or count (the worker went back and changed it) gets its own.
+  const batchIdsRef = useRef(new Map<string, string>());
 
   const filtered = useMemo(() => {
     const q = normalizeString(query.trim());
@@ -119,23 +121,22 @@ export function CartonCreator({ token, items, palletNumber, onBack, onCreated }:
     if (!selected || saving || count < 1) return;
     setSaving(true);
     try {
+      const payload = {
+        pallet_number: palletNumber,
+        item_code: selected.item_code ?? null,
+        item_name_hebrew: selected.item_name_hebrew ?? null,
+        item_name_english: selected.item_name_english ?? null,
+        weight_kg: weight ? Number(weight) : null,
+        quantity: count,
+        production_date: productionDate || null,
+        expiry_date: expiryDate || null,
+        notes: notes.trim() || null,
+        print_barcode: printBarcode,
+      };
       const res = await fetch('/api/carton-labels', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token,
-          batch_id: batchId,
-          pallet_number: palletNumber,
-          item_code: selected.item_code ?? null,
-          item_name_hebrew: selected.item_name_hebrew ?? null,
-          item_name_english: selected.item_name_english ?? null,
-          weight_kg: weight ? Number(weight) : null,
-          quantity: count,
-          production_date: productionDate || null,
-          expiry_date: expiryDate || null,
-          notes: notes.trim() || null,
-          print_barcode: printBarcode,
-        }),
+        body: JSON.stringify({ token, batch_id: batchIdForPayload(batchIdsRef.current, payload), ...payload }),
       });
       const data = await res.json();
       if (res.status === 401) {
@@ -364,6 +365,9 @@ export function CartonCreator({ token, items, palletNumber, onBack, onCreated }:
         <CalendarPicker
           value={calendarFor === 'production' ? productionDate : expiryDate}
           fieldTitle={calendarFor === 'production' ? tr('carton.production') : tr('carton.expiry')}
+          // Never a silent "today": an empty date opens with no day chosen
+          // and OK disabled until the worker picks one off the sticker.
+          requirePick
           onPick={iso => {
             if (calendarFor === 'production') setProductionDate(iso);
             else setExpiryDate(iso);

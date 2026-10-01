@@ -307,22 +307,6 @@ export async function POST(request: NextRequest) {
         nmPayload.supplier_batch = only.supplier_batch;
       }
 
-      const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
-      if (botUrl) {
-        // after(): Vercel keeps the function alive until the bot has the
-        // call. A bare fire-and-forget fetch could be cut off when the
-        // response returned — and the last pallet's call is the one that
-        // closes the delivery and starts the Priority push.
-        const botBody = JSON.stringify(nmPayload); // serialized now, sent after the response
-        after(() =>
-          fetch(`${botUrl}/webhook/pallet-complete`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: botBody,
-          }).catch((err) => console.error('[multi-pallet-complete] Bot webhook (non_meat) failed:', err)),
-        );
-      }
-
       // Accumulate committed cartons per item so a later pallet pre-fills the
       // correct remaining and never double-counts a split item.
       const committed: Record<string, number> = { ...(session.nonmeat_committed || {}) };
@@ -349,6 +333,26 @@ export async function POST(request: NextRequest) {
       };
       const redisNm = getRedisClient();
       await redisNm.set(sessionKey(token), JSON.stringify(nmUpdated), { ex: SESSION_TTL });
+
+      const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
+      if (botUrl) {
+        // after(): Vercel keeps the function alive until the bot has the
+        // call. A bare fire-and-forget fetch could be cut off when the
+        // response returned — and the last pallet's call is the one that
+        // closes the delivery and starts the Priority push. Registered only
+        // AFTER the session write above succeeded: Next runs an after()
+        // callback even when the handler fails afterwards, so registering it
+        // first booked the pallet in the bot while the session cursor never
+        // moved — and the worker's retry booked the same boxes again.
+        const botBody = JSON.stringify(nmPayload); // serialized now, sent after the response
+        after(() =>
+          fetch(`${botUrl}/webhook/pallet-complete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: botBody,
+          }).catch((err) => console.error('[multi-pallet-complete] Bot webhook (non_meat) failed:', err)),
+        );
+      }
 
       const nmAppUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
       okResult = {
@@ -494,9 +498,13 @@ export async function POST(request: NextRequest) {
       // close-out at finalization without a second lookup.
       mPayload.roster_chat_ids = mIsFinal ? (session.roster ?? []).map((r) => r.chat_id) : undefined;
 
+      const redisM = getRedisClient();
+      await redisM.set(sessionKey(token), JSON.stringify(mUpdated), { ex: SESSION_TTL });
+
       const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
       if (botUrl) {
-        // after(): see the non-meat branch — the call must not be lost.
+        // after(): see the non-meat branch — the call must not be lost, and
+        // it is registered only once the session write above succeeded.
         const botBody = JSON.stringify(mPayload); // serialized now, sent after the response
         after(() =>
           fetch(`${botUrl}/webhook/pallet-complete`, {
@@ -506,9 +514,6 @@ export async function POST(request: NextRequest) {
           }).catch((err) => console.error('[multi-pallet-complete] Bot webhook (manual) failed:', err)),
         );
       }
-
-      const redisM = getRedisClient();
-      await redisM.set(sessionKey(token), JSON.stringify(mUpdated), { ex: SESSION_TTL });
 
       const mAppUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
       // Split sessions: next_pallet/all_done are cursor-derived and meaningless
@@ -729,7 +734,7 @@ export async function POST(request: NextRequest) {
       };
     }
 
-    // Fire webhook to bot (fire-and-forget)
+    // The bot's payload (sent after the session is saved, below).
     // token: lets the bot detect a stale plan (a manager who started a
     // second split job while an earlier one's webhook is still in flight).
     // Additive only — the bot already tolerates the field being absent.
@@ -745,12 +750,18 @@ export async function POST(request: NextRequest) {
     // close-out at finalization without a second lookup.
     webhookPayload.roster_chat_ids = isFinal ? (session.roster ?? []).map((r) => r.chat_id) : undefined;
 
+    const redis = getRedisClient();
+    await redis.set(sessionKey(token), JSON.stringify(updatedSession), { ex: SESSION_TTL });
+
     const botUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
     if (botUrl) {
       // after(): Vercel keeps the function alive until the bot has the call
       // instead of freezing it mid-request once the response is out. The
       // last pallet's call is the one that closes the delivery, and the
-      // automatic Priority push starts from that close.
+      // automatic Priority push starts from that close. Registered only
+      // once the session write above succeeded — Next runs an after()
+      // callback even when the handler fails afterwards, and a booked pallet
+      // whose session did not move is booked twice by the worker's retry.
       const botBody = JSON.stringify(webhookPayload); // serialized now, sent after the response
       after(() =>
         fetch(`${botUrl}/webhook/pallet-complete`, {
@@ -760,9 +771,6 @@ export async function POST(request: NextRequest) {
         }).catch((err) => console.error('[multi-pallet-complete] Bot webhook failed:', err)),
       );
     }
-
-    const redis = getRedisClient();
-    await redis.set(sessionKey(token), JSON.stringify(updatedSession), { ex: SESSION_TTL });
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
 

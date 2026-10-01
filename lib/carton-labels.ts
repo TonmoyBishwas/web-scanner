@@ -13,12 +13,27 @@
  * Service-role client (see lib/supabase.ts) — server only.
  */
 import { supabase } from './supabase';
-import { sessionBookedBarcodes, toUnprintedLabels, type UnprintedLabel } from './label-batches';
+import {
+  batchMatchesRequest,
+  chunked,
+  printCountSteps,
+  sessionBookedBarcodes,
+  toUnprintedLabels,
+  type UnprintedLabel,
+} from './label-batches';
 import type { CartonLabel, CartonLabelOrigin, LabelSize } from '@/types';
 
 export type { CartonLabel, LabelSize };
 
 export const LABEL_SIZES: LabelSize[] = ['10x10', '10x15', 'a4'];
+
+/**
+ * Most ids one `.in()` filter may carry. PostgREST echoes the whole query
+ * string back in a response header, and with ~390 UUIDs that header passes
+ * Node's 16 KB limit: the request dies as "fetch failed" (measured
+ * 2026-10-01: 380 ids fine, 400 failed, 1000 a 400 Bad Request).
+ */
+const IN_CHUNK = 200;
 
 /** Every column the UI and the print sheet read. */
 const COLUMNS =
@@ -69,9 +84,9 @@ export interface CreateCartonBatchInput {
   sourceBarcode?: string | null;
   palletNumber?: number | null;
   /**
-   * The client's id for this save (a UUID, made once per form open). A retry
-   * after a lost response sends the same one and gets the SAME batch back
-   * instead of a second set of labels.
+   * The client's id for this save (a UUID, one per distinct payload — see
+   * batchIdForPayload). A retry after a lost response sends the same one and
+   * gets the SAME batch back instead of a second set of labels.
    */
   batchId?: string | null;
 }
@@ -86,14 +101,37 @@ export interface CreateCartonBatchInput {
 export async function createCartonBatch(input: CreateCartonBatchInput): Promise<CartonLabel[]> {
   const quantity = Math.min(Math.max(Math.round(input.quantity), 1), 500);
 
-  // Idempotent retry: this session already saved this batch → hand it back.
-  // A batch id already used by ANOTHER session is never joined (it would mix
-  // two jobs' labels in one batch); that save simply gets a fresh id.
+  // Idempotent retry: this session already saved THIS batch → hand it back.
+  // Only when the stored batch is what this request asks for: a save whose
+  // content changed after a lost response (another count, weight or date)
+  // must never be answered with the first attempt's labels — that printed
+  // 10.2 kg stickers for cartons booked at 10.4, and left two without one.
+  // A batch id already used by ANOTHER session, or by a different save, is
+  // never joined; that save simply gets a fresh id.
   let batchId = input.batchId || crypto.randomUUID();
   if (input.batchId) {
     const existing = await getCartonLabelsByBatches([input.batchId]);
     if (existing.length) {
-      if (existing.every(l => l.session_token === input.sessionToken)) return existing;
+      const sameSession = existing.every(l => l.session_token === input.sessionToken);
+      if (sameSession && batchMatchesRequest(existing, {
+        itemCode: input.itemCode,
+        itemNameHebrew: input.itemNameHebrew,
+        itemNameEnglish: input.itemNameEnglish,
+        weightKg: input.weightKg,
+        quantity,
+        productionDate: input.productionDate,
+        expiryDate: input.expiryDate,
+        notes: input.notes,
+        printBarcode: input.printBarcode,
+        origin: input.origin,
+        sourceBarcode: input.sourceBarcode,
+        palletNumber: input.palletNumber,
+      })) {
+        return existing;
+      }
+      if (sameSession) {
+        console.warn(`[carton-labels] batch ${input.batchId} re-sent with different content; saved as a new batch`);
+      }
       batchId = crypto.randomUUID();
     }
   }
@@ -168,14 +206,19 @@ export async function listCartonLabels(opts: ListCartonLabelsOptions = {}): Prom
 }
 
 export async function getCartonLabelsByIds(ids: string[]): Promise<CartonLabel[]> {
-  if (!ids.length) return [];
-  const { data, error } = await supabase
-    .from('carton_labels')
-    .select(COLUMNS)
-    .in('id', ids.slice(0, 1000))
-    .order('created_at', { ascending: true });
-  if (error) throw new Error(`carton_labels read failed: ${error.message}`);
-  return (data ?? []) as unknown as CartonLabel[];
+  const unique = [...new Set(ids.filter(Boolean))].slice(0, 1000);
+  if (!unique.length) return [];
+  const out: CartonLabel[] = [];
+  // In slices: one `.in()` with every id overflows the response headers.
+  for (const part of chunked(unique, IN_CHUNK)) {
+    const { data, error } = await supabase
+      .from('carton_labels')
+      .select(COLUMNS)
+      .in('id', part);
+    if (error) throw new Error(`carton_labels read failed: ${error.message}`);
+    out.push(...((data ?? []) as unknown as CartonLabel[]));
+  }
+  return out.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
 }
 
 export async function getCartonLabelsByBatches(batchIds: string[]): Promise<CartonLabel[]> {
@@ -211,32 +254,70 @@ export async function findUnprintedForSession(sessionToken: string): Promise<Unp
  * Flag labels as printed and bump their print count.
  *
  * Called by the print sheet itself, for exactly the labels it rendered, just
- * before it opens the print dialog — or by the worker's "Mark as printed" in
- * Labels. The browser never reports back whether paper actually came out, so
+ * before it opens the print dialog (`markCartonLabelsPrinted`, by id) — or by
+ * the worker's "Mark as printed" in Labels (`markCartonBatchesPrinted`, by
+ * batch). The browser never reports back whether paper actually came out, so
  * this records "sent to the printer"; a reprint simply increments the count
  * again and never un-prints a label.
+ *
+ * Since 2026-10-01 this lifts the print gate (an unprinted label holds back
+ * the LPN), so it must work for any batch the UI lets a worker save (up to
+ * 500 labels) and finish while the sheet waits its 1.5 s. It used to read
+ * every row with one unbounded `.in('id', …)` — which fails from ~390 ids —
+ * and then update the rows one by one (64 round trips for a 64-label batch,
+ * a half-marked batch visible meanwhile). Now: slices of at most IN_CHUNK
+ * keys, and per slice one read of the print counts plus one UPDATE per
+ * distinct count (normally one: every label of a fresh batch is at 0).
  */
 export async function markCartonLabelsPrinted(ids: string[], labelSize?: LabelSize): Promise<number> {
-  if (!ids.length) return 0;
+  return markPrintedWhere('id', ids.slice(0, 1000), IN_CHUNK, labelSize);
+}
 
-  const existing = await getCartonLabelsByIds(ids);
-  if (!existing.length) return 0;
+/**
+ * Same, for whole batches. Two batch ids per slice: a batch holds at most 500
+ * labels, and the print-count read must stay under PostgREST's 1000-row cap.
+ */
+export async function markCartonBatchesPrinted(batchIds: string[], labelSize?: LabelSize): Promise<number> {
+  return markPrintedWhere('batch_id', batchIds.slice(0, 200), 2, labelSize);
+}
+
+async function markPrintedWhere(
+  column: 'id' | 'batch_id',
+  keys: string[],
+  sliceSize: number,
+  labelSize?: LabelSize,
+): Promise<number> {
+  const unique = [...new Set(keys.filter(Boolean))];
+  if (!unique.length) return 0;
 
   const printedAt = new Date().toISOString();
   let updated = 0;
-  // print_count is per-row, so each row needs its own increment.
-  for (const label of existing) {
-    const { error } = await supabase
+  for (const part of chunked(unique, sliceSize)) {
+    const { data, error } = await supabase
       .from('carton_labels')
-      .update({
-        status: 'printed',
-        printed_at: printedAt,
-        print_count: label.print_count + 1,
-        ...(labelSize ? { label_size: labelSize } : null),
-      })
-      .eq('id', label.id);
-    if (error) throw new Error(`carton_labels update failed: ${error.message}`);
-    updated++;
+      .select('print_count')
+      .in(column, part);
+    if (error) throw new Error(`carton_labels read failed: ${error.message}`);
+    const counts = ((data ?? []) as { print_count: number }[]).map(r => r.print_count);
+    // `where print_count = c` makes each step exact, and a concurrent reprint
+    // that already moved a row is simply skipped (it is printed either way).
+    for (const c of printCountSteps(counts)) {
+      const { count, error: updateError } = await supabase
+        .from('carton_labels')
+        .update(
+          {
+            status: 'printed',
+            printed_at: printedAt,
+            print_count: c + 1,
+            ...(labelSize ? { label_size: labelSize } : null),
+          },
+          { count: 'exact' },
+        )
+        .in(column, part)
+        .eq('print_count', c);
+      if (updateError) throw new Error(`carton_labels update failed: ${updateError.message}`);
+      updated += count ?? 0;
+    }
   }
   return updated;
 }

@@ -14,15 +14,29 @@
  *   clears itself after SCAN_NOTICE_MS.
  * - an ERROR (the page's `error`): red, persistent — the worker must act.
  *
- * The helpers here are the pure parts of that: which row a re-read refers to,
- * whether it is worth a sound, whether it may offer "Different carton?", and
- * where to scroll its row.
+ * The helpers here are the pure parts of that: which row a re-read refers to
+ * (or the identical batch that covers it), whether it is worth a sound,
+ * whether it may offer "Different carton?", how long it stays up, and where
+ * to scroll its row.
  */
 
 import { isMintedLabelBarcode } from './label-batches';
 
 /** How long a notice stays in the footer. */
 export const SCAN_NOTICE_MS = 4000;
+
+/**
+ * How long a notice that offers an action ("Different carton?") stays up. A
+ * worker holding a carton has to lower the phone to tap it — and once the
+ * camera stops re-reading the sticker nothing refreshes the notice — so it
+ * gets twice as long. Touching it holds it up (the page pauses the timer).
+ */
+export const SCAN_NOTICE_ACTION_MS = 8000;
+
+/** How long this notice stays up. */
+export function scanNoticeMs(notice: { different?: unknown }): number {
+  return notice.different ? SCAN_NOTICE_ACTION_MS : SCAN_NOTICE_MS;
+}
 
 /** How long the carton a notice names stays highlighted in the list. */
 export const HIGHLIGHT_ROW_MS = 2000;
@@ -71,6 +85,29 @@ interface CountedRow {
   barcode: string;
   /** The supplier code an "all boxes identical" row stands in for. */
   source_barcode?: string;
+  /** Minted by "all boxes identical" / "Different carton?". */
+  minted?: boolean;
+}
+
+const digitsOf = (code: string | undefined | null) => (code || '').replace(/\D/g, '');
+
+/**
+ * Is this row a warehouse label an identical batch minted IN PLACE OF `code`
+ * (the supplier code just read, or a photo's printed digits)? Then the read
+ * is not "carton #n": the worker declared that every carton carrying this
+ * code is on the list already, as one row per printed label — and the camera
+ * keeps reading the supplier code on each carton while those labels are
+ * stuck on, every one a physically different carton.
+ */
+export function isBatchStandIn(code: string, row: CountedRow): boolean {
+  const c = digitsOf(code);
+  if (!row.minted || !c || !row.source_barcode) return false;
+  return digitsOf(row.source_barcode) === c && digitsOf(row.barcode) !== c;
+}
+
+/** How many rows on the list stand in for `code` — the batch's label count. */
+export function standInCount(rows: ReadonlyArray<CountedRow>, code: string): number {
+  return rows.filter((r) => isBatchStandIn(code, r)).length;
 }
 
 export interface CountedCarton<T> {
@@ -124,12 +161,19 @@ export function findCountedCartonByDigits<T extends CountedRow>(
  *
  * Not offered for a warehouse-minted `28…` label (unique per carton by
  * construction, so a re-read IS the same carton), for anything that is not a
- * real barcode (`MANUAL-…` / `NOBC-…`), or while the counted row is still in
- * OCR — the form would open with no name or weight to copy.
+ * real barcode (`MANUAL-…` / `NOBC-…`), while the counted row is still in
+ * OCR — the form would open with no name or weight to copy — or when the hit
+ * is an identical batch standing in for the code (`isBatchStandIn`): the
+ * worker already declared every carton that carries it, so "one more" would
+ * count a labelled carton twice.
  */
-export function canOfferDifferentCarton(code: string, row: { ocr_status?: string }): boolean {
+export function canOfferDifferentCarton(
+  code: string,
+  row: { ocr_status?: string } & Partial<CountedRow>,
+): boolean {
   const c = (code || '').trim();
   if (!/^\d/.test(c) || isMintedLabelBarcode(c)) return false;
+  if (typeof row.barcode === 'string' && isBatchStandIn(c, row as CountedRow)) return false;
   return row.ocr_status !== 'processing';
 }
 

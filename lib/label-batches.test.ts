@@ -3,6 +3,10 @@ import {
   isMintedLabelBarcode,
   parseBatchId,
   newBatchId,
+  batchIdForPayload,
+  batchMatchesRequest,
+  chunked,
+  printCountSteps,
   parseLabelOrigin,
   toUnprintedLabels,
   labelTags,
@@ -44,6 +48,78 @@ describe('newBatchId', () => {
     const b = newBatchId();
     expect(parseBatchId(a)).toBe(a.toLowerCase());
     expect(a).not.toBe(b);
+  });
+});
+
+describe('batchIdForPayload', () => {
+  it('the same save content keeps its id (a retry after a lost response)', () => {
+    const ids = new Map<string, string>();
+    const a = batchIdForPayload(ids, { quantity: 12, weight_kg: 10.2 });
+    expect(batchIdForPayload(ids, { quantity: 12, weight_kg: 10.2 })).toBe(a);
+    expect(parseBatchId(a)).toBe(a.toLowerCase());
+  });
+
+  it('changed content gets a new id — and going back to the first content its old one', () => {
+    const ids = new Map<string, string>();
+    const a = batchIdForPayload(ids, { quantity: 12, weight_kg: 10.2 });
+    const b = batchIdForPayload(ids, { quantity: 14, weight_kg: 10.4 });
+    expect(b).not.toBe(a);
+    expect(batchIdForPayload(ids, { quantity: 12, weight_kg: 10.2 })).toBe(a);
+  });
+});
+
+describe('batchMatchesRequest', () => {
+  const row = {
+    item_code: '1234', item_name_hebrew: 'אמנון', item_name_english: 'Tilapia', weight_kg: 10.2,
+    production_date: '2026-09-20', expiry_date: '2026-10-20', notes: null, print_barcode: true,
+    origin: 'identical' as const, source_barcode: '7290001455258', pallet_number: 2,
+  };
+  const req = {
+    itemCode: '1234', itemNameHebrew: 'אמנון', itemNameEnglish: 'Tilapia', weightKg: 10.2, quantity: 2,
+    productionDate: '2026-09-20', expiryDate: '2026-10-20', notes: null, printBarcode: true,
+    origin: 'identical' as const, sourceBarcode: '7290001455258', palletNumber: 2,
+  };
+
+  it('the same save → the stored batch answers it', () => {
+    expect(batchMatchesRequest([row, row], req)).toBe(true);
+  });
+
+  it('a numeric weight read back as a string, a DD/MM date, blank vs null → still the same', () => {
+    expect(batchMatchesRequest(
+      [{ ...row, weight_kg: '10.20' as unknown as number, notes: '' }, row],
+      { ...req, expiryDate: '20/10/2026', notes: undefined },
+    )).toBe(true);
+  });
+
+  it('another count, weight, date, item or pallet → not this batch', () => {
+    expect(batchMatchesRequest([row, row], { ...req, quantity: 3 })).toBe(false);
+    expect(batchMatchesRequest([row, row], { ...req, weightKg: 10.4 })).toBe(false);
+    expect(batchMatchesRequest([row, row], { ...req, expiryDate: '2026-10-21' })).toBe(false);
+    expect(batchMatchesRequest([row, row], { ...req, itemNameHebrew: 'סלמון' })).toBe(false);
+    expect(batchMatchesRequest([row, row], { ...req, palletNumber: 3 })).toBe(false);
+    expect(batchMatchesRequest([row, row], { ...req, weightKg: null })).toBe(false);
+  });
+
+  it('nothing stored → no match', () => {
+    expect(batchMatchesRequest([], req)).toBe(false);
+  });
+});
+
+describe('chunked', () => {
+  it('slices of at most n, in order', () => {
+    expect(chunked([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]);
+    expect(chunked([], 200)).toEqual([]);
+    expect(chunked(Array.from({ length: 500 }, (_, i) => i), 200).map((c) => c.length)).toEqual([200, 200, 100]);
+  });
+});
+
+describe('printCountSteps', () => {
+  it('a fresh batch is one step (every label at 0)', () => {
+    expect(printCountSteps(Array(64).fill(0))).toEqual([0]);
+  });
+
+  it('distinct counts, highest first — a bumped row is never re-matched', () => {
+    expect(printCountSteps([0, 1, 0, 2, 1])).toEqual([2, 1, 0]);
   });
 });
 

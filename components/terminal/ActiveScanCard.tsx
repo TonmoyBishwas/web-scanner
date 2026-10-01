@@ -119,6 +119,8 @@ export function ActiveScanCard({
 
       <div className="mt-2 border-t border-white/8 pt-[7px]">
         <ScanActions
+          // A new scan becomes this card: an armed Delete must not carry over to it.
+          key={`${index}:${barcode ?? ''}`}
           onViewImage={failed ? onViewImage : undefined}
           onRetry={failed ? onRetry : undefined}
           onEdit={onEdit}

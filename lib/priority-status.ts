@@ -26,6 +26,11 @@
  *     waits for a person to check in Priority.
  * A column that does not exist arrives as `undefined` (the route selects
  * `*`), and the check that needs it is skipped rather than guessed.
+ *
+ * The migration's plan() also holds a delivery whose supplier note is
+ * already in Priority under ANOTHER deliveries row (hold_same_invoice — the
+ * bot forks deliveries for one note). `heldBySameNote` mirrors it; the route
+ * reads what it needs only for a queued row while the push is on.
  */
 
 export type PriorityState =
@@ -40,7 +45,8 @@ export type PriorityState =
   /** Waiting for the purchase-order pick in WhatsApp (a few minutes' grace). */
   | 'waitingPo'
   /** Queued, but not sent by itself (category off, queued before the push was
-   *  switched on, a local draft in flight, or closed before autofire). */
+   *  switched on, a local draft in flight, closed before autofire, or another
+   *  delivery of the same supplier note is already in Priority). */
   | 'held'
   /** Priority cannot take it yet (unmapped items / supplier). Re-checked. */
   | 'waiting'
@@ -108,6 +114,11 @@ export interface PriorityStatusInput {
   receipts: PriorityReceiptRow[];
   /** A delivery_po_links row exists; null = not known. */
   hasPoLink: boolean | null;
+  /**
+   * Another deliveries row of the same supplier note is already in Priority
+   * or on its way (`heldBySameNote`); null / absent = not known (not read).
+   */
+  sameNote?: boolean | null;
   now: Date;
 }
 
@@ -198,6 +209,10 @@ function queued(input: PriorityStatusInput, outbox: Record<string, unknown>): Pr
 
   // A local warehouse_bot draft: a push by hand may be in flight.
   if (input.receipts.some((r) => r.origin === LOCAL_DRAFT_ORIGIN)) return { state: 'held' };
+
+  // The same supplier note is already in Priority (or on its way) under
+  // another delivery row — plan()'s hold_same_invoice. A release lifts it.
+  if (input.sameNote === true && releasedAt === null) return { state: 'held' };
 
   // Queued while the push was off: never sent by itself.
   if (config.enabledSince !== undefined && releasedAt === null) {
@@ -291,6 +306,72 @@ export function derivePriorityStatus(input: PriorityStatusInput): PriorityStatus
     default:
       return { state: 'unknown' };
   }
+}
+
+/** One outbox row of ANOTHER delivery with the same document_number. */
+export interface SameNoteOutboxRow {
+  id: number | string;
+  status: string | null;
+  queued_at: string | null;
+  /** Its delivery's created_at (for the ±90-day window). */
+  delivery_created_at: string | null;
+}
+
+/** One priority_goods_receipts row whose booknum is this note's number. */
+export interface SameNoteReceipt {
+  origin: string | null;
+  delivery_id: string | null;
+  curdate: string | null;
+  synced_at: string | null;
+}
+
+/** Window either side of the delivery in which a same-number note counts. */
+export const SAME_NOTE_WINDOW_MS = 90 * 24 * 60 * 60_000;
+
+const SAME_NOTE_GONE = new Set(['sent', 'unconfirmed', 'delivered', 'already_in_priority']);
+
+/**
+ * Is this delivery's supplier note already in Priority, or on its way, under
+ * ANOTHER deliveries row? The scanner's mirror of plan() step (3b),
+ * hold_same_invoice, in docs/migrations/2026-10-01-priority-push-autofire.sql
+ * (the bot forks deliveries for one note: a re-photographed note whose
+ * delivery already closed, or "Separate delivery"). Either:
+ *   a. another delivery's outbox row with this document_number was sent /
+ *      unconfirmed / delivered / already_in_priority, or is queued / waiting
+ *      and was queued first (two forks closing together send only one); or
+ *   b. a Priority receipt (origin ≠ warehouse_bot) with this BOOKNUM belongs
+ *      to another delivery, or to none (typed in Priority by the office).
+ * Within 90 days either side of this delivery, as in the SQL.
+ */
+export function heldBySameNote(input: {
+  outboxId: number | string;
+  queuedAt: string | null;
+  deliveryId: string;
+  deliveryCreatedAt: string | null;
+  siblings: ReadonlyArray<SameNoteOutboxRow>;
+  receipts: ReadonlyArray<SameNoteReceipt>;
+}): boolean {
+  const created = time(input.deliveryCreatedAt);
+  if (created === null) return false;
+  const selfQueued = time(input.queuedAt);
+  const selfId = Number(input.outboxId);
+
+  const sibling = input.siblings.some((o) => {
+    const at = time(o.delivery_created_at);
+    if (at === null || Math.abs(at - created) > SAME_NOTE_WINDOW_MS) return false;
+    if (o.status && SAME_NOTE_GONE.has(o.status)) return true;
+    if (o.status !== 'queued' && o.status !== 'waiting') return false;
+    const q = time(o.queued_at);
+    if (q === null || selfQueued === null) return false;
+    return q < selfQueued || (q === selfQueued && Number(o.id) < selfId);
+  });
+  if (sibling) return true;
+
+  return input.receipts.some((g) => {
+    if (!g.origin || g.origin === LOCAL_DRAFT_ORIGIN || g.delivery_id === input.deliveryId) return false;
+    const at = time(g.curdate) ?? time(g.synced_at);
+    return at !== null && at >= created - SAME_NOTE_WINDOW_MS;
+  });
 }
 
 /** States that cannot change by themselves any more: polling stops. */

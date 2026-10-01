@@ -5,8 +5,13 @@ import {
   findCountedCarton,
   findCountedCartonByDigits,
   canOfferDifferentCarton,
+  isBatchStandIn,
+  standInCount,
+  scanNoticeMs,
   nearestScrollTop,
   DUPLICATE_QUIET_MS,
+  SCAN_NOTICE_MS,
+  SCAN_NOTICE_ACTION_MS,
 } from './scan-notice';
 
 // Carton #8 and #9 of IN264172698 pallet 3 (2026-09-24).
@@ -136,6 +141,61 @@ describe('canOfferDifferentCarton', () => {
 
   it('the counted row still in OCR → not yet (nothing to copy)', () => {
     expect(canOfferDifferentCarton(C8, { ocr_status: 'processing' })).toBe(false);
+  });
+
+  it('the supplier code of an identical batch → never offered (every carton carrying it is declared)', () => {
+    const minted = { barcode: '2826100100000001', source_barcode: C8, minted: true, ocr_status: 'done' };
+    expect(canOfferDifferentCarton(C8, minted)).toBe(false);
+  });
+
+  it('a plain counted carton that also has a "Different carton?" sibling → still offered', () => {
+    expect(canOfferDifferentCarton(C8, { barcode: C8, ocr_status: 'done' })).toBe(true);
+  });
+});
+
+describe('isBatchStandIn / standInCount', () => {
+  const rows = [
+    { barcode: C9 },
+    { barcode: '2826100100000001', source_barcode: C8, minted: true },
+    { barcode: '2826100100000002', source_barcode: C8, minted: true },
+    { barcode: '2826100100000003', source_barcode: C8, minted: true },
+  ];
+
+  it('a minted row standing in for the code just read → stand-in', () => {
+    expect(isBatchStandIn(C8, rows[1])).toBe(true);
+  });
+
+  it('the hit findCountedCarton returns for a batch\'s supplier code is a stand-in', () => {
+    const hit = findCountedCarton(rows, C8);
+    expect(hit && isBatchStandIn(C8, hit.row)).toBe(true);
+  });
+
+  it('a photo\'s printed digits match the same way', () => {
+    const hit = findCountedCartonByDigits(rows, C8);
+    expect(hit && isBatchStandIn(C8, hit.row)).toBe(true);
+  });
+
+  it('a re-read of the minted label itself is that carton, not a stand-in', () => {
+    expect(isBatchStandIn('2826100100000001', rows[1])).toBe(false);
+  });
+
+  it('a plain carton, or a minted row for another code → not a stand-in', () => {
+    expect(isBatchStandIn(C9, rows[0])).toBe(false);
+    expect(isBatchStandIn(C9, rows[1])).toBe(false);
+    expect(isBatchStandIn('', rows[1])).toBe(false);
+  });
+
+  it('standInCount is the number of labels the batch saved', () => {
+    expect(standInCount(rows, C8)).toBe(3);
+    expect(standInCount(rows, C9)).toBe(0);
+  });
+});
+
+describe('scanNoticeMs', () => {
+  it('a notice with an action stays up twice as long', () => {
+    expect(scanNoticeMs({})).toBe(SCAN_NOTICE_MS);
+    expect(scanNoticeMs({ different: { n: 3 } })).toBe(SCAN_NOTICE_ACTION_MS);
+    expect(SCAN_NOTICE_ACTION_MS).toBeGreaterThan(SCAN_NOTICE_MS);
   });
 });
 

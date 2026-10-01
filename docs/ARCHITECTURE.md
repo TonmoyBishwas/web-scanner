@@ -201,9 +201,9 @@ the header, with a draggable sheet floating over it.
 | `ToolDock` | The chip row inside the sheet's toolbar (share / delete / pallets / locked stubs). Chips follow the page direction and the end edge fades as the "more chips" cue; a chip can carry an amber `badge` count (the Labels chip: saved labels not printed yet) |
 | `ActiveScanCard` | The newest scan — live status dot, big mono weight; the whole summary line expands it; its actions are a `ScanActions` bar |
 | `HistoryRow` | One older scan; tap to expand a `ScanActions` bar underneath it |
-| `ScanActions` | The one per-scan action bar (2026-10-01): Edit (blue) · All boxes identical · Delete (red, last); View · Retry on their own line when OCR failed. Lines wrap, so nothing runs off a 320 px phone |
+| `ScanActions` | The one per-scan action bar (2026-10-01): Edit (blue) · All boxes identical · Delete (red, last, two taps — the first arms it solid red "Tap again" for 3 s); View · Retry on their own line when OCR failed. 40 px buttons; lines wrap, so nothing runs off a 320 px phone |
 | `EditPanel` | Full-screen carton editor (camera paused) — sticker photo on top, Item / Weight / Expiry tiles with one state each, the selected field's editor (see below) |
-| `Keypad`, `CalendarPicker` | Context inputs for the edit panel (`CalendarPicker requirePick` in the edit panel: no silent "today") |
+| `Keypad`, `CalendarPicker` | Context inputs for the edit panel (`CalendarPicker requirePick` — the default, so also in the identical form and New carton: no silent "today") |
 | `DoneOverlay`, `SwipeConfirm` (in `shared/`) | Pallet-done stats + the one-tap **Scan pallet N of M**; slide-to-confirm only where stock is booked (pallet confirm, close-short, loose confirm) |
 | `PriorityPushStatus` | The all-done card's status row for the automatic Priority push — not a button (2026-10-01) |
 | `CartonCreator`, `IdenticalBoxesForm`, `LabelsBrowser` | New carton / All boxes identical **save** labels and return to the scanner; the Labels screen prints them, marks them printed, deletes them |
@@ -580,8 +580,11 @@ shared-label. The worker does.**
   in OCR, and on rows that are themselves minted.
 - **Save N labels** (HE `שמור N מדבקות`) → `POST /api/carton-labels` with
   `origin: 'identical'`, `source_barcode` (the supplier code off the sample),
-  `pallet_number` (0 = loose) and a client `batch_id` (one per form open — a
-  retry after a lost response returns the same batch). The minting stack
+  `pallet_number` (0 = loose) and a client `batch_id` (one per distinct save
+  content, `batchIdForPayload` — a retry of the same save after a lost
+  response returns the same batch; a save whose count, weight, dates or item
+  changed gets its own, and the server answers with a stored batch only when
+  it is the same save, `batchMatchesRequest`). The minting stack
   (`lib/carton-labels.ts`: `28` + YYMMDD + 8 random digits, unique index)
   returns N rows and the form closes **straight back to the scanner** with a
   toast "N labels saved · print them from Labels before closing the pallet".
@@ -607,7 +610,12 @@ shared-label. The worker does.**
   byte-identical (a 31-digit catch-weight label carries no serial). It
   **adds** one row with a label of its own — the counted carton stays — and
   that label falls under the print gate. Explicit tap only; not offered for a
-  warehouse `28…` label or a row still in OCR.
+  warehouse `28…` label, a row still in OCR, or the supplier code of an
+  identical batch (`isBatchStandIn`): every carton carrying it is already
+  declared, so that read says "the N identical labels saved for this product
+  cover it" and names no carton. The link is a full-width 40 px line; the
+  notice stays 8 s and never times out while a finger is on it. The camera is
+  paused while this form, New carton or Labels is open.
 - **Booked directly.** The rows travel through `/api/multi-pallet-complete` /
   `/api/multi-pallet-loose-complete` unchanged and the bot writes one
   `box_inventory` row per minted barcode (`box_sku` = supplier prefix).
@@ -667,7 +675,7 @@ this is carton #8 in the list (15:09)". Now (`lib/scan-notice.ts`):
 
 | What happened | What the worker sees |
 |---|---|
-| A counted carton read again | **Blue** notice over the top of the camera, "Carton #N is already counted — scan the next carton.", 4 s; its row rings blue and scrolls into view; one soft 520 Hz tick, silent while the camera rests on the same sticker (15 s sliding window); the camera hold says **Already counted** in blue |
+| A counted carton read again | **Blue** notice over the top of the camera, "Carton #N is already counted — scan the next carton.", 4 s (8 s, held while touched, when it offers "Different carton?"); for the supplier code of an All-boxes-identical batch it says the N saved labels cover it instead, and offers nothing; its row rings blue and scrolls into view; one soft 520 Hz tick, silent while the camera rests on the same sticker (15 s sliding window); the camera hold says **Already counted** in blue |
 | A manual capture of a counted label | Blue "This label is carton #N — it is already counted." (was dropped silently) |
 | A misread / too-short read | **Amber** notice, 4 s — scan it again |
 | A failure (network, failed complete, session, split clash, save) | **Red**, persistent, with an icon and `role="alert"` — the only red |
@@ -777,7 +785,8 @@ with an icon (`lib/edit-panel-state.ts`):
 - **Weight**: a muted `—` when empty, a fixed hint line ("Weight must be more
   than 0" in red), a 50 px keypad.
 - **Expiry**: "Pick the expiry date from the sticker" (amber) / "Change date";
-  the calendar has no preselected day (`requirePick`) — the old silent
+  the calendar has no preselected day (`requirePick`, now the default for
+  every form) — the old silent
   "today" is how 64 tilapia cartons got their receiving day as expiry. Stored
   as ISO `YYYY-MM-DD`, shown as `DD/MM/YYYY`.
 - **Save**: grey and disabled with nothing to save; amber + warning when it

@@ -583,6 +583,8 @@ export const en = {
   'terminal.cartonsScanned': '{count} cartons',
   'terminal.details': 'Details',
   'terminal.edit': 'Edit',
+  // An armed Delete on a scan row: one more tap deletes.
+  'terminal.deleteTapAgain': 'Tap again',
   'terminal.barcode': 'Barcode',
   'terminal.expiry': 'Expiry',
   'terminal.weight': 'Weight',
@@ -661,6 +663,10 @@ export const en = {
   'terminal.alreadyCounted': 'Carton #{n} is already counted — scan the next carton.',
   'terminal.photoAlreadyCounted': 'This label is carton #{n} — it is already counted.',
   'terminal.differentCarton': 'Different carton?',
+  // The supplier code of an "All boxes identical" batch read again: every
+  // carton carrying it is already on the list, one row per saved label.
+  'terminal.coveredByLabels': 'Already counted — the {count} identical labels saved for this product cover it. Nothing to scan.',
+  'terminal.coveredByLabelOne': 'Already counted — the identical label saved for this product covers it. Nothing to scan.',
   'terminal.barcodeAcceptedAsPrinted': 'Read the same three times — accepted as printed ({digits}).',
   'terminal.palletLabelRead': 'Shipping-pallet label {digits} noted as the pallet number — not counted as a carton.',
   'terminal.barcodeTooShort': 'Only part of the barcode was read ({digits}). Aim at the long barcode and scan again.',

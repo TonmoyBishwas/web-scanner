@@ -3,6 +3,7 @@ import { getSessionContext } from '@/lib/session-guard';
 import {
   getCartonLabelsByBatches,
   getCartonLabelsByIds,
+  markCartonBatchesPrinted,
   markCartonLabelsPrinted,
   LABEL_SIZES,
   type LabelSize,
@@ -49,6 +50,10 @@ export async function GET(request: NextRequest) {
  * records the hand-off; reprinting simply increments the print count. `via`
  * is not stored (no column for it) — it is in the request, so the scanner
  * trace and the server log carry it.
+ *
+ * `batch_ids` are marked by batch, `ids` by id — either way in bounded
+ * slices with one UPDATE per print count (see markCartonLabelsPrinted): this
+ * is what lifts the print gate, so a 500-label batch must mark in one go.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -60,10 +65,8 @@ export async function POST(request: NextRequest) {
 
     const asStrings = (v: unknown) => (Array.isArray(v) ? v.filter((i): i is string => typeof i === 'string') : []);
     const batchIds = asStrings(body.batch_ids);
-    const ids = batchIds.length
-      ? (await getCartonLabelsByBatches(batchIds)).map(l => l.id)
-      : asStrings(body.ids);
-    if (!ids.length) {
+    const ids = asStrings(body.ids);
+    if (!batchIds.length && !ids.length) {
       return NextResponse.json({ success: false, error: 'ids or batch_ids is required' }, { status: 400 });
     }
 
@@ -72,7 +75,9 @@ export async function POST(request: NextRequest) {
       : undefined;
 
     const via = body.via === 'sheet' || body.via === 'manual' ? body.via : 'unknown';
-    const updated = await markCartonLabelsPrinted(ids, labelSize);
+    const updated = batchIds.length
+      ? await markCartonBatchesPrinted(batchIds, labelSize)
+      : await markCartonLabelsPrinted(ids, labelSize);
     console.log(`[api/carton-labels/print] marked ${updated} printed via=${via}`);
     return NextResponse.json({ success: true, updated, via });
   } catch (error) {

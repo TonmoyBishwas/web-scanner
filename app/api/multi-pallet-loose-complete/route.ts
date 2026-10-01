@@ -115,11 +115,7 @@ export async function POST(request: NextRequest) {
         return;
       }
 
-      // To the bot once the response is out. after() keeps the function
-      // alive until the call is made (a bare fire-and-forget fetch could be
-      // cut off), and it now goes out after the session below is persisted.
-      // When loose boxes are the last piece, this call closes the delivery
-      // and starts the automatic Priority push.
+      // To the bot once the response is out — see the after() below.
       const boxes: MultiPalletBoxScan[] = scanned_boxes || [];
       const botBody = JSON.stringify({
         // Lets the bot detect a stale plan the same way pallet-complete
@@ -143,13 +139,6 @@ export async function POST(request: NextRequest) {
         all_completed_pallets: isFinal ? updatedSession.completed_pallets : undefined,
         roster_chat_ids: isFinal ? (session.roster ?? []).map((r) => r.chat_id) : undefined,
       });
-      after(() =>
-        fetch(`${botUrl}/webhook/loose-boxes-complete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: botBody,
-        }).catch((err) => console.error('[multi-pallet-loose-complete] bot webhook error:', err)),
-      );
 
       // What was booked, recorded in the session now — box_inventory only
       // follows once the bot has the call. Labels reads it to refuse deleting
@@ -161,6 +150,22 @@ export async function POST(request: NextRequest) {
 
       // Persist session (marks completed when this was the final piece)
       await redis.set(sessionKey(token), JSON.stringify(updatedSession), { ex: SESSION_TTL });
+
+      // To the bot once the response is out. after() keeps the function
+      // alive until the call is made (a bare fire-and-forget fetch could be
+      // cut off). Registered only now, once the session write above has
+      // SUCCEEDED: Next runs an after() callback even when the handler then
+      // fails, so registering it first booked the boxes in the bot while the
+      // session never moved — and the worker's retry booked them again.
+      // When loose boxes are the last piece, this call closes the delivery
+      // and starts the automatic Priority push.
+      after(() =>
+        fetch(`${botUrl}/webhook/loose-boxes-complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: botBody,
+        }).catch((err) => console.error('[multi-pallet-loose-complete] bot webhook error:', err)),
+      );
 
       okResult = { success: true };
     });
