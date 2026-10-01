@@ -31,6 +31,7 @@ import { LanguageContext, useLangDir, t } from '@/lib/i18n';
 import type { Language, MultiPalletSession, ParsedBarcode } from '@/types';
 import { matchInvoiceItem, type InvoiceItem } from '@/lib/invoice-match';
 import { nonMeatItemKey } from '@/lib/nonmeat-key';
+import { LABELS_NOT_PRINTED } from '@/lib/label-gate';
 import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
 
 type Phase = 'scanning' | 'saving' | 'pallet_done' | 'all_done' | 'error';
@@ -325,7 +326,13 @@ export function NonMeatTypeAFlow({
       });
       const data = await res.json();
       if (!data.success) {
-        setError(data.error || tr('palletVerify.failedComplete'));
+        // The print gate's 409 is a reason code, not a sentence — map it.
+        // Everything else the server already translated.
+        setError(
+          data.error === LABELS_NOT_PRINTED
+            ? tr('labels.gateHintManual')
+            : data.error || tr('palletVerify.failedComplete'),
+        );
         setPhase('scanning');
         return;
       }

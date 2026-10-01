@@ -198,12 +198,15 @@ the header, with a draggable sheet floating over it.
 |---|---|
 | `DesignHeader` / `ProgressHeader` | Hamburger + optional `leading` slot, centred title/subtitle, optional `right` slot; progress bar with an **optional** caption row (omit `label` for a bare bar) |
 | `BottomSheet` | The floating sheet. 3 snaps, drag handle, `toolbar` + scrolling children + `footer`. Exposes `snapTo(i)` via ref. **On a wide landscape host (≥ 720px and aspect ≥ 1.15 — a tablet on its side) it docks instead as a full-height side panel** at the inline end (`data-sheet-layout="side"`, width `clamp(340, 38%, 480)`): no handle, footer always shown, `--sheet-h` = 0 and `--sheet-w` = its width, so the scanner's overlays keep to the visible camera. Decided per measure, so rotation switches live |
-| `ToolDock` | The chip row inside the sheet's toolbar (share / delete / pallets / locked stubs) |
-| `ActiveScanCard` | The newest scan — live status dot, big mono weight, details expander, and its actions (edit / delete / retry / view frame) |
-| `HistoryRow` | One older scan; tap to expand its action row |
-| `EditPanel` | In-sheet edit of a scan (see below) — value tabs, sticker photo, keypad / item chips / calendar |
-| `Keypad`, `CalendarPicker` | Context inputs for the edit panel |
-| `DoneOverlay`, `SwipeConfirm` (in `shared/`) | Pallet-done stats + RTL swipe-to-confirm actions |
+| `ToolDock` | The chip row inside the sheet's toolbar (share / delete / pallets / locked stubs). Chips follow the page direction and the end edge fades as the "more chips" cue; a chip can carry an amber `badge` count (the Labels chip: saved labels not printed yet) |
+| `ActiveScanCard` | The newest scan — live status dot, big mono weight; the whole summary line expands it; its actions are a `ScanActions` bar |
+| `HistoryRow` | One older scan; tap to expand a `ScanActions` bar underneath it |
+| `ScanActions` | The one per-scan action bar (2026-10-01): Edit (blue) · All boxes identical · Delete (red, last, two taps — the first arms it solid red "Tap again" for 3 s); View · Retry on their own line when OCR failed. 40 px buttons; lines wrap, so nothing runs off a 320 px phone |
+| `EditPanel` | Full-screen carton editor (camera paused) — sticker photo on top, Item / Weight / Expiry tiles with one state each, the selected field's editor (see below) |
+| `Keypad`, `CalendarPicker` | Context inputs for the edit panel (`CalendarPicker requirePick` — the default, so also in the identical form and New carton: no silent "today") |
+| `DoneOverlay`, `SwipeConfirm` (in `shared/`) | Pallet-done stats + the one-tap **Scan pallet N of M**; slide-to-confirm only where stock is booked (pallet confirm, close-short, loose confirm) |
+| `PriorityPushStatus` | The all-done card's status row for the automatic Priority push — not a button (2026-10-01) |
+| `CartonCreator`, `IdenticalBoxesForm`, `LabelsBrowser` | New carton / All boxes identical **save** labels and return to the scanner; the Labels screen prints them, marks them printed, deletes them |
 | `SideDrawer`, `DrawerHost`, `ScreenOverlay`, `LockedScreen` | Hamburger drawer, overlay host, "not built yet" screens |
 | `PalletsBrowser`, `DocumentsBrowser` | Unlocked drawer features: floor pallet lookup, completed-delivery archive |
 | `SplitJobScreen`, `SplitPlanner`, `SplitBoard` | Split-assignment worker/manager UI (`SPLIT_ASSIGNMENT_ENABLED`) |
@@ -247,7 +250,7 @@ could be swallowed outright.
 
 ## API Routes (`app/api/`)
 
-**27 routes total.** See [API_REFERENCE.md](API_REFERENCE.md) for full request/response docs.
+**29 route files** (2026-10-01; `GET /api/priority-status` is the newest). See [API_REFERENCE.md](API_REFERENCE.md) for older request/response docs and `SCANNER_REFERENCE.md` for the current contracts.
 
 ### Carton Scan (RECEIVE/ISSUE)
 | Route | Purpose |
@@ -278,8 +281,8 @@ could be swallowed outright.
 | `POST /api/pallet-manual` | Manual box entry for pallet |
 | `POST /api/pallet-assign` | Manually assign box to mix pallet item |
 | `POST /api/pallet-complete` | Generate LPN, insert pallet into Supabase (`savePalletToSupabase`), call bot `/webhook/pallet-complete` |
-| `POST /api/multi-pallet-complete` | Confirm one pallet of a multi-pallet session — classifies single/mix server-side (`detectPalletType`), applies `uniform_groups` overrides, emits the bot webhook |
-| `POST /api/multi-pallet-loose-complete` | Submit loose box scans → call bot `/webhook/loose-boxes-complete` (now under `withLock`) |
+| `POST /api/multi-pallet-complete` | Confirm one pallet of a multi-pallet session — classifies single/mix server-side (`detectPalletType`), applies `uniform_groups` overrides, emits the bot webhook (with `after()`). Normalises expiries to ISO; **409 `labels_not_printed`** while saved labels are unprinted (print gate) |
+| `POST /api/multi-pallet-loose-complete` | Submit loose box scans → call bot `/webhook/loose-boxes-complete` (now under `withLock`; `after()`; same print gate and ISO expiries; records `loose_barcodes`) |
 | `POST /api/consolidate-items` | AI name-consolidation — asks whether two OCR name groups are the same product |
 
 ### Split assignment (`SPLIT_ASSIGNMENT_ENABLED`)
@@ -296,6 +299,20 @@ could be swallowed outright.
 | `GET /api/pallets/detail` | One pallet with per-item remaining counts |
 | `GET /api/documents` | Completed-delivery archive list |
 | `GET /api/documents/detail` | One delivery: invoice photo, lines with gaps, pallets, Type B voice note |
+
+### Carton labels (token-guarded, `lib/carton-labels.ts`)
+| Route | Purpose |
+|-------|---------|
+| `GET /api/carton-labels` | Labels list — `scope=session\|all`, `status=created\|printed`; `status=created` also feeds the unprinted badge |
+| `POST /api/carton-labels` | **Save** one label per carton — `origin` `new_carton` (label only) · `identical` · `receiving` (booked as stock); a client `batch_id` makes a retry return the same batch |
+| `DELETE /api/carton-labels` | `?batch` — delete a batch (409 `labels_booked` once its cartons are booked on an LPN); `?barcode` — one unprinted identical / receiving label whose scan row was deleted |
+| `GET /api/carton-labels/print` | The labels the print sheet renders |
+| `POST /api/carton-labels/print` | Mark printed — `via:'sheet'` (the sheet, right before `window.print()`) or `via:'manual'` ("Mark as printed") |
+
+### Priority status (read-only)
+| Route | Purpose |
+|-------|---------|
+| `GET /api/priority-status` | Where this session's delivery stands with the automatic Priority push (all-done card). Reads our outbox/config and the client's `priority_goods_receipts` / `delivery_po_links`; sends nothing; never returns the webhook URL |
 
 ## Session Storage (Supabase / Postgres)
 
@@ -347,22 +364,26 @@ For each pallet:
 5. canComplete = true when:
    - Single: all expected boxes scanned (or uniform: ≥2 samples)
    - Mix: each item group has enough scans per its uniform_weight flag
-6. Worker taps "Generate LPN" → POST /api/pallet-complete
-   → generates LPN, POST /webhook/pallet-complete (bot)
+6. Worker slides "Slide to confirm · Pallet N" → POST /api/multi-pallet-complete
+   → (409 labels_not_printed while saved labels are unprinted — print them first)
+   → generates LPN, POST /webhook/pallet-complete (bot, sent with after())
 7. Bot creates: Pallet, Pallet Items, Box Inventory rows, Stock Batches, IN Transaction
-8. Bot sends LPN sticker link → worker prints
+8. Bot sends LPN sticker link → worker prints; the scanner's pallet_done card offers the
+   same print link and a one-tap "Scan pallet N+1 of M" (no second slide)
 
 After last pallet:
 9. If session.loose_box_count == 0: scanner shows all_done, delivery finalized
+   (deliveries.status → Complete / Has Discrepancy → automatic Priority push, once enabled;
+   the all-done card shows its status)
 10. If session.loose_box_count > 0: scanner transitions to loose_scanning phase
 
 Loose box phase:
 11. Worker scans individual loose boxes (each box → POST /api/pallet-scan → OCR)
     - Loose boxes are NOT assigned to pallet items; each is independent
     - Progress: scanned / declared count shown in orange UI
-12. Confirm → POST /api/multi-pallet-loose-complete → POST /webhook/loose-boxes-complete (bot)
+12. Slide confirm → POST /api/multi-pallet-loose-complete (same print gate) → POST /webhook/loose-boxes-complete (bot)
 13. Bot creates: Pallets(type=Loose) row, Box Inventory rows for each loose box
-14. Bot finalizes delivery
+14. Bot finalizes delivery (→ automatic Priority push, once enabled)
 ```
 
 ## Key TypeScript Types (`types/index.ts`)
@@ -425,10 +446,11 @@ Phase transitions:
 - `loading` → `loose_scanning` (session loaded, `current_pallet > pallet_count` and `loose_box_count > 0` — i.e. user refreshed mid-loose-phase)
 - `loading` → `all_done` (session loaded with `status: 'completed'`)
 - `job` → `scanning` (slot claimed)
-- `scanning` → `confirming` (canConfirm and swipe-confirm completed)
+- `scanning` → `confirming` (canConfirm and the confirm slide completed — or the close-short slide, or the single-item count submit; refused while the print gate blocks)
+- `confirming` → `scanning` (failure, or 409 `labels_not_printed` — the gate is shown, never a red error)
 - `confirming` → `pallet_done` (pallet-complete call succeeded)
-- `pallet_done` → `scanning` (next pallet, via swipe) OR `loose_scanning` (all pallets done, loose_box_count > 0) OR `all_done` (all done, loose_box_count == 0)
-- `loose_scanning` → `loose_confirming` (all loose boxes scanned, confirm tapped)
+- `pallet_done` → `scanning` (next pallet, via a **tap** on "Scan pallet N of M" — armed 500 ms after the card appears; a 400 ms tap shield follows) — the last pallet skips `pallet_done` and goes from `confirming` straight to `loose_scanning` (loose_box_count > 0) or `all_done`
+- `loose_scanning` → `loose_confirming` (all loose boxes scanned, the blue loose slide completed; refused while the print gate blocks)
 - `loose_confirming` → `all_done` (loose-complete call succeeded)
 
 **Reload safety**: in-progress scans are cached in `localStorage` under
@@ -521,9 +543,12 @@ Every `BoxScan` retains the captured frame as `image_data` (base64 JPEG from
 | Action | Behaviour |
 |---|---|
 | **ערוך / Edit** | Opens `EditPanel` in place of the list (see below) |
-| **מחק / Delete** | `rescanPalletBox` — drops the box and clears `processedRef` for that barcode so the worker can physically rescan. If removing it leaves a locked uniform group with <2 samples, the lock is cleared too |
+| **כל הקרטונים זהים / All boxes identical** | Opens `IdenticalBoxesForm` for this carton (see below). Not on `MANUAL-`/`NOBC-` rows, rows still in OCR, or minted rows |
+| **מחק / Delete** | `rescanPalletBox` — drops the box and clears `processedRef` for that barcode so the worker can physically rescan. If removing it leaves a locked uniform group with <2 samples, the lock is cleared too. Deleting a row whose identical / receiving label is still unprinted also deletes that label (`DELETE /api/carton-labels?barcode`); deleting the last row of an identical batch frees the supplier barcode |
 | **נסה שוב / Retry** *(failed OCR only)* | Re-runs `/api/multi-pallet-ocr` against the stored `image_data` — for transient failures (timeout, server hiccup) |
 | **צפה / View** *(failed OCR only)* | Full-screen image modal (`viewingImage`) of the captured frame, so the worker can see whether the photo is genuinely bad |
+
+Since 2026-10-01 both places render the same `ScanActions` bar — Edit (blue) · All boxes identical · Delete (red, last), each line wrapping — because on a 360 px phone the card's old non-wrapping row pushed "All boxes identical" off the screen, where it could not be reached.
 
 Where they render:
 - **`ActiveScanCard`** — actions are **props on the card** (`onEdit`, `onDelete`,
@@ -536,7 +561,7 @@ Where they render:
   31-digit barcode; the barcode had no clamp, so the three collided. The barcode
   now ellipsises and the buttons get a full-width line of their own.
 
-## "All boxes identical" → one printed label per carton (2026-09-22)
+## "All boxes identical" → one printed label per carton (2026-09-22; save-now / print-later 2026-10-01)
 
 Some products print **one barcode on every carton** (fixed-weight goods:
 kebabonim, fish, produce cartons), and for those the name, weight and expiry
@@ -553,17 +578,44 @@ shared-label. The worker does.**
   per carton (required, prefilled from the OCR), production/expiry dates, a
   live `CartonSticker` preview. Hidden on `MANUAL-`/`NOBC-` rows, on rows still
   in OCR, and on rows that are themselves minted.
-- Create → `POST /api/carton-labels` with `origin: 'identical'`,
-  `source_barcode` (the supplier code off the sample), `pallet_number` (0 =
-  loose). The existing minting stack (`lib/carton-labels.ts`: `28` + YYMMDD +
-  8 random digits, unique index) returns N rows; a **Print N labels** button
-  opens the existing `/labels/print` sheet (10×15), reprint from the Labels chip.
+- **Save N labels** (HE `שמור N מדבקות`) → `POST /api/carton-labels` with
+  `origin: 'identical'`, `source_barcode` (the supplier code off the sample),
+  `pallet_number` (0 = loose) and a client `batch_id` (one per distinct save
+  content, `batchIdForPayload` — a retry of the same save after a lost
+  response returns the same batch; a save whose count, weight, dates or item
+  changed gets its own, and the server answers with a stored batch only when
+  it is the same save, `batchMatchesRequest`). The minting stack
+  (`lib/carton-labels.ts`: `28` + YYMMDD + 8 random digits, unique index)
+  returns N rows and the form closes **straight back to the scanner** with a
+  toast "N labels saved · print them from Labels before closing the pallet".
+  There is no print step here any more (until 2026-10-01 a second "created"
+  screen offered Print N labels / Done). The labels are printed from the
+  **Labels** chip whenever it suits — but **the pallet cannot get its LPN
+  while they are unprinted** (the print gate, below).
 - `lib/identical-boxes.ts` → `expandIdenticalBoxes(sample, labels, form)`
   replaces the sample row by N ordinary `BoxScan`s: `barcode` = minted code,
   `sku` = the sample's 13-digit prefix (`sourceSku`), weight/dates from the
-  form, `minted: true`, `label_batch_id`; the sticker photo stays on the first
-  row, `image_url` on all. The minted codes (and the supplier code) sit in the
-  dedup set, so scanning a printed sticker back in is refused as a duplicate.
+  form, `minted: true`, `label_batch_id`, `source_barcode`; the sticker photo
+  stays on the first row, `image_url` on all. The minted codes (and the
+  supplier code) sit in the dedup set, so scanning a printed sticker back in is
+  an "already counted" notice. A re-read of the supplier code points at the
+  batch's first row. Deleting the batch's rows one by one frees the supplier
+  code again (`releasedSources`), and a reload refills the dedup set with it
+  (`dedupCodes`). The expiry is handed over as ISO `YYYY-MM-DD` (until
+  `01a2ae5` this line wrote `DD/MM/YYYY`, which the bot stored as
+  `box_expiry` NULL — 140 cartons).
+- **"Different carton?"** (HE `קרטון אחר?`) on an already-counted notice
+  opens this form as "Different carton, same label" with the counted carton
+  as the sample and count 1: for a physically different carton whose label is
+  byte-identical (a 31-digit catch-weight label carries no serial). It
+  **adds** one row with a label of its own — the counted carton stays — and
+  that label falls under the print gate. Explicit tap only; not offered for a
+  warehouse `28…` label, a row still in OCR, or the supplier code of an
+  identical batch (`isBatchStandIn`): every carton carrying it is already
+  declared, so that read says "the N identical labels saved for this product
+  cover it" and names no carton. The link is a full-width 40 px line; the
+  notice stays 8 s and never times out while a finger is on it. The camera is
+  paused while this form, New carton or Labels is open.
 - **Booked directly.** The rows travel through `/api/multi-pallet-complete` /
   `/api/multi-pallet-loose-complete` unchanged and the bot writes one
   `box_inventory` row per minted barcode (`box_sku` = supplier prefix).
@@ -575,6 +627,87 @@ shared-label. The worker does.**
   (`docs/migrations/2026-09-22-carton-labels-identical.sql`). Tests:
   `lib/identical-boxes.test.ts`; `lib/carton-barcode.ts` keeps only the SCN-13
   misread refusal (`classifyRead`).
+
+## Labels: save now, print later, and the print gate (2026-10-01)
+
+Floor request: save labels while scanning, keep scanning, print them all
+whenever it suits — "but of course without printing he can't create the LPN or
+go to the next pallet". Rules in `lib/label-batches.ts` and `lib/label-gate.ts`
+(both tested).
+
+- **Three ways to save a label**, all `POST /api/carton-labels`: New carton
+  (`origin 'new_carton'`, label only — the carton is scanned in once the label
+  is printed), All boxes identical (`'identical'`, booked) and the edit panel's
+  "Create a barcode for this carton" (`'receiving'`, booked). Each records its
+  pallet (0 = loose).
+- **Seeing what is unprinted.** `useUnprintedLabels` reads
+  `GET /api/carton-labels?scope=session&status=created` on mount, after every
+  save / print / delete, and whenever the tab becomes visible or focused again
+  (the worker coming back from the print tab). The Labels chip shows an amber
+  count; each unprinted scan row an amber crossed-out printer.
+- **"Printed" is set by the print sheet**, for exactly the labels it rendered,
+  right before `window.print()` (`POST /api/carton-labels/print`,
+  `via:'sheet'`, `keepalive`, once per page load). Not by the opener — "the
+  tab opened" is not "the labels printed" — and never on `afterprint`, which
+  Android Chrome may not fire. **Mark as printed** in Labels (`via:'manual'`,
+  tap + confirm) is the fallback.
+- **The gate.** An unprinted label blocks the list being booked when (i) its
+  carton is on that list, or (ii) it is a New carton label anywhere in the
+  session. Printed labels and orphans never block. On the page, the confirm
+  slide (or the close-short button) is replaced by an amber hint, an amber
+  one-tap **Print N labels first** (opens the sheet for exactly those batches,
+  inside the click so pop-up blockers allow it) and a **Choose in Labels**
+  link; the confirm handlers refuse too (slide, close-short modal, gap chip,
+  single-item auto-confirm). On the server, both completion routes answer
+  **409 `labels_not_printed`** before any write or webhook — so with unprinted
+  labels the last pallet cannot close the delivery or start the Priority push.
+  The `pallet_done` tap and the all-done card are not gated (the LPN exists).
+- **Deleting.** A Labels batch delete warns what it removes from the open
+  lists and is refused (409 `labels_booked`) once the cartons are booked on an
+  LPN; deleting an identical / receiving row deletes its unprinted label.
+
+## Scan notices — "already counted" is not an error (2026-10-01)
+
+The page used to have one persistent red line for everything, so a carton read
+a second time — the most common event on a pallet scanned in place (22 of 32
+reads on IN264172698 pallet 3) — sat in red for minutes as "Already scanned —
+this is carton #8 in the list (15:09)". Now (`lib/scan-notice.ts`):
+
+| What happened | What the worker sees |
+|---|---|
+| A counted carton read again | **Blue** notice over the top of the camera, "Carton #N is already counted — scan the next carton.", 4 s (8 s, held while touched, when it offers "Different carton?"); for the supplier code of an All-boxes-identical batch it says the N saved labels cover it instead, and offers nothing; its row rings blue and scrolls into view; one soft 520 Hz tick, silent while the camera rests on the same sticker (15 s sliding window); the camera hold says **Already counted** in blue |
+| A manual capture of a counted label | Blue "This label is carton #N — it is already counted." (was dropped silently) |
+| A misread / too-short read | **Amber** notice, 4 s — scan it again |
+| A failure (network, failed complete, session, split clash, save) | **Red**, persistent, with an icon and `role="alert"` — the only red |
+
+The notice floats at the top of the camera, not in the sheet footer: on a
+360×641 phone the count input plus one more footer line made `BottomSheet` hide
+the whole footer and never bring it back. Progress reads "6 of 15 cartons left
+to scan" with a pencil (or tap the CARTONS counter) to correct the total; a
+pallet that arrived short closes with the outlined amber **Fewer cartons
+arrived? Close with N** → modal "Close the pallet with missing cartons?" →
+amber slide **Slide to close with N cartons**, which books exactly N.
+
+## Priority push — automatic, a status row only (2026-10-01)
+
+The all-done card's locked "Close & send to Priority" button is gone: nobody
+in the warehouse sends anything. At the last LPN (or the last loose box) the bot
+closes the delivery; the DB trigger queues it in `priority_push_outbox`; pg_cron
+job 8 sends it to the client's Make scenario every minute; the scenario creates
+the Priority **draft** and writes `priority_goods_receipts`, which makes the bot
+send "✅ Priority received it" in WhatsApp. The card shows
+`PriorityPushStatus` — a row that polls `GET /api/priority-status` (4 s for
+3 min, then 30 s) and changes by itself: blue sending, green "In Priority as
+draft GR…", amber waiting / unconfirmed (ask the office), red failed, grey
+off / test / on hold.
+
+**Status today:** the push is **off**. The enqueue trigger has never queued a
+row (it reads a `deliveries.category` column that does not exist), and its fix
+— `docs/migrations/2026-10-01-priority-push-autofire.sql` — is **not applied**;
+Tonmoy applies it by hand. Even then nothing is sent until the client gives his
+Make webhook URL and `priority_push_config` is set `url = …, enabled = true`.
+Until then the row says "Automatic sending to Priority is off" (or "Test user —
+not sent to Priority").
 
 ## Barcode cross-check (`lib/barcode-parser.ts`)
 
@@ -611,40 +744,65 @@ the barcode across the four insert paths.
 
 ## Edit panel (`components/terminal/EditPanel.tsx`)
 
-Rendered **inside** the bottom sheet in place of the scan list while `editForm`
-is set (the sheet's footer is suppressed); `openEdit()` also calls `snapTo(2)`.
+*Rewritten 2026-10-01* (`d44d180`, `59fde78`). A **full-screen** editor
+(`fixed inset-0 z-[80]`; the camera pauses while it is open), mounted in both
+the pallet and the loose phase, remounted per carton.
 
-The layout is driven by one fact: **the worker is editing because OCR misread the
-sticker**, so the sticker photo has to sit next to whatever they are typing into.
+The layout is driven by one fact: **the worker is editing because OCR misread
+the sticker**, so the sticker photo fills the top of the screen and the
+controls sit below it, both visible at once.
 
 ```
-top bar        ‹ back · קרטון #N · שמור
-tab strip      משקל נטו | שם הפריט | ת. תפוגה   ← every value, tap to switch field
-context input  [sticker photo] + readout/chips/calendar
-               keypad (weight mode)
-batch          BATCH · free-text input — supplier lot, optional
-barcode        read-only — it is the row's identity/dedup key
+top bar        ‹ back · Carton #N · status line ("Missing: weight, expiry") · Save
+photo          the sticker, as large as the room allows (tap → full screen)
+tiles          [Item] [Weight] [Expiry] — each with one state badge
+editor         the selected tile's editor, joined to it by a caret
+batch          Supplier batch / lot · optional
+barcode        Scanned barcode 🔒 — the row's identity/dedup key
 ```
 
-- The photo is 112×86 beside the weight readout, or full-width 104px above the
-  name chips (no keypad in that mode, so there is room). Tap it for the
-  full-screen viewer. It was previously a 36px thumbnail **below the keypad**
-  that had to be tapped open, making "read the sticker" and "correct the value"
-  two alternating steps.
-- The tab strip replaces the old tall "נתוני המוצר" field boxes, which sat below
-  the keypad and were mostly off-screen.
-- **Batch is a row, not a fourth tab.** The three tabs are the hot path — the
-  panel is open *because* OCR misread the weight or the name — and a fourth tab
-  drops all four below a legible width at 360px. `supplier_batch` is the
-  opposite: the OCR fills it only when the carton label prints an explicit
-  `מנה`/`אצווה`/`לוט`/`Batch`/`Lot` heading, so in practice this row is where it
-  gets entered at all. Blank is valid; nothing gates on it.
-- A restored-from-cache box has no `image_data`, so the panel simply renders
-  without a photo.
+Floor complaint: "which one is selected, which to edit, there is no edit sign".
+One brand-blue border used to mean three things (the field being edited, the
+chosen invoice line, an always-outlined text box), empty values were drawn as
+data (`0 kg`, `—`) and Save never changed. Now one colour per meaning, each
+with an icon (`lib/edit-panel-state.ts`):
+
+| Tile state | Look |
+|---|---|
+| being edited | blue frame + blue pencil + a caret into the editor |
+| missing | amber **dashed** frame, "!" , "Missing · tap to enter" |
+| wrong (weight 0; expiry today or earlier) | red frame, "!" |
+| changed and valid | green check |
+| untouched | grey pencil |
+
+- Opens on the first field that still needs the worker; picking an item or a
+  date moves on to what is still missing.
+- **Item**: a radio list with exactly one green row, item codes in mono,
+  invoice lines with the same name merged; a name read off the sticker that is
+  not on the invoice is the first row, amber; free text sits behind
+  "Different name — type it". The name is `dir="auto"` and clamped to two
+  lines so its first words show.
+- **Weight**: a muted `—` when empty, a fixed hint line ("Weight must be more
+  than 0" in red), a 50 px keypad.
+- **Expiry**: "Pick the expiry date from the sticker" (amber) / "Change date";
+  the calendar has no preselected day (`requirePick`, now the default for
+  every form) — the old silent
+  "today" is how 64 tilapia cartons got their receiving day as expiry. Stored
+  as ISO `YYYY-MM-DD`, shown as `DD/MM/YYYY`.
+- **Save**: grey and disabled with nothing to save; amber + warning when it
+  saves but the carton keeps its warning; blue + check when complete. A
+  flagged or barcode-conflict carton can always be saved, even untouched.
+- Errors (typed barcode too short / duplicate, a failed mint) show in a red
+  strip **inside** the panel; they never leak into the scan footer.
+- **Batch is a row, not a fourth tab**: `supplier_batch` is filled by the OCR
+  only when the label prints an explicit `מנה`/`אצווה`/`לוט`/`Batch`/`Lot`
+  heading; blank is valid and nothing gates on it.
+- A restored-from-cache box has no `image_data`; the panel shows "No photo for
+  this carton".
 
 ## All-done view — pallet sticker list
 
-After every pallet is confirmed (and any loose boxes finalised), `phase === 'all_done'` renders a list of every confirmed pallet as a tappable card showing `LPN`, pallet number, declared box count, and `pallet_type`. Each card is `<a href="/pallet/{lpn}?token={session_token}" target="_blank">` so it opens in a new tab without disturbing the scanner. Loose-box count is displayed in a separate orange info card noting that no physical sticker is needed for loose pallets.
+After every pallet is confirmed (and any loose boxes finalised), `phase === 'all_done'` renders the "All pallets received" card: pallet and carton counts, then **`PriorityPushStatus`** right under the stats (so a long pallet list cannot push it off screen — see "Priority push" above), a list of every confirmed pallet as a tappable card (`LPN`, pallet number; `<a href="/pallet/{lpn}?token={session_token}" target="_blank">`, so it opens in a new tab without disturbing the scanner), a **Reprint labels** row that opens the Labels screen, and the loose-box note (no physical sticker is needed for loose pallets). There is no button to send anything.
 
 The list reads from `session.completed_pallets`. `handleConfirmPallet` mirrors each successful API confirm into local React state (the API persists the session to Supabase but the page never refetches), so by the time the worker reaches `all_done` every pallet they confirmed in this session is in the list — even on a fresh-mount session that had completed_pallets prefilled from a mid-flow refresh.
 
@@ -699,4 +857,4 @@ success at 500. Each new preview deployment invalidates the Vercel SSO share
 cookie. And a test harness must reproduce the **real** chrome of the screen under
 test — a stub footer is what hid the sheet outage.
 
-**Last Updated**: 2026-09-04 (Priority capture fields: `production_date` + `supplier_batch` off the carton sticker, batch row in the edit panel, non-meat Type A expiry, barcode-vs-OCR cross-check) | Working branch: `preview` | Production branch: `main`
+**Last Updated**: 2026-10-01 (floor-feedback release on `preview`: one-tap next pallet, save-now/print-later labels + the print gate, already-counted notices, the edit panel rewrite, ISO expiries, the automatic-Priority status row; the DB push migration is NOT applied and the push stays off) · previously 2026-09-04 (Priority capture fields, batch row, barcode-vs-OCR cross-check) | Working branch: `preview` | Production branch: `main`

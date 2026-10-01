@@ -5,16 +5,17 @@
  *
  * A carton turns up with no supplier sticker, or one too torn to read. The
  * worker picks the item off THIS delivery's invoice, types what the missing
- * sticker would have said, and the scanner mints one sticker per carton with
- * its own barcode. Printing happens on the Labels screen.
+ * sticker would have said, and "Save N labels" stores one label per carton
+ * with its own barcode, then returns straight to the scanner. Printing is a
+ * later step on the Labels screen (amber badge on its chip until then).
  *
- * Creating stickers books no stock and touches no delivery, pallet or box
- * record. The worker prints the sticker, puts it on the carton, and scans it
+ * Saving labels books no stock and touches no delivery, pallet or box
+ * record. The worker prints the label, puts it on the carton, and scans it
  * through the ordinary receiving flow — so the meat and non-meat inbound paths
  * are untouched by this feature.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { MI } from './MI';
 import { ScreenOverlay } from './ScreenOverlay';
 import { CalendarPicker } from './CalendarPicker';
@@ -22,6 +23,7 @@ import { CartonSticker } from './CartonSticker';
 import { Toast, useToast } from './Toast';
 import { useT } from '@/lib/i18n';
 import { normalizeString } from '@/lib/string-utils';
+import { batchIdForPayload } from '@/lib/label-batches';
 import type { CartonLabel } from '@/types';
 
 /** The subset of an invoice line this screen needs, shared by both session shapes. */
@@ -34,9 +36,15 @@ export interface CartonItemOption {
 interface CartonCreatorProps {
   token: string;
   items: CartonItemOption[];
+  /**
+   * Pallet the worker is on when saving (0 = the loose pile), stored on the
+   * labels so the Labels screen can say where they belong; null when the
+   * page has no pallet notion.
+   */
+  palletNumber: number | null;
   onBack: () => void;
-  /** Fired after a batch is created — the page uses it to open Labels. */
-  onCreated?: (count: number) => void;
+  /** Fired after the batch is saved — the page closes this screen. */
+  onCreated?: (count: number, batchId: string | null) => void;
 }
 
 type Step = 'item' | 'form';
@@ -47,7 +55,7 @@ function displayDate(iso: string): string {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
 }
 
-export function CartonCreator({ token, items, onBack, onCreated }: CartonCreatorProps) {
+export function CartonCreator({ token, items, palletNumber, onBack, onCreated }: CartonCreatorProps) {
   const tr = useT();
   const { toast, showToast } = useToast();
 
@@ -63,6 +71,11 @@ export function CartonCreator({ token, items, onBack, onCreated }: CartonCreator
   const [printBarcode, setPrintBarcode] = useState(true);
   const [calendarFor, setCalendarFor] = useState<DateField | null>(null);
   const [saving, setSaving] = useState(false);
+  // One batch id per distinct save content (lib/label-batches.ts): a retry
+  // of the same save after a lost response returns the batch the first
+  // attempt saved instead of minting a second one — and a save for another
+  // item or count (the worker went back and changed it) gets its own.
+  const batchIdsRef = useRef(new Map<string, string>());
 
   const filtered = useMemo(() => {
     const q = normalizeString(query.trim());
@@ -101,28 +114,29 @@ export function CartonCreator({ token, items, onBack, onCreated }: CartonCreator
     created_at: new Date().toISOString(),
     origin: 'new_carton',
     source_barcode: null,
-    pallet_number: null,
+    pallet_number: palletNumber,
   };
 
-  async function handleCreate() {
+  async function handleSave() {
     if (!selected || saving || count < 1) return;
     setSaving(true);
     try {
+      const payload = {
+        pallet_number: palletNumber,
+        item_code: selected.item_code ?? null,
+        item_name_hebrew: selected.item_name_hebrew ?? null,
+        item_name_english: selected.item_name_english ?? null,
+        weight_kg: weight ? Number(weight) : null,
+        quantity: count,
+        production_date: productionDate || null,
+        expiry_date: expiryDate || null,
+        notes: notes.trim() || null,
+        print_barcode: printBarcode,
+      };
       const res = await fetch('/api/carton-labels', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token,
-          item_code: selected.item_code ?? null,
-          item_name_hebrew: selected.item_name_hebrew ?? null,
-          item_name_english: selected.item_name_english ?? null,
-          weight_kg: weight ? Number(weight) : null,
-          quantity: count,
-          production_date: productionDate || null,
-          expiry_date: expiryDate || null,
-          notes: notes.trim() || null,
-          print_barcode: printBarcode,
-        }),
+        body: JSON.stringify({ token, batch_id: batchIdForPayload(batchIdsRef.current, payload), ...payload }),
       });
       const data = await res.json();
       if (res.status === 401) {
@@ -133,7 +147,7 @@ export function CartonCreator({ token, items, onBack, onCreated }: CartonCreator
         showToast(tr('carton.error'), 'error', '#ef8a8a');
         return;
       }
-      onCreated?.(data.labels?.length ?? count);
+      onCreated?.(data.labels?.length ?? count, data.batch_id ?? null);
     } catch {
       showToast(tr('carton.error'), 'error', '#ef8a8a');
     } finally {
@@ -225,7 +239,7 @@ export function CartonCreator({ token, items, onBack, onCreated }: CartonCreator
                   value={quantity}
                   onChange={e => setQuantity(e.target.value.replace(/\D/g, '').slice(0, 3))}
                   inputMode="numeric"
-                  className={`${tile} flex-1 h-[52px] text-center bg-tile outline-none text-[20px] font-extrabold text-ink-inverse font-mono`}
+                  className={`${tile} flex-1 min-w-0 h-[52px] text-center bg-tile outline-none text-[20px] font-extrabold text-ink-inverse font-mono`}
                 />
                 <button
                   onClick={() => setQuantity(String(Math.min(500, count + 1)))}
@@ -332,16 +346,16 @@ export function CartonCreator({ token, items, onBack, onCreated }: CartonCreator
 
           <div className="flex-none px-3 py-[11px] border-t border-line bg-header safe-bottom">
             <button
-              onClick={handleCreate}
+              onClick={handleSave}
               disabled={saving || count < 1}
               className="w-full h-[50px] rounded-[12px] bg-brand text-white text-[14px] font-black flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              <MI name="label" size={20} />
+              <MI name="save" size={20} />
               {saving
-                ? tr('carton.creating')
+                ? tr('carton.saving')
                 : count === 1
-                  ? tr('carton.createOne')
-                  : tr('carton.create', { count })}
+                  ? tr('carton.saveOne')
+                  : tr('carton.save', { count })}
             </button>
           </div>
         </>
@@ -351,6 +365,9 @@ export function CartonCreator({ token, items, onBack, onCreated }: CartonCreator
         <CalendarPicker
           value={calendarFor === 'production' ? productionDate : expiryDate}
           fieldTitle={calendarFor === 'production' ? tr('carton.production') : tr('carton.expiry')}
+          // Never a silent "today": an empty date opens with no day chosen
+          // and OK disabled until the worker picks one off the sticker.
+          requirePick
           onPick={iso => {
             if (calendarFor === 'production') setProductionDate(iso);
             else setExpiryDate(iso);

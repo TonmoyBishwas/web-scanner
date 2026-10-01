@@ -5,11 +5,14 @@ import { useSettingsStore } from '@/stores/settings-store';
 // ── Shared scan feedback ─────────────────────────────────────────────────
 //
 // One place for the audio + haptic cues fired on every scan, so all scanner
-// pages (carton /scan, /issue, and pallet-verify) feel identical. Two events,
+// pages (carton /scan, /issue, and pallet-verify) feel identical. Three events,
 // deliberately distinct so the worker can tell them apart without looking:
 //
-//   success   — bright, short rising "ping"  + a single crisp tap
-//   duplicate — two quick descending low buzzes + a double tap
+//   success         — bright, short rising "ping"  + a single crisp tap
+//   duplicate       — two quick descending low buzzes + a double tap (a
+//                     rejection the worker must act on: misread, clash)
+//   already counted — one soft low tick + a light tap (nothing to do: the
+//                     camera re-read a carton that is already on the list)
 //
 // Both are gated by the user's Sound / Vibration toggles (persisted in
 // localStorage via the settings store). Read imperatively with getState() so
@@ -106,4 +109,17 @@ export function scanDuplicateFeedback() {
     }
   }
   if (vibe) vibrate([130, 70, 130]);
+}
+
+// Already counted: one short, soft 520 Hz sine + a light 40 ms tap. A re-read
+// of a carton already on the list is not an error (on a pallet scanned in
+// place it is the most common read there is), so it must not sound like one —
+// but it still acknowledges the read, so the worker knows the camera saw it.
+export function scanAlreadyCountedFeedback() {
+  const { sound, vibe } = prefs();
+  if (sound) {
+    const ctx = getCtx();
+    if (ctx) tone(ctx, 520, 'sine', 0, 0.06, 0.16);
+  }
+  if (vibe) vibrate(40);
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { expandIdenticalBoxes, sourceSku } from './identical-boxes';
+import { dedupCodes, expandIdenticalBoxes, releasedSources, sourceSku, sourceStillListed } from './identical-boxes';
 
 const sample = {
   barcode: '7290004456825',
@@ -45,6 +45,7 @@ describe('expandIdenticalBoxes', () => {
       expect(r.sku).toBe('7290004456825');
       expect(r.minted).toBe(true);
       expect(r.label_batch_id).toBe('b1');
+      expect(r.source_barcode).toBe('7290004456825');
       expect(r.item_name_hebrew).toBe('קבבונים');
       expect(r.image_url).toBe('https://x/y.jpg');
       expect(r.needs_review).toBeUndefined();
@@ -63,5 +64,44 @@ describe('expandIdenticalBoxes', () => {
     expect(rows[0].image_data).toBe(sample.image_data);
     expect(rows[1].image_data).toBeUndefined();
     expect(rows[2].image_data).toBeUndefined();
+  });
+});
+
+describe('dedup bookkeeping for minted rows', () => {
+  const SRC = '7290004456825';
+  const rows = expandIdenticalBoxes(sample, labels, { weight: 5.2, expiry: '2026-12-31', production_date: '' });
+  const other = { barcode: '7290009999999', sku: '7290009999999' };
+
+  it('dedupCodes holds every row barcode plus the supplier code they stand in for', () => {
+    expect(dedupCodes([...rows, other]).sort()).toEqual([...labels.map((l) => l.barcode), SRC, other.barcode].sort());
+    expect(dedupCodes([other])).toEqual([other.barcode]);
+  });
+
+  it('keeps the supplier code while any row still stands in for it', () => {
+    expect(releasedSources(rows, new Set([rows[0].barcode]))).toEqual([]);
+    expect(releasedSources(rows, new Set([rows[0].barcode, rows[1].barcode]))).toEqual([]);
+  });
+
+  it('frees the supplier code when the last row of the batch is deleted (one at a time)', () => {
+    // Rows 0 and 1 already deleted; deleting the last one releases the code.
+    const left = rows.slice(2);
+    expect(releasedSources(left, new Set([left[0].barcode]))).toEqual([SRC]);
+    // Or all at once.
+    expect(releasedSources(rows, new Set(rows.map((r) => r.barcode)))).toEqual([SRC]);
+  });
+
+  it('keeps it while a plain row with that very code, or another batch for it, is listed', () => {
+    const last = rows.slice(2);
+    expect(releasedSources([...last, { barcode: SRC }], new Set([last[0].barcode]))).toEqual([]);
+    const second = expandIdenticalBoxes(sample, [{ barcode: '2826092299990000', batch_id: 'b2' }], {
+      weight: 5.2, expiry: '', production_date: '',
+    });
+    expect(releasedSources([...last, ...second], new Set([last[0].barcode]))).toEqual([]);
+    expect(sourceStillListed(second, SRC)).toBe(true);
+    expect(sourceStillListed([other], SRC)).toBe(false);
+  });
+
+  it('releases nothing for a row that is not minted', () => {
+    expect(releasedSources([other], new Set([other.barcode]))).toEqual([]);
   });
 });

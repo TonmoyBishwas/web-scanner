@@ -14,6 +14,7 @@ code, the disagreement is recorded — the code is the only truth.
 | **Companion state** | bot `whatsapp` @ `3621f46`, running on Railway |
 | **Database** | Supabase Postgres `vkeqzvwnqkuuwurgjjkd`, schema dumped live 2026-09-05 |
 | **Written** | 2026-09-08 |
+| **Updated** | 2026-10-01 — the floor-feedback release (scanner `01a2ae5`…`59fde78` on `preview`; production `main` still served `668f5fd` when this was written). Read [Changes since the audit](#changes-since-the-audit-the-2026-10-01-floor-feedback-release) first; the chapters are corrected where that release made them wrong, and their line numbers stay the 09-08 ones unless a newer one is given |
 | **Method** | every file in scope read in full; claims cited to `path:line`; live Vercel and database state read directly |
 
 ## How to navigate this document
@@ -57,8 +58,148 @@ code, the disagreement is recorded — the code is the only truth.
 > citation does not land where you expect, search for the symbol name; the symbol is right even when the
 > number has drifted.
 
+## Changes since the audit — the 2026-10-01 floor-feedback release
+
+**Why.** The chapters below describe scanner `e46d9b9` (2026-09-08). On 2026-10-01 a set of commits answered
+the floor complaints from session `Zr1Ys06KXH43fzwDkHpXr` (delivery IN264172698, 2026-09-24, a 360×641
+Android phone): a second slide after every LPN, no automatic Priority push, an "All boxes identical" button
+cut off on narrow phones, labels that had to be printed on the spot, a red "Already scanned" footer nobody
+understood, and an edit screen where nothing said what was selected or missing. This section is the
+summary; the chapters carry the detail where the old text was wrong.
+
+| | |
+|---|---|
+| **Scanner commits** | `01a2ae5` expiry ISO · `84ffc9f` one-tap next pallet · `bbbbf91` + `0b7ecdb` Priority status row · `6a52a5e` scan actions wrap · `839d186` + `a4e7391` save labels now, print later · `e7cb80b` print gate · `23c06c3` + `588295d` scan notices and the close-short modal · `d44d180` + `59fde78` edit panel |
+| **Deploy state when written** | on `preview` only. Production `main` still served `668f5fd`; it ships with the next `preview` → `main` mirror (`scripts/sync-contribution-graph.sh --ship-scanner`) |
+| **Bot companion** | `whatsapp` `32c9cbc`: `_parse_expiry` also reads `D/M/YYYY` and `DD/MM/YYYY` (day first). A push parks at Railway `NEEDS_APPROVAL` |
+| **Database companion** | `docs/migrations/2026-10-01-priority-push-autofire.sql` — **NOT applied.** Tonmoy applies it by hand in the SQL editor. Even after it is applied the push stays **off** (`priority_push_config.url` NULL, `enabled` false) until the client gives his Make webhook URL. See "The Priority push" below |
+| **Tests** | `npx vitest run` → 14 files, 251 tests (new: `expiry` 11, `priority-status` 50, `label-batches` 25, `label-gate` 12, `scan-notice` 32, `edit-panel-state` 45) |
+
+### What a worker sees now
+
+| Complaint | What changed | Commit |
+|---|---|---|
+| (a) "sliding multiple times is annoying" | The `pallet_done` card has no slide. After the LPN it shows **Print label for this pallet**, then a full-width blue button **Scan pallet N of M** (HE `סרוק משטח N מתוך M`, `terminal.nextPalletBtn`, `qr_code_scanner` icon). The button arms 500 ms after the card appears (dimmed until then), `advanceToNextPallet` returns unless `phase === 'pallet_done'` (a double tap advances once), and a transparent shield covers the next screen for 400 ms so the second tap of a double tap cannot open a dock tool. Trace `next_pallet {from, to, via:'tap'}`. A slide is left **only where stock is booked**: the pallet confirm (blue), the close-short confirm (amber) and the loose-box confirm (now blue, was amber). | `84ffc9f` |
+| (b) "the trigger to Priority should be automatic" | The locked **Close & send to Priority** button on the `all_done` card is gone (`terminal.sendToPriority` removed). In its place, right under the stats, `PriorityPushStatus`: a status row with no button and no `onClick` (`role="status"`, `aria-live="polite"`) that polls `GET /api/priority-status` and changes by itself. The card also gains **Reprint labels** (opens Labels). The completion routes send their bot webhook with `after()` so Vercel cannot freeze the function before the call leaves — the last pallet's call is the one that closes the delivery. | `bbbbf91`, `0b7ecdb` |
+| (c) "All boxes identical going out of space" | `components/terminal/ScanActions.tsx` is the one action bar for the newest-scan card and opened history rows: Edit (blue, primary) · All boxes identical (neutral) · Delete (red, last). Lines `flex-wrap`, buttons `flex-auto min-w-0 wrap-anywhere`, 40 px tall (32 px until the cross-review fixes); Delete takes two taps (solid red "Tap again" for 3 s); a failed-OCR card puts View · Retry on their own first line. `ActiveScanCard`'s "Details" toggle is gone — the whole summary line is the expander. `ToolDock` no longer forces `dir="ltr"` + `row-reverse`: chips follow the page direction and the end edge fades (20 px mask) as the "more chips" cue. Measured at 320/360/384/393 px, EN and HE, no horizontal scroll. | `6a52a5e` |
+| (d) "save n labels … print at any point … but without printing he can't create the LPN" | **All boxes identical** and **New carton** only *save* their labels and go straight back to the scanner (**Save N labels**, HE `שמור N מדבקות`). Printing happens from the **Labels** chip at any time. The chip carries an amber count of unprinted labels; each unprinted scan row shows an amber crossed-out printer ("Label not printed"). The **print gate** stops the LPN, the loose-box finish and therefore the final close until the labels that matter are printed — on the page (an amber **Print N labels first** button replaces the slide) and on the server (a 409). See Chapter 7. | `839d186`, `a4e7391`, `e7cb80b` |
+| (d2) the red "Already scanned — this is carton #8 in the list (15:09)" | A re-read of a counted carton is a **blue notice** over the top of the camera, "Carton #N is already counted — scan the next carton." (`terminal.alreadyCounted`), gone after 4 s (8 s, and never while a finger is on it, when it offers "Different carton?"); its row rings blue and scrolls into view; one soft 520 Hz tick, silent while the camera rests on the same sticker (15 s sliding window). A misread is an **amber** 4 s notice. Red is now only for failures the worker must act on (network, failed complete, session, split clash, saves), with an icon and `role="alert"`. **Different carton?** (HE `קרטון אחר?`, a full-width 40 px second line of the notice) opens the All-boxes-identical form for one more carton with a label of its own — never for the supplier code of an identical batch: that read says "Already counted — the N identical labels saved for this product cover it" (`terminal.coveredByLabels`) and names no carton. The camera's duplicate hold is blue **Already counted**, not red. | `23c06c3`, `588295d` |
+| (e) the carton edit screen | Field tiles (Item · Weight · Expiry) each carry one state, one colour and one icon: blue pencil + caret = being edited; amber dashed "!" = missing ("Missing / tap to enter"); red "!" = wrong (weight 0, expiry today or earlier); green check = changed and valid; grey pencil = untouched. A status line says what is missing; Save is grey / amber / blue by state; the item editor is a radio list with exactly one green row. See Chapter 5. | `d44d180`, `59fde78` |
+| (data) 140 cartons with no expiry date | Every expiry a person enters is stored as ISO `YYYY-MM-DD` (`lib/expiry.ts`); both completion routes normalise again before the webhook. The bot's `_parse_expiry` used to write `box_expiry` NULL for the `DD/MM/YYYY` the edit panel and the identical form saved. | `01a2ae5` (+ bot `32c9cbc`) |
+
+**Colour language** (applied everywhere above): red = a failure the worker must act on, or a destructive
+action · amber = needs attention or a decision (unprinted labels, missing fields, booking with a shortfall) ·
+brand blue = the normal / primary action, the field being edited, or information ("already counted") ·
+green = done, saved, chosen. Every colour comes with an icon.
+
+### New files
+
+| File | Lines | What it is |
+|---|---|---|
+| `lib/expiry.ts` (+ test) | 53 | `toIsoDate` (moved from pallet-verify), `isoToDdmmyyyy`, `normalizeExpiry` (ISO, or the trimmed original when the format is unknown — a bare `DDMMYY` the bot reads is never blanked), `normalizeBoxExpiries` (per row, non-mutating, order kept) |
+| `lib/priority-status.ts` (+ test) | 312 | `derivePriorityStatus(input)` → one `PriorityState`; `summarizePushConfig(row)` (the webhook URL becomes a boolean and goes no further); `isFinalPriorityState`; `nextPollDelay` (`FAST_POLL_MS` 4 s for `FAST_POLL_WINDOW_MS` 3 min, then `SLOW_POLL_MS` 30 s); `AWAIT_CONFIRM_MS` 15 min. Works on the live outbox schema **and** the schema after the 2026-10-01 migration: a column that does not exist arrives `undefined` and its check is skipped |
+| `lib/label-batches.ts` (+ test) | 239 | the save-now / print-later rules: `MINTED_LABEL_RE` `^28\d{14}$` / `isMintedLabelBarcode`, `parseBatchId` / `newBatchId` / `batchIdForPayload` (client batch id per distinct save content), `batchMatchesRequest` (the server answers a retry with the stored batch only when it is the same save), `chunked` / `printCountSteps` (mark printed in bounded slices, one UPDATE per print count), `parseLabelOrigin` (`new_carton` default, `identical`, `receiving`), `toUnprintedLabels`, `labelTags`, `sortUnprintedFirst`, `rowsOnList`, `openListsForPhase`, `liveRowPlaces`, `sessionBookedBarcodes`, `loadLabelSize` / `saveLabelSize` (localStorage `labels.size`), `labelSheetUrl` |
+| `lib/label-gate.ts` (+ test) | 96 | the print gate: `LABELS_NOT_PRINTED`, `blockingLabels(unprinted, listBarcodes)`, `barcodesBeingBooked(body)`, `labelGateError(gate)` |
+| `lib/use-unprinted-labels.ts` | 55 | hook: `GET /api/carton-labels?scope=session&status=created`; refetches on mount, on `visibilitychange` / `focus` (the worker back from the print tab) and on `refresh()` after a save / print / delete; only the newest request may write |
+| `lib/scan-notice.ts` (+ test) | 153 | `SCAN_NOTICE_MS` 4 s, `SCAN_NOTICE_ACTION_MS` 8 s / `scanNoticeMs`, `HIGHLIGHT_ROW_MS` 2 s, `DUPLICATE_QUIET_MS` 15 s; `shouldSoundDuplicate`, `clearDuplicateSounds`, `findCountedCarton`, `findCountedCartonByDigits` (both also match an identical batch's `source_barcode`), `isBatchStandIn` / `standInCount` (that match is the batch, not one carton), `canOfferDifferentCarton` (refused for a batch stand-in), `nearestScrollTop` |
+| `lib/edit-panel-state.ts` (+ test) | 225 | `weightState`, `nameState`, `expiryState`, `localIsoDate`, `firstField`, `fieldAfterItemPick`, `fieldAfterExpiryPick`, `missingList`, `gateMissing`, `saveMode`, `tileState`, `itemOptions` |
+| `components/terminal/ScanActions.tsx` | 99 | the shared per-scan action bar (above) |
+| `components/terminal/PriorityPushStatus.tsx` | 207 | the all-done status row (below) |
+| `app/api/priority-status/route.ts` | 118 | `GET /api/priority-status?token` (below) |
+
+Also changed: `lib/identical-boxes.ts` (minted rows carry `source_barcode`; `dedupCodes`, `sourceStillListed`,
+`releasedSources`), `lib/carton-labels.ts` (`findUnprintedForSession`, `batchHasBookedBoxes`,
+`deleteUnprintedLabelByBarcode`, idempotent `batch_id`, `deleteCartonBatch` returns the barcodes),
+`lib/scan-feedback.ts` (`scanAlreadyCountedFeedback`: one 520 Hz sine + a 40 ms tap), `CalendarPicker`
+(`requirePick`), `Keypad` (keys 54 → 50 px), `SmartScanner` (RejectKind `'clash'`; the "Capture anyway"
+nudge), `types/index.ts` (`CartonLabelOrigin` gains `'receiving'`; `MultiPalletSession.loose_barcodes`).
+
+### API contract changes
+
+| Route | Change |
+|---|---|
+| `POST /api/multi-pallet-complete` | `scanned_boxes` expiries normalised to ISO right after the body is parsed. **Print gate** inside the session lock, after the split guard and before all three paths (non-meat, damaged-sticker, scan-every-box): `blockingLabels(findUnprintedForSession(token), barcodesBeingBooked({scanned_boxes, nonmeat_items, manual_items}))` → **409 `{success:false, error:'labels_not_printed', unprinted, batch_ids}`**; nothing written, cursor not moved, no webhook. The bot webhook is sent with `after()` (body serialised before the response), registered only **after** the session write succeeded in all three paths — Next runs an `after()` callback even when the handler fails, so a failed save used to book the pallet in the bot while the cursor stayed put (and the retry booked it twice) |
+| `POST /api/multi-pallet-loose-complete` | same normalisation; the gate runs after the claim guards and before the session save and the webhook (same 409); records `loose_barcodes` in the session; the session is persisted **before** the webhook, and `after()` is registered only once that write succeeded |
+| `GET /api/priority-status?token` (**new**) | read-only, `Cache-Control: no-store`; 401 unless the token is a live `multi_pallet` session. Reads `deliveries.status / received_by_chat_id`, `users.env`, `priority_push_outbox` and `priority_push_config` (`select *`), and the client's `priority_goods_receipts` and `delivery_po_links` (read only). Answers `{success, state, docno?, final?, reason?, codes?}`. The webhook URL never leaves the function |
+| `POST /api/carton-labels` | "save", not "create": `origin` ∈ `new_carton` (default) · `identical` · `receiving` (the edit panel's new barcode); `pallet_number` (0 = loose; null on `/scan`); `batch_id` (client UUID — a retry after a lost response gets the same batch back) |
+| `DELETE /api/carton-labels?token&batch` | **409 `labels_booked`** when any of the batch's barcodes is booked — in its session's `completed_pallets[].barcodes` / `loose_barcodes` (written before the completion routes answer) or in `box_inventory`. Answers `{success, deleted, barcodes, source_barcode}` so the page can drop the rows |
+| `DELETE /api/carton-labels?token&barcode` (**new form**) | the scan row of an identical / receiving label was deleted: removes that one label only while it is unprinted, in this session and not a New carton label (stops orphans like batch `0877ca78`); otherwise a no-op |
+| `POST /api/carton-labels/print` | body gains `via` ∈ `sheet` · `manual` (logged, not stored — no column). The print sheet marks exactly the labels it rendered, right before `window.print()` (`keepalive`, once per page load, a 1.5 s race so a slow POST cannot stall the dialog). `LabelsBrowser`'s Print no longer marks anything; **Mark as printed** sends `via:'manual'`. `afterprint` is never relied on (Android Chrome may not fire it) |
+
+**i18n.** Added families: `priority.*` (21 keys), `labels.gate*`, `labels.markPrinted*`, `labels.*Tag`,
+`labels.deleteAlsoRemoves*`, `labels.deleteBooked`, `labels.sheetBack`, `terminal.nextPalletBtn`,
+`terminal.reprintLabels`, `terminal.alreadyCounted`, `terminal.photoAlreadyCounted`,
+`terminal.differentCarton`, `terminal.labelNotPrinted`, the edit-panel keys (`terminal.field*`,
+`terminal.missing*`, `terminal.changesReady`, `terminal.whichItem`, `terminal.notOnInvoice`,
+`terminal.otherName`, `terminal.pickExpiry`, `terminal.expiryPast`, `terminal.batchLabel`,
+`terminal.scannedBarcode` …), `palletVerify.leftToScan`, `palletVerify.changeTotal`,
+`palletVerify.closeShort*` / `closeUnread*`, `palletVerify.keepScanning`, `identical.save*`,
+`identical.another*`, `carton.save*`, `scanner.alreadyCounted`. Removed: `terminal.swipeNextPallet`,
+`terminal.sendToPriority`, `terminal.duplicateOf`, `palletVerify.moreBoxesToGo`, `forceCreateBtn`,
+`forceConfirmWarning`, `discrepancy*`, `identical.create/createdTitle/createdHint/print/added`,
+`carton.create/createOne/created`, `terminal.batchTag/batchHint`, `terminal.productData`. English now says
+"labels", not "stickers". `en.ts` and `he.ts` keep the same key set (tsc enforces it).
+
+### The Priority push, as the scanner sees it
+
+Nobody in the warehouse sends anything to Priority. When the last pallet's LPN (or the last loose box) is
+booked, the bot closes the delivery (`deliveries.status` → `Complete` / `Has Discrepancy`); our trigger
+`trg_priority_push_enqueue` queues it in `priority_push_outbox`; pg_cron job 8 runs
+`priority_push_dispatch()` every minute and posts it to the client's Make scenario, which creates the
+Priority draft and calls `wb_mark_gr_synced` (a `priority_goods_receipts` row, `origin='priority_push'`);
+the trigger `trg_bot_priority_receipt` on that row tells the bot, which sends the worker "✅ Priority
+received it" in WhatsApp.
+
+**State on 2026-10-01 (read live, SELECT only):** the enqueue trigger is broken — it inserts `NEW.category`
+and `deliveries` has no such column, so every close since 2026-09-23 raised 42703, was swallowed, and the
+outbox has **0 rows**. `priority_push_config` is `url NULL`, `enabled false`; the vault secret
+`priority_push_secret` does not exist. The fix is `docs/migrations/2026-10-01-priority-push-autofire.sql`
+(**not applied**; full description in `SYSTEM_REFERENCE.md` §6.5). So today the status row shows **"Automatic
+sending to Priority is off"** for a Prod user and **"Test user — not sent to Priority"** for a Test user
+(`users.env = 'Test'`, e.g. Mevaser Ran, chat `972528331573`).
+
+`derivePriorityStatus` — first match wins:
+
+1. Priority has a receipt for the delivery (`priority_goods_receipts`, any origin except the local
+   `warehouse_bot` draft) → `received` (draft, or `final` when `statdes = סופית`) / `cancelled` (`מבוטלת`).
+   This beats every outbox status, `failed` included.
+2. Outbox states that stand whatever the config says: `already_in_priority` → `already`; `skipped` → `test`
+   (Test user) else `held`; `failed`; `unconfirmed`; `expired`; `waiting` → `waiting` with a reason
+   (`items` + the unmapped codes · `supplier` · `nothing` · `other`).
+3. No outbox row and a Test user → `test`. 4. Push off → `off`. 5. No delivery → `unknown`; still
+   `In Progress` → `closing`. 6. Closed but no outbox row → `unknown`.
+7. `queued` → `held` (local draft · another delivery of the same supplier note already in Priority or on
+   its way — `hold_same_invoice`, mirrored by `heldBySameNote` from reads the route makes only for a queued
+   row on a live push · queued before the push was enabled · category not switched on or switched on later —
+   the same holds as `priority_push_plan()`; a `released_at` lifts them) / `waitingPo` (no PO
+   link yet, inside `po_grace_minutes`) / `sending`; `sent` → `sending`; `delivered` → `sending`, or
+   `awaiting` once older than 15 min.
+
+`PriorityPushStatus` colours: blue `cloud_sync` (pulsing) for closing / sending, blue `schedule` for awaiting;
+green `check_circle` for received / already; amber `sync_problem` (unconfirmed), `receipt_long` (waitingPo),
+`report_problem` (waiting, cancelled); red `error` for failed / expired ("tell the office"); grey
+`pause_circle` / `info` / `cloud_off` / `help_outline` for held / test / off / unknown. Polling stops on
+received, cancelled, already, failed, expired, test, off, or a 401; it pauses while the tab is hidden.
+
+### Known limits after this release
+
+- **The push is off** until the migration is applied **and** the client sets his webhook URL and
+  `enabled = true`. Default categories after the migration are `{meat}`: non-meat closes are held, not sent,
+  until he confirms (the four Prod closes since 2026-09-23 were all non-meat).
+- **140 cartons saved before `01a2ae5`** keep `box_expiry` NULL (the `DD/MM/YYYY` string is still in
+  `box_expiry_raw`). Not repaired: 76 can be repaired mechanically by a hand-run UPDATE; the 64 tilapia
+  cartons of batch `f6a47cfc` (IN264172698) carry the receiving day as their expiry — printed on their
+  labels too — and need someone to read the real date off the supplier stickers first.
+- `requirePick` (no silent "today") is the `CalendarPicker` default since the cross-review fixes: the edit
+  panel, the All-boxes-identical form and New carton all open an empty date with no day chosen.
+- "Printed" means the sheet rendered the labels and opened the print dialog — the browser never says
+  whether paper came out. **Mark as printed** is a manual override.
+- Unchanged: the loose phase still cannot close short (SYSTEM_REFERENCE X2-12); a split job never shows the
+  `pallet_done` card.
+
 ## Table of contents
 
+- [Changes since the audit — the 2026-10-01 floor-feedback release](#changes-since-the-audit-the-2026-10-01-floor-feedback-release)
 - [Chapter 1 — The pallet-verify page — the pallet inbound phase machine](#chapter-1-the-pallet-verify-page-the-pallet-inbound-phase-machine)
   - [0. Scope & file map](#0-scope-file-map)
   - [1. Per-file reference](#1-per-file-reference)
@@ -233,7 +374,7 @@ Sibling files in the same folder (out of scope, referenced only): `NonMeatTypeAF
 | 2009–2025 | render: `manualMode` → `<MeatManualCountFlow>` (only while `phase === 'scanning'`) |
 | 2027–2114 | render: `phase === 'all_done'` |
 | 2116–2342 | render: `loose_scanning` / `loose_confirming` |
-| 2344–2387 | render: `pallet_done` (DoneOverlay + swipe-next) |
+| 2344–2387 | render: `pallet_done` (DoneOverlay + swipe-next; a one-tap "Scan pallet N of M" since 2026-10-01) |
 | 2389–2445 | `newestFirst`/`activeBox`/`restBoxes`, `palletRowActions()` |
 | 2447–2454 | `statusText` |
 | 2456–2597 | `mainFooter` (priority-ordered footer modes) |
@@ -340,7 +481,7 @@ Inherited from `types/index.ts:278–302`: `barcode, sku, item_name, item_name_h
 | `pendingForceConfirm` | 350 | `boolean` | the amber "discrepancy" modal is open |
 | `showPallets`, `showCartonCreator`, `showLabels` | 357–362 | `boolean` | tool-dock overlays |
 | `activeExpanded` | 363 | `boolean` | active card expanded |
-| `pendingNextPallet` | 364 | `number \| null` | the number the swipe on the done overlay advances to |
+| `pendingNextPallet` | 364 | `number \| null` | the number the done overlay advances to (by a swipe until 2026-10-01, a tap on "Scan pallet N of M" since) |
 
 | ref (`useRef`) | line | purpose |
 |---|---|---|
@@ -493,7 +634,7 @@ Response handling: `409` + `error==='no_claimed_pallet'` → `handlePalletReleas
 
 **`resetPalletUiState()`** — 1747–1765: clears input/count/boxes/`processedRef`/type/groups/prompt/forcedMix/selection/edit/single-group/count error/merges/rejected pairs/pending merge/`manualMode`/`activeExpanded`.
 
-**`advanceToNextPallet()`** — 1769–1774: `currentPallet = pendingNextPallet ?? currentPallet+1`, reset, `phase='scanning'`. Fired by the swipe on the done overlay (2368–2371).
+**`advanceToNextPallet()`** — 1769–1774: `currentPallet = pendingNextPallet ?? currentPallet+1`, reset, `phase='scanning'`. Fired by the swipe on the done overlay (2368–2371) — **since 2026-10-01 (`84ffc9f`) by a tap** on "Scan pallet N of M", returning unless `phase === 'pallet_done'` (a double tap advances once), armed 500 ms after the card appears, followed by a 400 ms tap shield; traced `next_pallet {from, to, via:'tap'}`.
 
 **`handlePalletReleased()`** — 1784–1790 (split only): the manager released/reassigned the claimed slot mid-scan (409 from either confirm path). Clears this pallet's cache, resets UI, toast `split.palletReleased` ("This pallet was reassigned — pick another one.", red), `phase='job'`, `reloadSession()`.
 
@@ -504,7 +645,7 @@ Response handling: `409` + `error==='no_claimed_pallet'` → `handlePalletReleas
 - **`handleAcceptMerge()`** (447–457): writes every `from_key → to_key` (skipping identity) into `acceptedMerges`; **`handleRejectMerge()`** (460–469): adds the pair fingerprint to `rejectedMergePairs`. Accepted merges are applied in `detectType`, `uniformCandidateFrom`, `committedCount`, `groupedByName`, the persist snapshot, and are sent as `merge_map`.
 - **`handleShareSummary()`** (1277–1304): builds `Doc: {doc}` + one line per box `n. name · w.www kg · barcode` from the current phase's list; `navigator.share({text})` when available (AbortError silently ignored), else `navigator.clipboard.writeText` + toast `terminal.shareCopied`.
 - **`buildDockChips({gap})`** (1307–1327): 8 chips — `create` (→ `CartonCreator`), `labels` (→ `LabelsBrowser`), `warehouses` (**locked**), `pallets` (→ `PalletsBrowser`), `delete` (hint toast), `share`, `assign` (**locked**), `gap` (caller-supplied). Locked chips call `onLockedPress=showLockToast` → `terminal.lockedToast` ("Locked · not available yet").
-- **`cartonOverlays`** (1340–1358): `CartonCreator` gets `items=session.ocr_data`; `onCreated(count)` closes it, opens Labels and toasts `carton.created`. Rendered on the loose and main screens (2337, 2791) — not on `all_done`/`pallet_done`.
+- **`cartonOverlays`** (1340–1358): `CartonCreator` gets `items=session.ocr_data`; ~~`onCreated(count)` closes it, opens Labels and toasts `carton.created`~~ — **since 2026-10-01** `onCreated` closes it and toasts `carton.saved` ("N labels saved · print them from Labels, then scan each carton"); Labels is NOT opened. The same fragment also holds `LabelsBrowser` and `IdenticalBoxesForm`. Rendered on the loose and main screens and, since `bbbbf91`, on `all_done` (for **Reprint labels**) — not on `pallet_done`.
 - **`imageModal`** (1362–1384): `fixed inset-0 z-[60]` viewer; tap outside or "Close" (`palletVerify.closeButton`) dismisses; device Back also dismisses (370).
 - **`HeaderCount({caption,current,total,align,tone})`** (1933–1954): caption + mono `current[/total]` with `dir="ltr"`; `total <= 0` hides the denominator; tone colours `done #4ade80`, `warn #fbbf5c`, `brand #13a4ec`. **Defined inside the component body** (see §6).
 
@@ -526,6 +667,10 @@ Response handling: `409` + `error==='no_claimed_pallet'` → `handlePalletReleas
 
 #### 2.1 The `Phase` machine
 
+> **Updated 2026-10-01** (scanner `84ffc9f`, `e7cb80b`, on `preview`): `pallet_done → scanning` is a
+> **tap** on "Scan pallet N of M", not a slide; the confirm handlers refuse while the print gate blocks; a
+> server `409 labels_not_printed` returns to the scanning phase with the gate shown, never a red error.
+
 ```mermaid
 stateDiagram-v2
   [*] --> loading
@@ -536,19 +681,20 @@ stateDiagram-v2
   loading --> loose_scanning : single: current_pallet>pallet_count && loose>0 | split: loose claimed
   job --> scanning : SplitJobScreen.onClaimed(n)
   job --> loose_scanning : watcher effect (loose.owner===me && claimed)
-  scanning --> confirming : swipe confirm / force-confirm swipe / single-count submit
-  confirming --> scanning : !success or network error
+  scanning --> scanning : print gate blocks (labelGate.count>0) — confirm refused, amber "Print N labels first"
+  scanning --> confirming : slide confirm / close-short slide / single-count submit
+  confirming --> scanning : !success, network error, or 409 labels_not_printed
   confirming --> job : 409 no_claimed_pallet (split) | success (split)
   confirming --> pallet_done : success, !all_done (single)
   confirming --> loose_scanning : success, all_done, loose_box_count>0 (single)
   confirming --> all_done : success, all_done, loose_box_count==0 (single)
-  pallet_done --> scanning : swipe "receive next pallet"
-  loose_scanning --> loose_confirming : swipe confirm loose
-  loose_confirming --> loose_scanning : !success or network error
+  pallet_done --> scanning : tap "Scan pallet N of M" (armed 500 ms after the card appears)
+  loose_scanning --> loose_confirming : slide confirm loose (refused while the print gate blocks)
+  loose_confirming --> loose_scanning : !success, network error, or 409 labels_not_printed
   loose_confirming --> all_done : success (single)
   loose_confirming --> job : success (split, after awaited reload)
 ```
-Sources: loader 499–607; watcher 633–643; `handleConfirmPallet` 1796–1864; `applyCompletion` 1675–1739; `advanceToNextPallet` 1769; `handleConfirmLooseBoxes` 1550–1611; `handlePalletReleased` 1784. `MeatManualCountFlow` posts its own `/api/multi-pallet-complete` and funnels the result into the same `applyCompletion`/`handlePalletReleased` (2020–2022), so the manual path has identical exits. Note there is no transition into `error` after loading — later failures stay in-phase with an `error` banner.
+Sources (09-08 line numbers): loader 499–607; watcher 633–643; `handleConfirmPallet` 1796–1864; `applyCompletion` 1675–1739; `advanceToNextPallet` 1769; `handleConfirmLooseBoxes` 1550–1611; `handlePalletReleased` 1784. On `preview` after 2026-10-01: `handleConfirmLooseBoxes` 2472, `applyCompletion` 2653, `advanceToNextPallet` 2759, `handleConfirmPallet` 2789, `refuseForLabels` 2442. `MeatManualCountFlow` posts its own `/api/multi-pallet-complete` and funnels the result into the same `applyCompletion`/`handlePalletReleased`, so the manual path has identical exits (its 409 `labels_not_printed` shows `labels.gateHintManual`, "Print the saved labels first — go back and open Labels."). Note there is no transition into `error` after loading — later failures stay in-phase with an `error` banner.
 
 #### 2.2 Sub-modes inside `scanning` (not in `Phase`)
 
@@ -558,45 +704,59 @@ These are orthogonal booleans/objects that change what the sheet footer or the w
 |---|---|---|---|
 | uniform prompt | `pendingUniformPrompt` | `maybeTriggerUniformPrompt` / `restoreUniformPrompt` | Yes / No buttons; auto-retraction; delete/edit of a sample |
 | count input (single) | `pendingSingleGroup` | "Yes — only this product" | count submit (→ confirm) / "Cancel — keep scanning" |
-| count input (mix) | `confirmedBoxCount===0 && !anyProcessing && (doneCount>=4 \|\| forcedMix)` (2487) | 4th OCR-complete box, "No — other products too", or "Done scanning?" | count submit |
-| force-confirm modal | `pendingForceConfirm` | "Create LPN anyway" button or the dock's "Report gap" chip when `canForceConfirm` (2662–2665) | swipe (→ confirm) / Cancel |
+| count input (mix) | `confirmedBoxCount===0 && (totalEdit!==null \|\| (!anyProcessing && (doneCount>=4 \|\| forcedMix \|\| pendingSingleGroup \|\| a minted row)))` | 4th OCR-complete box, "No — other products too", "Done scanning?", an "All boxes identical" batch, or the total-edit pencil | count submit |
+| total edit (2026-10-01) | `totalEdit` (the old total, or null) | the pencil beside "N of M cartons left to scan" or a tap on the CARTONS counter, when `canEditTotal` (scanning, a total set, no locked single-item group) | Set (same minimum `max(2, scanned)`), traced `count_changed {from,to}`; Cancel restores the old total |
+| close-short modal | `pendingForceConfirm` | outlined amber "Fewer cartons arrived? Close with N" (`closeShortBtn`; "Unreadable cartons? Close with N" when only soft warnings remain) or the dock's "Report gap" chip, when `canForceConfirm` and the print gate is clear | amber slide "Slide to close with N cartons" (`closeShortConfirm`) → `handleConfirmPallet({boxCount: committed, groups: uniformGroups})` — it books exactly what it says (`588295d`) / "Keep scanning" |
+| scan notice (2026-10-01) | `scanNotice` `{text, tone:'info'\|'warn', different?}` | blue: a re-read of a counted carton (`terminal.alreadyCounted`) or a manual capture of a counted label (`terminal.photoAlreadyCounted`); amber: a misread / too-short read | clears itself after `scanNoticeMs` (4 s; 8 s with "Different carton?", held while touched); "Different carton?" → identical form with `anotherOf`; a batch's supplier code → `terminal.coveredByLabels`, no link |
+| print gate (2026-10-01) | `labelGate = blockingLabels(unprinted.labels, open list's barcodes)` | an unprinted label whose carton is on this list, or any unprinted New carton label in the session | printing them (the sheet marks them; `useUnprintedLabels` refetches when the tab is visible again), "Mark as printed", or deleting them in Labels |
+| identical form | `identicalFor` `{box, loose, anotherOf?}` | row action "All boxes identical", or "Different carton?" on a notice | "Save N labels" → `handleIdenticalCreated` (back to the scanner) / Back |
 | AI merge banner | `pendingMerge` | consolidation effect | Accept / Keep separate |
-| edit panel | `editForm` | Edit action / active-card edit | Save / Cancel |
-| damaged-sticker manual count | `manualMode` (only when `session.meat_discrepancy`) | link `palletVerify.stickersDamaged` (2588–2595) | Cancel → back to scanner; completion → `applyCompletion` |
-| needs-review block | any `needs_review` box | OCR gate / unreadable manual digits | Edit with name+weight, or Delete; or `meat_discrepancy` turns it into a soft warning routed to force-confirm |
+| edit panel | `editForm` (+ its own `editError`) | Edit action / active-card edit / the amber "Fix N warnings" button | Save / Cancel |
+| damaged-sticker manual count | `manualMode` (only when `session.meat_discrepancy`) | link `palletVerify.stickersDamaged` | Cancel → back to scanner; completion → `applyCompletion` |
+| needs-review block | any `needs_review` box | OCR gate / unreadable manual digits | Edit with name+weight, or Delete; or `meat_discrepancy` turns it into a soft warning routed to the close-short modal |
 | image viewer | `viewingImage` | View actions | tap/Close/device Back |
-| tool overlays | `showPallets`/`showCartonCreator`/`showLabels` | dock chips | each overlay's `onBack` |
+| tool overlays | `showPallets`/`showCartonCreator`/`showLabels` | dock chips; "Choose in Labels" on the gate; "Reprint labels" on `all_done` | each overlay's `onBack` |
 
-#### 2.3 Footer decision table (main screen, 2456–2597)
+#### 2.3 Footer decision table (main screen, `mainFooter`)
 
-Evaluated in order:
-1. `error` banner (always, when set); `statusText` caption when `!canConfirm` — `readyToConfirm` / `waitingInput` ("⏳ Waiting for your input below") / `scanToStart` (committed < 2, no total) / `setTotalBelow` / `moreBoxesToGo {count}`.
+Evaluated in order (2026-10-01):
+1. `footerError` — red, `error` icon, `role="alert"`, persistent; **failures only** (network, failed complete, session, split clash, saves). The edit panel's own errors no longer land here (`editError`, `59fde78`). `statusText` caption when `!canConfirm` — `readyToConfirm` / `waitingInput` / `scanToStart` (committed < 2, no total) / `setTotalBelow` / `leftToScan {left,total}` ("6 of 15 cartons left to scan"), with a pencil (`changeTotal`) when `canEditTotal`. **Scan notices are not in the footer**: `scanNoticeBanner` floats at the top of the camera, because on a 360×641 phone one more footer line made `BottomSheet` hide the whole footer (count input included) and never bring it back.
 2. `pendingUniformPrompt` → `uniformChoose` ("Same product, same weight. Is this the only product on the pallet?") + **Yes — only this product** / **No — other products too** (disabled while confirming).
-3. else count input when `confirmedBoxCount===0 && !anyProcessing && (doneCount>=4 || forcedMix || pendingSingleGroup)`: `deferredCountTitle` ("How many boxes on this pallet?"), hint `singleMultiplyNote` or `deferredCountHint` ("Enter the total — including the {scanned} you already scanned."), numeric input (`min=max(2,scanned)`, Enter submits, `autoFocus`), **Set** button, error line, and **Cancel — keep scanning** when `pendingSingleGroup`.
-4. else: **Create LPN anyway** (amber) when `!canConfirm && canForceConfirm`; **SwipeConfirm** `swipeConfirmPallet` ("Slide to confirm · Pallet {current}") when `canConfirm && phase!=='confirming'`; otherwise a disabled button reading `confirmPalletBtn` / `warningsBlockConfirm {count}` / `scanMoreToContinue {2−committed}` / `setTotalBelow` / `boxesNeeded {declared−committed}`. Plus the **Done scanning? Enter the pallet total** escape (blue, `setForcedMix(true)`) when `confirmedBoxCount===0 && !forcedMix && !pendingSingleGroup && 1<=doneCount<4 && !anyProcessing`, and the warnings note (`unreadableSoftNote` when soft, else `warningsBlockConfirm`).
+3. else the count input (condition in §2.2): `deferredCountTitle` ("How many boxes on this pallet?") with **Cancel** on the title line while editing the total, hint `singleMultiplyNote` or `deferredCountHint`, numeric input (`min=max(2,scanned)`, Enter submits, `autoFocus`), **Set**, error line, and **Cancel — keep scanning** when `pendingSingleGroup`.
+4. else, first match:
+   - `(canConfirm || canForceConfirm) && labelGate.count > 0` → **print gate**: amber hint `labels.gateHint` (`print_disabled` icon), an amber one-tap **Print N labels first** (`labels.gateButton`; opens `/labels/print` for exactly the blocking batches, synchronously inside the click so pop-up blockers allow it) and a link **Choose in Labels** (opens Labels on "Not printed");
+   - `!canConfirm && canForceConfirm` → outlined amber **Fewer cartons arrived? Close with N** (`closeShortBtn`) / **Unreadable cartons? Close with N** (`closeUnreadBtn`) → close-short modal;
+   - `canConfirm && phase!=='confirming'` → blue **SwipeConfirm** `swipeConfirmPallet` ("Slide to confirm · Pallet {current}");
+   - unresolved warnings → a live amber button `warningsBlockConfirm {count}` that opens the first flagged carton's editor;
+   - `showDoneScanning` → nothing here (the escape below is the next step; the grey bar only repeated the status line, and its ~56px pushed the newest card's actions under the footer at the tall snap on a 568–641px phone);
+   - otherwise a disabled grey button: `confirmPalletBtn` / `scanMoreToContinue {2−committed}` / `setTotalBelow` / `boxesNeeded {declared−committed}`.
+
+   Plus the **Done scanning? Enter the pallet total** escape (blue, `setForcedMix(true)`) when `showDoneScanning` = `confirmedBoxCount===0 && !forcedMix && !pendingSingleGroup && 1<=doneCount<4 && !anyProcessing`, and the warnings note (`unreadableSoftNote` when soft, else `warningsBlockConfirm`). Count strings that can read 1 have a `…One` key (`scanMoreToContinueOne`, `boxesNeededOne`, `warningsBlockConfirmOne`; in Labels `printOne`, `printSentOne`, `markPrintedConfirmOne`, `markedPrintedOne`, `deleteAlsoRemoves(Loose)One`; `carton.savedOne`).
 5. Below everything: **Stickers damaged? Enter counts instead** link when `softWarnings && !manualMode && phase==='scanning'`.
 
 #### 2.4 One pallet, happy paths
 
-**A. Single-uniform (fixed-weight product).** Scan box 1 → OCR → scan box 2 → OCR done, same name key, weights equal within 0.1 g → `maybeTriggerUniformPrompt` raises the prompt → worker taps **Yes** → count input (min 2) → **Set** → `handlePalletCountSubmit` locks the group and calls `handleConfirmPallet({boxCount, groups})` → `POST …/multi-pallet-complete` with `box_count=N`, `uniform_groups=[{name_key,N,avg}]` → `pallet_done` (or loose/all_done if last) → LPN link + swipe next.
+**A. Single-uniform (fixed-weight product).** Scan box 1 → OCR → scan box 2 → OCR done, same name key, weights equal within 0.1 g → `maybeTriggerUniformPrompt` raises the prompt → worker taps **Yes** → count input (min 2) → **Set** → `handlePalletCountSubmit` locks the group and calls `handleConfirmPallet({boxCount, groups})` → `POST …/multi-pallet-complete` with `box_count=N`, `uniform_groups=[{name_key,N,avg}]` → `pallet_done` (or loose/all_done if last) → LPN link + one tap on **Scan pallet N of M**.
 
-**B. Mix / catch-weight.** Boxes 1–2 differ in name or weight → no prompt. After the 4th OCR-complete box the count input appears (or after 1–3 boxes via "Done scanning?"). Worker enters the total → `PATCH current_box_count` → keeps scanning; footer shows `boxesNeeded`; when `committed >= declared` and no warnings → swipe → `POST` with `box_count=N`, empty `uniform_groups` → server classifies.
+**B. Mix / catch-weight.** Boxes 1–2 differ in name or weight → no prompt. After the 4th OCR-complete box the count input appears (or after 1–3 boxes via "Done scanning?"). Worker enters the total → `PATCH current_box_count` → keeps scanning; the caption shows "N of M cartons left to scan" and the pencil reopens the total; when `committed >= declared` and no warnings → slide → `POST` with `box_count=N`, empty `uniform_groups` → server classifies.
 
-**C. Short pallet.** Declared 12, scanned 10, cannot find more → **Create LPN anyway** (`canForceConfirm`) → amber "Discrepancy vs. delivery note" modal (Scanned/Expected/Shortfall tiles, `forceConfirmWarning`) → swipe `discrepancySwipe` → `handleConfirmPallet()` posts `box_count=12` (the declared value — see §6 #6) with 10 boxes.
+**C. Short pallet.** Declared 15, counted 9, the rest did not arrive → outlined amber **Fewer cartons arrived? Close with 9** (or the gap chip) → modal "Close the pallet with missing cartons?" — "You entered 15. 9 are counted. Only the counted cartons are booked." with tiles Counted / Your total / Missing → amber slide **Slide to close with 9 cartons** → `handleConfirmPallet({boxCount: 9, groups})`. (Before `588295d` the slide posted the declared 15, and on a one-product pallet whose cartons all weighed the same the server's uniform path booked 15.) A typed total that was simply wrong is fixed with the pencil instead.
 
-**D. Unreadable carton.** Barcode will not decode → "capture anyway" → OCR resolves digits ≥ 13 → identity assigned, deduped, uploaded. Digits unreadable → `needs_review` row (`pending` status), footer blocked with `warningsBlockConfirm` unless `meat_discrepancy`, in which case `unreadableSoftNote` and force-confirm are offered. Worker fixes via Edit (name + weight clears the flag) or deletes.
+**D. Unreadable carton.** Barcode will not decode → "Capture anyway" (it pulses only after a misread in the last 10 s, or after 6 s with no decode, and never while the count input or the single-item question is showing or the sheet is pulled over the camera) → OCR resolves digits ≥ 13 → identity assigned, deduped, uploaded; if those digits are an already-counted carton (or an identical batch's supplier code) the capture is dropped with a blue "This label is carton #N — it is already counted." and a trace `ui/manual_capture_duplicate`. Digits unreadable → `needs_review` row (`pending` status), footer blocked with `warningsBlockConfirm` unless `meat_discrepancy`, in which case `unreadableSoftNote` and the close-short modal are offered. Worker fixes via Edit (name + weight clears the flag; "Create barcode" mints a `28…` label, origin `receiving`, which then falls under the print gate) or deletes.
+
+**E. Saved labels on the list (2026-10-01).** "All boxes identical" on a carton → form → **Save N labels** → back to the scanner with N rows on the list, each carrying an unprinted label. When the list is otherwise ready, the slide is replaced by **Print N labels first** → the print sheet marks the labels printed as it opens the dialog → back on the scanner tab the badge refetch lifts the gate and the slide returns.
 
 #### 2.5 Split job (`?w=` links)
 
-Loader → no claimed slot → `job` → `<SplitJobScreen>` calls `POST /api/pallet-claim {token, worker_chat_id, action}` (`components/terminal/SplitJobScreen.tsx:100–103`; actions `next|release|reassign|add|close_short|take_loose`, `app/api/pallet-claim/route.ts:15`) and on a pallet claim invokes `onClaimed(slot.n)` → page sets `currentPallet=n`, `phase='scanning'`. Scanning is the normal flow with two additions: the cross-worker duplicate guard (656–678, 902–921) and `worker_chat_id` on both completion POSTs. Success returns to `job` (never `pallet_done`), so the worker never sees the done overlay/LPN link on a split job (see §6 #9). Release mid-scan → 409 → `handlePalletReleased`. The loose task moves the worker via the watcher effect; finishing it returns to `job` after an awaited reload.
+Loader → no claimed slot → `job` → `<SplitJobScreen>` calls `POST /api/pallet-claim {token, worker_chat_id, action}` (`components/terminal/SplitJobScreen.tsx:100–103`; actions `next|release|reassign|add|close_short|take_loose`, `app/api/pallet-claim/route.ts:15`) and on a pallet claim invokes `onClaimed(slot.n)` → page sets `currentPallet=n`, `phase='scanning'`. Scanning is the normal flow with two additions: the cross-worker duplicate guard (656–678, 902–921; a clash is a red hold `'clash'` and a red `error`) and `worker_chat_id` on both completion POSTs. Success returns to `job` (never `pallet_done`), so the worker never sees the done overlay/LPN link on a split job (see §6 #9). Release mid-scan → 409 → `handlePalletReleased`. The loose task moves the worker via the watcher effect; finishing it returns to `job` after an awaited reload.
 
 #### 2.6 Loose phase
 
-Entered in single mode when the last pallet completes with `loose_box_count > 0` (or on reload when `current_pallet > pallet_count`). Header: `loose.title` ("Loose boxes") at the start, cartons `scanned/declared` at the end, tone `done` when `scanned >= declared` else `warn`. `canConfirmLoose = scanned >= min(2, declared) && (declared===0 || scanned >= declared) && !hasUnresolvedLooseWarnings` (2124–2127). Confirm is a warn-variant SwipeConfirm `swipeConfirmLoose` ("Slide to confirm {count} loose boxes"); the dock's Report gap chip only toasts `gapNotApplicable` here. Differences from the pallet phase are listed in §1.2.5.
+Entered in single mode when the last pallet completes with `loose_box_count > 0` (or on reload when `current_pallet > pallet_count`). Header: `loose.title` ("Loose boxes") at the start, cartons `scanned/declared` at the end, tone `done` when `scanned >= declared` else `warn`. `canConfirmLoose = scanned >= min(2, declared) && (declared===0 || scanned >= declared) && !hasUnresolvedLooseWarnings`. Confirm is a **blue** (brand, since `84ffc9f`; it was amber) SwipeConfirm `swipeConfirmLoose` ("Slide to confirm {count} loose boxes"); when the print gate blocks, the same amber `labelGateFooter` with `labels.gateHintLoose` replaces it. Scan notices and "Different carton?" work as in the pallet phase; the edit panel is mounted in this phase too (`59fde78` — before it, Edit in loose paused the camera and showed nothing). The dock's Report gap chip only toasts `gapNotApplicable` here. Differences from the pallet phase are listed in §1.2.5.
 
 #### 2.7 Header counters & progress
 
-Main screen (2601–2626): `DesignHeader` title `Doc: {document_number}`, `leading` = `HeaderCount` "Pallet" `currentPallet/pallet_count`, `right` = `HeaderCount` "Cartons" `committed/confirmedBoxCount` (denominator hidden while 0), tone `done` when `canConfirm`; `ProgressHeader count={committed} total={confirmedBoxCount}` with no label (bare bar). Loose (2217–2241): leading = "Loose boxes" caption; right = cartons `scanned/declared`. `pallet_done` overlay stats: `currentPallet/pallet_count`, cartons (= last `completed_pallets[].box_count` or `committed`), total scanned weight (sum of `weight>0`, 1 dp). `all_done` card: pallet count, Σ `completed_pallets[].box_count`, per-pallet `/pallet/{lpn}?token=…[&lang=Hebrew]` print links, loose note, a **locked** "Close & send to Priority" button (`terminal.sendToPriority`, `showLockToast`), and `palletVerify.expiryNote` ("This page stays available for ~2 hours…").
+Main screen: `DesignHeader` title `Doc: {document_number}`, `leading` = `HeaderCount` "Pallet" `currentPallet/pallet_count`, `right` = `HeaderCount` "Cartons" `committed/confirmedBoxCount` (denominator hidden while 0; a button that reopens the total when `canEditTotal`), tone `done` when `canConfirm`; `ProgressHeader count={committed} total={confirmedBoxCount}` with no label (bare bar). Loose: leading = "Loose boxes" caption; right = cartons `scanned/declared`. `pallet_done` card: stats `currentPallet/pallet_count`, cartons (= last `completed_pallets[].box_count` or `committed`), total scanned weight (sum of `weight>0`, 1 dp); then **Print label for this pallet** (`terminal.issuePalletLabels`, the `/pallet/{lpn}?token=…` link) and a full-width blue 54 px **Scan pallet N of M** button (`terminal.nextPalletBtn`) — no slide. `all_done` card: pallet count, Σ `completed_pallets[].box_count`, then **`PriorityPushStatus`** (the automatic push's status row — no button), the per-pallet `/pallet/{lpn}?token=…[&lang=Hebrew]` print links, **Reprint labels** (`terminal.reprintLabels`, opens Labels; `cartonOverlays` is rendered in this phase so it can), the loose note, and `palletVerify.expiryNote` ("This page stays available for ~2 hours…"). The locked "Close & send to Priority" button is gone.
 
 ---
 
@@ -640,6 +800,8 @@ Restore logic (loader 531–541, 575–591): only when `cached.scannedBoxes.leng
 `terminal.*`: `lockedToast`, `toolCreateCarton`, `toolLabels`, `toolWarehouses`, `toolPallets`, `toolDelete`, `toolShare`, `toolAssign` ("Send task"), `toolGap` ("Report gap"), `palletDoneTitle`, `allDoneTitle`, `statPallet`, `statCartons`, `statWeight`, `swipeNextPallet`, `issuePalletLabels`, `sendToPriority`, `shareCopied`, `deleteHint`, `gapNotApplicable`.
 `split.*`: `palletReleased`, `duplicateBox`, `anotherWorker`, plus every `split.error.*` reachable through `SPLIT_CLAIM_ERROR_KEYS` (`SplitJobScreen.tsx:40–64`).
 Others: `common.cancel`, `common.delete`, `common.kg`, `loose.title`, `ocr.retry`, `ocr.view`, `pallet.stickers.title`, `pallet.tapOutsideToClose`, `carton.created`. All checked keys exist in both `en.ts` and `he.ts`.
+
+*2026-10-01:* `terminal.swipeNextPallet`, `terminal.sendToPriority`, `terminal.duplicateOf`, `palletVerify.moreBoxesToGo`, `palletVerify.forceCreateBtn`, `palletVerify.forceConfirmWarning`, `palletVerify.discrepancy*` and `carton.created` are gone; the page now also uses `terminal.nextPalletBtn`, `terminal.reprintLabels`, `terminal.alreadyCounted`, `terminal.photoAlreadyCounted`, `terminal.differentCarton`, `terminal.labelNotPrinted`, `palletVerify.leftToScan`, `palletVerify.changeTotal`, `palletVerify.closeShort*` / `closeUnread*`, `palletVerify.keepScanning`, `labels.gate*`, `carton.saved`, `identical.saved*` and the `priority.*` family (through `PriorityPushStatus`).
 
 #### 3.11 Browser / platform APIs used
 `window.location.search` + `URLSearchParams` (206–208); `localStorage` (via `pallet-scan-cache`, `settings-store`); `navigator.share`, `navigator.clipboard.writeText` (1290–1299); `navigator.vibrate` and `AudioContext` (via `lib/scan-feedback.ts:28,80`); `window.history.pushState/back` + `popstate` (via `lib/use-back-close.ts`); `document.documentElement.dir/lang` (via `useLangDir`); `console.*` monkey-patch (`installDebugLogCapture`); `fetch`, `AbortSignal.timeout` (409); `setTimeout` (deferred OCR retry, deferred confirm, debounce); `<a target="_blank" rel="noopener noreferrer">` for sticker pages. `BarcodeDetector`, `getUserMedia`, `requestAnimationFrame` and canvas capture live inside `SmartScanner` (`components/scanner/SmartScanner.tsx:484,707`) — the page only passes callbacks and the synchronous `isDuplicateBarcode` predicate.
@@ -693,7 +855,7 @@ No `process.env.*` is read in this file; no role check exists in this file (role
 3. **(NEW finding) `HeaderCount` is declared inside the component** (1933) so React sees a new component type every render and unmounts/remounts both counters on each state change. Harmless visually today; a perf/animation smell and a hazard if it ever gains state.
 4. **State updates and side effects inside `setState` updaters**: `rescanPalletBox` calls `setDetectedType`/`setUniformGroups`/`setPendingUniformPrompt` inside a `setScannedBoxes` updater (760–783); `retryPalletOcr`/`retryLooseOcr` schedule OCR from inside an updater (749, 1124); `runOcr` calls `archiveStickerPhoto`, `processedRef.add`, `dupFlashRef`, `setError` inside its updater (898–925, 968); `handleSaveEdit` nests two `set*` calls inside the updater (1236–1257). React may invoke updaters twice in StrictMode (the file acknowledges this at 858–859 for the toast). The upload is guarded by `uploadedStickersRef`; the retry `setTimeout` is not, so a dev-mode double OCR call is possible. (smell, not a production bug as far as the code shows)
 5. **Stale `acceptedMerges` inside `runOcr`** (961, 1013): `runOcr` is a plain closure created per render but invoked asynchronously; a merge accepted while OCR is in flight is not seen by that response's `detectType`/`uniformCandidateFrom`. Self-corrects on the next scan/edit.
-6. **Force-confirm posts the declared count, not the scanned count.** The modal says "The pallet will be created with {committed} box(es)" (`forceConfirmWarning`, 2821) and the swipe calls `handleConfirmPallet()` with no override (2827), which sends `box_count: confirmedBoxCount` (1804, 1828). Whether the server books `committed` or `box_count` depends on `app/api/multi-pallet-complete/route.ts` (`box_count || itemBoxes.length` per comment 1656) — [UNVERIFIED which value the bot ends up with; the docs say the shortfall is "recorded as a shortfall" (`discrepancySubtitle`)]. Flagging because the UI copy and the payload disagree on their face.
+6. **Force-confirm posts the declared count, not the scanned count.** The modal says "The pallet will be created with {committed} box(es)" (`forceConfirmWarning`, 2821) and the swipe calls `handleConfirmPallet()` with no override (2827), which sends `box_count: confirmedBoxCount` (1804, 1828). Whether the server books `committed` or `box_count` depends on `app/api/multi-pallet-complete/route.ts` (`box_count || itemBoxes.length` per comment 1656) — [UNVERIFIED which value the bot ends up with; the docs say the shortfall is "recorded as a shortfall" (`discrepancySubtitle`)]. Flagging because the UI copy and the payload disagree on their face. **FIXED 2026-10-01 (`588295d`, on `preview`):** the close-short slide now calls `handleConfirmPallet({boxCount: committed, groups: uniformGroups})`, and the modal says "You entered N. M are counted. Only the counted cartons are booked." Before it, on a one-product pallet whose cartons all weighed the same, the route's uniform path booked the declared total (e.g. 15 while the modal promised 9).
 7. **Loader error messages are always English** (`t(undefined, …)` at 504, 597) because the language arrives with the session that failed to load. Inherent; note for Hebrew-only workers.
 8. **Split loose finish depends on `reloadSession` succeeding** (1601–1602): `reloadSession` swallows a failed GET, so if it fails the page still flips to `job` with the stale session where `loose.status==='claimed'`, and the watcher (633–643) immediately re-enters `loose_scanning` with an empty list — exactly the bounce the comment set out to prevent, now with no boxes. Low likelihood.
 9. **Split workers never see the LPN/print link.** `applyCompletion`'s split branch (1683–1698) sets `lpn`/`lpnUrl` and returns to `job` without rendering `pallet_done`. [UNVERIFIED whether `SplitJobScreen` shows sticker links from `completed_pallets`.]
@@ -2055,6 +2217,17 @@ All **(NEW finding)** unless marked. Ordered by impact; the first three would bi
 ---
 
 ## Chapter 4 — The scanning engine — SmartScanner, barcode parsing, duplicate guard, feedback, caches, stores
+
+> **Addendum 2026-10-01** (`23c06c3`, on `preview`). `SmartScanner`'s `RejectKind` gains `'clash'` (a carton
+> another worker already has on a split job). The duplicate hold is now **blue "Already counted"**
+> (`scanner.alreadyCounted`, HE `כבר נספר`) with a double tick — a decode of a counted carton is routine, not a
+> failure — while a misread and a clash stay red; `/issue` keeps its neutral red "Rejected". **Capture anyway**
+> pulses only after a misread in the last 10 s or after 6 s with no decode, and never while the page sets
+> `nudgeSuppressed` (the count input or the single-item question is showing) or the sheet is pulled over the
+> camera; its hint is all-or-nothing (the stack wraps, so a hint that does not fit drops out of view instead of
+> sticking out under the progress header). `BarcodeDetector` is typed. `lib/scan-feedback.ts` gains
+> `scanAlreadyCountedFeedback()` (one soft 520 Hz sine + a 40 ms tap). What a re-read or a misread *says* on the
+> page is `lib/scan-notice.ts` — see [Changes since the audit](#changes-since-the-audit-the-2026-10-01-floor-feedback-release).
 _Scope:_ `scanner: components/scanner/SmartScanner.tsx`, `components/scanner/EnvExposer.tsx`, `lib/barcode-parser.ts`, `lib/duplicate-guard.ts`, `lib/duplicate-guard.test.ts`, `lib/scan-feedback.ts`, `lib/debug-log.ts`, `lib/offline-queue.ts`, `lib/pallet-scan-cache.ts`, `lib/use-back-close.ts`, `stores/scan-store.ts`, `stores/settings-store.ts`, `components/shared/DebugLogPanel.tsx`, `components/shared/OfflineBanner.tsx` · _Repo state:_ scanner `preview@e46d9b9` (bot `whatsapp@3621f46` not touched by this section) · _Written:_ 2026-09-08
 
 All paths below are relative to the **scanner** repo (`/Users/tonmoybishwas/Downloads/Tonmoy/0_n8n/web-scanner`) unless prefixed `bot:`. Every claim was read from the code; hints from CLAUDE.md / `docs/ARCHITECTURE.md` / `memory_all.md` are called out in §5 when they disagree.
@@ -2712,7 +2885,7 @@ All paths below are relative to `/Users/tonmoybishwas/Downloads/Tonmoy/0_n8n/web
 | `components/terminal/ProgressHeader.tsx` | 49 | `4ead75e` 2026-09-04 | Optional caption + 6px gradient progress bar (indeterminate when total ≤ 0) | `ProgressHeader` |
 | `components/terminal/ActiveScanCard.tsx` | 152 | `36a40f2` 2026-08-14 | The newest scan: status dot, big mono weight, details expander, edit/delete/retry/view actions | `ActiveScanCard` |
 | `components/terminal/HistoryRow.tsx` | 80 | `36a40f2` 2026-08-14 | One older scan row; optional actions row below the summary line | `HistoryRow` |
-| `components/terminal/DoneOverlay.tsx` | 63 | `b800489` 2026-08-03 | Pallet-done modal card with stat tiles + children slot (swipe-next lives there) | `DoneOverlay`, `DoneStat` |
+| `components/terminal/DoneOverlay.tsx` | 63 | `b800489` 2026-08-03 | Pallet-done modal card with stat tiles + children slot (the next-pallet control lives there — a tap button since 2026-10-01) | `DoneOverlay`, `DoneStat` |
 | `components/terminal/ScreenOverlay.tsx` | 32 | `5012eb1` 2026-08-11 | Full-screen z-90 nav destination with 56px sub-header; owns a Back-button guard | `ScreenOverlay` |
 | `components/terminal/Toast.tsx` | 56 | `7a5f450` 2026-08-03 | Bottom-centre pill toast + `useToast` (2.4s) + `useLockToast` preset | `Toast`, `ToastState`, `useToast`, `useLockToast` |
 | `components/terminal/Keypad.tsx` | 28 | `b800489` 2026-08-03 | LTR 3×4 numeric keypad (`0-9`, `.`, `back`) | `Keypad` |
@@ -2797,7 +2970,7 @@ Fonts actually live at `app/fonts/material-icons-round.woff2` (173,620 bytes, on
 - `type ToolTint = 'blue'|'neutral'|'red'|'green'|'amber'` — `:6`.
 - `interface ToolChip` — `:8-19`: `id`, `icon: string | ReactNode` (ligature name or e.g. `<PalletIcon/>`), `label`, `tint`, `iconColor?` (design: blue add `#33b1f0`, amber `#fbbf5c`), `locked?`, `onPress?`, `flip?` (mirrors the glyph via `MI flip`, used for `send` in RTL).
 - `TINT_BG` — `:21-27`: blue `rgba(19,164,236,.2)`, neutral `#243444`, red `rgba(239,68,68,.18)`, green `rgba(34,197,94,.18)`, amber `rgba(245,158,11,.18)`.
-- `ToolDock({chips, onLockedPress})` — `:39-72`. Container `dir="ltr"` + `flex-row-reverse` so the first chip sits at the RTL start regardless of document direction (`:41-45`); `overflow-x-auto no-scrollbar`, `touchAction:'pan-x'`. `onClick = chip.locked ? onLockedPress : chip.onPress` (`:49`). Lock badge `:61-65`: 17px square at top-right, `bg-[#1a2530] border-[#3a4a57]`, `MI lock` 11px `#f6b45a`. A chip with neither `locked` nor `onPress` is inert.
+- `ToolDock({chips, onLockedPress})` — `:39-72`. ~~Container `dir="ltr"` + `flex-row-reverse` so the first chip sits at the RTL start regardless of document direction (`:41-45`)~~ **Since `6a52a5e` (2026-10-01) the chips follow the page direction** (Hebrew unchanged; in English "New carton" is leftmost and hidden chips scroll in from the right) and the end edge fades over 20 px (`mask-image`, mirrored under `rtl:`) as the "more chips" cue. `ToolChip` gains `badge?: number` (an amber count, hidden at 0, `99+` cap — the Labels chip's unprinted-label count since `839d186`); `overflow-x-auto no-scrollbar`, `touchAction:'pan-x'`. `onClick = chip.locked ? onLockedPress : chip.onPress` (`:49`). Lock badge `:61-65`: 17px square at top-right, `bg-[#1a2530] border-[#3a4a57]`, `MI lock` 11px `#f6b45a`. A chip with neither `locked` nor `onPress` is inert.
 
 **Chip inventory per page** (established from the three callers; label keys glossed in Appendix B):
 
@@ -2817,38 +2990,39 @@ Fonts actually live at `app/fonts/material-icons-round.woff2` (173,620 bytes, on
 
 So the **only permanently locked chips on every page are `warehouses` and `assign`**; `create`/`delete` are locked on `/issue` only. (CLAUDE.md's "ToolDock of chips … locked chips" and memory's 2026-08-03 list are stale — see §5.)
 
-#### `components/terminal/EditPanel.tsx` (322 lines)
+#### `components/terminal/EditPanel.tsx` (698 lines — rewritten 2026-10-01, `d44d180` + `59fde78`)
 
-**Purpose.** The in-sheet editor for one scanned carton on `/pallet-verify`. Blue-bordered card: top bar (back / "Carton #N" / Save pill), a **tab strip** carrying the three product values (weight, name, expiry — tap to switch the active field), a **context input** that swaps per field (numeric keypad / item chips + free text / calendar button), an optional amber **barcode suggestion strip** when the carton's 31-digit barcode disagrees with the OCR, a **BATCH** free-text row, and a read-only barcode line. The panel owns no data: every value is a controlled prop, every change is a callback, and Save/Cancel are callbacks.
+**Purpose.** The full-screen editor for one scanned carton on `/pallet-verify` (`fixed inset-0 z-[80]`; the caller pauses the camera while it is open — since `7ac499e` it no longer lives inside the bottom sheet). Layout top to bottom: a top bar (back · "Carton #N" · a one-line status · Save), the **sticker photo** filling everything the controls do not need (tap → full-screen viewer; a "No photo for this carton" placeholder when a cache restore dropped it), then a scrolling controls block: the missing-identity block (only for a manual capture with no readable digits), three **field tiles** (Item · Weight · Expiry), the editor for the selected tile, the supplier batch / lot row, and the scanned barcode row. The panel owns no data: every value is a controlled prop and every change a callback.
 
-**Imports.** `next/image`, `MI`, `Keypad`, `CalendarPicker`, `useT`.
-**Called by.** Only `app/pallet-verify/[token]/page.tsx:1391` (rendered as `editPanelNode` inside the sheet in place of the card + history while `editForm` is set; the footer is suppressed at `:2280`).
+**Why it was rewritten.** Floor complaint (2026-09-24): "very hard to get what it means, which one is selected, which to edit, there is no edit sign". One brand-blue 2 px border meant three things at once (the field being edited, the chosen invoice line, and an always-outlined text box — so two item rows looked selected); empty values were drawn as data (`0 kg`, `—`); the item tile showed only the kashrut tail every line on the invoice shares; and Save looked the same whatever the state. The trace showed every worker saving with the weight still missing and reopening the carton 3–5 times.
 
-**Symbols.**
-- `interface EditItemChip { label; active; onPick }` — `:10-14`.
-- `interface EditPanelProps` — `:16-47`: `cartonNumber: number|string`; `name`; `weight: string` (raw editable text, e.g. `"18.45"`); `expiry: string` (free text `DD/MM/YYYY`); `batch: string`; `barcodeWeight?`/`barcodeExpiry?` (the barcode's reading when it disagrees with OCR — "Undefined = agree, or the format carries nothing"); `onUseBarcodeWeight?`/`onUseBarcodeExpiry?`; `barcode` (read-only); `itemChips?`; `imageData?`; `onViewImage?`; `onNameChange/onWeightChange/onExpiryChange/onBatchChange: (v:string)=>void`; `onSave`; `onCancel`.
-- `type Field = 'weight'|'name'|'expiry'` — `:49`.
-- `ddmmyyyyToIso(v)` — `:51-55`: `/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/` → `YYYY-MM-DD` (zero-padded) or `''`.
-- `isoToDdmmyyyy(iso)` — `:56-60`: `/^(\d{4})-(\d{2})-(\d{2})$/` → `DD/MM/YYYY`, otherwise returns input unchanged.
-- `EditPanel(...)` — `:74-322`.
-  - State: `field` (default `'weight'`, `:81`), `calOpen` (`:82`). **`field` is component-local and resets to weight every time the panel mounts** (every `openEdit`).
-  - `tabStyle(sel)` — `:84-87` (selected = brand tint + 2px `#13a4ec` border + glow).
-  - `handleKey(k)` — `:89-94`: `'back'` → drop last char; a second `'.'` is ignored; **max 5 digits excluding the dot** (`weight.replace('.','').length >= 5` → ignore), so `"999.99"` / `"99.999"` are the longest inputs; otherwise appends.
-  - `tab(f,label,value,mono,grow)` — `:96-112`: label 8px + value 14px; mono values get `dir="ltr"`.
-  - `suggestion(value,onUse)` — `:116-133`: amber strip `qr_code_scanner` + `tr('terminal.barcodeSays',{value})` + pill `tr('terminal.useBarcodeValue')` ("Use"). Comment: amber not red, "nothing is wrong yet and nothing is blocked — the worker decides."
-  - `photo` — `:136-147`: 112×86 button with `next/image` (`unoptimized`, `object-contain`) and a `search` badge; only when both `imageData` and `onViewImage` exist.
-  - Root `:156`: `shrink-0 border-2 border-brand rounded-[14px] overflow-hidden bg-header flex flex-col` — the comment at `:150-155` records the clipping bug that `shrink-0` fixes.
-  - Top bar `:158-175`: back = `arrow_forward_ios` (points "back" in RTL), `document_scanner` + `tr('terminal.editCarton',{n})`, Save pill `check` + `tr('terminal.save')` → `onSave`.
-  - Tab strip `:179-188`: weight `flex-[1.15]` mono (`${weight||'0'} kg`), name `flex-1`, expiry `flex-1` mono (`expiry||'—'`).
-  - Context input `:192-273`:
-    - **weight**: suggestion strip (if `barcodeWeight && onUseBarcodeWeight`, value shown as `"<w> kg"`) → row of `photo` + LTR readout (`font-mono 30px`, `weight||'0'`, unit `common.kg`) → `<Keypad onKey={handleKey}/>`.
-    - **name**: full-width 104px photo (no keypad, so there is room) → wrapping `itemChips` (active = brand tint, `#7cc9f2` text) → `<input dir="rtl" type="text">` bound to `name`.
-    - **expiry**: suggestion strip (if `barcodeExpiry && onUseBarcodeExpiry`) → row of `photo` + a button (`calendar_month`, `tr('terminal.expiryDate')`, mono `expiry || 'DD/MM/YYYY'`, hint `tr('terminal.openCalendar')`) that sets `calOpen`.
-  - **BATCH row** `:284-297`: tag `tr('terminal.batchTag')` ("BATCH" / Hebrew "מנה" = batch), `<input dir="ltr" maxLength={24} placeholder=tr('terminal.batchHint')>` bound to `batch`. Comment `:275-283`: deliberately not a fourth tab (three tabs already hit legibility limits at 360px; batch is rarely printed; blank is valid; nothing gates on it). The 24-char cap matches the bot's `_clean_supplier_batch` rejection threshold quoted in CLAUDE.md.
-  - Barcode row `:300-310`: tag literal `BC_SCAN`, LTR mono ellipsised `barcode`. Read-only — the barcode is the row's identity/dedup key.
-  - `CalendarPicker` `:312-319`: `value=ddmmyyyyToIso(expiry)`, `fieldTitle=tr('terminal.expiryDate')`, `onPick(iso) → onExpiryChange(isoToDdmmyyyy(iso)); setCalOpen(false)`.
+**One state per tile, one colour + icon per state** (`lib/edit-panel-state.ts`, 45 tests):
 
-**Save semantics (in the caller, `app/pallet-verify/[token]/page.tsx`).** `openEdit(box,isLoose)` `:1175-1191` seeds `editForm = {barcode, name_he, name_en, weight: box.weight>0 ? String(box.weight) : '', expiry: box.expiry||'', batch: box.supplier_batch||'', conflict: box.barcode_conflict, image_data, isLoose}` and snaps the sheet to tall. Wiring `:1391-1435`: `cartonNumber` = 1-based index in `looseBoxes`/`scannedBoxes` (or `'—'`); `itemChips` = every `session.ocr_data` line with a name (`active` when `name_he` equals the line's Hebrew name; `onPick` sets both `name_he` and `name_en`); `barcodeWeight = conflict.weight.barcode.toFixed(2)`; `barcodeExpiry = isoToDdmmyyyyShort(conflict.expiry.barcode)`; `onUseBarcodeWeight` writes `String(conflict.weight.barcode)` into `weight`. `handleSaveEdit()` `:1198-1259`: parses `weight` with `parseFloat` (keeps the old weight if not finite/≤0), trims `expiry`/`batch`, patches the box: `ocr_status:'done'`, `item_name`/`item_name_hebrew`, `weight`, `expiry`, `supplier_batch`, **`needs_review` cleared only when both a non-empty name AND a positive weight exist**, `barcode_conflict: undefined` (the worker has chosen). Loose boxes: patch only. Pallet boxes: patch, then `setDetectedType(detectType(...))`, drop uniform groups with <2 done samples, clear a pending uniform prompt whose item no longer has ≥2 samples. `setEditForm(null)` closes the panel. **Nothing is sent to the server on Save** — the edit is local until pallet confirm.
+| tile state | when | look |
+|---|---|---|
+| being edited | `field === f` | brand-blue frame, blue pencil badge, a caret pointing down into the editor (`aria-pressed`) |
+| `missing` | weight `''` · name blank · expiry `''` | amber **dashed** frame, amber "!" badge, value text "Missing" + "tap to enter" — never `0 kg` or `—` |
+| `offInvoice` | a name that matches no invoice line (only when there are lines) | amber frame, amber "!" |
+| `invalid` | weight `0` / `.` / `0.0`; expiry **today or earlier** | red frame, red "!" |
+| `changed` | the value differs from what the panel opened with, and is valid | green check |
+| `idle` | untouched and valid | grey pencil |
+
+The item name is `dir="auto"` and clamped to two lines, so its **first** words show (they tell lines apart). An expiry of *today* is flagged on purpose: on the floor it means the calendar's "today" was taken instead of the sticker's date — how 64 tilapia cartons got their receiving day as expiry.
+
+**Header.** The back chevron points back in both directions (`arrow_forward_ios`, flipped in English). The status line, first match: `missingList` → amber "Missing: weight, expiry" (`terminal.missingList`; barcode / item / weight / expiry in that order; a weight of 0 counts as missing); an expiry in the past → amber "Check the expiry date"; something changed → green "N changed — tap Save"; a flagged or barcode-conflict carton with nothing to fill in → blue "Check the values, then tap Save"; otherwise grey "Tap a field to change it". **Save** (`saveMode`): grey and disabled with nothing to save; **amber + warning** when it saves but the carton keeps its warning (a gate field — name, weight > 0, barcode identity — is still missing); **blue + check** when complete. A flagged (`needsReview`) or barcode-conflict carton can always be saved, even untouched — saving is how the worker says "I looked, it is right".
+
+**Which field opens.** `firstField`: the first that still needs the worker (item, then weight, then expiry); a complete carton opens on Weight. Picking an item moves on to whatever is still missing (`fieldAfterItemPick`); so does a calendar pick (`fieldAfterExpiryPick`).
+
+**Editors.**
+- **Weight**: optional amber barcode suggestion strip ("Barcode: 15.80 kg" + **Use**); an LTR readout that shows a muted `—` when empty; one fixed hint line ("Type the net weight printed on the sticker", or red "Weight must be more than 0") so the keypad never jumps; `Keypad` (keys 50 px since this release, so all 12 fit within 62vh at 360×640). `handleKey`: back drops a char, a second `.` is ignored, at most 5 digits.
+- **Item** ("Which item is this carton?"): a `role="radiogroup"` list with **exactly one** selected row — green, `check_circle` (the others `radio_button_unchecked`); item codes under the name in mono. `itemOptions` merges invoice lines that share a name into one row listing every code (two lines with one name used to light up together). A name read off the sticker that matches no line is the first row, amber, "Read from the sticker — not on the invoice". Free text sits behind **"Different name — type it"**; typing clears the OCR English name so it is not sent as `item_name` for a different item.
+- **Expiry**: amber "Pick the expiry date from the sticker" when empty; "Change date" when set; red "Expires today or already expired — check the sticker" when past. `CalendarPicker` is opened with **`requirePick`** (now the picker's default, so also in the identical form and New carton): no day highlighted and OK disabled until a day or "Today" is tapped. The value is stored as **ISO `YYYY-MM-DD`** and shown as `DD/MM/YYYY` (`lib/expiry.ts`); the calendar opens on an OCR-read ISO date instead of today.
+- **Supplier batch / lot · optional** (`terminal.batchLabel`, `maxLength 24`, LTR) — a labelled row, not the old `BATCH` tag; blank is valid.
+- **Scanned barcode** (`terminal.scannedBarcode`) with a lock icon ("Can't be changed") — the row's identity / dedup key. For a carton with no identity the barcode block moves to the top: a digit input (≥ 13 digits), **Create a barcode for this carton** (mints one `28…` label, origin `receiving`, saved with the pallet number — it is then an unprinted label under the print gate), and, only after a mint has failed, "No readable barcode on this carton".
+
+**Errors** (typed barcode too short / duplicate, mint failures) show in a red strip **inside** the panel from the caller's own `editError` — set by the mint and save checks, cleared on open, cancel, a successful save, "No readable barcode", a new mint attempt and when the worker changes what the error is about. The page's `error` is the footer's alone; before `59fde78` panel errors leaked into the scan footer with no carton named.
+
+**Save semantics (in the caller).** `openEdit(box, isLoose)` seeds `editForm` with `expiry: normalizeExpiry(box.expiry)` and the panel is remounted per carton (`key`), so "changed" compares against the values it opened with. It is mounted in both the pallet and the loose phase. `handleSaveEdit()` normalises the expiry to ISO, keeps the old weight when the new one is not finite / ≤ 0, patches the row, clears `needs_review` only when there is a name, a weight > 0 and a barcode identity, and clears the barcode conflict. **Nothing is sent to the server on Save** — the edit is local until the pallet (or loose list) is confirmed.
 
 #### `components/terminal/DrawerHost.tsx` (112 lines)
 
@@ -2914,20 +3088,28 @@ So the **only permanently locked chips on every page are `warehouses` and `assig
 **Called by.** `app/pallet-verify/[token]/page.tsx:2287` (loose, `tone='warn'`) and `:2733` (main); both pass `unit={tr('common.kg')}`.
 
 - Props `:6-25`: `index`, `name`, `value` (pre-formatted weight), `unit`, `barcode?`, `expiry?`, `status?: 'reading'|'done'|'failed'` (default `done`), `expanded`, `onToggleExpand`, `onEdit?`, `onDelete?` (comment `:18-19`: must be reachable here — the newest scan is the one a worker realises they mis-scanned), `onRetry?` (failed only), `onViewImage?`, `tone?: 'brand'|'warn'`.
-- `ActiveScanCard(...)` — `:35-152`. Border: failed `#ef4444`, warn `#f59e0b`, else `#13a4ec`; badge tint / accent ink per tone. Status line: 6px dot (`animate-shim` while `reading`; red when failed) + `tr('terminal.notRecognized')` ("⚠ Not recognized") or `tr('terminal.scanningNow')`. Big LTR value 23px mono. Action row (`:81-127`): details toggle (`expand_more`/`expand_less`, `tr('terminal.details')`); when failed: view (`image`, `ocr.view`) and retry (`refresh`, `ocr.retry`); delete (`delete`, `common.delete`, danger tint); edit (`edit`, `terminal.edit`). Expanded block (`:129-149`): barcode (LTR mono, ellipsised) and expiry rows with `terminal.barcode` / `terminal.expiry` labels.
+- `ActiveScanCard(...)` — `:35-152`. Border: failed `#ef4444`, warn `#f59e0b`, else `#13a4ec`; badge tint / accent ink per tone. Status line: 6px dot (`animate-shim` while `reading`; red when failed) + `tr('terminal.notRecognized')` ("⚠ Not recognized") or `tr('terminal.scanningNow')`. Big LTR value 23px mono. **Since `6a52a5e` (2026-10-01)** the "Details" toggle is gone: the whole summary line is the expander button (`aria-expanded`, chevron beside the weight), and the actions are a `ScanActions` bar (below) — the old row was a `flex-none` group that never wrapped, so at 360 px "All boxes identical" ran off the card and, clipped inside a sheet that scrolls only vertically, could not be reached. The card also shows the row's "Label not printed" marker and the blue already-counted ring/pulse when a notice names it. Expanded block (`:129-149`): barcode (LTR mono, ellipsised) and expiry rows with `terminal.barcode` / `terminal.expiry` labels.
 
 #### `components/terminal/HistoryRow.tsx` (80 lines)
 
-**Purpose.** One older scan: 40px mono index tile, status glyph + name, LTR mono barcode (ellipsised — comment `:52-53`: 31-digit barcodes pushed the weight off the row), 17px mono weight, expander chevron, optional `actions` row rendered *below* the summary line (`:15-19`).
+**Purpose.** One older scan: 40px mono index tile, status glyph + name, LTR mono barcode (ellipsised — comment `:52-53`: 31-digit barcodes pushed the weight off the row), 17px mono weight, expander chevron, optional `actions` row rendered *below* the summary line (`:15-19`). **Since `6a52a5e` (2026-10-01)** the `actions` container is a plain bordered block and the page passes a `ScanActions` bar into it (it used to be `ROW_ACTION_BTN` thirds, where "All boxes identical" wrapped to 2–3 lines next to one-line Edit/Delete); since `839d186` a row whose label is unprinted carries an amber crossed-out printer ("Label not printed").
 **Called by.** `app/pallet-verify/[token]/page.tsx:2311,2757` (both pass `unitLabel={tr('common.kg')}`).
 
 - Props `:6-22`: `index: number|string`, `name`, `barcode?`, `weight?` (omit to hide), `unitLabel?` (**default is the Hebrew literal `'ק"ג'` = "kg"**, `:27` — harmless today because both callers override it), `status?: 'done'|'pending'|'failed'`, `onClick?`, `actions?`, `dimmed?`.
 - Status glyph map `:30-31`: failed → `error` `#ef4444`, pending → `hourglass_empty` `#fbbf5c`, done → `check_circle` `#22c55e`. `open = Boolean(actions)` switches the border to `border-line-strong` and the chevron to `expand_less`.
 
+#### `components/terminal/ScanActions.tsx` (99 lines) — new 2026-10-01
+
+**Purpose.** The per-scan action bar shared by `ActiveScanCard` and an opened `HistoryRow`, so both offer the same buttons in the same order and colours. Order **Edit** (blue, primary) · **All boxes identical** (neutral) · **Delete** (red, last — destructive, away from Edit, **two taps**: the first arms it solid red "Tap again" / `delete_forever` for `DELETE_ARM_MS` 3 s; fixed `basis-[100px]` so arming never re-flows the bar; keyed per carton so an armed Delete never carries over to the next scan). When OCR failed, **View · Retry** get their own first line with Retry as the primary; a failed history row has no Edit / Identical, so it is one line View · Retry · Delete. Every line `flex flex-wrap gap-[8px]`; every button `flex-auto min-w-0 min-h-[40px] … wrap-anywhere`, so a line wraps and an over-wide label wraps inside its button instead of overflowing. Each tap calls `stopPropagation` (the bar lives inside a tappable card / row). Props: `onEdit?`, `onIdentical?`, `onDelete?`, `onRetry?`, `onViewImage?` — a button renders only when its callback is given (pallet-verify passes `onIdentical` only when `canDeclareIdentical(box)`).
+
+#### `components/terminal/PriorityPushStatus.tsx` (207 lines) — new 2026-10-01
+
+**Purpose.** The `all_done` card's row for the automatic Priority push. **Deliberately not a button** (no `onClick`): a `role="status"` `aria-live="polite"` row that polls `GET /api/priority-status?token` every 4 s for 3 min, then every 30 s, pauses while the tab is hidden, and stops on a final state (received, cancelled, already, failed, expired, test, off) or a 401. Icon + tone per `PriorityState`: blue `cloud_sync` (pulsing) closing / sending, blue `schedule` awaiting; green `check_circle` received / already; amber `sync_problem` unconfirmed, `receipt_long` waitingPo, `report_problem` waiting / cancelled; red `error` failed / expired; grey `pause_circle` held, `info` test, `cloud_off` off, `help_outline` unknown. `waiting` with reason `items` lists the unmapped item codes (`priority.codesLabel`). Every icon is in the font subset. Rules: `lib/priority-status.ts`; see "The Priority push, as the scanner sees it" in the changes section.
+
 #### `components/terminal/DoneOverlay.tsx` (63 lines)
 
 **Purpose.** Pallet-done modal: `absolute inset-0 z-[70]` blurred scrim (`rgba(5,8,10,.74)`, `backdrop-blur-[3px]`), centred 330px card (`bg-overlay-card`, green hairline `#1e3a2e`, `animate-doneRise`), 64px icon circle (`animate-donePop`), 19px title, optional subtitle, up to N stat tiles (`bg-sunken`, `flex: wide ? 1.3 : 1`), then `children`.
-**Called by.** `app/pallet-verify/[token]/page.tsx:2352` — title `terminal.palletDoneTitle {n}`, subtitle `LPN <lpn>`, stats `[pallet x/n (LTR), cartons, weight (wide)]`, children = `<SwipeConfirm onConfirm={advanceToNextPallet} label={tr('terminal.swipeNextPallet')}/>` (`:2368-2371`) followed by a print link to `${lpnUrl}?token=…(&lang=Hebrew)` labelled `terminal.issuePalletLabels` (`:2373-2382`). `advanceToNextPallet()` (`pallet-verify/page.tsx`, found via grep) sets `currentPallet = pendingNextPallet ?? currentPallet+1`, clears `pendingNextPallet`, resets pallet UI state and sets `phase='scanning'` — this swipe **replaced the old 4-second auto-advance** (memory 2026-08-03).
+**Called by.** `app/pallet-verify/[token]/page.tsx:2352` — title `terminal.palletDoneTitle {n}`, subtitle `LPN <lpn>`, stats `[pallet x/n (LTR), cartons, weight (wide)]`, children = (**since `84ffc9f`, 2026-10-01**) a print link to `${lpnUrl}?token=…(&lang=Hebrew)` labelled `terminal.issuePalletLabels`, **then** a full-width 54 px blue button `terminal.nextPalletBtn` ("Scan pallet {n} of {total}", `qr_code_scanner` icon) with `onClick={advanceToNextPallet}` and `disabled={!nextArmed}` — it arms 500 ms after the card appears so the tail of the confirm slide cannot land on it. `advanceToNextPallet()` returns unless `phase === 'pallet_done'` (a double tap advances once), traces `next_pallet {from, to, via:'tap'}`, sets `currentPallet = pendingNextPallet ?? currentPallet+1`, clears `pendingNextPallet`, resets pallet UI state, raises a 400 ms transparent tap shield over the next screen and sets `phase='scanning'`. History: a 4-second auto-advance (until 2026-08-03), then a second slide on this card (its key `terminal.swipeNextPallet` is removed) — the 09-24 trace showed workers sliding past it in 5–22 s without opening the sticker, so the pause it was meant to give was not being used. No auto-advance: the camera would come back on still pointed at the pallet just booked.
 
 - `interface DoneStat { value: ReactNode; label: string; wide?: boolean }` — `:6-11`.
 - `DoneOverlay({icon='check_circle', iconColor='#4ade80', iconBg='rgba(34,197,94,.14)', title, subtitle?, stats?, children?})` — `:26-63`. Note it is `absolute`, not `fixed` — it fills its positioned parent (`h-dvh relative` at `pallet-verify/page.tsx:2351`).
@@ -2951,7 +3133,7 @@ So the **only permanently locked chips on every page are `warehouses` and `assig
 
 #### `components/terminal/Keypad.tsx` (28 lines)
 
-- `KEYS = ['1'..'9', '.', '0', 'back']` — `:10`. `Keypad({onKey})` — `:14-28`: `dir="ltr"` 3-column grid of 54px keys (`bg-tile border-line`, mono 21px, active state brand), `'back'` renders `MI backspace`. Only consumer: `EditPanel:207`.
+- `KEYS = ['1'..'9', '.', '0', 'back']` — `:10`. `Keypad({onKey})` — `:14-28`: `dir="ltr"` 3-column grid of 54px keys (**50 px since `d44d180`**, so all 12 fit within 62vh at 360×640) (`bg-tile border-line`, mono 21px, active state brand), `'back'` renders `MI backspace`. Only consumer: `EditPanel:207`.
 
 #### `components/terminal/CalendarPicker.tsx` (191 lines)
 
@@ -2959,7 +3141,7 @@ So the **only permanently locked chips on every page are `warehouses` and `assig
 **Imports.** `MI`, `LanguageContext`, `useT`.
 **Called by.** `EditPanel:313` and out-of-scope `CartonCreator`.
 
-- Props `:7-13`: `value` (ISO `YYYY-MM-DD` or empty), `fieldTitle`, `onPick(iso)`, `onClose`.
+- Props `:7-13`: `value` (ISO `YYYY-MM-DD` or empty), `fieldTitle`, `onPick(iso)`, `onClose`, and (**since `d44d180`**) `requirePick?: boolean` — no day highlighted and OK disabled until a day or Today is tapped. **Default `true`** since the cross-review fixes (`EditPanel`, `CartonCreator` and `IdenticalBoxesForm` all pass it explicitly too); a form that really wants a today-default must pass `requirePick={false}`.
 - `toParts(value)` — `:17-22`: parses ISO or falls back to today.
 - `CalendarPicker(...)` — `:28-191`. `locale = language==='Hebrew' ? 'he' : 'en'` (`:31`) read from **`LanguageContext`** (so a page must render it under its provider for Hebrew month names). `monthNames` via `toLocaleDateString(locale,{month:'long'})`; `dowNames` via `weekday:'narrow'` from 2023-01-01 (a Sunday — week starts Sunday, `:46`). `years = today−2 … today+9` (12 values, `:59-62`). `commit()` `:64-67` clamps the day to the chosen month's length and emits ISO. Month pick returns to the day tab; year pick moves to the month tab (`:142,159`). Header shows `DD/MM/YYYY` LTR. Buttons: `tr('terminal.today')`, `tr('terminal.ok')`.
 
@@ -2974,7 +3156,7 @@ So the **only permanently locked chips on every page are `warehouses` and `assig
 
 **Purpose.** Slide-to-confirm track (54px, 48px thumb). Direction-aware: in RTL the thumb starts at inline-start (right) and is dragged leftwards.
 **Imports.** `lucide-react` `Check`, `ChevronLeft`, `ChevronRight` (not Material).
-**Called by.** `app/scan/[token]/page.tsx:1042` (sheet footer, `scan.slideToConfirm`), `app/pallet-verify/[token]/page.tsx:2188` (loose footer), `:2368` (DoneOverlay next-pallet), `:2544`, `:2824` (pallet confirm / discrepancy variants). `DoneOverlay.tsx` only mentions it in a comment.
+**Called by.** `app/scan/[token]/page.tsx:1042` (sheet footer, `scan.slideToConfirm`), `app/pallet-verify/[token]/page.tsx:2188` (loose footer), ~~`:2368` (DoneOverlay next-pallet)~~, `:2544`, `:2824` (pallet confirm / discrepancy variants). **Since 2026-10-01 a slide is used only where stock is booked**: the pallet confirm (brand), the close-short confirm in the modal (`variant="warn"`, "Slide to close with N cartons") and the loose confirm (brand since `84ffc9f`, was `warn`). The `pallet_done` next-pallet slide is gone (a tap), and while the print gate blocks, the pallet and loose slides are replaced by the amber "Print N labels first" button. `DoneOverlay.tsx` only mentions it in a comment.
 
 - Props `:6-12`: `onConfirm`, `label='Slide to Confirm'` (**English literal default**; every caller passes a translated label), `disabled=false`, `variant: 'brand'|'warn'`.
 - Constants `:36-38`: `THUMB_SIZE=48`, `EDGE=3`, `THRESHOLD=0.72` (fraction of max travel).
@@ -3136,12 +3318,17 @@ The Back-button guard (`lib/use-back-close.ts`, out of scope, read for this clai
 #### 2.3 EditPanel field switching
 
 ```
-openEdit(box) ─► editForm seeded, sheet.snapTo(2), panel mounts with field='weight'
-  tab[weight] ─► suggestion? + photo + readout + Keypad (handleKey: back / '.' once / ≤5 digits)
-  tab[name]   ─► big photo + invoice chips (onPick sets he+en) + rtl text input
-  tab[expiry] ─► suggestion? + photo + calendar button ─► CalendarPicker(z-81) ─► OK → DD/MM/YYYY
-  BATCH input (≤24 chars, ltr) · barcode read-only
-  Save ─► handleSaveEdit (local patch, regroup, clear conflict) ─► editForm=null (panel unmounts)
+(2026-10-01) openEdit(box) ─► editForm seeded (expiry → ISO), camera paused, full-screen panel mounts
+                 keyed per carton, field = firstField(name, weight, expiry)
+  tile[Item]   ─► radio list, exactly one green row (+ amber "read from the sticker" row) ·
+                  "Different name — type it" ─► text input ─► after a pick: fieldAfterItemPick
+  tile[Weight] ─► suggestion? + readout ('—' when empty) + fixed hint line + Keypad (50 px keys)
+  tile[Expiry] ─► suggestion? + pick / change date ─► CalendarPicker(requirePick) ─► OK → ISO
+                  (shown DD/MM/YYYY) ─► fieldAfterExpiryPick
+  Supplier batch / lot · optional (≤24, ltr) · Scanned barcode 🔒 (or the missing-identity block first)
+  header status: Missing: … (amber) / Check the expiry date / N changed — tap Save (green) / Tap a field
+  Save (grey disabled / amber warn / blue ready) ─► handleSaveEdit (local patch, regroup, clear conflict) ─► editForm=null
+  errors (barcode too short / duplicate, mint failed) ─► red strip inside the panel (editError)
   Back ─► onCancel ─► editForm=null (edits discarded — the form was a copy)
 ```
 
@@ -3349,6 +3536,17 @@ Unused-key count by family (no string-literal reference in `app/`, `components/`
 ---
 
 ## Chapter 6 — Pallet-flow API routes, the OCR route, storage upload, the data layer, matching libraries, shared types
+
+> **Addendum 2026-10-01** (on `preview`). Both completion routes: (1) normalise every `scanned_boxes[].expiry`
+> to ISO right after the body is parsed (`normalizeBoxExpiries`, `01a2ae5`); (2) run the **print gate** —
+> `multi-pallet-complete` inside the lock after the split guard and before all three paths,
+> `multi-pallet-loose-complete` after its claim guards and before the session save — answering **409
+> `{success:false, error:'labels_not_printed', unprinted, batch_ids}`** with nothing written and no webhook
+> (`e7cb80b`); (3) send the bot webhook with **`after()`** from `next/server`, the body serialised before the
+> response, so Vercel keeps the function alive until the call is made (`bbbbf91`; still no retry or
+> persistence — §6 #8). The loose route now persists the session **before** its webhook and records
+> `loose_barcodes` in it (`a4e7391`). New read-only route **`GET /api/priority-status?token`**
+> (`app/api/priority-status/route.ts`, 118 lines) — see the changes section at the top.
 _Scope:_ `app/api/multi-pallet-session/route.ts`, `app/api/multi-pallet-complete/route.ts`, `app/api/multi-pallet-loose-complete/route.ts`, `app/api/multi-pallet-ocr/route.ts`, `app/api/pallet-session/route.ts`, `app/api/pallet-scan/route.ts`, `app/api/pallet-complete/route.ts`, `app/api/ocr/route.ts`, `app/api/cloudinary/upload/route.ts`, `lib/supabase.ts`, `lib/redis.ts`, `lib/session-guard.ts`, `lib/llm-matcher.ts`, `lib/group-key.ts`, `lib/nonmeat-key.ts`, `lib/string-utils.ts`, `lib/lpn-constants.ts`, `lib/lpn-signature.ts`, `types/index.ts` (all under `web-scanner/`) · _Repo state:_ bot `whatsapp@3621f46` · scanner `preview@e46d9b9` · _Written:_ 2026-09-08
 
 All paths below are relative to `web-scanner/` unless prefixed `bot:` (then relative to `telegram-warehouse-bot/`). Every route here is a Next.js 16 App Router route handler (`export async function POST/GET/PATCH(request: NextRequest)`), runs server-side only, and returns `NextResponse.json(...)`.
@@ -3718,7 +3916,7 @@ The whole body of work runs inside `sessionStorage.withLock(token, …)` (L169�
 4. No surviving items → **400 `errors.serverError`** ("Internal server error." / `שגיאת שרת פנימית.`) (L238–241) — a client-input problem reported as a server error (§6).
 5. `nmScannedBoxes` = one synthetic box per item `{barcode: sample_barcode, sku:'', weight: unit, expiry, item_name, item_name_hebrew, supplier_batch}` (L243–251) — no `image_url`, `production_date`, `document_number`, `name_key`.
 6. Payload (L253–279): `{token, chat_id, pallet_number, lpn, category:'non_meat', nonmeat_meta, scale_weight:0, document_number, verified_scan_count: items.length, scanned_boxes}` plus, for >1 items, `pallet_type:'mix', items`; for one item, `pallet_type:'single', item_code, item_name, item_name_hebrew, box_count, ocr_box_weight, calculated_total_weight, expiry_date, supplier_batch`.
-7. Webhook `POST ${TELEGRAM_BOT_WEBHOOK_URL}/webhook/pallet-complete` fire-and-forget, `.catch` → `console.error` (L281–288); **skipped silently if the env var is unset**.
+7. Webhook `POST ${TELEGRAM_BOT_WEBHOOK_URL}/webhook/pallet-complete` fire-and-forget, `.catch` → `console.error` (L281–288); **skipped silently if the env var is unset**. (2026-10-01: wrapped in `after()`.)
 8. `nonmeat_committed[name_key] += box_count` (L292–293); `nmNextPallet = palletNumber+1`; `nmAllDone = nmNextPallet > pallet_count` (L296–297, comment: "loose is 0 for Type A" — the bot forces `loose_box_count=0` for Type A; `loose_box_count` is *not* consulted here).
 9. Save `{…session, current_pallet: nmNextPallet, status: nmAllDone ? 'completed' : 'active', nonmeat_committed, completed_pallets + {pallet_number, lpn, pallet_type, box_count: totalCartons}}` (L299–315) — **no `worker_chat_id`, no `barcodes`, and split slots are never `markDone`'d** (this branch ignores `split` entirely; unreachable today because the bot offers Split for meat only — §6).
 10. Respond `{success:true, lpn, lpn_url: \`${appUrl}/pallet/${lpn}\`, pallet_number, next_pallet: nmAllDone ? null : nmNextPallet, all_done: nmAllDone}` (L317–325).
@@ -3733,7 +3931,7 @@ Client: `NonMeatTypeAFlow.tsx:312–324` posts `{token, nonmeat_items:[{item_key
 5. `meat_committed[name_key] += box_count` (L398–399). `mCompletedEntry = {pallet_number, lpn, pallet_type, box_count: totalBoxes (declared), worker_chat_id}` (L410–418).
 6. Split: `markDone(splitStateOf(session), palletNumber, mLpn, totalBoxes)` — fails 409 with `marked.reason` (`no_such_slot` / `not_claimed`, `lib/pallet-slots.ts:163–167`) (L423–428); `mUpdated = applySplitState(...) + meat_committed + completed_pallets`; `mIsFinal = isComplete(state)` (all slots done AND loose null-or-done, `pallet-slots.ts:213–218`); status → `completed` when final (L429–435). Single: `mIsFinal = allPalletsDone && loose_box_count === 0`; cursor advances; status accordingly (L436–451).
 7. Payload extras (L453–459): `worker_chat_id`, `owner_chat_id: session.owner_chat_id ?? session.chat_id`, `is_final`, `all_completed_pallets` (only when final), `roster_chat_ids` (only when final; `roster[].chat_id`).
-8. Webhook fire-and-forget (L461–468); save with 2 h TTL (L470–471); respond `{success, lpn, lpn_url, pallet_number, next_pallet: split ? null : (allDone ? null : next), all_done: split ? mIsFinal : mAllPalletsDone}` (L478–485; comment L474–477 explains why split answers differ: the worker who closes the highest slot is not necessarily the one who finishes).
+8. Webhook fire-and-forget (L461–468; `after()` since 2026-10-01); save with 2 h TTL (L470–471); respond `{success, lpn, lpn_url, pallet_number, next_pallet: split ? null : (allDone ? null : next), all_done: split ? mIsFinal : mAllPalletsDone}` (L478–485; comment L474–477 explains why split answers differ: the worker who closes the highest slot is not necessarily the one who finishes).
 
 Client: `MeatManualCountFlow.tsx:120–130` posts `{token, manual_declared:true, manual_items:[{item_key, box_count}], worker_chat_id}` (no `sample_barcode` from this component — so `mScannedBoxes` is empty and the bot gets **no** `box_inventory` rows for a manual pallet unless another caller supplies samples).
 
@@ -3773,7 +3971,7 @@ Client: `page.tsx:1822–1835` posts `{token, scanned_boxes (minus ocr_status/im
 2. `status !== 'active'` → **409** `errors.sessionAlreadyCompleted` (L47–50) — also rejects a `planning` split session.
 3. `TELEGRAM_BOT_WEBHOOK_URL` unset → **500** `errors.botWebhookNotConfigured` ("Bot webhook not configured" / `webhook של הבוט לא מוגדר`) (L52–56) — unlike `multi-pallet-complete`, this route refuses to proceed without the bot.
 4. Split (L68–90): `state.loose` must exist with `status === 'claimed'` else **409 `loose_not_claimed`** (L70–79; comment: a refresh/double-submit would otherwise re-fire the webhook because the session legitimately stays `active` when loose finishes before the last pallet); `worker_chat_id` must equal `state.loose.owner` else **403 `not_your_loose_task`** (L80–86; closing loose can finalise the whole delivery, so only its owner may); mark loose `done`, `isFinal = isComplete(next)`, status `completed` when final. Single (L91–94): unconditionally `status: 'completed'`, `isFinal = true` — **no check that all pallets were completed** (the page only reaches this phase after them).
-5. Webhook `POST ${botUrl}/webhook/loose-boxes-complete` fire-and-forget (L98–123) with body `{token, chat_id, document_number, receipt_id, scanned_boxes: boxes (verbatim, `scanned_boxes || []`), worker_chat_id, owner_chat_id, is_final, all_completed_pallets (final only), roster_chat_ids (final only)}`. Because boxes are forwarded **verbatim**, everything the client left on them reaches the bot — `image_url`, `production_date`, `supplier_batch`, but also `captured_via`, `needs_review`, `barcode_conflict` (the client strips only `ocr_status`/`image_data`, `page.tsx:1562`).
+5. Webhook `POST ${botUrl}/webhook/loose-boxes-complete` fire-and-forget (L98–123; since 2026-10-01 sent with `after()`, after the print gate and after the session — now carrying `loose_barcodes` — is saved) with body `{token, chat_id, document_number, receipt_id, scanned_boxes: boxes (verbatim, `scanned_boxes || []`), worker_chat_id, owner_chat_id, is_final, all_completed_pallets (final only), roster_chat_ids (final only)}`. Because boxes are forwarded **verbatim**, everything the client left on them reaches the bot — `image_url`, `production_date`, `supplier_batch`, but also `captured_via`, `needs_review`, `barcode_conflict` (the client strips only `ocr_status`/`image_data`, `page.tsx:1562`).
 6. Save (L126); respond `{success: true}` (L128).
 
 Client: `page.tsx:1554–1567` posts `{token, scanned_boxes, worker_chat_id}`; raw split codes are translated via `SPLIT_CLAIM_ERROR_KEYS` (`:1574`).
@@ -4091,7 +4289,7 @@ Request `CloudinaryUploadRequest`. Response `{success:true, secure_url, public_i
 5. **Type A branch ignores split mode and the loose count** (NEW). `multi-pallet-complete:296–313` advances `current_pallet`, never calls `markDone`, sends no `is_final`/`worker_chat_id`/`owner_chat_id`, and `nmAllDone` ignores `loose_box_count`. Harmless today only because the bot offers Split for meat invoices only (memory `split_pallet_assignment_design.md`) and forces `loose_box_count = 0` for Type A; the route does not enforce either assumption.
 6. **`uniform_groups[].total_count` of 0 is honoured** (NEW, edge). `:519` uses `??`, so a group override with `total_count: 0` books zero boxes and 0 kg while `isUniform` is forced true (`:514`). The page never sends 0 in practice.
 7. **An override forces `isUniform` even when the two sample weights differ** (`:514`) — by design (worker declared it), but it means the 0.0001 kg rule is only advisory once the prompt is accepted.
-8. **Webhook is fire-and-forget with no retry and no persistence** (NEW as a stated limitation). `multi-pallet-complete:705–712` (and `:281–288`, `:461–468`): if the bot is down, returns 5xx, or `TELEGRAM_BOT_WEBHOOK_URL` is unset, the session still advances, the page shows the LPN, and **the pallet never reaches the ledger**; the only trace is a Vercel function log line. The loose route at least refuses when the URL is unset (`loose-complete:52–56`).
+8. **Webhook is fire-and-forget with no retry and no persistence** (NEW as a stated limitation). *2026-10-01: partly mitigated — every branch now sends it with `after()`, so Vercel no longer freezes the function before the request leaves; a bot that is down or answers 5xx still loses the call.* `multi-pallet-complete:705–712` (and `:281–288`, `:461–468`): if the bot is down, returns 5xx, or `TELEGRAM_BOT_WEBHOOK_URL` is unset, the session still advances, the page shows the LPN, and **the pallet never reaches the ledger**; the only trace is a Vercel function log line. The loose route at least refuses when the URL is unset (`loose-complete:52–56`).
 9. **Misleading error for empty Type A / manual item lists** (NEW). `:239,364` answer 400 with `errors.serverError` ("Internal server error." / `שגיאת שרת פנימית.`) when every submitted line failed to map to an invoice line or had a zero count. The worker sees a server error for a client-input problem.
 10. **Manual-declared and Type A sample boxes carry no photo/date/lot/invoice** (partly known — memory `box_sticker_photo_persisted.md` "not covered on purpose"). `:243–251,369–379` build synthetic boxes without `image_url`, `production_date`, `document_number` (Type A keeps `supplier_batch`/`expiry` at item level). `MeatManualCountFlow.tsx:124` sends no `sample_barcode` at all, so a damaged-sticker pallet produces **zero** `box_inventory` rows.
 11. **`PATCH /api/multi-pallet-session` is not locked** (NEW). `:77–86` does a read-modify-write of the whole session outside `withLock`; concurrent with a `multi-pallet-complete` on the same token it can resurrect the pre-completion `completed_pallets`/`status`/`current_pallet`. The page's call ordering (PATCH after the complete response, `page.tsx:1728`; or during scanning, `:1661`) makes the race unlikely but not impossible (two tabs).
@@ -4161,6 +4359,18 @@ Request `CloudinaryUploadRequest`. Response `{success:true, secure_url, public_i
 > shared-label opt-in (`LabelPrompt`, `lib/repeat-gate.ts`, `SmartScanner.allowRepeat`,
 > `-B/-C` repeat keys) was reverted the same day; `lib/carton-barcode.ts` keeps only
 > `classifyRead` (SCN-13). See `docs/ARCHITECTURE.md` § "All boxes identical".
+
+> **Addendum 2026-10-01 — save now, print later, and the print gate** (`839d186`, `a4e7391`, `e7cb80b`, on
+> `preview`). §2.4 and contracts §3.6–§3.9 below are rewritten. The per-file entries further down predate it;
+> the deltas: `CartonCreator` / `IdenticalBoxesForm` say **Save N labels** and close straight back to the scanner
+> (no forced Labels screen, no second "created" screen), each form open makes one client `batch_id`;
+> `LabelsBrowser` (554 lines) opens on **Not printed**, sorts unprinted first, tags Pallet / Loose / New carton,
+> remembers the size per device (localStorage `labels.size`), offers **Mark as printed**, warns what a batch
+> delete removes from the open lists and no longer marks anything when it opens the sheet; `LabelSheet` (268
+> lines) marks what it rendered before `window.print()` and shows "Printed · back to scanner";
+> `lib/carton-labels.ts` (330 lines) gains `findUnprintedForSession`, `batchHasBookedBoxes`,
+> `deleteUnprintedLabelByBarcode`; origin `receiving` is new (the edit panel's minted barcode — no DDL: `origin`
+> is plain text). The rules live in `lib/label-batches.ts` and `lib/label-gate.ts`.
 _Scope:_ `scanner: lib/documents.ts`, `lib/pallet-browser.ts`, `lib/carton-labels.ts`, `lib/code128.ts`, `lib/code128.test.ts`, `app/api/documents/route.ts`, `app/api/documents/detail/route.ts`, `app/api/pallets/route.ts`, `app/api/pallets/detail/route.ts`, `app/api/carton-labels/route.ts`, `app/api/carton-labels/print/route.ts`, `app/labels/print/page.tsx`, `app/labels/print/LabelSheet.tsx`, `app/pallet/[lpn]/page.tsx`, `app/pallet/[lpn]/PrintButton.tsx`, `app/sticker/v1/[lpn]/page.tsx`, `components/terminal/DocumentsBrowser.tsx`, `components/terminal/PalletsBrowser.tsx`, `components/terminal/LabelsBrowser.tsx`, `components/terminal/CartonCreator.tsx`, `components/terminal/CartonSticker.tsx`, `components/terminal/Barcode128.tsx` · _Repo state:_ bot whatsapp@3621f46 · scanner preview@e46d9b9 · _Written:_ 2026-09-08
 
 All paths below are relative to the **scanner** repo (`web-scanner/`) unless prefixed `bot:`. Every file in scope was read in full. Out-of-scope files were consulted only to establish callers and contracts (`lib/session-guard.ts`, `lib/lpn-signature.ts`, `lib/lpn-constants.ts`, `types/index.ts`, `components/terminal/DrawerHost.tsx`, `LockedScreen.tsx`, `Toast.tsx`, `lib/use-back-close.ts`, the three scanner pages' dock-chip arrays, `lib/i18n/{en,he}.ts`, `vitest.config.ts`, `bot: pallet_service.py`, `bot: pallet_issue_handler.py`, `bot: pallet_handler.py`).
@@ -4353,9 +4563,9 @@ Exported output types: `PalletCard` (`:77-89`: `id, lpn, status, pallet_type, ca
 - `createCartonBatch(input)` — `:72-106` — `quantity` clamped to `[1, 500]` after rounding (`:73`). **One row per physical carton** (`:66-70`): the inbound scan path dedupes on barcode, so five cartons sharing a code would read as one box scanned five times; `batch_id` keeps them together for the Labels list. Builds all rows with **one** `batchId = crypto.randomUUID()` and per-row fresh `barcode`/`serial`; the `quantity` column stores the **batch size on every row** (`:90`). Single `insert(rows).select(COLUMNS)`. On Postgres error `23505` (unique violation) the **whole batch is regenerated once** (new batch_id, new barcodes); any other error, or a second collision, throws `carton_labels insert failed: …` (`:77-104`). Empty strings for dates/notes become `null` (`||`), while item fields use `??`.
 - `ListCartonLabelsOptions` — `:108-121` — `sessionToken?` (**default view**: only the stickers minted by ONE scanner session — comment `:110-115`: re-scanning the same invoice creates a new session, so scoping by delivery is not enough — it would resurrect the previous run's stickers under the same document number), `documentNumber?`, `status?: 'created'|'printed'|'all'`, `limit?`.
 - `listCartonLabels(opts)` — `:123-139` — `limit` default 500, clamped `[1, 1000]`; ordered `created_at DESC`; optional `eq(session_token)`, `eq(document_number)`, `eq(status)`.
-- `getCartonLabelsByIds(ids)` — `:141-150` — `.in('id', ids.slice(0, 1000))`, `created_at ASC`.
+- `getCartonLabelsByIds(ids)` — `.in('id', …)` in slices of `IN_CHUNK` 200 (≤1000 ids, de-duplicated), sorted `created_at ASC`. One unbounded `.in()` dies from ~390 UUIDs: PostgREST echoes the query string in a response header and Node's 16 KB header limit trips ("fetch failed"; 1000 ids → 400).
 - `getCartonLabelsByBatches(batchIds)` — `:152-162` — `.in('batch_id', batchIds.slice(0, 200))`, ordered `created_at ASC, serial ASC`.
-- `markCartonLabelsPrinted(ids, labelSize?)` — `:171-194` — re-reads the rows, then **one `update` per row** (`status='printed'`, `printed_at=now (same timestamp for all)`, `print_count = existing + 1`, optionally `label_size`), because `print_count` is per-row (`:179`). Not transactional — a failure mid-loop leaves earlier rows updated and throws. Records "sent to the printer", not "paper came out" (`:164-170`); a reprint simply increments the count again.
+- `markCartonLabelsPrinted(ids, labelSize?)` / `markCartonBatchesPrinted(batchIds, labelSize?)` — since the cross-review fixes: keys in slices (200 ids, or 2 batch ids so the read stays under PostgREST's 1000-row cap); per slice one read of `print_count` and **one `update … where <key> in (…) and print_count = c`** per distinct count, highest first (`printCountSteps`; normally one — a fresh batch is all 0), setting `status='printed'`, `printed_at`, `print_count = c + 1`, optionally `label_size`. Counts rows via `count: 'exact'`. It lifts the print gate, so a 500-label batch must mark in a couple of round trips (it used to re-read every row with one unbounded `.in()` — failing from ~390 ids — then update row by row). Records "sent to the printer", not "paper came out"; a reprint simply increments the count again.
 - `deleteCartonBatch(batchId)` — `:197-205` — `delete().eq('batch_id', id).select('id')` → number deleted. The undo for a mis-typed New-carton submission.
 
 ---
@@ -4428,7 +4638,7 @@ All three handlers use `getSessionContext(token)` (`lib/session-guard.ts:41-63`)
 
 - `splitCsv(v)` — `:11` — comma-split, trim, drop empties.
 - **`GET /api/carton-labels/print?token&batches|ids`** — `:20-37`. `getSessionContext` guard. If `batches` non-empty → `getCartonLabelsByBatches` (≤200 batch ids); else `getCartonLabelsByIds(splitCsv(ids))` (≤1000; empty → `[]`, i.e. **no 400** for a bare request). Response `{success:true, labels}`. Rationale `:16-18`: selection on the Labels screen is per batch, so the sheet is addressed by `batches` — a URL carrying 200 label ids would blow past what some browsers accept.
-- **`POST /api/carton-labels/print`** — `:46-73`. Body `{token, batch_ids?: string[], ids?: string[], label_size?}`. `batch_ids` (strings only) win: resolved to ids via `getCartonLabelsByBatches`; else `ids`. Empty → `400 'ids or batch_ids is required'` (`:59-61`). `label_size` applied only if in `LABEL_SIZES` (`:63-65`). `markCartonLabelsPrinted(ids, labelSize)` → `{success:true, updated: n}`. Errors → `500 'Failed to update labels'`.
+- **`POST /api/carton-labels/print`** — `:46-73`. Body `{token, batch_ids?: string[], ids?: string[], label_size?}`. `batch_ids` (strings only) win: marked by batch with `markCartonBatchesPrinted` (≤200); else `ids` with `markCartonLabelsPrinted` (≤1000). Empty → `400 'ids or batch_ids is required'` (`:59-61`). `label_size` applied only if in `LABEL_SIZES` (`:63-65`). `markCartonLabelsPrinted(ids, labelSize)` → `{success:true, updated: n}`. Errors → `500 'Failed to update labels'`.
 
 #### `app/labels/print/page.tsx` (21 lines)
 
@@ -4648,22 +4858,53 @@ Branches: 401 on any call → session-expired screen (no retry button); other er
 5. "Open sticker" (not for Loose) → new tab `/sticker/v1/{lpn}?lang=…` (no `token` → its Back goes to `/`).
 6. Opened from a document with `initialPalletId`: Back returns to the document.
 
-#### 2.4 New carton → Labels → print (the only writes in this section)
+#### 2.4 Save labels now, print later (the only writes in this section)
+
+> **Rewritten 2026-10-01** (scanner `839d186`, `a4e7391`, `e7cb80b`, on `preview`). Before it, New carton
+> forced the Labels screen open after every create, "All boxes identical" had a second "created" screen with
+> a Print button, and **the opener** marked a batch printed the moment the print tab opened — so every batch
+> read "printed" 2–4 s after it was made, whether or not paper came out. Nothing checked print state anywhere.
+
+Three paths save labels into `carton_labels` (one `batch_id` per save, `28` + YYMMDD + 8 digits, `status='created'`):
+
+| origin | saved by | books stock? | `pallet_number` |
+|---|---|---|---|
+| `new_carton` | the **New carton** chip (`CartonCreator`, "Save N labels") | **no** — the printed label is scanned in later like any carton | the pallet it was saved on (0 = loose; null on `/scan`) |
+| `identical` | **All boxes identical** (`IdenticalBoxesForm`, "Save N labels"), incl. "Different carton?" | **yes** — the page swaps the sample row for N minted rows (`expandIdenticalBoxes`, each with `minted`, `label_batch_id`, `source_barcode`) | the pallet (0 = loose) |
+| `receiving` | the edit panel's **Create a barcode for this carton** | yes — the minted code becomes that row's barcode | the pallet (0 = loose) |
 
 ```mermaid
 stateDiagram-v2
-  [*] --> PickItem: chip צור קרטון (pallet-verify / scan only)
-  PickItem --> Form: tap invoice line
-  Form --> PickItem: החלף פריט (change item)
-  Form --> Creating: צור N מדבקות (POST /api/carton-labels)
-  Creating --> Form: 401 / error toast
-  Creating --> Labels: success → onCreated → LabelsBrowser opens, toast carton.created
-  Labels --> Labels: scope session|all · status all|created|printed · size 10x10|10x15|a4 · select batches
-  Labels --> PrintSheet: הדפס N מדבקות → window.open(/labels/print?token&batches&size&lang) [sync] + POST /api/carton-labels/print
-  PrintSheet --> PrintSheet: GET /api/carton-labels/print → render → ResizeObserver → @page size → window.print() after 400 ms
-  Labels --> Labels: מחק → confirm → DELETE /api/carton-labels?batch → reload
+  [*] --> Form: New carton chip · All boxes identical · Different carton? · edit panel
+  Form --> Saving: Save N labels (POST /api/carton-labels, client batch_id per distinct save content)
+  Saving --> Form: error (a retry with the same batch_id returns the same batch)
+  Saving --> Scanner: success → back to the scanner, toast "N labels saved · print them from Labels …"
+  Scanner --> Scanner: Labels chip shows an amber count · unprinted rows show a crossed-out printer
+  Scanner --> Labels: Labels chip / "Choose in Labels" (opens on "Not printed") / "Reprint labels" (all_done)
+  Scanner --> PrintSheet: gate's "Print N labels first" → window.open(/labels/print, the blocking batches) [sync]
+  Labels --> PrintSheet: select batches → Print → window.open(...) [sync] · the opener marks nothing
+  Labels --> Labels: Mark as printed (tap + inline confirm) → POST /print via 'manual'
+  Labels --> Labels: Delete batch → warns "This also removes N boxes from pallet P" → DELETE ?batch (409 labels_booked once booked)
+  PrintSheet --> PrintSheet: render → measure @page → POST /print (the ids it rendered, via sheet, keepalive, once per load) → window.print()
+  PrintSheet --> Scanner: "Printed · back to scanner"; on return the tab refetches (visibilitychange/focus) and the gate lifts
 ```
-DB effects: `POST` inserts `quantity` rows into `carton_labels` (one `batch_id`, distinct `barcode`/`serial`, `status='created'`, `print_count=0`, `session_token=token`, `document_number` from the session, `created_by_chat_id` from the session); `POST /print` sets `status='printed'`, `printed_at`, `print_count+1`, and `label_size` on every row of the selected batches; `DELETE` removes the batch. **No other table is touched.** The sticker is later scanned through the ordinary inbound flow, where the 16-digit `28…` barcode is just another ID (the pallet-verify page derives `sku = digits.slice(0,13)` for ≥13-digit codes, `app/pallet-verify/[token]/page.tsx:686,1086`; `lib/barcode-parser.ts:97-100` accepts any digit string) and the box's product/weight/dates come from the Gemini box-sticker OCR reading the printed text — which is why the layout mimics a supplier sticker and keeps the bars hard against the text.
+
+**Labels screen** (`LabelsBrowser`, 554 lines): opens on **Not printed** when there are any, lists unprinted batches first (`sortUnprintedFirst`), and tags each batch: an amber **Not printed** pill, **Pallet N** / **Loose** / **New carton** (`labelTags`). The label size is remembered per device (localStorage `labels.size`, default `10x15`). The list reloads when the tab is visible again. **Delete** keeps the list and the ledger in step: deleting a batch whose cartons are on an open list warns "This also removes N boxes from pallet P" (or "from the loose boxes"), then the page drops those rows, releases the supplier barcode from the dedup set (`releasedSources`) and lowers its own prefilled total; a batch already booked on an LPN is refused (`labels_booked`, "These labels belong to boxes already booked on an LPN — they can only be reprinted.").
+
+**Deleting a scan row** (`rescanPalletBox` / `rescanLooseBox`) of an identical or receiving label calls `DELETE /api/carton-labels?token&barcode=…`, which removes that one label only while it is unprinted, in this session and not a New carton label — this stops orphans like batch `0877ca78`. Deleting the last minted row of an identical batch also frees the sample's supplier barcode, so the carton can be scanned again (before `a4e7391` that re-scan was refused as "Already scanned — carton #?" until a reload). A reload refills the dedup set from the cache **including** those supplier codes (`dedupCodes`).
+
+**"Printed".** The print sheet (`app/labels/print/LabelSheet.tsx`) marks exactly the labels it rendered, right before it calls `window.print()`: `POST /api/carton-labels/print {token, ids, label_size, via:'sheet'}` with `keepalive`, once per page load (a reprint is a new load and bumps `print_count`), raced against 1.5 s so a slow POST cannot stall the dialog. It never relies on `afterprint`, which Android Chrome may not fire; `afterprint` is only traced. The browser never reports whether paper came out, so "printed" means "rendered and handed to the print dialog". **Mark as printed** in Labels (`via:'manual'`) is the fallback for a sheet printed elsewhere or a tab killed before it could report.
+
+**The print gate** (`lib/label-gate.ts`, `blockingLabels`). An unprinted label blocks the list being booked when
+(i) its carton is **on that list** — an identical or receiving label whose row is about to be booked; or
+(ii) it is a **New carton** label anywhere in the session — that sticker is on no list yet and can only be scanned once printed, so an unprinted one is a carton still waiting outside the job.
+An identical / receiving label whose row was deleted (an orphan) never blocks; printed labels never block. It is enforced twice with the same function:
+- **page (UX)** — while it blocks a list that is otherwise ready, the confirm slide (or "Fewer cartons arrived? Close with N") becomes an amber hint plus an amber one-tap **Print N labels first** (HE `קודם הדפס N מדבקות`) and a link **Choose in Labels**. `handleConfirmPallet` / `handleConfirmLooseBoxes` refuse before `setPhase('confirming')` — covering the slide, the close-short modal, the gap chip and the single-item auto-confirm — with an amber toast and a trace `labels_gate_blocked {count, batch_ids, by}`.
+- **server (authoritative)** — `/api/multi-pallet-complete` (inside the session lock, after the split guard, before the non-meat / damaged-sticker / scan-every-box paths) and `/api/multi-pallet-loose-complete` (after its claim guards, before the session save) read `findUnprintedForSession(token)` and answer **409 `{success:false, error:'labels_not_printed', unprinted, batch_ids}`**. Nothing is written, the cursor does not move and no bot webhook fires — so the last pallet cannot close the delivery, and the Priority push cannot start, with unprinted labels. The page answers a 409 by re-reading the labels and returning to scanning with the gate shown, never a red error or the raw code; the damaged-sticker form and non-meat Type A show "Print the saved labels first — go back and open Labels."
+
+The `pallet_done` "Scan pallet N" tap and the `all_done` card are not gated: the LPN already exists by then.
+
+DB effects: `POST` inserts `quantity` rows (`batch_id` from the client when it is a valid UUID, else minted; `origin`; `source_barcode`; `pallet_number`; `session_token`; `document_number` and `created_by_chat_id` from the session); `POST /print` sets `status='printed'`, `printed_at`, `print_count+1` and `label_size`; `DELETE ?batch` removes the batch; `DELETE ?barcode` removes one unprinted label. **No other table is written.** `batchHasBookedBoxes` reads `scan_sessions` (`completed_pallets[].barcodes`, `loose_barcodes`) and `box_inventory`. A New carton label is later scanned through the ordinary inbound flow, where the 16-digit `28…` barcode is just another ID and the carton's product/weight/dates come from the box-sticker OCR reading the printed text — which is why the layout mimics a supplier sticker and keeps the bars hard against the text.
 
 #### 2.5 LPN sticker page
 
@@ -4708,13 +4949,16 @@ Query: `token`, `scope?` (`all` else `session`), `status?` (`created|printed` el
 
 #### 3.6 `POST /api/carton-labels`
 Body: `{token, quantity: 1..500, item_name_hebrew?, item_name_english? (≥1 required), item_code?, weight_kg?: number|null (0 < w ≤ 2000), production_date?: 'YYYY-MM-DD', expiry_date?, notes? (≤500), print_barcode?: boolean (default true), label_size?: LabelSize (default '10x15')}`.
-Response: `{success:true, labels: CartonLabel[] (quantity rows), batch_id}`; 400 messages: `quantity must be between 1 and 500`, `an item must be selected`, `invalid weight_kg`; 401; 500 `Failed to create labels`. Producer `CartonCreator.handleCreate` (never sends `label_size`).
+Since 2026-10-01 the body also takes `origin?: 'new_carton'|'identical'|'receiving'` (anything else → `new_carton`), `source_barcode?` (digits only, ≤ 40), `pallet_number?: int ≥ 0 | null` and `batch_id?: uuid` — a repeat POST with the same `batch_id` from the same session returns the existing batch instead of a second set (a `batch_id` used by another session gets a fresh id).
+Response: `{success:true, labels: CartonLabel[] (quantity rows), batch_id}`; 400 messages: `quantity must be between 1 and 500`, `an item must be selected`, `invalid weight_kg`, `invalid pallet_number`; 401; 500 `Failed to create labels`. Producers: `CartonCreator` (`new_carton`), `IdenticalBoxesForm` (`identical`), pallet-verify `handleCreateBarcode` (`receiving`); none sends `label_size`.
 
-#### 3.7 `DELETE /api/carton-labels?token&batch` → `{success:true, deleted: n}`; 400 `batch is required`.
+#### 3.7 `DELETE /api/carton-labels?token&batch` and `?token&barcode`
+`DELETE /api/carton-labels?token&batch` → `{success:true, deleted: n, barcodes: string[], source_barcode: string|null}`; **409 `labels_booked`** when any carton of the batch is already booked (its session's `completed_pallets[].barcodes` / `loose_barcodes`, or `box_inventory`); 400 `batch or barcode is required`. **`DELETE /api/carton-labels?token&barcode=<digits>`** → `{success:true, deleted: 0|1}` — removes one label only while `status='created'`, in this session and `origin <> 'new_carton'` (2026-10-01).
 
 #### 3.8 `GET /api/carton-labels/print?token&batches=<csv>|ids=<csv>` → `{success:true, labels: CartonLabel[]}` (ordered `created_at, serial`). Consumer: `LabelSheet`.
 
-#### 3.9 `POST /api/carton-labels/print` body `{token, batch_ids?: string[], ids?: string[], label_size?}` → `{success:true, updated: n}`; 400 `ids or batch_ids is required`. Producer: `LabelsBrowser.handlePrint` (always `batch_ids` + `label_size`).
+#### 3.9 `POST /api/carton-labels/print`
+`POST /api/carton-labels/print` body `{token, batch_ids?: string[], ids?: string[], label_size?, via?: 'sheet'|'manual'}` → `{success:true, updated: n, via}`; 400 `ids or batch_ids is required`. Producers (2026-10-01): `LabelSheet` (`ids` it rendered + `label_size`, `via:'sheet'`, `keepalive`, just before `window.print()`) and `LabelsBrowser` **Mark as printed** (`batch_ids`, `via:'manual'`). `via` is logged, not stored. `LabelsBrowser`'s Print no longer calls it.
 
 #### 3.10 Print-sheet URL contract
 `/labels/print?token=<session>&batches=<csv batch_ids>&size=10x10|10x15|a4&lang=Hebrew|English` (producer `LabelsBrowser.tsx:155-158`; consumer `LabelSheet.tsx:35-40`).
@@ -4804,7 +5048,7 @@ Thresholds / magic values:
 
 **Carton labels / Code 128 / print**
 14. (NEW finding, security-adjacent) **`DELETE /api/carton-labels` and `POST /api/carton-labels/print` have no ownership check** — any live session token can delete or flag-printed any batch warehouse-wide (`app/api/carton-labels/route.ts:124-136`, `print/route.ts:46-68`), and `GET ?scope=all` exposes every recent sticker. Tokens are unguessable nanoids and the table owns no stock, so impact is limited to ledger noise, but the doc's "safe" framing (`route.ts:120-122`) should be read as "harmless to stock", not "authorised".
-15. (NEW finding) `markCartonLabelsPrinted` issues one `update` per row, non-transactionally (`lib/carton-labels.ts:180-192`). A failure mid-loop leaves a batch half-`printed` and throws → the UI's `.catch(() => {})` swallows it (`LabelsBrowser.tsx:180`), so the worker sees no error and the "×N printed" pill may never appear for that batch. Fix direction: a single `update … where id in (…)` with `print_count = print_count + 1` via RPC, or accept the drift.
+15. (FIXED in the cross-review fixes — slices + one `update` per print count; see `markCartonLabelsPrinted` above) `markCartonLabelsPrinted` issued one `update` per row, non-transactionally (`lib/carton-labels.ts:180-192`). A failure mid-loop leaves a batch half-`printed` and throws → the UI's `.catch(() => {})` swallows it (`LabelsBrowser.tsx:180`), so the worker sees no error and the "×N printed" pill may never appear for that batch. Fix direction: a single `update … where id in (…)` with `print_count = print_count + 1` via RPC, or accept the drift.
 16. (NEW finding) The "printed" flag is written when the sheet **tab opens** (before the print dialog even appears, `LabelsBrowser.tsx:159-170`); the sheet's own `window.print()` (auto and the manual button) never reports back. Pressing the sheet's Print button five times = one increment. `print_count` therefore counts *print-queue hand-offs from the Labels screen*, not printouts. Documented intent in code (`carton-labels.ts:164-170`), but the pill `הודפסה ×N` could mislead.
 17. (NEW finding) `POST /api/carton-labels` accepts `production_date`/`expiry_date` as any string (`route.ts:102-103`); a non-ISO value reaches the `date` columns and surfaces as a 500 `Failed to create labels` → generic `carton.error` toast. The shipped UI only sends `CalendarPicker` ISO values, so only API callers hit it.
 18. (NEW finding) The client weight input allows multiple dots (`[^\d.]` filter, `CartonCreator.tsx:247`), e.g. `1.2.3` → `Number('1.2.3') = NaN` → server 400 `invalid weight_kg` → the UI shows the generic `carton.error` (no field-level message).
@@ -5450,6 +5694,11 @@ No roles are read in this scope (role routing is bot-side).
 
 ## Appendix A — Complete i18n key catalogue
 
+> **Snapshot of 2026-09-08.** The 2026-10-01 release added and removed keys (listed in
+> [Changes since the audit](#changes-since-the-audit-the-2026-10-01-floor-feedback-release)); among the rows below,
+> `palletVerify.moreBoxesToGo`, `forceCreateBtn`, `discrepancy*`, `terminal.swipeNextPallet`,
+> `terminal.sendToPriority`, `terminal.duplicateOf` and `carton.created` no longer exist.
+
 Every translation key defined in `lib/i18n/en.ts` and `lib/i18n/he.ts`, its English text, and whether anything in the application actually uses it. Unused keys are safe to delete; a key used but missing fails the TypeScript build, which is why the two dictionaries never drift apart.
 
 | # | key | English text | used? |
@@ -5628,7 +5877,7 @@ Every translation key defined in `lib/i18n/en.ts` and `lib/i18n/he.ts`, its Engl
 | 172 | `palletVerify.committed` | {committed} / {total} committed | **unused** |
 | 173 | `palletVerify.readyToConfirm` | Ready to confirm | yes |
 | 174 | `palletVerify.waitingInput` | ⏳ Waiting for your input below | yes |
-| 175 | `palletVerify.moreBoxesToGo` | {count} more boxes to go | yes |
+| 175 | `palletVerify.moreBoxesToGo` | *(removed 2026-10-01 — `palletVerify.leftToScan`)* | — |
 | 176 | `palletVerify.uniformItemsHeader` | Uniform items | yes |
 | 177 | `palletVerify.uniformLockedItem` | {name} — {count} boxes locked ({weight} kg/box) | yes |
 | 178 | `palletVerify.boxesUnit` | {count} boxes | **unused** |
@@ -5645,7 +5894,7 @@ Every translation key defined in `lib/i18n/en.ts` and `lib/i18n/he.ts`, its Engl
 | 189 | `palletVerify.confirmPalletBtn` | Confirm Pallet {current} | yes |
 | 190 | `palletVerify.scanMoreToContinue` | Scan {count} more boxes to continue | yes |
 | 191 | `palletVerify.boxesNeeded` | {count} more boxes needed | yes |
-| 192 | `palletVerify.forceCreateBtn` | Create LPN anyway | yes |
+| 192 | `palletVerify.forceCreateBtn` | *(removed 2026-10-01 — `palletVerify.closeShortBtn`)* | — |
 | 193 | `palletVerify.forceConfirmWarning` | You’ve scanned {committed} of {declared} boxes. The pallet will be created with {committed} box(es). Create the LPN and continue? | yes |
 | 194 | `palletVerify.swipeConfirmPallet` | Slide to confirm · Pallet {current} | yes |
 | 195 | `palletVerify.swipeConfirmLoose` | Slide to confirm {count} loose boxes | yes |
@@ -5654,7 +5903,7 @@ Every translation key defined in `lib/i18n/en.ts` and `lib/i18n/he.ts`, its Engl
 | 198 | `palletVerify.discrepancyScanned` | Scanned | yes |
 | 199 | `palletVerify.discrepancyExpected` | Expected | yes |
 | 200 | `palletVerify.discrepancyShortfall` | Shortfall | yes |
-| 201 | `palletVerify.discrepancySwipe` | Slide to confirm the shortfall | yes |
+| 201 | `palletVerify.discrepancySwipe` | *(removed 2026-10-01 — `palletVerify.closeShortConfirm`)* | — |
 | 202 | `palletVerify.palletTypeSingle` | single | **unused** |
 | 203 | `palletVerify.palletTypeMix` | mix | **unused** |
 | 204 | `palletVerify.scanToStart` | Scan boxes on this pallet | yes |
@@ -5991,10 +6240,10 @@ Every translation key defined in `lib/i18n/en.ts` and `lib/i18n/he.ts`, its Engl
 | 534 | `terminal.statPallet` | Pallet | yes |
 | 535 | `terminal.statCartons` | Cartons | yes |
 | 536 | `terminal.statWeight` | Weight | yes |
-| 537 | `terminal.swipeNextPallet` | Slide to confirm · receive next pallet | yes |
+| 537 | `terminal.swipeNextPallet` | *(removed 2026-10-01 — moving on is a tap, `terminal.nextPalletBtn`)* | — |
 | 538 | `terminal.issuePalletLabels` | Print label for this pallet | yes |
 | 539 | `terminal.commitAndIssue` | Add to stock & print labels | **unused** |
-| 540 | `terminal.sendToPriority` | Close & send to Priority | yes |
+| 540 | `terminal.sendToPriority` | *(removed 2026-10-01 — the push is automatic; `priority.*`)* | — |
 | 541 | `terminal.continueScanning` | Continue scanning | **unused** |
 | 542 | `terminal.finish` | Finish | **unused** |
 | 543 | `terminal.savingPallet` | Saving pallet… | **unused** |
@@ -6189,7 +6438,7 @@ Every translation key defined in `lib/i18n/en.ts` and `lib/i18n/he.ts`, its Engl
 | 732 | `carton.create` | Create {count} stickers | yes |
 | 733 | `carton.createOne` | Create 1 sticker | yes |
 | 734 | `carton.creating` | Creating… | yes |
-| 735 | `carton.created` | {count} stickers created — open Labels to print them | yes |
+| 735 | `carton.created` | *(removed 2026-10-01 — `carton.saved`)* | — |
 | 736 | `carton.error` | Could not create the stickers. Try again. | yes |
 | 737 | `carton.sessionExpired` | This session has expired. Ask for a fresh link. | yes |
 | 738 | `carton.printedNote` | Print the sticker, stick it on the carton, then scan it like any other box. | yes |

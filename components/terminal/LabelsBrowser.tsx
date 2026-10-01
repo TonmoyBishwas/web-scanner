@@ -3,21 +3,41 @@
 /**
  * מדבקות — Labels.
  *
- * The print queue for the stickers minted by New carton: pick a label size,
- * select the batches to print, hand them to the browser's print dialog, and
- * see at a glance which have already been printed.
+ * The print queue for every label this job SAVED — New carton, "all boxes
+ * identical" and the edit panel's new barcode: pick a label size, select the
+ * batches to print, hand them to the browser's print dialog, and see at a
+ * glance which still need printing. Saving and printing are separate steps
+ * (2026-10-01): the floor saves labels while scanning and prints them here in
+ * one go, any time before the pallet is closed.
  *
- * Read/write is limited to the `carton_labels` ledger — printing a sticker
- * moves no stock. Selection is per batch (one New carton submission), which is
- * also how the client's design groups them ("×N").
+ * "Printed" is recorded by the print sheet itself for the labels it rendered,
+ * not by this screen when the tab opens. "Mark as printed" is the fallback
+ * for a sheet printed elsewhere. Unprinted = amber with a crossed-out
+ * printer; printed = green.
+ *
+ * Writes only the `carton_labels` ledger — except that deleting a batch whose
+ * cartons are still rows on the scan list also takes those rows off it (the
+ * page does that through `onBatchDeleted`; the confirm says so first). A
+ * batch already booked on an LPN cannot be deleted, only reprinted.
  */
 
-import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { MI } from './MI';
 import { ScreenOverlay } from './ScreenOverlay';
 import { CartonSticker } from './CartonSticker';
 import { Toast, useToast } from './Toast';
 import { LanguageContext, useT } from '@/lib/i18n';
+import {
+  labelSheetUrl,
+  labelTags,
+  loadLabelSize,
+  rowsOnList,
+  saveLabelSize,
+  sortUnprintedFirst,
+  type LabelTag,
+  type LiveRowPlace,
+} from '@/lib/label-batches';
+import { trace } from '@/lib/scanner-trace';
 import type { CartonLabel, LabelSize } from '@/types';
 
 type StatusFilter = 'all' | 'created' | 'printed';
@@ -68,28 +88,49 @@ function shortDate(iso: string | null): string {
 interface LabelsBrowserProps {
   token: string;
   onBack: () => void;
+  /** Which status filter to open on — 'created' when labels await printing. */
+  initialStatus?: 'created' | 'all';
+  /** Something changed in the ledger (printed, marked, deleted). */
+  onChanged?: () => void;
+  /** barcode → where its row sits on the scanner's live lists right now. */
+  liveRows?: ReadonlyMap<string, LiveRowPlace>;
+  /** A batch was deleted: drop these barcodes' rows from the lists. */
+  onBatchDeleted?: (batchId: string, barcodes: string[], sourceBarcode: string | null) => void;
 }
 
-export function LabelsBrowser({ token, onBack }: LabelsBrowserProps) {
+type Confirm = { batchId: string; kind: 'delete' | 'mark' };
+
+export function LabelsBrowser({
+  token, onBack, initialStatus = 'all', onChanged, liveRows, onBatchDeleted,
+}: LabelsBrowserProps) {
   const tr = useT();
   const language = useContext(LanguageContext);
   const { toast, showToast } = useToast();
 
-  const [size, setSize] = useState<LabelSize>('10x15');
-  // Opens on THIS job's stickers. Anything older is a different job, even when
+  // Remembered per device: a warehouse's printer takes one stock.
+  const [size, setSize] = useState<LabelSize>(loadLabelSize);
+  // Opens on THIS job's labels. Anything older is a different job, even when
   // it carries the same invoice number — re-scanning an invoice mints a new
   // session, and showing both runs side by side is how a worker reprints
   // yesterday's label onto today's carton.
   const [scope, setScope] = useState<Scope>('session');
-  const [status, setStatus] = useState<StatusFilter>('all');
+  const [status, setStatus] = useState<StatusFilter>(initialStatus);
   const [labels, setLabels] = useState<CartonLabel[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorKey, setErrorKey] = useState<'labels.error' | 'labels.sessionExpired' | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const [busy, setBusy] = useState(false);
+  // Opening on "Not printed" puts the active chip at the far end of the
+  // scrolling filter row, half off a 320 px screen — bring it into view.
+  const activeStatusRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    activeStatusRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  /** `quiet` = refresh in place (returning from the print tab) without the loading line. */
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     setErrorKey(null);
     try {
       const res = await fetch(
@@ -117,7 +158,22 @@ export function LabelsBrowser({ token, onBack }: LabelsBrowserProps) {
 
   useEffect(() => { void load(); }, [load]);
 
-  const batches = useMemo(() => groupBatches(labels), [labels]);
+  // Back from the print tab: the sheet has flipped what it printed by now.
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState !== 'visible') return;
+      void load(true);
+      onChanged?.();
+    };
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [load, onChanged]);
+
+  const batches = useMemo(() => sortUnprintedFirst(groupBatches(labels)), [labels]);
   const totalSelectedLabels = useMemo(
     () => batches.filter(b => selected.has(b.batch_id)).reduce((n, b) => n + b.count, 0),
     [batches, selected]
@@ -146,60 +202,105 @@ export function LabelsBrowser({ token, onBack }: LabelsBrowserProps) {
     setSelected(prev => (prev.size === batches.length ? new Set() : new Set(batches.map(b => b.batch_id))));
   }
 
+  function pickSize(next: LabelSize) {
+    setSize(next);
+    saveLabelSize(next);
+  }
+
   function handlePrint() {
     const batchIds = batches.filter(b => selected.has(b.batch_id)).map(b => b.batch_id);
     if (!batchIds.length) return;
 
     // Opened synchronously inside the click — a window.open after an awaited
-    // fetch is what pop-up blockers kill.
-    const url =
-      `/labels/print?token=${encodeURIComponent(token)}` +
-      `&batches=${encodeURIComponent(batchIds.join(','))}` +
-      `&size=${size}&lang=${encodeURIComponent(language)}`;
-    const win = window.open(url, '_blank');
+    // fetch is what pop-up blockers kill. Nothing is marked here: the sheet
+    // marks the labels it actually rendered, right before its print dialog.
+    const win = window.open(labelSheetUrl({ token, batchIds, size, language }), '_blank');
     if (!win) {
       showToast(tr('labels.printBlocked'), 'error', '#ef8a8a');
       return;
     }
+    trace('ui', 'labels_print_opened', { batch_ids: batchIds, count: totalSelectedLabels, size });
+    showToast(
+      totalSelectedLabels === 1 ? tr('labels.printSentOne') : tr('labels.printSent', { count: totalSelectedLabels }),
+      'print',
+    );
+    setSelected(new Set());
+  }
 
-    const printed = totalSelectedLabels;
-    fetch('/api/carton-labels/print', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, batch_ids: batchIds, label_size: size }),
-    })
-      .then(r => r.json())
-      .then(data => {
-        if (data?.success) {
-          showToast(tr('labels.printSent', { count: printed }), 'print');
-          setSelected(new Set());
-          void load();
-        }
-      })
-      .catch(() => { /* the sheet is already open; the ledger just missed the flag */ });
+  /** "Mark as printed" — for a sheet printed elsewhere, or a tab killed before it could report. */
+  async function handleMarkPrinted(batch: LabelBatch) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch('/api/carton-labels/print', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, batch_ids: [batch.batch_id], via: 'manual' }),
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        showToast(tr('labels.markFailed'), 'error', '#ef8a8a');
+        return;
+      }
+      trace('ui', 'labels_marked_printed', { batch_id: batch.batch_id, count: batch.count });
+      showToast(
+        batch.count === 1 ? tr('labels.markedPrintedOne') : tr('labels.markedPrinted', { count: batch.count }),
+        'task_alt',
+      );
+      setConfirm(null);
+      void load(true);
+      onChanged?.();
+    } catch {
+      showToast(tr('labels.markFailed'), 'error', '#ef8a8a');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleDelete(batchId: string) {
+    if (busy) return;
+    setBusy(true);
     try {
       const res = await fetch(
         `/api/carton-labels?token=${encodeURIComponent(token)}&batch=${encodeURIComponent(batchId)}`,
         { method: 'DELETE' }
       );
       const data = await res.json();
+      if (res.status === 409 && data?.error === 'labels_booked') {
+        // Already stock on an LPN: the stickers are on boxes in the
+        // warehouse, so the ledger keeps them (reprint only).
+        showToast(tr('labels.deleteBooked'), 'info', '#fbbf5c');
+        setConfirm(null);
+        return;
+      }
       if (!data?.success) {
         showToast(tr('labels.deleteFailed'), 'error', '#ef8a8a');
         return;
       }
+      const barcodes: string[] = Array.isArray(data.barcodes) ? data.barcodes : [];
+      trace('ui', 'labels_batch_deleted', { batch_id: batchId, count: barcodes.length });
+      onBatchDeleted?.(batchId, barcodes, typeof data.source_barcode === 'string' ? data.source_barcode : null);
       showToast(tr('labels.deleted'), 'delete');
-      setConfirmDelete(null);
-      void load();
+      setConfirm(null);
+      void load(true);
+      onChanged?.();
     } catch {
       showToast(tr('labels.deleteFailed'), 'error', '#ef8a8a');
+    } finally {
+      setBusy(false);
     }
   }
 
+  function tagText(tag: LabelTag): string {
+    if (tag.kind === 'pallet') return tr('labels.palletTag', { n: tag.n });
+    if (tag.kind === 'loose') return tr('labels.looseTag');
+    return tr('labels.newCartonTag');
+  }
+
+  // flex-none + nowrap: in the scrolling filter row a chip used to shrink and
+  // break its label onto two lines ("לא / הודפסו") on a 320 px phone.
   const chip = (active: boolean) =>
-    `px-3 h-[32px] rounded-[9px] text-[11.5px] font-extrabold border ${
+    `flex-none whitespace-nowrap px-3 h-[32px] rounded-[9px] text-[11.5px] font-extrabold border ${
       active ? 'bg-brand-weak border-brand text-ink-inverse' : 'bg-tile border-line text-ink-muted'
     }`;
 
@@ -214,7 +315,7 @@ export function LabelsBrowser({ token, onBack }: LabelsBrowserProps) {
             {SIZES.map(s => (
               <button
                 key={s.id}
-                onClick={() => setSize(s.id)}
+                onClick={() => pickSize(s.id)}
                 className={`flex-1 h-[34px] rounded-[8px] text-[12px] font-extrabold ${
                   size === s.id ? 'bg-brand text-white' : 'text-ink-muted'
                 }`}
@@ -239,7 +340,11 @@ export function LabelsBrowser({ token, onBack }: LabelsBrowserProps) {
           <button onClick={() => setStatus('all')} className={chip(status === 'all')}>
             {tr('labels.filterAll')}
           </button>
-          <button onClick={() => setStatus('created')} className={chip(status === 'created')}>
+          <button
+            ref={initialStatus === 'created' ? activeStatusRef : undefined}
+            onClick={() => setStatus('created')}
+            className={chip(status === 'created')}
+          >
             {tr('labels.filterCreated')}
           </button>
           <button onClick={() => setStatus('printed')} className={chip(status === 'printed')}>
@@ -265,18 +370,30 @@ export function LabelsBrowser({ token, onBack }: LabelsBrowserProps) {
         ) : errorKey ? (
           <p className="text-[12px] font-bold text-ink-muted text-center mt-8">{tr(errorKey)}</p>
         ) : batches.length === 0 ? (
-          <p className="text-[12px] font-bold text-ink-muted text-center mt-8 leading-[1.5]">
-            {status !== 'all'
-              ? tr('labels.emptyFiltered')
-              : scope === 'session'
-                ? tr('labels.empty')
-                : tr('labels.emptyAll')}
-          </p>
+          status === 'created' ? (
+            // Green = done: nothing is waiting for the printer.
+            <p className="flex items-center justify-center gap-[6px] text-[12px] font-bold text-ok-weak-ink text-center mt-8 leading-[1.5]">
+              <MI name="task_alt" size={18} />
+              {tr('labels.emptyUnprinted')}
+            </p>
+          ) : (
+            <p className="text-[12px] font-bold text-ink-muted text-center mt-8 leading-[1.5]">
+              {status !== 'all'
+                ? tr('labels.emptyFiltered')
+                : scope === 'session'
+                  ? tr('labels.empty')
+                  : tr('labels.emptyAll')}
+            </p>
+          )
         ) : (
           batches.map(batch => {
             const isSelected = selected.has(batch.batch_id);
             const printed = batch.printedCount === batch.count;
             const label = batch.sample;
+            const confirming = confirm?.batchId === batch.batch_id ? confirm.kind : null;
+            const onList = confirming === 'delete'
+              ? rowsOnList(labels.filter(l => l.batch_id === batch.batch_id).map(l => l.barcode), liveRows)
+              : { count: 0, place: null };
             return (
               <div
                 key={batch.batch_id}
@@ -312,21 +429,32 @@ export function LabelsBrowser({ token, onBack }: LabelsBrowserProps) {
                         label.print_barcode ? '' : tr('labels.noBarcode'),
                       ].filter(Boolean).join(' · ')}
                     </span>
-                    <span className="flex items-center gap-[6px] mt-[5px]">
+                    <span className="flex flex-wrap items-center gap-[6px] mt-[5px]">
+                      {/* Amber + crossed-out printer = still to print;
+                          green + tick = printed. */}
                       <span
-                        className="px-[7px] py-[2px] rounded-[6px] text-[9.5px] font-extrabold"
+                        className="inline-flex items-center gap-[3px] px-[7px] py-[2px] rounded-[6px] text-[9.5px] font-extrabold"
                         style={
                           printed
                             ? { background: 'rgba(34,197,94,.16)', color: '#86efac' }
-                            : { background: 'rgba(19,164,236,.18)', color: '#7cc9f2' }
+                            : { background: 'rgba(245,158,11,.18)', color: '#fbbf5c' }
                         }
                       >
+                        <MI name={printed ? 'check_circle' : 'print_disabled'} size={11} />
                         {printed
                           ? batch.maxPrintCount > 1
                             ? tr('labels.printedTimes', { count: batch.maxPrintCount })
                             : tr('labels.statusPrinted')
                           : tr('labels.statusCreated')}
                       </span>
+                      {labelTags(label).map(tag => (
+                        <span
+                          key={tag.kind}
+                          className="px-[6px] py-[1px] rounded-[6px] border border-line bg-tile text-[9.5px] font-extrabold text-ink-inverse"
+                        >
+                          {tagText(tag)}
+                        </span>
+                      ))}
                       <span className="text-[10px] font-bold text-ink-muted" dir="ltr">
                         {label.serial}
                       </span>
@@ -336,32 +464,83 @@ export function LabelsBrowser({ token, onBack }: LabelsBrowserProps) {
                   <span className="flex-none text-[16px] font-black text-ink-inverse">×{batch.count}</span>
                 </button>
 
-                <div className="flex items-center border-t border-line">
-                  {confirmDelete === batch.batch_id ? (
-                    <>
+                {confirming === 'mark' ? (
+                  <div className="border-t border-line">
+                    <p className="flex items-start gap-[6px] px-[11px] pt-[9px] text-[11px] font-bold text-ink-inverse leading-[1.45]">
+                      <MI name="task_alt" size={15} className="flex-none text-ok-weak-ink mt-[1px]" />
+                      {batch.count === 1
+                        ? tr('labels.markPrintedConfirmOne')
+                        : tr('labels.markPrintedConfirm', { count: batch.count })}
+                    </p>
+                    <div className="flex items-center">
                       <button
-                        onClick={() => void handleDelete(batch.batch_id)}
-                        className="flex-1 py-[9px] text-[11.5px] font-extrabold text-[#ef8a8a]"
+                        onClick={() => void handleMarkPrinted(batch)}
+                        disabled={busy}
+                        className="flex-1 py-[10px] flex items-center justify-center gap-[6px] text-[11.5px] font-extrabold text-ok-weak-ink disabled:opacity-50"
                       >
-                        {tr('labels.delete')}
+                        <MI name="task_alt" size={16} />
+                        {tr('labels.markPrinted')}
                       </button>
                       <button
-                        onClick={() => setConfirmDelete(null)}
-                        className="flex-1 py-[9px] text-[11.5px] font-extrabold text-ink-muted border-s border-line"
+                        onClick={() => setConfirm(null)}
+                        className="flex-1 py-[10px] text-[11.5px] font-extrabold text-ink-muted border-s border-line"
                       >
                         {tr('labels.cancelDelete')}
                       </button>
-                    </>
-                  ) : (
+                    </div>
+                  </div>
+                ) : confirming === 'delete' ? (
+                  <div className="border-t border-line">
+                    {onList.count > 0 && onList.place !== null ? (
+                      // Red: deleting the batch also takes its boxes off the pallet list.
+                      <p className="flex items-start gap-[6px] px-[11px] pt-[9px] text-[11px] font-bold text-danger-weak-ink leading-[1.45]">
+                        <MI name="warning" size={15} className="flex-none mt-[1px]" />
+                        {onList.place === 'loose'
+                          ? onList.count === 1
+                            ? tr('labels.deleteAlsoRemovesLooseOne')
+                            : tr('labels.deleteAlsoRemovesLoose', { count: onList.count })
+                          : onList.count === 1
+                          ? tr('labels.deleteAlsoRemovesOne', { n: onList.place })
+                          : tr('labels.deleteAlsoRemoves', { count: onList.count, n: onList.place })}
+                      </p>
+                    ) : null}
+                    <div className="flex items-center">
+                      <button
+                        onClick={() => void handleDelete(batch.batch_id)}
+                        disabled={busy}
+                        className="flex-1 py-[10px] flex items-center justify-center gap-[6px] text-[11.5px] font-extrabold text-[#ef8a8a] disabled:opacity-50"
+                      >
+                        <MI name="delete_outline" size={16} />
+                        {tr('labels.delete')}
+                      </button>
+                      <button
+                        onClick={() => setConfirm(null)}
+                        className="flex-1 py-[10px] text-[11.5px] font-extrabold text-ink-muted border-s border-line"
+                      >
+                        {tr('labels.cancelDelete')}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center border-t border-line">
+                    {!printed ? (
+                      <button
+                        onClick={() => setConfirm({ batchId: batch.batch_id, kind: 'mark' })}
+                        className="flex-1 min-w-0 py-[9px] px-2 flex items-center justify-center gap-[6px] text-[11.5px] font-extrabold text-ink-inverse border-e border-line"
+                      >
+                        <MI name="task_alt" size={16} className="flex-none text-ok-weak-ink" />
+                        <span className="truncate">{tr('labels.markPrinted')}</span>
+                      </button>
+                    ) : null}
                     <button
-                      onClick={() => setConfirmDelete(batch.batch_id)}
-                      className="flex-1 py-[9px] flex items-center justify-center gap-[6px] text-[11.5px] font-extrabold text-ink-muted"
+                      onClick={() => setConfirm({ batchId: batch.batch_id, kind: 'delete' })}
+                      className="flex-1 min-w-0 py-[9px] px-2 flex items-center justify-center gap-[6px] text-[11.5px] font-extrabold text-ink-muted"
                     >
-                      <MI name="delete_outline" size={16} />
-                      {tr('labels.delete')}
+                      <MI name="delete_outline" size={16} className="flex-none" />
+                      <span className="truncate">{tr('labels.delete')}</span>
                     </button>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             );
           })
@@ -377,6 +556,8 @@ export function LabelsBrowser({ token, onBack }: LabelsBrowserProps) {
           <MI name="print" size={20} />
           {totalSelectedLabels === 0
             ? tr('labels.printNone')
+            : totalSelectedLabels === 1
+            ? tr('labels.printOne')
             : tr('labels.print', { count: totalSelectedLabels })}
         </button>
       </div>
