@@ -234,6 +234,12 @@ const DECODE_MAX_EDGE_PX = 1280;
  * bars instead (bench 2026-10-03: 7/14 floor photos shrunk vs 12/14 full).
  */
 const THICK_MAX_EDGE_PX = 1920;
+/**
+ * Fastest cadence for the Code 128 worker. Each post costs the main thread
+ * one getImageData of the visible strip (~1–2 Mpx); the scan itself runs in
+ * the worker, and a new frame is only sent once the last one is answered.
+ */
+const E2E_MIN_INTERVAL_MS = 100;
 
 interface FrameDecoder {
   engine: DecodeEngine;
@@ -614,6 +620,9 @@ export function SmartScanner({
   // Multi-read validation: two identical reads within 3 s, counted per value
   // so a second sticker in the frame cannot keep resetting the aimed one.
   const confirmerRef = useRef(new ReadConfirmer(2, 3000));
+  // Background thread running the edge-to-edge Code 128 reader (see
+  // scanContinuously). Owned by the scan loop; stopped with the camera.
+  const e2eWorkerRef = useRef<Worker | null>(null);
 
   // GS1-128 checksum validation
   const validateGS1Checksum = (barcode: string): boolean => {
@@ -1031,6 +1040,8 @@ export function SmartScanner({
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
     }
+    e2eWorkerRef.current?.terminate();
+    e2eWorkerRef.current = null;
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
@@ -1168,6 +1179,122 @@ export function SmartScanner({
     const thickCanvas = document.createElement('canvas');
     const thickCtx = thickCanvas.getContext('2d', { willReadFrequently: true });
 
+    // Confirm and hand over a frame's reads — from the platform detector
+    // (`via` = its pass) or from the edge-to-edge worker. Both feed the same
+    // two-reads rule, so one read from each confirms as well as two from one.
+    const consume = async (reads: FrameRead[], via: string) => {
+      const now = Date.now();
+
+      // Multi-read validation: 2 identical reads within 3 seconds, per value.
+      const { confirmed, progress } = confirmerRef.current.add(reads, now);
+      if (!confirmed) {
+        setCaptureCount(progress);
+        return;
+      }
+      const barcode = confirmed;
+
+      // SUCCESS: 2 identical reads confirmed
+      console.log('[SmartScanner] Barcode confirmed:', barcode, `(${via})`);
+      setCaptureCount(0);
+
+      // Check cooldown
+      const timeSinceLastScan = now - lastScanTimeRef.current;
+      if (timeSinceLastScan < 3000) {
+        console.log('[SmartScanner] Cooldown active, ignoring confirmed scan');
+        return;
+      }
+
+      // Process confirmed scan
+      lastScannedRef.current = barcode;
+      lastScanTimeRef.current = now;
+      lastActivityRef.current = now; // a decode just happened — reset the manual-capture nudge
+
+      // Decide saved-vs-duplicate NOW, while we still have to paint
+      // something. The parent's own duplicate verdict only arrives after
+      // the sharpest-frame capture below (~400ms), which is far too late
+      // to be showing a green "saved" in the meantime.
+      const isDup = isDupRef.current?.(barcode) ?? false;
+      outcomeRef.current = isDup ? 'duplicate' : 'saved';
+      setScanOutcome(outcomeRef.current);
+      if (isDup) setRejectKind('duplicate');
+      if (!isDup && holdClaimRef.current === 'saved') {
+        savedCountRef.current += 1;
+        setSavedCount(savedCountRef.current);
+      }
+
+      // Set cooldown state
+      inCooldownRef.current = true;
+      setIsInCooldown(true);
+      setCooldownTimeLeft(3);
+
+      // Start cooldown countdown timer
+      let countdown = 3;
+      const countdownInterval = setInterval(() => {
+        countdown--;
+        setCooldownTimeLeft(countdown);
+        if (countdown <= 0) {
+          clearInterval(countdownInterval);
+          inCooldownRef.current = false;
+          setIsInCooldown(false);
+        }
+      }, 1000);
+
+      // Long enough to register as a deliberate confirmation rather than a
+      // blink. A re-read keeps the old short blink — blue where a decode
+      // is the save ("already counted"), red where it is a rejection
+      // (/issue) — and the frame behind it carries the message.
+      setFlashColor(isDup ? (holdClaimRef.current === 'saved' ? 'blue' : 'red') : 'green');
+      setTimeout(() => setFlashColor(null), isDup ? 200 : 420);
+
+      // Vibration handled by parent component with settings check
+
+      const parsedData = parseIsraeliBarcode(barcode) || {
+        type: 'unknown',
+        sku: barcode,
+        weight: 0,
+        expiry: '',
+        raw_barcode: barcode,
+        expiry_source: 'ocr_required' as const
+      };
+
+      // OCR image: sharpest of a short burst of FULL-frame stills (not the
+      // cropped barcode region) so the whole sticker is captured and motion
+      // blur from the aiming moment is avoided. Runs inside the 3s cooldown.
+      const imageData = await captureSharpestFrame(video).catch(() => snapshotFrame(video));
+      onBarcodeDetected(barcode, parsedData, imageData);
+    };
+
+    // Edge-to-edge Code 128 reader (lib/code128-e2e.ts) in a worker. It reads
+    // the thin-printed supplier stickers the platform detector misses (and
+    // the misprinted ones with a dead printhead dot), and runs beside it, not
+    // instead of it. One frame in flight at a time; if the worker cannot be
+    // created the loop simply runs without it.
+    let e2e: Worker | null = null;
+    let e2eBusy = false;
+    let e2eLastPost = 0;
+    const e2eCanvas = document.createElement('canvas');
+    const e2eCtx = e2eCanvas.getContext('2d', { willReadFrequently: true });
+    try {
+      e2eWorkerRef.current?.terminate();
+      const worker = new Worker(new URL('../../lib/code128.worker.ts', import.meta.url));
+      e2e = worker;
+      e2eWorkerRef.current = worker;
+      worker.onmessage = (ev: MessageEvent<{ reads: FrameRead[] }>) => {
+        e2eBusy = false;
+        if (!isMountedRef.current || pausedRef.current || e2eWorkerRef.current !== worker) return;
+        const { reads } = ev.data;
+        if (reads.length > 0) void consume(reads, 'e2e');
+      };
+      worker.onerror = (err) => {
+        console.warn('[SmartScanner] Code 128 worker failed — platform detector only:', err.message);
+        worker.terminate();
+        if (e2e === worker) e2e = null;
+      };
+    } catch (err) {
+      console.warn('[SmartScanner] Code 128 worker unavailable — platform detector only:', err);
+      e2e = null;
+    }
+
     const ensureDecoder = () => {
       if (decoder && decoder.engine === engineRef.current) return;
       if (decoderLoading) return;
@@ -1258,6 +1385,29 @@ export function SmartScanner({
           return;
         }
 
+        // Hand the visible strip to the Code 128 worker at camera resolution
+        // (a starved 1-module bar is ~2 px; any shrink loses it). The `thick`
+        // pass reads exactly these pixels anyway, so it shares its copy below;
+        // every other pass grabs its own.
+        const e2eDue = !!e2e && !!e2eCtx && !e2eBusy && nowMs - e2eLastPost >= E2E_MIN_INTERVAL_MS;
+        const postE2E = (pixels: Uint8ClampedArray, width: number, height: number) => {
+          if (!e2e) return;
+          e2eBusy = true;
+          e2eLastPost = nowMs;
+          e2e.postMessage({ buffer: pixels.buffer, width, height }, [pixels.buffer]);
+        };
+        if (e2eDue && e2eCtx && !(pass === 'thick' && active.engine === 'native' && thickCtx)) {
+          const k = Math.min(1, THICK_MAX_EDGE_PX / Math.max(roi.sw, roi.sh));
+          const ew = Math.max(1, Math.round(roi.sw * k));
+          const eh = Math.max(1, Math.round(roi.sh * k));
+          if (e2eCanvas.width !== ew || e2eCanvas.height !== eh) {
+            e2eCanvas.width = ew;
+            e2eCanvas.height = eh;
+          }
+          e2eCtx.drawImage(video, roi.sx, roi.sy, roi.sw, roi.sh, 0, 0, ew, eh);
+          postE2E(e2eCtx.getImageData(0, 0, ew, eh).data, ew, eh);
+        }
+
         // Native path: crop + shrink straight from the video into an
         // ImageBitmap (GPU-side in Chrome), so the only pixels that ever reach
         // the CPU are the ones the detector needs. Falls back to the canvas
@@ -1301,6 +1451,9 @@ export function SmartScanner({
           }
           thickCtx.drawImage(video, roi.sx, roi.sy, roi.sw, roi.sh, 0, 0, tw, th);
           const px = thickCtx.getImageData(0, 0, tw, th);
+          if (e2eDue && pass === 'thick' && active.engine === 'native') {
+            postE2E(new Uint8ClampedArray(px.data), tw, th);
+          }
           thickScratch = thickenBars(px, thickScratch);
           // BarcodeDetector takes the pixels as they are; ZXing reads a canvas.
           if (active.engine === 'native') {
@@ -1347,89 +1500,7 @@ export function SmartScanner({
         // thickened either (bench 2026-10-03), so it keeps its full raw cadence.
         pass = active.engine === 'native' ? nextPass(pass, reads.length > 0) : 'raw';
 
-        if (reads.length > 0) {
-          const now = Date.now();
-
-          // Multi-read validation: 2 identical reads within 3 seconds, per value.
-          const { confirmed, progress } = confirmerRef.current.add(reads, now);
-          if (!confirmed) {
-            setCaptureCount(progress);
-            animationFrameRef.current = requestAnimationFrame(detect);
-            return;
-          }
-          const barcode = confirmed;
-
-          // SUCCESS: 2 identical reads confirmed
-          console.log('[SmartScanner] Barcode confirmed:', barcode, `(${pass} pass)`);
-          setCaptureCount(0);
-
-          // Check cooldown
-          const timeSinceLastScan = now - lastScanTimeRef.current;
-          if (timeSinceLastScan < 3000) {
-            console.log('[SmartScanner] Cooldown active, ignoring confirmed scan');
-            animationFrameRef.current = requestAnimationFrame(detect);
-            return;
-          }
-
-          // Process confirmed scan
-          lastScannedRef.current = barcode;
-          lastScanTimeRef.current = now;
-          lastActivityRef.current = now; // a decode just happened — reset the manual-capture nudge
-
-          // Decide saved-vs-duplicate NOW, while we still have to paint
-          // something. The parent's own duplicate verdict only arrives after
-          // the sharpest-frame capture below (~400ms), which is far too late
-          // to be showing a green "saved" in the meantime.
-          const isDup = isDupRef.current?.(barcode) ?? false;
-          outcomeRef.current = isDup ? 'duplicate' : 'saved';
-          setScanOutcome(outcomeRef.current);
-          if (isDup) setRejectKind('duplicate');
-          if (!isDup && holdClaimRef.current === 'saved') {
-            savedCountRef.current += 1;
-            setSavedCount(savedCountRef.current);
-          }
-
-          // Set cooldown state
-          inCooldownRef.current = true;
-          setIsInCooldown(true);
-          setCooldownTimeLeft(3);
-
-          // Start cooldown countdown timer
-          let countdown = 3;
-          const countdownInterval = setInterval(() => {
-            countdown--;
-            setCooldownTimeLeft(countdown);
-            if (countdown <= 0) {
-              clearInterval(countdownInterval);
-              inCooldownRef.current = false;
-              setIsInCooldown(false);
-            }
-          }, 1000);
-
-          // Long enough to register as a deliberate confirmation rather than a
-          // blink. A re-read keeps the old short blink — blue where a decode
-          // is the save ("already counted"), red where it is a rejection
-          // (/issue) — and the frame behind it carries the message.
-          setFlashColor(isDup ? (holdClaimRef.current === 'saved' ? 'blue' : 'red') : 'green');
-          setTimeout(() => setFlashColor(null), isDup ? 200 : 420);
-
-          // Vibration handled by parent component with settings check
-
-          const parsedData = parseIsraeliBarcode(barcode) || {
-            type: 'unknown',
-            sku: barcode,
-            weight: 0,
-            expiry: '',
-            raw_barcode: barcode,
-            expiry_source: 'ocr_required' as const
-          };
-
-          // OCR image: sharpest of a short burst of FULL-frame stills (not the
-          // cropped barcode region) so the whole sticker is captured and motion
-          // blur from the aiming moment is avoided. Runs inside the 3s cooldown.
-          const imageData = await captureSharpestFrame(video).catch(() => snapshotFrame(video));
-          onBarcodeDetected(barcode, parsedData, imageData);
-        }
+        if (reads.length > 0) await consume(reads, `${pass} pass`);
       } catch (err) {
         console.error('[SmartScanner] Detection error:', err);
       }

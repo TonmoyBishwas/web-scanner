@@ -1060,11 +1060,13 @@ export default function PalletVerifyPage({
       // Fire OCR with the frame captured at detection time
       if (imageData) {
         const capturedIndex = processedRef.current.size - 1; // index of this box
-        runOcr(barcode, imageData, capturedIndex);
-        // Archive the same frame. Done here rather than after OCR so a box
-        // whose OCR fails — the one the worker will retype by hand, and the
-        // one most worth having a picture of — still keeps its photo.
-        archiveStickerPhoto(barcode, imageData, 'pallet');
+        const ocr = runOcr(barcode, imageData, capturedIndex);
+        // Archive the same frame — after the OCR call settles, success or
+        // not, so a box whose OCR fails (the one the worker will retype, and
+        // the one most worth a picture) still keeps its photo. Not alongside
+        // it: the two ~450 KB uploads used to share the phone's uplink, and
+        // the OCR request reached the bot ~5 s after the scan (2026-10-03).
+        archiveStickerPhoto(barcode, imageData, 'pallet', ocr);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1204,6 +1206,7 @@ export default function PalletVerifyPage({
     barcode: string,
     imageData: string,
     target: 'pallet' | 'loose',
+    after?: Promise<unknown>,
   ) {
     if (!barcode || !imageData) return;
     // Guards a retried OCR, a re-render, and StrictMode's double-invoked
@@ -1211,16 +1214,20 @@ export default function PalletVerifyPage({
     if (uploadedStickersRef.current.has(barcode)) return;
     uploadedStickersRef.current.add(barcode);
 
-    fetch('/api/cloudinary/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        image: imageData,
-        barcode,
-        document_number: sessionRef.current?.document_number,
-        image_type: 'box',
-      }),
-    })
+    (after ?? Promise.resolve())
+      .catch(() => {})
+      .then(() =>
+        fetch('/api/cloudinary/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            image: imageData,
+            barcode,
+            document_number: sessionRef.current?.document_number,
+            image_type: 'box',
+          }),
+        }),
+      )
       .then((r) => r.json())
       .then((data) => {
         if (!data?.success || !data.secure_url) throw new Error(data?.error || 'no url');
@@ -1237,7 +1244,7 @@ export default function PalletVerifyPage({
 
   // ── OCR helper ──
 
-  function runOcr(lookupKey: string, imageData: string, capturedIndex: number, manual = false) {
+  function runOcr(lookupKey: string, imageData: string, capturedIndex: number, manual = false): Promise<void> {
     // Pass the invoice catalog so the bot's OCR prompt picks a known canonical
     // Hebrew name (closed set) instead of free-form reading.
     const candidates = invoiceItemsRef.current.map((it) => ({
@@ -1245,7 +1252,7 @@ export default function PalletVerifyPage({
       name_english: it.item_name_english,
       code: it.item_code,
     }));
-    fetch('/api/multi-pallet-ocr', {
+    return fetch('/api/multi-pallet-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey, candidates, token }),
@@ -1548,8 +1555,8 @@ export default function PalletVerifyPage({
       };
       setLooseBoxes((prev) => [...prev, box]);
       if (imageData) {
-        runLooseOcr(barcode, imageData);
-        archiveStickerPhoto(barcode, imageData, 'loose');
+        const ocr = runLooseOcr(barcode, imageData);
+        archiveStickerPhoto(barcode, imageData, 'loose', ocr);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2375,8 +2382,8 @@ export default function PalletVerifyPage({
     />
   ) : null;
 
-  function runLooseOcr(lookupKey: string, imageData: string, manual = false) {
-    fetch('/api/multi-pallet-ocr', {
+  function runLooseOcr(lookupKey: string, imageData: string, manual = false): Promise<void> {
+    return fetch('/api/multi-pallet-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey, token }),
