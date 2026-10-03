@@ -4,6 +4,15 @@ import { useEffect, useState, useRef, useCallback, type PointerEvent as ReactPoi
 import { AlertTriangle, ScanLine, Camera, Check, CheckCheck, X } from 'lucide-react';
 import type { ParsedBarcode, BoxStickerOCR } from '@/types';
 import { parseIsraeliBarcode } from '@/lib/barcode-parser';
+import {
+  thickenBars,
+  orderReads,
+  nextPass,
+  ReadConfirmer,
+  THICK_SMALL_SCALE,
+  type DecodePass,
+  type FrameRead,
+} from '@/lib/barcode-frame';
 import { useT } from '@/lib/i18n';
 import { useSettingsStore } from '@/stores/settings-store';
 
@@ -136,7 +145,9 @@ const HOLD_GLOW = {
 
 // The slice of the Shape Detection API's BarcodeDetector this file uses.
 interface NativeBarcodeDetector {
-  detect(source: HTMLCanvasElement | ImageBitmap): Promise<Array<{ rawValue: string }>>;
+  detect(source: HTMLCanvasElement | ImageBitmap | ImageData): Promise<
+    Array<{ rawValue: string; boundingBox?: { x: number; y: number; width: number; height: number } }>
+  >;
 }
 interface NativeBarcodeDetectorCtor {
   new (options: { formats: string[] }): NativeBarcodeDetector;
@@ -215,11 +226,23 @@ const DECODE_MAX_INTERVAL_MS = 400;
  * the 320px scan frame is still ≥3 px per module after the shrink.
  */
 const DECODE_MAX_EDGE_PX = 1280;
+/**
+ * The thickened pass (lib/barcode-frame.ts) runs on the visible strip at the
+ * camera's own resolution, up to this edge. Growing bars by a pixel only helps
+ * while a module is ≥ ~2.5 px; after the 1280 shrink a 31-digit sticker held
+ * at arm's length is ~1.8 px per module and the filter merges neighbouring
+ * bars instead (bench 2026-10-03: 7/14 floor photos shrunk vs 12/14 full).
+ */
+const THICK_MAX_EDGE_PX = 1920;
 
 interface FrameDecoder {
   engine: DecodeEngine;
-  /** Resolves the first barcode's payload in the frame, or null. Throws only for engine failure. */
-  detect(source: HTMLCanvasElement | ImageBitmap): Promise<string | null>;
+  /**
+   * Every barcode in the frame, nearest the centre first ([] when none).
+   * Throws only for engine failure. All of them, not just the first: stacked
+   * cartons put several stickers in one frame (see lib/barcode-frame.ts).
+   */
+  detect(source: HTMLCanvasElement | ImageBitmap | ImageData): Promise<FrameRead[]>;
 }
 
 async function pickDecodeEngine(): Promise<DecodeEngine> {
@@ -246,7 +269,18 @@ function createNativeDecoder(): FrameDecoder {
     engine: 'native',
     async detect(source) {
       const barcodes = await detector.detect(source);
-      return barcodes.length > 0 ? String(barcodes[0].rawValue) : null;
+      const cx = source.width / 2;
+      const cy = source.height / 2;
+      const diag = Math.hypot(source.width, source.height) || 1;
+      return orderReads(
+        barcodes.map((b) => {
+          const box = b.boundingBox;
+          const dist = box
+            ? Math.hypot(box.x + box.width / 2 - cx, box.y + box.height / 2 - cy) / diag
+            : Number.POSITIVE_INFINITY;
+          return { value: String(b.rawValue), dist };
+        }),
+      );
     },
   };
 }
@@ -274,13 +308,13 @@ async function createZxingDecoder(): Promise<FrameDecoder> {
   return {
     engine: 'zxing',
     async detect(source) {
-      // The loop only ever feeds ZXing a canvas; the bitmap path is native-only.
-      if (!(source instanceof HTMLCanvasElement)) return null;
+      // The loop only ever feeds ZXing a canvas; bitmap/ImageData are native-only.
+      if (!(source instanceof HTMLCanvasElement)) return [];
       const now = performance.now();
-      if (now - lastAttempt < ZXING_MIN_INTERVAL_MS) return null;
+      if (now - lastAttempt < ZXING_MIN_INTERVAL_MS) return [];
       lastAttempt = now;
       try {
-        return reader.decodeFromCanvas(source).getText();
+        return [{ value: reader.decodeFromCanvas(source).getText(), dist: 0 }];
       } catch (err) {
         // "Nothing in this frame" is the normal case, not a failure.
         if (
@@ -288,7 +322,7 @@ async function createZxingDecoder(): Promise<FrameDecoder> {
           err instanceof lib.ChecksumException ||
           err instanceof lib.FormatException
         ) {
-          return null;
+          return [];
         }
         throw err;
       }
@@ -577,8 +611,9 @@ export function SmartScanner({
     | { state: 'error'; message: string }
   >({ state: 'init' });
 
-  // Multi-read validation to ensure barcode is read correctly
-  const pendingReadsRef = useRef<{ barcode: string; count: number; timestamp: number } | null>(null);
+  // Multi-read validation: two identical reads within 3 s, counted per value
+  // so a second sticker in the frame cannot keep resetting the aimed one.
+  const confirmerRef = useRef(new ReadConfirmer(2, 3000));
 
   // GS1-128 checksum validation
   const validateGS1Checksum = (barcode: string): boolean => {
@@ -1124,6 +1159,14 @@ export function SmartScanner({
     // Smoothed wall time of one decode attempt (bitmap/canvas prep + detect).
     let decodeCostMs = 0;
     let bitmapPath = typeof createImageBitmap === 'function';
+    // Raw frames and "thickened" frames take turns (lib/barcode-frame.ts):
+    // thin-printed or glary stickers only decode once their bars are grown a
+    // pixel, bold ones only decode raw. A pass that read something is kept.
+    let pass: DecodePass = 'raw';
+    let thickScratch: Uint8Array | undefined;
+    // Own canvas, so alternating passes never resize the shared one.
+    const thickCanvas = document.createElement('canvas');
+    const thickCtx = thickCanvas.getContext('2d', { willReadFrequently: true });
 
     const ensureDecoder = () => {
       if (decoder && decoder.engine === engineRef.current) return;
@@ -1219,9 +1262,10 @@ export function SmartScanner({
         // ImageBitmap (GPU-side in Chrome), so the only pixels that ever reach
         // the CPU are the ones the detector needs. Falls back to the canvas
         // permanently if this browser can't do it.
-        let source: HTMLCanvasElement | ImageBitmap = canvas;
+        let source: HTMLCanvasElement | ImageBitmap | ImageData = canvas;
         let bitmap: ImageBitmap | null = null;
-        if (active.engine === 'native' && bitmapPath) {
+        const thick = pass !== 'raw';
+        if (active.engine === 'native' && bitmapPath && !thick) {
           try {
             bitmap = await createImageBitmap(
               video,
@@ -1245,7 +1289,27 @@ export function SmartScanner({
             console.warn('[SmartScanner] createImageBitmap(video) unavailable — using canvas:', err);
           }
         }
-        if (!bitmap) {
+        if (thick && thickCtx) {
+          const k =
+            Math.min(1, THICK_MAX_EDGE_PX / Math.max(roi.sw, roi.sh)) *
+            (pass === 'thickSmall' ? THICK_SMALL_SCALE : 1);
+          const tw = Math.max(1, Math.round(roi.sw * k));
+          const th = Math.max(1, Math.round(roi.sh * k));
+          if (thickCanvas.width !== tw || thickCanvas.height !== th) {
+            thickCanvas.width = tw;
+            thickCanvas.height = th;
+          }
+          thickCtx.drawImage(video, roi.sx, roi.sy, roi.sw, roi.sh, 0, 0, tw, th);
+          const px = thickCtx.getImageData(0, 0, tw, th);
+          thickScratch = thickenBars(px, thickScratch);
+          // BarcodeDetector takes the pixels as they are; ZXing reads a canvas.
+          if (active.engine === 'native') {
+            source = px;
+          } else {
+            thickCtx.putImageData(px, 0, 0);
+            source = thickCanvas;
+          }
+        } else if (!bitmap) {
           // Resizing a canvas reallocates its backing store; only do it when
           // the visible region actually changed (sheet moved, rotation).
           if (canvas.width !== roi.dw || canvas.height !== roi.dh) {
@@ -1256,9 +1320,9 @@ export function SmartScanner({
           source = canvas;
         }
 
-        let barcode: string | null = null;
+        let reads: FrameRead[] = [];
         try {
-          barcode = await active.detect(source);
+          reads = await active.detect(source);
           if (active.engine === 'native') nativeErrors = 0;
           const took = performance.now() - nowMs;
           decodeCostMs = decodeCostMs === 0 ? took : decodeCostMs * 0.7 + took * 0.3;
@@ -1279,31 +1343,24 @@ export function SmartScanner({
         } finally {
           bitmap?.close();
         }
+        // Native only: the JS ZXing fallback read none of the thin stickers
+        // thickened either (bench 2026-10-03), so it keeps its full raw cadence.
+        pass = active.engine === 'native' ? nextPass(pass, reads.length > 0) : 'raw';
 
-        if (barcode) {
+        if (reads.length > 0) {
           const now = Date.now();
 
-          // Multi-read validation: require 2 consecutive identical reads within 3 seconds
-          const pending = pendingReadsRef.current;
-
-          if (!pending || pending.barcode !== barcode || now - pending.timestamp > 3000) {
-            pendingReadsRef.current = { barcode, count: 1, timestamp: now };
-            setCaptureCount(1);
+          // Multi-read validation: 2 identical reads within 3 seconds, per value.
+          const { confirmed, progress } = confirmerRef.current.add(reads, now);
+          if (!confirmed) {
+            setCaptureCount(progress);
             animationFrameRef.current = requestAnimationFrame(detect);
             return;
           }
-
-          pending.count++;
-          setCaptureCount(pending.count);
-
-          if (pending.count < 2) {
-            animationFrameRef.current = requestAnimationFrame(detect);
-            return;
-          }
+          const barcode = confirmed;
 
           // SUCCESS: 2 identical reads confirmed
-          console.log('[SmartScanner] Barcode confirmed:', barcode);
-          pendingReadsRef.current = null;
+          console.log('[SmartScanner] Barcode confirmed:', barcode, `(${pass} pass)`);
           setCaptureCount(0);
 
           // Check cooldown
