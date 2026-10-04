@@ -11,6 +11,9 @@
  *   1. exact normalized Hebrew, then exact normalized English
  *   2. first-Hebrew-word prefix (invoice OCR sometimes captures a shorter form)
  *   3. fuzzy: normalized Levenshtein similarity ≥ FUZZY_THRESHOLD
+ *   4. distinctive words: the sticker shares a product word with exactly one
+ *      invoice line ("אחדות חזה עוף גדול קפוא" ↔ "חזה עוף גדול תפ לנדא" —
+ *      the sticker leads with a brand the invoice doesn't print)
  *
  * Returns the matched invoice line, or null when nothing matches confidently
  * (e.g. a loose / unlisted box) — callers then keep the raw OCR name.
@@ -100,5 +103,51 @@ export function matchInvoiceItem(
       best = line;
     }
   }
-  return best;
+  if (best) return best;
+
+  // 4. distinctive words
+  return matchByDistinctiveWords(nameHebrew, invoiceItems);
+}
+
+// A sticker naming one species / state must not land on a line naming another.
+const SPECIES = ['עוף', 'הודו', 'בקר', 'עגל', 'כבש', 'טלה', 'אווז', 'ברווז', 'דג', 'סלמון'];
+const STATES = ['טרי', 'קפוא'];
+
+function hebrewWords(name: string | undefined): string[] {
+  return (name || '').split(/[^\u05D0-\u05EA]+/).filter((w) => w.length >= 2);
+}
+
+/** Sticker word equals the invoice word, allowing a leading ו ("ושוקיים"). */
+function sameWord(stickerWord: string, invoiceWord: string): boolean {
+  return stickerWord === invoiceWord || stickerWord === 'ו' + invoiceWord;
+}
+
+function clashes(sticker: string[], line: string[], vocab: string[]): boolean {
+  const a = vocab.filter((v) => sticker.some((w) => sameWord(w, v)));
+  const b = vocab.filter((v) => line.includes(v));
+  return a.length > 0 && b.length > 0 && !a.some((v) => b.includes(v));
+}
+
+function matchByDistinctiveWords(
+  nameHebrew: string | undefined,
+  invoiceItems: InvoiceItem[],
+): InvoiceItem | null {
+  const sticker = hebrewWords(nameHebrew);
+  if (sticker.length === 0) return null;
+  const lines = invoiceItems.map((l) => hebrewWords(l.item_name_hebrew));
+
+  // Lines the sticker shares a word with that no other line has.
+  const hits = new Set<number>();
+  lines.forEach((words, i) => {
+    // Fresh / frozen describe a state, not which product it is.
+    const distinctive = words.filter(
+      (w) => !STATES.includes(w) && lines.every((other, j) => j === i || !other.includes(w)),
+    );
+    if (distinctive.some((d) => sticker.some((s) => sameWord(s, d)))) hits.add(i);
+  });
+  if (hits.size !== 1) return null;
+
+  const [i] = [...hits];
+  if (clashes(sticker, lines[i], SPECIES) || clashes(sticker, lines[i], STATES)) return null;
+  return invoiceItems[i];
 }
