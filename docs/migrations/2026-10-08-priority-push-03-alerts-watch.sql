@@ -452,6 +452,10 @@ $report_a$;
 --       it is 07:00 Israel time in summer and after the clocks go back on
 --       2026-10-25. One kind 'digest' POST with
 --       items = the open problems and orphan_counts; nothing when all is clear.
+--       Test receivers' never-queued deliveries are left out of the items.
+--   * Every claim UPDATE in the watch re-checks the status the row was selected
+--       with, so a row job 8 changed in between is not claimed under a stale
+--       kind. The watch runs with lock_timeout = 5 s (function attribute).
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -476,6 +480,7 @@ returns integer
 language plpgsql
 security definer
 set search_path = public, net, pg_temp
+set lock_timeout = '5s'     -- never wait long behind a lock while holding claimed rows; a row that times out is logged and skipped
 as $function$
 declare
   cfg       public.priority_push_config%rowtype;
@@ -526,6 +531,7 @@ begin
         update public.priority_push_outbox o
            set alerted_at = now(), alert_kind = r.last_kind      -- alert_tries kept: it counts the retries
          where o.id = r.id and o.alert_kind is null
+           and o.status = r.status                    -- job 8 may have moved the row since the select
         returning o.id into v_id;
         if v_id is not null then
           perform public.priority_push_notify_bot(v_id, r.last_kind);
@@ -569,6 +575,7 @@ begin
       update public.priority_push_outbox o
          set alerted_at = now(), alert_kind = 'no_writeback', alert_tries = 0
        where o.id = r.id and o.alert_kind is distinct from 'no_writeback'
+         and o.status in ('sent', 'unconfirmed')       -- job 8 may have moved the row since the select
       returning o.id into v_id;
       if v_id is not null then
         perform public.priority_push_notify_bot(v_id, 'no_writeback');
@@ -596,6 +603,7 @@ begin
       update public.priority_push_outbox o
          set alerted_at = now(), alert_kind = o.status, alert_tries = 0
        where o.id = r.id and o.alert_kind is distinct from o.status
+         and o.status in ('failed', 'expired')         -- job 8 may have moved the row since the select
       returning o.id, o.status into v_id, v_kind;
       if v_id is not null then
         perform public.priority_push_notify_bot(v_id, v_kind);
@@ -648,6 +656,7 @@ begin
              alert_kind  = 'held',
              alert_tries = 0
        where o.id = r.id and o.alert_kind is distinct from 'held'
+         and o.status in ('queued', 'waiting')         -- job 8 may have moved the row since the select
       returning o.id into v_id;
       if v_id is not null then
         perform public.priority_push_notify_bot(v_id, 'held');
@@ -852,7 +861,11 @@ begin
         from public.priority_push_alert_log a
         join public.deliveries d on d.id = a.delivery_id
        where a.kind = 'not_queued'
-         and not exists (select 1 from public.priority_push_outbox o where o.delivery_id = d.id)),
+         and not exists (select 1 from public.priority_push_outbox o where o.delivery_id = d.id)
+         -- a Test receiver's delivery is not an office problem (its alert carries is_test)
+         and not exists (select 1 from public.users u
+                          where u.chat_id = d.received_by_chat_id
+                            and u.env = 'Test'::public.user_env)),
       '[]'::jsonb);
     v_orphans := jsonb_build_object('class1', null, 'class2', null, 'class3', null);
   end if;
@@ -876,7 +889,7 @@ end
 $function$;
 
 comment on function public.priority_push_digest() is
-  '2026-10-08: pg_cron job priority-push-digest, 07:00 Israel time daily (cron 04:00 and 05:00 GMT, the command runs it only at 07:00 Asia/Jerusalem). One priority_push_notify_bot(NULL, ''digest'', {items, orphan_counts}) with the open problems from priority_push_attention_v (orphans counted, not listed; fake-Make target=test rows left out); before that view exists, from the outbox and priority_push_alert_log (orphan_counts values NULL). Sends nothing when all is clear. Never raises.';
+  '2026-10-08: pg_cron job priority-push-digest, 07:00 Israel time daily (cron 04:00 and 05:00 GMT, the command runs it only at 07:00 Asia/Jerusalem). One priority_push_notify_bot(NULL, ''digest'', {items, orphan_counts}) with the open problems from priority_push_attention_v (orphans counted, not listed; fake-Make target=test rows left out); before that view exists, from the outbox and priority_push_alert_log (orphan_counts values NULL; a Test receiver''s never-queued delivery is left out). Sends nothing when all is clear. Never raises.';
 
 -- -----------------------------------------------------------------------------
 -- B4. Privileges: server-side only

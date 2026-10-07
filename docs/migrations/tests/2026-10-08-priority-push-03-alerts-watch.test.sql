@@ -871,6 +871,22 @@ begin
               where (e ->> 'outbox_id')::bigint = 990000805) then
     raise exception 'T9.7 fake-Make (target test) row 990000805 is in the office digest';
   end if;
+  -- (fix round 1) never-queued deliveries (T9.4 / T9.4b): the Test receiver's (916)
+  -- is not an office problem; a Prod receiver's (917) and 906's (receiver not in
+  -- users) still are. Before M4 these come from priority_push_alert_log; once
+  -- M4's priority_push_attention_v exists it must give the same answer.
+  if exists (select 1 from jsonb_array_elements(b -> 'items') e
+              where e ->> 'delivery_id' = '00000000-0000-4000-8000-000000000916') then
+    raise exception 'T9.7 never-queued delivery 916 of a Test receiver is in the office digest';
+  end if;
+  if not exists (select 1 from jsonb_array_elements(b -> 'items') e
+                  where e ->> 'delivery_id' = '00000000-0000-4000-8000-000000000917'
+                    and e ->> 'problem' = 'not_queued')
+     or not exists (select 1 from jsonb_array_elements(b -> 'items') e
+                     where e ->> 'delivery_id' = '00000000-0000-4000-8000-000000000906'
+                       and e ->> 'problem' = 'not_queued') then
+    raise exception 'T9.7 not_queued deliveries 917 (Prod receiver) / 906 (unknown receiver) missing from the digest items';
+  end if;
   raise notice 'T9.7 digest ok (% items, test rows left out)', jsonb_array_length(b -> 'items');
 end
 $t$;
@@ -907,6 +923,11 @@ begin
       raise exception 'T9.8 % is executable by PUBLIC', f;
     end if;
   end loop;
+  -- (fix round 1) the watch never waits long behind a lock while it holds claimed rows
+  if not coalesce((select p.proconfig @> array['lock_timeout=5s']
+                     from pg_proc p where p.oid = 'public.priority_push_watch()'::regprocedure), false) then
+    raise exception 'T9.8 priority_push_watch() must run with lock_timeout = 5s (function attribute)';
+  end if;
   if not (select relrowsecurity from pg_class where oid = 'public.priority_push_alert_log'::regclass) then
     raise exception 'T9.8 RLS must be on for priority_push_alert_log';
   end if;
