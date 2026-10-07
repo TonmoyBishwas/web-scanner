@@ -197,9 +197,66 @@ received, cancelled, already, failed, expired, test, off, or a 401; it pauses wh
 - Unchanged: the loose phase still cannot close short (SYSTEM_REFERENCE X2-12); a split job never shows the
   `pallet_done` card.
 
+## Changes since the audit — the 2026-10-08 Priority push release
+
+**Why.** Part 1 of the non-meat redesign (`telegram-warehouse-bot/docs/superpowers/specs/2026-10-07-priority-push-dependable-design.md`):
+every push outcome reaches the office, the worker is never misled or asked to fix Priority, and nothing is
+re-sent in a way that can make a duplicate draft.
+
+| | |
+|---|---|
+| **Database companion** | `docs/migrations/2026-10-08-priority-push-02-outcomes-explain.sql` (`priority_push_explain`, outbox `alerted_at` / `alert_kind`), `-03-alerts-watch.sql`, `-04-resend-views.sql` (`priority_push_attention_v`, `priority_push_resend`, `priority_push_mark_found` — the needs-attention API reads and calls these, so it answers 500 until M4 is applied), and `-05-units-shortage.sql` (`delivery_gaps_v`, read by the page's "lines to check in Priority") — **`-05` does not exist yet (slice 5)**; until it is applied the page's last section stays hidden |
+| **Env** | `ADMIN_LINK_SECRET` on Vercel Production — the same value as on Railway (the bot signs, the scanner verifies) |
+| **Tests** | `npx vitest run` → 21 files, 346 tests (new: `admin-link` 9, `admin-auth` 5, `priority-attention` 14, `priority-attention-routes` 15; `priority-status` 50 → 70) |
+
+### The status row (`PriorityPushStatus`, `lib/priority-status.ts`, `GET /api/priority-status`)
+
+- A **queued** row's state comes from `rpc('priority_push_explain', { p_delivery_id })`: `send` /
+  `send_unready` → sending, `wait_po` → waitingPo, `hold_*` → held, `hold_not_closed` → closing,
+  `already_in_priority` → already, `skipped_test` → test, `disabled` → off. `heldBySameNote` and the route's
+  same-note reads are gone. If the call fails the card falls back to the holds the row's own columns prove.
+- New state **`noWriteback`** (sent / unconfirmed with `alert_kind = 'no_writeback'`) and a flag **`office`**:
+  the outbox row carries `alerted_at` and a matching `alert_kind`. Only then do the `priority.*Office` lines say
+  "the office has it". For `unconfirmed`, `office` is true only after a Make crash (HTTP 5xx) was alerted: a bare
+  200 "Accepted" or a timeout is told to the office later, at `no_writeback` (5 min), and until then the card does
+  not claim the office has it. No line asks the worker to tell the office; `waitingItems` / `waitingSupplier` no
+  longer claim a notification.
+- **`delivered`** with Make's `{"ok":true,"docno":…}` reply, or with `not_ready_reason` "confirmed by hand:
+  Priority draft …" (Mark as found), shows **received** with that number before the client's write-back.
+- `AWAIT_CONFIRM_MS` 15 → **5 min** (= `priority_push_config.no_writeback_minutes`). Polling
+  (`shouldStopPolling`) keeps going on failed / expired until the office alert is stamped.
+- Also mounted on the non-meat **Type A** `all_done` screen (`NonMeatTypeAFlow.tsx`).
+
+### The needs-attention page (`/priority/attention?u&exp&sig`)
+
+- Opened from the link in the bot's office alert (`make_admin_link`, 24 h). `page.tsx` (Suspense + `noindex`,
+  `no-referrer`) renders `AttentionBoard.tsx`: English UI, one card per row of `priority_push_attention_v` with the
+  reason, the Hebrew Priority error glossed, "what to check", and per row **Send again** (only where
+  `priority_push_resend` can accept it: the view's `outbox_status` is `failed` / `unconfirmed` and `gr_docno` is
+  empty — so never on an expired row or a no-write-back row, which is still `sent`; two required ticks: BOOKNUM
+  searched in any status incl. draft, Make history checked) and **Mark as found** (failed / unconfirmed / no
+  write-back / held; asks the GR number, prefilled with `gr_docno`). A `target = 'test'` row is labelled
+  "TEST (fake Make)". A `bot_unreachable` row (the office alert never reached the bot after M3's retries) sits
+  next to the note's own card and has no button. No bulk action.
+- Below the list, **"In Priority — lines to check there (last 7 days)"**: `delivery_gaps_v` (M5) grouped per
+  delivery (`groupFixLines`, `fixLineText`) — short / over lines with the worker's reason and "will the rest
+  come?", lines nobody counted (`count_source = invoice_assumed`), unit risks (`priority_push_explain`'s
+  `unit_risk` at send) and items not linked. Read-only. Until M5 is applied the API returns `fixes: []`,
+  `fixes_available: false` and the section is hidden; M5 (`-05-units-shortage.sql`) is slice 5 and is not written
+  yet, so this section lights up with that release.
+- API (all `no-store`): `GET /api/priority/attention`, `POST /api/priority/resend`,
+  `POST /api/priority/mark-found`. Each checks `lib/admin-link.ts` `verifyAdminLink` (hex HMAC-SHA256 of
+  `u + "." + exp` keyed by `ADMIN_LINK_SECRET`, trimmed like the bot's; exp in the future and at most 7 days
+  away) and
+  `lib/admin-auth.ts` `requireAdmin` (an active `Admin` row in `users` for `u`); 401 / 403 otherwise. Send again
+  calls `priority_push_resend(p_outbox_id, 'admin:<u>', priority_checked, make_checked)` — the two overrides are
+  never sent from the page; Mark as found calls `priority_push_mark_found(p_outbox_id, docno, 'admin:<u>')`, which
+  never touches the client's `wb_mark_gr_synced`.
+
 ## Table of contents
 
 - [Changes since the audit — the 2026-10-01 floor-feedback release](#changes-since-the-audit-the-2026-10-01-floor-feedback-release)
+- [Changes since the audit — the 2026-10-08 Priority push release](#changes-since-the-audit-the-2026-10-08-priority-push-release)
 - [Chapter 1 — The pallet-verify page — the pallet inbound phase machine](#chapter-1-the-pallet-verify-page-the-pallet-inbound-phase-machine)
   - [0. Scope & file map](#0-scope-file-map)
   - [1. Per-file reference](#1-per-file-reference)
