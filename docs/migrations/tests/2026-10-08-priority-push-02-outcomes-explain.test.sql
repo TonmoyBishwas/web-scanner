@@ -381,6 +381,11 @@ begin
   if not has_function_privilege('service_role', f, 'execute') then
     raise exception 'T7.1 the scanner (service_role) must be able to call explain';
   end if;
+  if not (select coalesce(proconfig, '{}'::text[]) @> array['search_path=public, pg_temp']
+            from pg_proc where oid = f::regprocedure)
+     or not (select prosecdef from pg_proc where oid = f::regprocedure) then
+    raise exception 'T7.1 explain must be SECURITY DEFINER with search_path = public, pg_temp';
+  end if;
   raise notice 'T7.1 shape ok';
 end
 $t$;
@@ -393,8 +398,15 @@ declare
   k   text;
 begin
   if not (e ?& array['decision', 'hold_reason', 'ready', 'supplier_resolved', 'supplier_supname',
-                     'lines', 'unit_risk_lines', 'unmapped_codes', 'not_ready_reason', 'is_test']) then
+                     'lines', 'unit_risk_lines', 'lines_error', 'unmapped_codes', 'not_ready_reason', 'is_test']) then
     raise exception 'T7.2 a contract key is missing: %', e;
+  end if;
+  -- normal path: the lines resolved, so lines_error is present and JSON null (a stable key set);
+  -- the exception handler that fills it cannot be forced from here without touching the
+  -- client's wb_* objects, so that branch is reviewed, not run.
+  if jsonb_typeof(e -> 'lines_error') is distinct from 'null' or jsonb_typeof(e -> 'unit_risk_lines') <> 'array' then
+    raise exception 'T7.2 lines_error must be JSON null and unit_risk_lines an array on the normal path: % / %',
+      e -> 'lines_error', e -> 'unit_risk_lines';
   end if;
   if e ->> 'decision' <> 'send_unready' or (e ->> 'ready')::boolean or (e ->> 'supplier_resolved')::boolean
      or e ->> 'supplier_supname' is not null or e ->> 'not_ready_reason' <> 'supplier_unmatched'

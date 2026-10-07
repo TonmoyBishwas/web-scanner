@@ -438,7 +438,8 @@ begin
         -- M2: wrong. Never allowed to stop the send: NULL when explain fails
         -- M2: (or does not exist yet, between Task 6 and Task 7).
         begin                                                                 -- M2
-          v_risk := public.priority_push_explain(r.delivery_id) -> 'unit_risk_lines';  -- M2
+          -- M2: explain returns JSON null for "lines could not be resolved"; store that as SQL NULL (unknown).
+          v_risk := nullif(public.priority_push_explain(r.delivery_id) -> 'unit_risk_lines', 'null'::jsonb);  -- M2
         exception when others then                                            -- M2
           v_risk := null;                                                     -- M2
         end;                                                                  -- M2
@@ -521,6 +522,9 @@ revoke execute on function public.priority_push_dispatch() from public, anon, au
 --     packs_not_units      our unit is cartons / boxes / packs
 --   (יח = "units" in the client's catalog; ק'ג = kg.)
 --   A meat line with no unit counts as kg (meat is always weighed).
+--   If resolving the lines raises, lines is [] but unit_risk_lines is JSON null
+--   (unknown, not "none at risk") and lines_error holds the error text; on the
+--   normal path lines_error is JSON null, so the key set never changes.
 -- * outbox_id / outbox_status: extra keys, so a caller can tell a queued row
 --   from a terminal one without a second query.
 -- Reads the client's wb_gr_priority_body / wb_build_priority_gr_full /
@@ -531,7 +535,7 @@ returns jsonb
 language plpgsql
 stable
 security definer
-set search_path = public
+set search_path = public, pg_temp
 as $function$
 declare
   cfg           public.priority_push_config%rowtype;
@@ -573,6 +577,7 @@ declare
   v_vat         text;
   v_lines       jsonb := '[]'::jsonb;
   v_risk        jsonb := '[]'::jsonb;
+  v_lines_err   text;                    -- set only when resolving the lines raised
   v_decision    text;
   v_hold        text;
   c_test_no_url constant text := 'skipped: test row not sent - priority_push_config.test_url is not set';  -- M1's dispatch text
@@ -679,8 +684,11 @@ begin
         into v_lines, v_risk
         from lj;
     exception when others then
-      v_lines := '[]'::jsonb;
-      v_risk  := '[]'::jsonb;
+      -- unknown, not "nothing at risk": lines stays [], unit_risk_lines becomes JSON null and
+      -- lines_error says why (a caller that needs the risk list must check lines_error)
+      v_lines     := '[]'::jsonb;
+      v_risk      := null;
+      v_lines_err := left(sqlerrm, 500);
     end;
   end if;
 
@@ -835,6 +843,7 @@ begin
     'supplier_supname',  v_supname,
     'lines',             v_lines,
     'unit_risk_lines',   v_risk,
+    'lines_error',       v_lines_err,
     'unmapped_codes',    to_jsonb(coalesce(v_codes, '{}'::text[])),
     'not_ready_reason',  case when v_failed is not null then 'error: ' || v_failed else v_reason end,
     'is_test',           v_is_test,
@@ -843,6 +852,6 @@ begin
 end
 $function$;
 comment on function public.priority_push_explain(uuid) is
-  '2026-10-08: read-only. What priority_push_plan() would decide for this delivery and why (decision, hold_reason = plan()''s reason text), its readiness (the client''s wb_gr_priority_body + the vat_sku rule), supplier resolution, every line with its Priority item, units and unit_risk (no_item_defaults_kg / unit_unknown / count_to_kg_item / kg_to_unit_item / packs_not_units), and is_test. Works with or without an outbox row. Used by the bot''s readiness check, the scanner''s /api/priority-status, priority_push_watch() and dispatch (unit_risk_lines at send).';
+  '2026-10-08: read-only. What priority_push_plan() would decide for this delivery and why (decision, hold_reason = plan()''s reason text), its readiness (the client''s wb_gr_priority_body + the vat_sku rule), supplier resolution, every line with its Priority item, units and unit_risk (no_item_defaults_kg / unit_unknown / count_to_kg_item / kg_to_unit_item / packs_not_units), and is_test. unit_risk_lines is JSON null and lines_error holds the error text when the lines could not be resolved (unknown, not none). Works with or without an outbox row. Used by the bot''s readiness check, the scanner''s /api/priority-status, priority_push_watch() and dispatch (unit_risk_lines at send).';
 revoke execute on function public.priority_push_explain(uuid) from public, anon, authenticated;
 grant  execute on function public.priority_push_explain(uuid) to service_role;
