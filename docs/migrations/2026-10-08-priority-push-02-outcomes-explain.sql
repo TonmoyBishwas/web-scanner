@@ -490,3 +490,359 @@ comment on function public.priority_push_dispatch() is
   'pg_cron job 8, every 15 s. Reads pg_net replies back AT MOST ONCE (2xx with the scenario''s {"ok":true} body delivered; 4xx failed; only a request that provably never left - DNS / TCP connect failure - is re-queued, up to max_attempts; timeout, 5xx, any other 2xx and anything else unconfirmed, never re-sent by itself), marks a long-silent sent row unconfirmed, confirms sent/unconfirmed rows by the scenario''s write-back (priority_goods_receipts), then (only when enabled, url set and the vault secret exists) applies priority_push_plan(): at most 20 sends per run, 120 s timeout. 2026-10-08 (M1): target=test rows go to priority_push_config.test_url signed with the bot secret, or become skipped when test_url is not set. 2026-10-08 (M2): the previous reply is archived in priority_push_attempts before a send; the body gains outbox_id + attempt; unit_risk_lines is stored at send; a held row records plan()''s reason in hold_reason.';
 -- CREATE OR REPLACE keeps the ACL; re-assert it (postgres + service_role only).
 revoke execute on function public.priority_push_dispatch() from public, anon, authenticated;
+-- ---------------------------------------------------------------------------
+-- Part 2: priority_push_explain(delivery_id) - the one answer to "will this
+-- delivery go to Priority, and what will be wrong with it?"
+--
+-- * decision: what priority_push_plan() would decide for this delivery if its
+--   outbox row were due now (rules copied from plan() as M1 leaves it,
+--   including M1's per-target same-note guard; the guard at the top of this
+--   file refuses to apply if plan() is not that version).
+--   No outbox row yet = as if enqueued now (target 'test' for a Test receiver
+--   while test_url is set, as M1's enqueue does). Answers plan() cannot give:
+--   'skipped_test' (a Test receiver that enqueue skips, or a target 'test'
+--   row that dispatch will mark skipped because test_url is not set),
+--   'disabled' (push off: dispatch sends nothing), and plan()'s 'send' split
+--   into 'send' / 'send_unready'. plan()'s 'expired', 'error' and 'not_ready'
+--   come through unchanged (only reachable while send_unready is off, or when
+--   the builder raises).
+-- * hold_reason: plan()'s own reason text for every decision that is not a
+--   send, so it equals what priority_push_dispatch() writes into
+--   priority_push_outbox.hold_reason (and, for skipped_test, the outbox row's
+--   response_error text).
+-- * lines: one per delivery_items row, resolved with the client's own
+--   wb_resolve_partname (as his builder does) and flagged with unit_risk:
+--     no_item_defaults_kg  no Priority item: his builder labels it kg
+--     unit_unknown         the note printed no unit (delivery_items.unit =
+--                          'unknown', bot Task 16): nobody knows what the
+--                          count is in, whatever the Priority item's unit
+--     count_to_kg_item     our unit is not kg, the item is kg
+--     kg_to_unit_item      our unit is kg, the item counts units (יח / יח')
+--     packs_not_units      our unit is cartons / boxes / packs
+--   (יח = "units" in the client's catalog; ק'ג = kg.)
+--   A meat line with no unit counts as kg (meat is always weighed).
+-- * outbox_id / outbox_status: extra keys, so a caller can tell a queued row
+--   from a terminal one without a second query.
+-- Reads the client's wb_gr_priority_body / wb_build_priority_gr_full /
+-- wb_resolve_partname (all STABLE); never writes anything.
+-- ---------------------------------------------------------------------------
+create or replace function public.priority_push_explain(p_delivery_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $function$
+declare
+  cfg           public.priority_push_config%rowtype;
+  v_cfg_found   boolean;
+  v_d_found     boolean;
+  v_d_status    text;
+  v_d_doc       text;
+  v_d_created   timestamptz;
+  v_d_chat      bigint;
+  v_oid         bigint;
+  v_ostatus     text;
+  v_otarget     text;
+  v_oqueued     timestamptz;
+  v_oreleased   timestamptz;
+  v_ocategory   text;
+  v_odoc        text;
+  v_oerror      text;
+  v_queued_at   timestamptz;
+  v_ref         text;
+  v_env         text;
+  v_is_test     boolean;
+  v_target      text;
+  v_test_url    text;
+  v_gr          text;
+  v_draft       text;
+  v_doc         text;
+  v_dup         text;
+  v_cat         text;
+  v_cat_since   timestamptz;
+  v_full        jsonb;
+  v_body        jsonb;
+  v_ready       boolean := false;
+  v_reason      text;
+  v_codes       text[];
+  v_guessed     text[];
+  v_failed      text;
+  v_supres      boolean := false;
+  v_supname     text;
+  v_vat         text;
+  v_lines       jsonb := '[]'::jsonb;
+  v_risk        jsonb := '[]'::jsonb;
+  v_decision    text;
+  v_hold        text;
+  c_test_no_url constant text := 'skipped: test row not sent - priority_push_config.test_url is not set';  -- M1's dispatch text
+begin
+  select * into cfg from public.priority_push_config c where c.id = 1;
+  v_cfg_found := found;
+  v_test_url  := nullif(btrim(cfg.test_url), '');
+
+  select dd.status::text, dd.document_number, dd.created_at, dd.received_by_chat_id
+    into v_d_status, v_d_doc, v_d_created, v_d_chat
+    from public.deliveries dd
+   where dd.id = p_delivery_id;
+  v_d_found := found;
+
+  select o.id, o.status, o.target, o.queued_at, o.released_at, o.category,
+         o.document_number, o.response_error
+    into v_oid, v_ostatus, v_otarget, v_oqueued, v_oreleased, v_ocategory,
+         v_odoc, v_oerror
+    from public.priority_push_outbox o
+   where o.delivery_id = p_delivery_id;
+
+  v_queued_at := coalesce(v_oqueued, now());          -- no row yet: as if enqueued now
+  v_ref       := coalesce(v_oid::text, '?');
+  select u.env::text into v_env from public.users u where u.chat_id = v_d_chat;
+  -- the row's target; no row yet: what M1's enqueue would give it
+  v_target    := coalesce(v_otarget,
+                          case when coalesce(v_env, 'Prod') = 'Test' and v_test_url is not null
+                               then 'test' else 'make' end);
+  v_is_test   := coalesce(v_env, 'Prod') = 'Test' or v_target = 'test';
+  v_doc       := nullif(btrim(coalesce(v_d_doc, v_odoc)), '');
+
+  -- readiness, exactly as plan() computes it (body first, then the builder)
+  if v_d_found then
+    begin
+      v_body  := public.wb_gr_priority_body(p_delivery_id, 'invoice');
+      v_ready := coalesce((v_body ->> 'ready')::boolean, false);
+      if not v_ready then
+        v_reason := coalesce(v_body ->> 'not_ready_reason', 'not ready (no not_ready_reason given)');
+        if jsonb_typeof(v_body -> 'unmapped_codes') = 'array' then
+          v_codes := array(select jsonb_array_elements_text(v_body -> 'unmapped_codes'));
+        end if;
+      end if;
+      v_full := public.wb_build_priority_gr_full(p_delivery_id);
+      -- plan()'s 2026-10-04 rule: only a mapping made for THIS supplier is trusted
+      select array_agg(distinct coalesce(l ->> 'SRC_CODE', '?'))
+        into v_guessed
+        from jsonb_array_elements(coalesce(v_full -> 'TRANSORDER_P', '[]'::jsonb)) l
+       where (l ->> 'METHOD') is distinct from 'vat_sku';
+      if coalesce(cardinality(v_guessed), 0) > 0 then
+        v_codes := array(select distinct c from unnest(coalesce(v_codes, '{}'::text[]) || v_guessed) c order by c);
+        if v_ready then
+          v_ready  := false;
+          v_reason := 'items_unmapped';
+        end if;
+      end if;
+    exception when others then
+      v_failed := left(sqlerrm, 500);
+    end;
+  end if;
+
+  -- supplier and per-line facts, from the client's own builder and resolver
+  if v_full is not null then
+    v_supres  := coalesce((v_full -> '_meta' ->> 'supplier_resolved')::boolean, false);
+    v_supname := v_full ->> 'SUPNAME';
+    v_vat     := v_full -> '_meta' ->> 'supplier_vat';
+    v_cat     := coalesce(v_ocategory, public.priority_push_delivery_category(p_delivery_id));
+    begin
+      with li as (
+        select di.id, di.item_code,
+               coalesce(nullif(btrim(di.item_name_hebrew), ''), di.item_name_english) as name,
+               r.partname, r.method, cp.unitname as item_unit,
+               coalesce(nullif(lower(btrim(di.unit)), ''),
+                        case when v_cat = 'meat' then 'kg' end) as our_unit,
+               round(di.received_qty_kg, 3) as received,
+               di.created_at
+          from public.delivery_items di
+          left join lateral public.wb_resolve_partname(di.item_code, v_vat) r on true
+          left join public.catalog_products cp on cp.partname = r.partname
+         where di.receipt_id = p_delivery_id
+      ), lr as (
+        select li.*,
+               -- English: item_unit ק'ג = kg; יח / יח' = units (the client's catalog unit names).
+               case
+                 when li.partname is null then 'no_item_defaults_kg'
+                 when li.our_unit = 'unknown' then 'unit_unknown'
+                 when li.our_unit is not null and li.our_unit <> 'kg'
+                      and li.item_unit = 'ק''ג'                    then 'count_to_kg_item'
+                 when li.our_unit = 'kg'
+                      and li.item_unit in ('יח', 'יח''')          then 'kg_to_unit_item'
+                 when li.our_unit in ('cartons', 'boxes', 'packs') then 'packs_not_units'
+               end as unit_risk
+          from li
+      ), lj as (
+        select lr.item_code, lr.created_at, lr.id, lr.unit_risk,
+               jsonb_build_object(
+                 'code', lr.item_code, 'name', lr.name, 'partname', lr.partname,
+                 'source', lr.method, 'our_unit', lr.our_unit, 'item_unit', lr.item_unit,
+                 'received', lr.received, 'unit_risk', lr.unit_risk) as line
+          from lr
+      )
+      select coalesce(jsonb_agg(lj.line order by lj.item_code nulls last, lj.created_at, lj.id), '[]'::jsonb),
+             coalesce(jsonb_agg(lj.line order by lj.item_code nulls last, lj.created_at, lj.id)
+                        filter (where lj.unit_risk is not null), '[]'::jsonb)
+        into v_lines, v_risk
+        from lj;
+    exception when others then
+      v_lines := '[]'::jsonb;
+      v_risk  := '[]'::jsonb;
+    end;
+  end if;
+
+  -- the decision: plan()'s order, plus the answers plan() cannot give
+  select g.docno || ' (origin ' || g.origin || ', ' || coalesce(g.statdes, '?') || ')'
+    into v_gr
+    from public.priority_goods_receipts g
+   where g.delivery_id = p_delivery_id
+     and g.origin <> 'warehouse_bot'
+   order by g.synced_at desc
+   limit 1;
+  select g.docno
+    into v_draft
+    from public.priority_goods_receipts g
+   where g.delivery_id = p_delivery_id
+     and g.origin = 'warehouse_bot'
+   limit 1;
+
+  if v_gr is not null then
+    v_decision := 'already_in_priority';
+    v_hold     := 'Priority already has GR ' || v_gr;
+  elsif v_draft is not null then
+    v_decision := 'hold_local_draft';
+    v_hold     := 'priority_goods_receipts has a local warehouse_bot row ' || v_draft
+                  || '; held until it is synced (origin priority_push) or removed';
+  elsif v_d_status is null or v_d_status not in ('Complete', 'Has Discrepancy') then
+    v_decision := 'hold_not_closed';
+    v_hold     := 'delivery status is now ' || coalesce(v_d_status, 'missing')
+                  || '; sent only while Complete / Has Discrepancy';
+  elsif (v_ostatus = 'skipped'
+         and (v_oerror like 'skipped: Test user%' or v_oerror like 'skipped: test row not sent%'))
+     or (v_oid is null and coalesce(v_env, 'Prod') = 'Test' and v_test_url is null) then
+    v_decision := 'skipped_test';
+    v_hold     := coalesce(case when v_ostatus = 'skipped' then v_oerror end,
+                           'skipped: Test user ' || coalesce(v_d_chat::text, '?'));
+  elsif not coalesce(v_cfg_found, false) or not cfg.enabled or nullif(btrim(cfg.url), '') is null then
+    v_decision := 'disabled';
+    v_hold     := 'the Priority push is switched off (priority_push_config.enabled is false or its url is empty); nothing is sent';
+  end if;
+
+  if v_decision is null and v_doc is not null and v_oreleased is null then
+    select 'outbox row ' || o2.id || ' (delivery ' || o2.delivery_id || ', status ' || o2.status || ')'
+      into v_dup
+      from public.priority_push_outbox o2
+      join public.deliveries d2 on d2.id = o2.delivery_id
+     where o2.id is distinct from v_oid
+       and o2.delivery_id <> p_delivery_id
+       and o2.target = v_target   -- as M1's plan(): a test row never holds a real one, nor the reverse
+       and btrim(coalesce(d2.document_number, o2.document_number)) = v_doc
+       and d2.created_at between v_d_created - interval '90 days'
+                             and v_d_created + interval '90 days'
+       and (o2.status in ('sent', 'unconfirmed', 'delivered', 'already_in_priority')
+            or (o2.status in ('queued', 'waiting')
+                -- no row yet: a new row would sort after every existing one
+                and (o2.queued_at, o2.id) < (v_queued_at, coalesce(v_oid, 9223372036854775807))))
+     order by o2.queued_at, o2.id
+     limit 1;
+    if v_dup is null and v_target = 'make' then   -- as M1's plan(): test rows never reach Priority
+      select 'GR ' || g.docno || ' (origin ' || g.origin || ', ' || coalesce(g.statdes, '?')
+             || ', delivery ' || coalesce(g.delivery_id::text, 'none') || ')'
+        into v_dup
+        from public.priority_goods_receipts g
+       where btrim(g.booknum) = v_doc
+         and g.origin <> 'warehouse_bot'
+         and g.delivery_id is distinct from p_delivery_id
+         and coalesce(g.curdate, g.synced_at) >= v_d_created - interval '90 days'
+       order by g.synced_at desc
+       limit 1;
+    end if;
+    if v_dup is not null then
+      v_decision := 'hold_same_invoice';
+      v_hold     := 'supplier note ' || v_doc || ' is already in Priority or on its way under '
+                    || v_dup || '; a second draft for the same BOOKNUM is never sent by itself.'
+                    || ' Only if this is genuinely a second delivery of goods under the same note: '
+                    || 'update public.priority_push_outbox set released_at = now() where id = ' || v_ref;
+    end if;
+  end if;
+
+  if v_decision is null and v_oreleased is null
+     and (cfg.enabled_since is null or v_queued_at < cfg.enabled_since) then
+    v_decision := 'hold_pre_enable';
+    v_hold     := 'queued ' || to_char(v_queued_at at time zone 'Asia/Jerusalem', 'YYYY-MM-DD HH24:MI')
+                  || ' (Israel) before the push was enabled ('
+                  || coalesce(to_char(cfg.enabled_since at time zone 'Asia/Jerusalem', 'YYYY-MM-DD HH24:MI'),
+                              'it is not enabled')
+                  || '). To send it on purpose: update public.priority_push_outbox set released_at = now() where id = '
+                  || v_ref;
+  end if;
+
+  if v_decision is null then
+    v_cat := coalesce(v_ocategory, public.priority_push_delivery_category(p_delivery_id));
+    if v_cat is null or not (v_cat = any (cfg.categories)) then
+      v_decision := 'hold_category';
+      v_hold     := 'category ' || coalesce(v_cat, 'unknown') || ' is not in priority_push_config.categories '
+                    || cfg.categories::text;
+    end if;
+  end if;
+
+  if v_decision is null then
+    v_cat_since := (cfg.category_since ->> v_cat)::timestamptz;
+    if v_oreleased is null and (v_cat_since is null or v_queued_at < v_cat_since) then
+      v_decision := 'hold_pre_category';
+      v_hold     := 'queued ' || to_char(v_queued_at at time zone 'Asia/Jerusalem', 'YYYY-MM-DD HH24:MI')
+                    || ' (Israel) before category ' || v_cat || ' was switched on ('
+                    || coalesce(to_char(v_cat_since at time zone 'Asia/Jerusalem', 'YYYY-MM-DD HH24:MI'),
+                                'no switch-on time recorded')
+                    || '). To send it on purpose: update public.priority_push_outbox set released_at = now() where id = '
+                    || v_ref;
+    end if;
+  end if;
+
+  if v_decision is null
+     and not exists (select 1 from public.delivery_po_links l where l.delivery_id = p_delivery_id)
+     and v_queued_at > now() - make_interval(mins => cfg.po_grace_minutes) then
+    v_decision := 'wait_po';
+    v_hold     := 'no purchase-order answer yet (no delivery_po_links row); waiting until '
+                  || to_char((v_queued_at + make_interval(mins => cfg.po_grace_minutes)) at time zone 'Asia/Jerusalem',
+                             'HH24:MI') || ' (Israel)';
+  end if;
+
+  if v_decision is null then
+    if v_failed is null and not v_ready and cfg.send_unready then
+      v_decision := 'send_unready';                   -- plan(): 'send', reason 'sent although not ready ...'
+    elsif (v_failed is not null or not v_ready)
+       and greatest(v_queued_at, v_oreleased) < now() - make_interval(days => cfg.max_wait_days) then
+      v_decision := 'expired';
+      v_hold     := 'still not ready after ' || cfg.max_wait_days || ' days: '
+                    || coalesce('error: ' || v_failed, v_reason);
+    elsif v_failed is not null then
+      v_decision := 'error';
+      v_hold     := 'error: ' || v_failed;
+    elsif not v_ready then
+      v_decision := 'not_ready';
+      v_hold     := v_reason;
+    else
+      v_decision := 'send';
+    end if;
+  end if;
+
+  -- M1's dispatch marks a target 'test' row skipped instead of sending it
+  -- while test_url is not set.
+  if v_decision in ('send', 'send_unready') and v_target = 'test' and v_test_url is null then
+    v_decision := 'skipped_test';
+    v_hold     := c_test_no_url;
+  end if;
+
+  return jsonb_build_object(
+    'decision',          v_decision,
+    'hold_reason',       left(v_hold, 1000),
+    'ready',             (v_failed is null and v_ready),
+    'supplier_resolved', v_supres,
+    'supplier_supname',  v_supname,
+    'lines',             v_lines,
+    'unit_risk_lines',   v_risk,
+    'unmapped_codes',    to_jsonb(coalesce(v_codes, '{}'::text[])),
+    'not_ready_reason',  case when v_failed is not null then 'error: ' || v_failed else v_reason end,
+    'is_test',           v_is_test,
+    'outbox_id',         v_oid,
+    'outbox_status',     v_ostatus);
+end
+$function$;
+comment on function public.priority_push_explain(uuid) is
+  '2026-10-08: read-only. What priority_push_plan() would decide for this delivery and why (decision, hold_reason = plan()''s reason text), its readiness (the client''s wb_gr_priority_body + the vat_sku rule), supplier resolution, every line with its Priority item, units and unit_risk (no_item_defaults_kg / unit_unknown / count_to_kg_item / kg_to_unit_item / packs_not_units), and is_test. Works with or without an outbox row. Used by the bot''s readiness check, the scanner''s /api/priority-status, priority_push_watch() and dispatch (unit_risk_lines at send).';
+revoke execute on function public.priority_push_explain(uuid) from public, anon, authenticated;
+grant  execute on function public.priority_push_explain(uuid) to service_role;

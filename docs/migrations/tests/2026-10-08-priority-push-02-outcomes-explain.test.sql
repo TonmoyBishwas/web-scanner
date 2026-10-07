@@ -255,3 +255,378 @@ begin
 end
 $t$;
 update public.priority_push_config set test_url = 'https://priority-push-test.invalid/fake-make' where id = 1;
+-- ===================== Part 2 (Task 7): priority_push_explain ===============
+
+update public.priority_push_config
+   set url               = 'https://priority-push-test.invalid/make',
+       test_url          = 'https://priority-push-test.invalid/fake-make',
+       enabled           = true,
+       send_unready      = true,
+       po_grace_minutes  = 0,
+       categories        = array['meat', 'non_meat']
+ where id = 1;
+
+insert into public.users (chat_id, nickname, env)
+values (990000000011, 'zz-m2-explain-prod', 'Prod'),
+       (990000000012, 'zz-m2-explain-test', 'Test');
+
+-- 701  Prod, unknown supplier, five lines covering every unit_risk rule
+-- 711  an earlier delivery of note ZZT7-9900711, already delivered to Priority
+-- 712  the same note again (spaces around it): plan() holds it, hold_same_invoice
+-- 713  the same digits spelled differently: plan() matches notes exactly, so NOT held
+-- 714  the same note again, Test receiver (target 'test'): M1's plan() never
+--      lets a real row hold a test row (or the reverse), so NOT held
+-- 721  Test receiver, routed to the fake Make (target 'test')
+-- 722  Test receiver, row skipped at close (no test routing then)
+-- 723  Test receiver, no outbox row yet
+-- 731  Prod, closed, no outbox row and no category source
+-- English: supplier_hebrew 'זזזספקבדיקהזזז' = "zzz test supplier zzz" (a made-up name).
+insert into public.deliveries (id, document_number, supplier_hebrew, received_by_chat_id, status, created_at)
+values ('00000000-0000-4000-8000-000000000701', 'ZZT7-9900701',     'זזזספקבדיקהזזז', 990000000011, 'Complete', now() - interval '1 hour'),
+       ('00000000-0000-4000-8000-000000000711', 'ZZT7-9900711',     'זזזספקבדיקהזזז', 990000000011, 'Complete', now() - interval '1 day'),
+       ('00000000-0000-4000-8000-000000000712', '  ZZT7-9900711 ',  'זזזספקבדיקהזזז', 990000000011, 'Complete', now() - interval '1 hour'),
+       ('00000000-0000-4000-8000-000000000713', 'ZZT7:9900711',     'זזזספקבדיקהזזז', 990000000011, 'Complete', now() - interval '1 hour'),
+       ('00000000-0000-4000-8000-000000000714', 'ZZT7-9900711',     'זזזספקבדיקהזזז', 990000000012, 'Complete', now() - interval '1 hour'),
+       ('00000000-0000-4000-8000-000000000721', 'ZZT7-9900721',     'זזזספקבדיקהזזז', 990000000012, 'Complete', now() - interval '1 hour'),
+       ('00000000-0000-4000-8000-000000000722', 'ZZT7-9900722',     'זזזספקבדיקהזזז', 990000000012, 'Complete', now() - interval '1 hour'),
+       ('00000000-0000-4000-8000-000000000723', 'ZZT7-9900723',     'זזזספקבדיקהזזז', 990000000012, 'Complete', now() - interval '1 hour'),
+       ('00000000-0000-4000-8000-000000000731', 'ZZT7-9900731',     'זזזספקבדיקהזזז', 990000000011, 'Complete', now() - interval '1 hour');
+
+-- 701's lines. The real Priority items are picked from the client's item mirror
+-- (read only): direct-method items, i.e. not any supplier's code in sku_crosswalk.
+-- Glosses: לחם בדיקה = "test bread"; catalog unitname ק'ג = kg, יח = units.
+insert into public.delivery_items (receipt_id, item_code, item_name_hebrew, unit, invoice_qty_kg, received_qty_kg)
+values ('00000000-0000-4000-8000-000000000701', 'ZZT7-NOITEM', 'לחם בדיקה', 'units', 5, 5);
+insert into public.delivery_items (receipt_id, item_code, item_name_hebrew, unit, invoice_qty_kg, received_qty_kg)
+select '00000000-0000-4000-8000-000000000701', x.partname, x.label, x.unit, x.qty, x.qty
+  from (select (select cp.partname from public.catalog_products cp
+                 where cp.unitname = 'ק''ג'
+                   and not exists (select 1 from public.sku_crosswalk s where s.supplier_sku = cp.partname)
+                 order by cp.partname limit 1)            as partname,
+               'kg item counted in units' as label, 'units' as unit, 7::numeric as qty
+        union all
+        select (select cp.partname from public.catalog_products cp
+                 where cp.unitname = 'יח'
+                   and not exists (select 1 from public.sku_crosswalk s where s.supplier_sku = cp.partname)
+                 order by cp.partname limit 1),
+               'unit item weighed in kg', 'kg', 2.5
+        union all
+        select (select cp.partname from public.catalog_products cp
+                 where cp.unitname = 'יח'
+                   and not exists (select 1 from public.sku_crosswalk s where s.supplier_sku = cp.partname)
+                 order by cp.partname offset 1 limit 1),
+               'unit item counted in cartons', 'cartons', 4
+        union all
+        select (select cp.partname from public.catalog_products cp
+                 where cp.unitname = 'ק''ג'
+                   and not exists (select 1 from public.sku_crosswalk s where s.supplier_sku = cp.partname)
+                 order by cp.partname offset 1 limit 1),
+               'kg item weighed in kg', 'kg', 10) x;
+-- English: פריט בדיקה = "test item".
+insert into public.delivery_items (receipt_id, item_code, item_name_hebrew, unit, invoice_qty_kg, received_qty_kg)
+select d, 'ZZT7-NOITEM', 'פריט בדיקה', 'units', 3, 3
+  from unnest(array['00000000-0000-4000-8000-000000000711',
+                    '00000000-0000-4000-8000-000000000712',
+                    '00000000-0000-4000-8000-000000000713',
+                    '00000000-0000-4000-8000-000000000714',
+                    '00000000-0000-4000-8000-000000000721',
+                    '00000000-0000-4000-8000-000000000722',
+                    '00000000-0000-4000-8000-000000000723',
+                    '00000000-0000-4000-8000-000000000731']::uuid[]) d;
+
+insert into public.priority_push_outbox
+       (id, delivery_id, document_number, delivery_status, category, status, target, response_error, queued_at)
+values (990000701, '00000000-0000-4000-8000-000000000701', 'ZZT7-9900701',    'Complete', 'non_meat', 'queued',    'make', null, now()),
+       (990000711, '00000000-0000-4000-8000-000000000711', 'ZZT7-9900711',    'Complete', 'non_meat', 'delivered', 'make', null, now() - interval '1 day'),
+       (990000712, '00000000-0000-4000-8000-000000000712', '  ZZT7-9900711 ', 'Complete', 'non_meat', 'queued',    'make', null, now()),
+       (990000713, '00000000-0000-4000-8000-000000000713', 'ZZT7:9900711',    'Complete', 'non_meat', 'queued',    'make', null, now()),
+       (990000714, '00000000-0000-4000-8000-000000000714', 'ZZT7-9900711',    'Complete', 'non_meat', 'queued',    'test', null, now()),
+       (990000721, '00000000-0000-4000-8000-000000000721', 'ZZT7-9900721',    'Complete', 'non_meat', 'queued',    'test', null, now()),
+       (990000722, '00000000-0000-4000-8000-000000000722', 'ZZT7-9900722',    'Complete', 'non_meat', 'skipped',   'make',
+        'skipped: Test user 990000000012', now());
+
+-- T7.0 preconditions: the fixtures' notes are not live notes, the catalog had the items
+do $t$
+begin
+  if exists (select 1 from public.deliveries
+              where btrim(document_number) in ('ZZT7-9900701', 'ZZT7-9900711', 'ZZT7:9900711')
+                and id not in ('00000000-0000-4000-8000-000000000701', '00000000-0000-4000-8000-000000000711',
+                               '00000000-0000-4000-8000-000000000712', '00000000-0000-4000-8000-000000000713',
+                               '00000000-0000-4000-8000-000000000714')) then
+    raise exception 'T7.0 a live delivery uses a fixture note number; pick other numbers';
+  end if;
+  if (select count(*) from public.delivery_items
+       where receipt_id = '00000000-0000-4000-8000-000000000701' and item_code is not null) <> 5 then
+    raise exception 'T7.0 the item mirror did not give the 4 fixture items';
+  end if;
+  raise notice 'T7.0 preconditions ok';
+end
+$t$;
+
+-- T7.1 the function's shape and grants
+do $t$
+declare
+  f text := 'public.priority_push_explain(uuid)';
+begin
+  if (select provolatile from pg_proc where oid = f::regprocedure) <> 's' then
+    raise exception 'T7.1 explain must be STABLE';
+  end if;
+  if exists (select 1 from pg_proc p, aclexplode(p.proacl) a
+              where p.oid = f::regprocedure and a.grantee = 0 and a.privilege_type = 'EXECUTE')
+     or (select proacl from pg_proc where oid = f::regprocedure) is null
+     or has_function_privilege('anon', f, 'execute')
+     or has_function_privilege('authenticated', f, 'execute') then
+    raise exception 'T7.1 explain must not be executable by PUBLIC / anon / authenticated';
+  end if;
+  if not has_function_privilege('service_role', f, 'execute') then
+    raise exception 'T7.1 the scanner (service_role) must be able to call explain';
+  end if;
+  raise notice 'T7.1 shape ok';
+end
+$t$;
+
+-- T7.2 an unready Prod delivery: send_unready, and every unit-risk rule
+do $t$
+declare
+  e   jsonb := public.priority_push_explain('00000000-0000-4000-8000-000000000701');
+  l   jsonb;
+  k   text;
+begin
+  if not (e ?& array['decision', 'hold_reason', 'ready', 'supplier_resolved', 'supplier_supname',
+                     'lines', 'unit_risk_lines', 'unmapped_codes', 'not_ready_reason', 'is_test']) then
+    raise exception 'T7.2 a contract key is missing: %', e;
+  end if;
+  if e ->> 'decision' <> 'send_unready' or (e ->> 'ready')::boolean or (e ->> 'supplier_resolved')::boolean
+     or e ->> 'supplier_supname' is not null or e ->> 'not_ready_reason' <> 'supplier_unmatched'
+     or e ->> 'hold_reason' is not null or (e ->> 'is_test')::boolean
+     or (e ->> 'outbox_id')::bigint <> 990000701 or e ->> 'outbox_status' <> 'queued' then
+    raise exception 'T7.2 header is wrong: %', e - 'lines' - 'unit_risk_lines';
+  end if;
+  if not (e -> 'unmapped_codes') ? 'ZZT7-NOITEM' then
+    raise exception 'T7.2 the unmapped line must be listed: %', e -> 'unmapped_codes';
+  end if;
+  if jsonb_array_length(e -> 'lines') <> 5 or jsonb_array_length(e -> 'unit_risk_lines') <> 4 then
+    raise exception 'T7.2 expected 5 lines / 4 unit-risk lines, got % / %',
+      jsonb_array_length(e -> 'lines'), jsonb_array_length(e -> 'unit_risk_lines');
+  end if;
+  for l in select * from jsonb_array_elements(e -> 'lines') loop
+    if not (l ?& array['code', 'name', 'partname', 'source', 'our_unit', 'item_unit', 'received', 'unit_risk']) then
+      raise exception 'T7.2 a line key is missing: %', l;
+    end if;
+    -- English: לחם בדיקה = "test bread" (701's line with no Priority item).
+    k := case l ->> 'name'
+           when 'לחם בדיקה'                     then 'no_item_defaults_kg'
+           when 'kg item counted in units'      then 'count_to_kg_item'
+           when 'unit item weighed in kg'       then 'kg_to_unit_item'
+           when 'unit item counted in cartons'  then 'packs_not_units'
+           when 'kg item weighed in kg'         then null
+         end;
+    if l ->> 'unit_risk' is distinct from k then
+      raise exception 'T7.2 line % expected unit_risk %, got %', l ->> 'name', k, l ->> 'unit_risk';
+    end if;
+  end loop;
+  l := (select x from jsonb_array_elements(e -> 'lines') x where x ->> 'code' = 'ZZT7-NOITEM');
+  if l ->> 'partname' is not null or l ->> 'source' is not null or l ->> 'item_unit' is not null
+     or l ->> 'our_unit' <> 'units' or (l ->> 'received')::numeric <> 5 then
+    raise exception 'T7.2 the no-item line is wrong: %', l;
+  end if;
+  l := (select x from jsonb_array_elements(e -> 'lines') x where x ->> 'name' = 'kg item weighed in kg');
+  -- English: ק'ג = kg (the catalog's unit name).
+  if l ->> 'source' <> 'direct' or l ->> 'item_unit' <> 'ק''ג' or l ->> 'partname' is null then
+    raise exception 'T7.2 a direct kg item is wrong: %', l;
+  end if;
+  raise notice 'T7.2 unready Prod delivery ok';
+end
+$t$;
+
+-- T7.3 same note already delivered -> hold_same_invoice; a differently spelt
+--      note is NOT held (plan() matches the trimmed note exactly; pinned here);
+--      a Test row is never held by a real row of the same note (M1's rule)
+do $t$
+declare
+  e jsonb := public.priority_push_explain('00000000-0000-4000-8000-000000000712');
+begin
+  if e ->> 'decision' <> 'hold_same_invoice'
+     or e ->> 'hold_reason' not like 'supplier note ZZT7-9900711 is already in Priority or on its way under outbox row 990000711 %' then
+    raise exception 'T7.3 712 expected hold_same_invoice: % / %', e ->> 'decision', e ->> 'hold_reason';
+  end if;
+  if public.normalize_note_number('ZZT7:9900711') <> public.normalize_note_number('ZZT7-9900711') then
+    raise exception 'T7.3 fixture: 713 must normalise like 711';
+  end if;
+  e := public.priority_push_explain('00000000-0000-4000-8000-000000000713');
+  if e ->> 'decision' <> 'send_unready' then
+    raise exception 'T7.3 713 (exact-match rule) expected send_unready, got %', e ->> 'decision';
+  end if;
+  e := public.priority_push_explain('00000000-0000-4000-8000-000000000714');
+  if e ->> 'decision' <> 'send_unready' or not (e ->> 'is_test')::boolean then
+    raise exception 'T7.3 714 (Test row, same note as a real row) expected send_unready, got % / %',
+      e ->> 'decision', e ->> 'hold_reason';
+  end if;
+  raise notice 'T7.3 same-note hold ok';
+end
+$t$;
+
+-- T7.4 explain says exactly what plan() decides, for every due fixture row
+do $t$
+declare
+  p record;
+  e jsonb;
+  n integer := 0;
+begin
+  for p in select * from public.priority_push_plan() where outbox_id between 990000700 and 990000799 loop
+    e := public.priority_push_explain(p.delivery_id);
+    if p.decision = 'send' then
+      -- (the CASE is in parentheses: PL/pgSQL ends an IF condition at the first THEN outside them)
+      if e ->> 'decision' <> (case when p.reason like 'sent although not ready%' then 'send_unready' else 'send' end) then
+        raise exception 'T7.4 outbox %: plan send (%), explain %', p.outbox_id, p.reason, e ->> 'decision';
+      end if;
+    elsif e ->> 'decision' <> p.decision
+       or (e ->> 'hold_reason') is distinct from left(p.reason, 1000) then
+      raise exception 'T7.4 outbox %: plan % / %, explain % / %',
+        p.outbox_id, p.decision, p.reason, e ->> 'decision', e ->> 'hold_reason';
+    end if;
+    n := n + 1;
+  end loop;
+  if n < 5 then
+    raise exception 'T7.4 expected at least 5 due fixture rows (701, 712, 713, 714, 721), got %', n;
+  end if;
+  raise notice 'T7.4 parity with plan() ok (% rows)', n;
+end
+$t$;
+
+-- T7.5 Test receivers
+do $t$
+declare
+  e jsonb;
+begin
+  e := public.priority_push_explain('00000000-0000-4000-8000-000000000721');
+  if not (e ->> 'is_test')::boolean or e ->> 'decision' <> 'send_unready' then
+    raise exception 'T7.5 721 (target test, test_url set): % / %', e ->> 'is_test', e ->> 'decision';
+  end if;
+  e := public.priority_push_explain('00000000-0000-4000-8000-000000000722');
+  if not (e ->> 'is_test')::boolean or e ->> 'decision' <> 'skipped_test'
+     or e ->> 'hold_reason' <> 'skipped: Test user 990000000012' then
+    raise exception 'T7.5 722 (skipped at close): % / %', e ->> 'decision', e ->> 'hold_reason';
+  end if;
+  -- 723 has no row: with test routing on it would be queued (then held: no category source)
+  e := public.priority_push_explain('00000000-0000-4000-8000-000000000723');
+  if not (e ->> 'is_test')::boolean or e ->> 'decision' <> 'hold_category' or e -> 'outbox_id' <> 'null'::jsonb then
+    raise exception 'T7.5 723 (no row, test_url set): % / %', e ->> 'decision', e -> 'outbox_id';
+  end if;
+  update public.priority_push_config set test_url = null where id = 1;
+  e := public.priority_push_explain('00000000-0000-4000-8000-000000000723');
+  if e ->> 'decision' <> 'skipped_test' or e ->> 'hold_reason' <> 'skipped: Test user 990000000012' then
+    raise exception 'T7.5 723 (no row, no test_url): % / %', e ->> 'decision', e ->> 'hold_reason';
+  end if;
+  -- a queued target 'test' row with no test_url: M1's dispatch will mark it skipped
+  e := public.priority_push_explain('00000000-0000-4000-8000-000000000721');
+  if e ->> 'decision' <> 'skipped_test'
+     or e ->> 'hold_reason' <> 'skipped: test row not sent - priority_push_config.test_url is not set' then
+    raise exception 'T7.5 721 (target test, no test_url): % / %', e ->> 'decision', e ->> 'hold_reason';
+  end if;
+  update public.priority_push_config set test_url = 'https://priority-push-test.invalid/fake-make' where id = 1;
+  raise notice 'T7.5 Test receivers ok';
+end
+$t$;
+
+-- T7.6 no outbox row, a missing delivery, the push switched off
+do $t$
+declare
+  e jsonb;
+begin
+  e := public.priority_push_explain('00000000-0000-4000-8000-000000000731');
+  if e ->> 'decision' <> 'hold_category' or e -> 'outbox_id' <> 'null'::jsonb
+     or e ->> 'hold_reason' not like 'category unknown is not in priority_push_config.categories%'
+     or jsonb_array_length(e -> 'lines') <> 1 then
+    raise exception 'T7.6 731 (no outbox row): %', e - 'lines' - 'unit_risk_lines';
+  end if;
+  e := public.priority_push_explain('00000000-0000-4000-8000-0000000007ff');
+  if e ->> 'decision' <> 'hold_not_closed'
+     or e ->> 'hold_reason' <> 'delivery status is now missing; sent only while Complete / Has Discrepancy'
+     or e -> 'lines' <> '[]'::jsonb then
+    raise exception 'T7.6 missing delivery: %', e;
+  end if;
+  update public.priority_push_config set enabled = false where id = 1;
+  e := public.priority_push_explain('00000000-0000-4000-8000-000000000701');
+  if e ->> 'decision' <> 'disabled' then
+    raise exception 'T7.6 push off: expected disabled, got %', e ->> 'decision';
+  end if;
+  update public.priority_push_config set enabled = true where id = 1;
+  raise notice 'T7.6 edge cases ok';
+end
+$t$;
+
+-- the enabled false -> true flip above re-stamped enabled_since = now(); fixture
+-- rows queued at now() are not before it, so nothing below is held for it.
+
+-- T7.7 dispatch stores unit_risk_lines at send time, and a held row's
+--      hold_reason equals explain's hold_reason
+do $t$
+declare
+  o record;
+  e jsonb;
+begin
+  perform public.priority_push_dispatch();
+  select * into o from public.priority_push_outbox where id = 990000701;
+  e := public.priority_push_explain('00000000-0000-4000-8000-000000000701');
+  if o.status <> 'sent' or o.unit_risk_lines is null
+     or o.unit_risk_lines <> e -> 'unit_risk_lines'
+     or jsonb_array_length(o.unit_risk_lines) <> 4 then
+    raise exception 'T7.7 701: status %, unit_risk_lines %', o.status, o.unit_risk_lines;
+  end if;
+  select * into o from public.priority_push_outbox where id = 990000712;
+  e := public.priority_push_explain('00000000-0000-4000-8000-000000000712');
+  if o.status <> 'queued' or o.hold_reason is null or o.hold_reason <> e ->> 'hold_reason' then
+    raise exception 'T7.7 712: hold_reason % vs explain %', o.hold_reason, e ->> 'hold_reason';
+  end if;
+  raise notice 'T7.7 dispatch + explain agree ok';
+end
+$t$;
+
+-- T7.8 a line whose note printed no unit (bot Task 16 stores 'unknown') is
+--      flagged unit_unknown, whatever the Priority item's unit; a line with no
+--      Priority item at all is still no_item_defaults_kg (that rule wins)
+insert into public.deliveries (id, document_number, supplier_hebrew, received_by_chat_id, status, created_at)
+values ('00000000-0000-4000-8000-000000000741', 'ZZT7-9900741', 'זזזספקבדיקהזזז', 990000000011, 'Complete', now() - interval '1 hour');
+-- Gloss: the three labels are English on purpose; the supplier is "zzz test supplier zzz".
+-- English: catalog unitname יח = units, ק'ג = kg.
+insert into public.delivery_items (receipt_id, item_code, item_name_hebrew, unit, invoice_qty_kg, received_qty_kg)
+select '00000000-0000-4000-8000-000000000741', x.partname, x.label, 'unknown', 6, 6
+  from (select (select cp.partname from public.catalog_products cp
+                 where cp.unitname = 'יח'
+                   and not exists (select 1 from public.sku_crosswalk s where s.supplier_sku = cp.partname)
+                 order by cp.partname limit 1)            as partname,
+               'unit item, no unit on the note'           as label
+        union all
+        select (select cp.partname from public.catalog_products cp
+                 where cp.unitname = 'ק''ג'
+                   and not exists (select 1 from public.sku_crosswalk s where s.supplier_sku = cp.partname)
+                 order by cp.partname limit 1),
+               'kg item, no unit on the note'
+        union all
+        select 'ZZT7-NOITEM', 'no item, no unit on the note') x;
+
+do $t$
+declare
+  e jsonb := public.priority_push_explain('00000000-0000-4000-8000-000000000741');
+  l jsonb;
+  k text;
+begin
+  if jsonb_array_length(e -> 'lines') <> 3 or jsonb_array_length(e -> 'unit_risk_lines') <> 3 then
+    raise exception 'T7.8 expected 3 lines / 3 unit-risk lines, got % / %',
+      jsonb_array_length(e -> 'lines'), jsonb_array_length(e -> 'unit_risk_lines');
+  end if;
+  for l in select * from jsonb_array_elements(e -> 'lines') loop
+    k := case l ->> 'name'
+           when 'unit item, no unit on the note' then 'unit_unknown'
+           when 'kg item, no unit on the note'   then 'unit_unknown'
+           when 'no item, no unit on the note'   then 'no_item_defaults_kg'
+         end;
+    if l ->> 'unit_risk' is distinct from k or l ->> 'our_unit' is distinct from 'unknown' then
+      raise exception 'T7.8 line % expected unit_risk % (our_unit unknown), got % / %',
+        l ->> 'name', k, l ->> 'unit_risk', l ->> 'our_unit';
+    end if;
+  end loop;
+  raise notice 'T7.8 unknown unit flagged ok';
+end
+$t$;
