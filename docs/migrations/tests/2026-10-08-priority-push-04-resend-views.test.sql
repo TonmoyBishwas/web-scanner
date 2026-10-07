@@ -199,6 +199,50 @@ begin
 end
 $$;
 
+-- ---------- a fresh Make crash is listed at once; a fresh 2xx-without-ok keeps the grace (final review I-1) ----------
+-- Since slice 3 the bot alerts the office the moment Make answers 5xx, and that alert links to
+-- this page: a crash sent a minute ago must already be on it. A 2xx-without-ok (or a timeout)
+-- is alerted only at no_writeback, so it stays off the page for no_writeback_minutes (5).
+do $$
+declare
+  c_sup constant text := 'בדיקה 990414';  -- English: test 990414
+begin
+  perform pg_temp.t14_make('crash_young', 'TQ-990414000126', c_sup, 'Complete', now() - interval '1 day', 'unconfirmed', 500,
+                           'Scenario failed to complete.', null, now() - interval '1 minute', 990414126);
+  perform pg_temp.t14_make('ok_young', 'TQ-990414000127', c_sup, 'Complete', now() - interval '1 day', 'unconfirmed', 200,
+                           'Accepted', null, now() - interval '1 minute', 990414127);
+  if pg_temp.t14_problems('crash_young') is distinct from 'unconfirmed:make_crash' then
+    raise exception 'T14 view crash_young (500, sent 1 minute ago) must be listed at once: %',
+      coalesce(pg_temp.t14_problems('crash_young'), '<NOT LISTED>');
+  end if;
+  if pg_temp.t14_problems('ok_young') is not null then
+    raise exception 'T14 view ok_young (200 without ok, sent 1 minute ago) must wait out the grace: %',
+      pg_temp.t14_problems('ok_young');
+  end if;
+end
+$$;
+
+-- ---------- reason texts (final review m-1, m-5) ----------
+do $$
+declare
+  v_reason text;
+begin
+  -- a generic refusal also asks for the Priority search: a 4xx after createHeader leaves a draft.
+  -- The % stands for the Hebrew draft status (טיוטא = draft) so the test needs no Hebrew literal.
+  select v.reason_text into v_reason from public.priority_push_attention_v v
+   where v.delivery_id = pg_temp.t14_d('json_fail');
+  if v_reason not like 'Make or Priority refused note TQ-990414000110 (HTTP 400): %. Check the Make history and search Priority for BOOKNUM TQ-990414000110 in any status, including draft (%), before any re-send.' then
+    raise exception 'T14 view generic failed reason: %', v_reason;
+  end if;
+  -- class 3: the scanned goods may be in stock; what is certain is that they are not in Priority
+  select v.reason_text into v_reason from public.priority_push_attention_v v
+   where v.delivery_id = pg_temp.t14_d('orph3');
+  if v_reason not like '% but the receipt was never finished, so they are not in Priority. Ask the receiver to finish it. Never delete it.' then
+    raise exception 'T14 view class 3 reason: %', v_reason;
+  end if;
+end
+$$;
+
 -- grants: only service_role (the scanner API) may read the view or call the two functions
 do $$
 declare
@@ -511,7 +555,9 @@ begin
 
   -- the draft is confirmed in Priority: his sync sets the delivery Complete again
   update public.deliveries set status = 'Complete' where id = v_d;
-  perform public.priority_push_watch();
+  if public.priority_push_watch() < 0 then
+    raise exception 'T14 reopen: priority_push_watch is busy (live run holds its lock) - rerun the test';
+  end if;
   if (select o.status from public.priority_push_outbox o where o.id = v_o) <> 'delivered'
      or (select count(*) from public.priority_push_outbox o where o.delivery_id = v_d) <> 1 then
     raise exception 'T14 reopen: the re-close re-queued the delivery: %',
@@ -544,6 +590,71 @@ begin
   if pg_temp.t14_problems('notq') is distinct from 'not_queued:-' then
     raise exception 'T14 view notq (Prod receiver) after the Test rule: %', pg_temp.t14_problems('notq');
   end if;
+end
+$$;
+
+-- ---------- the scanner's role can really call both functions (SECURITY DEFINER path) ----------
+-- The grants block above reads has_function_privilege; this one calls them as service_role (what the
+-- scanner's API routes use) and as anon (which must be refused). Placed last on purpose: the
+-- "a refusal wrote nothing" check earlier scans every t14 outbox row for archive rows, and an
+-- accepted Mark as found archives one. Ids are resolved before the role switch because the
+-- temp helper functions read the temp table t14, which service_role cannot read.
+do $$
+declare
+  c_sup  constant text := 'בדיקה 990414';  -- English: test 990414
+  v_mf   bigint;
+  v_rs   bigint;
+  r      jsonb;
+begin
+  perform pg_temp.t14_make('mf_srv', 'TQ-990414000128', c_sup, 'Complete', now() - interval '1 day', 'unconfirmed', 500,
+                           'Scenario failed to complete.', null, now() - interval '1 hour', 990414128);
+  perform pg_temp.t14_make('rs_srv', 'TQ-990414000129', c_sup, 'Complete', now() - interval '1 day', 'failed', 400,
+                           '{"ok":false,"stage":"createLines","error":"T14 generic 400"}', null, now() - interval '1 hour', 990414129);
+  v_mf := pg_temp.t14_o('mf_srv');
+  v_rs := pg_temp.t14_o('rs_srv');
+
+  set local role service_role;
+  r := public.priority_push_mark_found(v_mf, 'GRT14990414199', 'admin:990414');
+  if not coalesce((r ->> 'ok')::boolean, false) then
+    reset role;
+    raise exception 'T14 service_role mark_found: %', r;
+  end if;
+  -- both ticks missing: the refusal proves EXECUTE and the SECURITY DEFINER path without a real send
+  r := public.priority_push_resend(v_rs, 'admin:990414', false, false);
+  if r ->> 'refused' is distinct from 'checks_not_confirmed' then
+    reset role;
+    raise exception 'T14 service_role resend: %', r;
+  end if;
+  reset role;
+
+  if (select o.status || '|' || o.not_ready_reason from public.priority_push_outbox o where o.id = v_mf)
+     is distinct from 'delivered|confirmed by hand: Priority draft GRT14990414199 (admin:990414)' then
+    raise exception 'T14 service_role mark_found row: %', (select to_jsonb(o) from public.priority_push_outbox o where o.id = v_mf);
+  end if;
+  if (select o.status from public.priority_push_outbox o where o.id = v_rs) <> 'failed' then
+    raise exception 'T14 service_role refused resend changed the row';
+  end if;
+end
+$$;
+-- the check bites: anon has no EXECUTE on either function (-1 is no outbox row, so nothing could change)
+do $$
+begin
+  set local role anon;
+  begin
+    perform public.priority_push_mark_found(-1, 'GRT14990414198', 'anon:990414');
+    reset role;
+    raise exception 'T14 anon may call priority_push_mark_found';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    perform public.priority_push_resend(-1, 'anon:990414', true, true);
+    reset role;
+    raise exception 'T14 anon may call priority_push_resend';
+  exception when insufficient_privilege then
+    null;
+  end;
+  reset role;
 end
 $$;
 

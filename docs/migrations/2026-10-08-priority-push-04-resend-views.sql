@@ -22,7 +22,7 @@
 --   priority_push_mark_found()  an operator's "Priority has it as GR…": status 'delivered'.
 --                               It never calls the client's wb_mark_gr_synced.
 --   priority_push_attention_v   one row per problem: failed / unconfirmed / no write-back / held /
---                               not queued / orphan deliveries by class (spec §5).
+--                               not queued / bot unreachable / orphan deliveries by class (spec §5).
 -- delivery_gaps_v is NOT here: it reads M5's delivery_items columns, so M5 creates it.
 --
 -- Nothing here sends by itself, edits a client object or changes job 8. Both functions take
@@ -327,8 +327,11 @@ ob2 as (
   select ob.*,
          case
            when ob.status in ('failed', 'expired') then 'failed'
+           -- a Make crash (5xx) is alerted to the office at once (bot route since slice 3), so the page
+           -- lists it at once; a 2xx-without-ok or a timeout keeps the no_writeback grace
            when ob.status = 'unconfirmed'
-                and coalesce(ob.sent_at, ob.queued_at) < now() - make_interval(mins => cfg.no_writeback_minutes)
+                and (ob.status_code >= 500
+                     or coalesce(ob.sent_at, ob.queued_at) < now() - make_interval(mins => cfg.no_writeback_minutes))
              then 'unconfirmed'
            when ob.status = 'sent'
                 and coalesce(ob.sent_at, ob.queued_at) < now() - make_interval(mins => cfg.no_writeback_minutes)
@@ -374,7 +377,8 @@ outbox_rows as (
              'Make or Priority refused note ' || coalesce(ob2.doc, '?')
              || coalesce(' (HTTP ' || ob2.status_code || ')', '') || ': '
              || coalesce(left(nullif(btrim(ob2.reply_text), ''), 200), 'no detail recorded')
-             || '. Check the Make history before any re-send.'
+             || '. Check the Make history and search Priority for BOOKNUM ' || coalesce(ob2.doc, '?')
+             || ' in any status, including draft (טיוטא), before any re-send.'
            when ob2.error_class = 'make_crash' then
              'Make crashed while building note ' || coalesce(ob2.doc, '?') || '. A draft header may already exist: '
              || 'search Priority for BOOKNUM ' || coalesce(ob2.doc, '?')
@@ -565,7 +569,7 @@ orphans as (
              'Goods were scanned or labelled for note ' || coalesce(ip3.document_number, '?') || ' (opened '
              || to_char(ip3.created_at at time zone 'Asia/Jerusalem', 'YYYY-MM-DD HH24:MI') || ' Israel by '
              || coalesce(ip3.receiver_name, 'an unknown receiver') || ') but the receipt was never finished, '
-             || 'so they are in neither stock nor Priority. Ask the receiver to finish it. Never delete it.'
+             || 'so they are not in Priority. Ask the receiver to finish it. Never delete it.'
            when 'orphan_class1' then
              'Superseded copy of note ' || coalesce(ip3.document_number, '?') || ' (opened '
              || to_char(ip3.created_at at time zone 'Asia/Jerusalem', 'YYYY-MM-DD HH24:MI')
