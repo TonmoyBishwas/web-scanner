@@ -2,8 +2,11 @@
 -- 2026-10-08  priority_push_01_safety_test_harness   (M1, OUR objects only)
 -- =============================================================================
 --
--- STATUS: applied with mcp__supabase__apply_migration (name
---         priority_push_01_safety_test_harness) ONLY after Tonmoy's OK.
+-- STATUS: APPLIED 2026-10-07 10:02:50 UTC with Tonmoy's OK, byte-exact via psycopg in one
+--         transaction, recorded in supabase_migrations.schema_migrations as
+--         20261007100250 priority_push_01_safety_test_harness (rollback copy in the row).
+--         Post-apply: md5 plan 1d4ccf3c… / dispatch 408deca5…, 55 rows target='make',
+--         test_url NULL, anon cannot execute finance_resend, job 8 succeeding, test ALL PASS.
 --         Test: tests/2026-10-08-priority-push-01-safety-test-harness.test.sql
 --
 -- Spec: telegram-warehouse-bot/docs/superpowers/specs/
