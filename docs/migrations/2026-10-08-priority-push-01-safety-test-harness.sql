@@ -11,7 +11,9 @@
 --       "Security clean-up").
 --
 -- WHAT THIS FILE DOES
---   0. Guards: holds the dispatcher's advisory lock for the whole migration
+--   0. Guards: sets lock_timeout = 5 s (no statement queues behind another
+--      session longer than that; past it the migration rolls back whole),
+--      holds the dispatcher's advisory lock for the whole migration
 --      (cron job 8 skips its ticks instead of blocking on the ALTERs below),
 --      and REFUSES to run if any of the three functions it replaces whole has
 --      changed since its 2026-10-07 live definition (md5), so nobody's later
@@ -53,6 +55,15 @@
 -- =============================================================================
 
 -- 0. guards ---------------------------------------------------------------------
+-- No statement below may queue behind another session for more than 5 s (the
+-- ALTER TABLEs below need ACCESS EXCLUSIVE; a long reader or writer on
+-- priority_push_outbox / priority_push_config would otherwise hold them - and
+-- everything behind them - up). Past 5 s the statement errors, the whole
+-- migration rolls back, and nothing is changed. Transaction-local, set before
+-- the first lock, and outside every function body (so the md5 guard below,
+-- which covers function bodies only, is not affected).
+set local lock_timeout = '5s';
+
 -- Take the dispatcher's lock FIRST and keep it to the end of this transaction.
 -- From here on job 8 gets pg_try_advisory_xact_lock = false and returns 0
 -- without touching a table. Without this, a job 8 tick that starts after the
