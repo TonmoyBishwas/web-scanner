@@ -51,7 +51,7 @@ export const PROBLEM_INFO: Readonly<Record<string, ProblemInfo>> = {
       'Read the reason. A supplier refusal creates no draft; an item refusal or a crash may leave a draft header, so search Priority for the note number (BOOKNUM) in any status, including draft (טיוטא), before any Send again. An expired row was never sent and has no Send again — tell Tonmoy.',
   },
   unconfirmed: {
-    title: 'Sent, but Make never confirmed it',
+    title: 'Sent, but Make did not confirm it',
     check:
       'A draft may already exist. Search Priority for the note number (BOOKNUM) in any status, including draft (טיוטא), and check the Make history before any re-send.',
   },
@@ -269,6 +269,18 @@ export function receiverLabel(row: Pick<AttentionRow, 'receiver_name' | 'receive
   if (name) return name;
   const digits = row.receiver_chat_id == null ? '' : String(row.receiver_chat_id).replace(/\D/g, '');
   return digits ? `…${digits.slice(-4)}` : null;
+}
+
+/**
+ * The sentence under an empty problem list. When delivery_gaps_v was read
+ * (the API's fixes_available), only the receipts the bot could not close are
+ * still missing from the page; when it was not readable, the lines to fix
+ * inside a Priority draft are missing too.
+ */
+export function emptyStateText(fixesAvailable: boolean): string {
+  return fixesAvailable
+    ? 'No receipt is stuck on its way to Priority right now. Receipts the bot could not close are not listed here yet — the WhatsApp message has the details.'
+    : 'Nothing is listed right now. Lines to fix inside a Priority draft, and receipts the bot could not close, are not listed here yet — the WhatsApp message has the details.';
 }
 
 /** "07 Oct, 14:05" in Israel time; '—' when there is no time. */

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   canMarkFound,
   canSendAgain,
+  emptyStateText,
   errorClassText,
   fixLineText,
   formatIsraelTime,
@@ -131,6 +132,26 @@ describe('plain words', () => {
     }
     expect(markFoundRefusalText(null)).toMatch(/Nothing was changed/);
     expect(markFoundRefusalText('brand_new_code')).not.toMatch(/sent/i);
+  });
+
+  it('the unconfirmed title does not say Make "never" confirmed (it also covers a 5xx and a timeout)', () => {
+    expect(PROBLEM_INFO.unconfirmed.title).toBe('Sent, but Make did not confirm it');
+  });
+});
+
+describe('the empty-list sentence', () => {
+  it('when the lines-to-fix view was read, only the not-yet-listed receipts are said to be missing', () => {
+    const text = emptyStateText(true);
+    expect(text).toBe(
+      'No receipt is stuck on its way to Priority right now. Receipts the bot could not close are not listed here yet — the WhatsApp message has the details.',
+    );
+    expect(text).not.toMatch(/Lines to fix/);
+  });
+
+  it('when the view was unreadable, keep the old sentence naming both gaps', () => {
+    expect(emptyStateText(false)).toBe(
+      'Nothing is listed right now. Lines to fix inside a Priority draft, and receipts the bot could not close, are not listed here yet — the WhatsApp message has the details.',
+    );
   });
 });
 
