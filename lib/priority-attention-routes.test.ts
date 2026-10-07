@@ -12,13 +12,19 @@ const tables: Record<string, unknown[]> = {};
 /** A table whose read fails (e.g. delivery_gaps_v before M5 is applied). */
 const errors: Record<string, { message: string; code?: string }> = {};
 const fromCalls: string[] = [];
+/** Every .eq(column, value) a route's query made, with the table it was made on. */
+const eqCalls: { table: string; args: unknown[] }[] = [];
 
 /** supabase.from(table)…: every builder method returns the chain; awaiting it gives the table's rows. */
 function fakeFrom(table: string) {
   fromCalls.push(table);
   const result = errors[table] ? { data: null, error: errors[table] } : { data: tables[table] ?? [], error: null };
   const chain: Record<string, unknown> = {};
-  for (const m of ['select', 'eq', 'gte', 'order', 'limit']) chain[m] = () => chain;
+  for (const m of ['select', 'gte', 'order', 'limit']) chain[m] = () => chain;
+  chain.eq = (...args: unknown[]) => {
+    eqCalls.push({ table, args });
+    return chain;
+  };
   chain.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
     Promise.resolve(result).then(resolve, reject);
   return chain;
@@ -53,6 +59,7 @@ beforeEach(() => {
   process.env.ADMIN_LINK_SECRET = SECRET;
   rpc.mockReset();
   fromCalls.length = 0;
+  eqCalls.length = 0;
   tables.users = [{ role: 'Admin', active: true }];
   tables.priority_push_attention_v = [{ outbox_id: 45, problem: 'failed' }];
   delete tables.delivery_gaps_v;
@@ -77,6 +84,8 @@ describe('GET /api/priority/attention', () => {
       fixes_available: true,
     });
     expect(fromCalls).toEqual(['users', 'priority_push_attention_v', 'delivery_gaps_v']);
+    // the Admin lookup is filtered to THIS link's chat id: a dropped filter would admit any link holder
+    expect(eqCalls).toEqual([{ table: 'users', args: ['chat_id', U] }]);
   });
 
   // English: לחם = "bread"; אגמי = Agami (supplier)
@@ -120,6 +129,26 @@ describe('GET /api/priority/attention', () => {
     expect(res.status).toBe(403);
     expect(fromCalls).toEqual(['users']);
   });
+
+  it('the view cannot be read → 500 with the plain message, never an empty list', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    errors.priority_push_attention_v = { message: 'permission denied for view priority_push_attention_v', code: '42501' };
+    const res = await get(`u=${U}&exp=${EXP}&sig=${SIG}`);
+    quiet.mockRestore();
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ success: false, error: 'Failed to read the list' });
+    expect(fromCalls).toEqual(['users', 'priority_push_attention_v']);
+  });
+
+  it('the users table cannot be read → 500, nobody is let in and the view is not read', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    errors.users = { message: 'connection reset' };
+    const res = await get(`u=${U}&exp=${EXP}&sig=${SIG}`);
+    quiet.mockRestore();
+    expect(res.status).toBe(500);
+    expect((await res.json()).success).toBe(false);
+    expect(fromCalls).toEqual(['users']);
+  });
 });
 
 describe('POST /api/priority/resend', () => {
@@ -161,6 +190,15 @@ describe('POST /api/priority/resend', () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  it('a valid link whose chat id is not an active Admin → 403 and nothing is called', async () => {
+    tables.users = [{ role: 'Manager', active: true }];
+    const res = await resendPOST(post('/api/priority/resend', body()));
+    expect(res.status).toBe(403);
+    expect((await res.json()).success).toBe(false);
+    expect(rpc).not.toHaveBeenCalled();
+    expect(eqCalls).toEqual([{ table: 'users', args: ['chat_id', U] }]);
+  });
+
   it('no outbox id → 400 and nothing is called', async () => {
     const res = await resendPOST(post('/api/priority/resend', body({ outbox_id: 'all' })));
     expect(res.status).toBe(400);
@@ -197,6 +235,14 @@ describe('POST /api/priority/mark-found', () => {
     const json = await res.json();
     expect(json.refused).toBe('not_markable_status');
     expect(json.error).toMatch(/already delivered/);
+  });
+
+  it('a tampered link → 401, no database call of any kind', async () => {
+    const res = await markFoundPOST(post('/api/priority/mark-found', body({ sig: SIG.replace(/.$/, (c) => (c === '0' ? '1' : '0')) })));
+    expect(res.status).toBe(401);
+    expect((await res.json()).success).toBe(false);
+    expect(rpc).not.toHaveBeenCalled();
+    expect(fromCalls).toEqual([]);
   });
 
   it('a missing or odd document number → 400 and nothing is called', async () => {

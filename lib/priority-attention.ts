@@ -25,6 +25,8 @@ export interface AttentionRow {
   sent_at: string | null;
   created_at: string | null;
   receiver_chat_id: number | string | null;
+  /** The receiver's nickname when the row carries one (absent on the view today → undefined). */
+  receiver_name?: string | null;
   /** M4's additive trailing columns (absent on an older view → undefined). */
   /** 'make' | 'test' (the fake Make of the Test-user harness); null for rows without an outbox row. */
   target?: string | null;
@@ -81,7 +83,8 @@ export const PROBLEM_INFO: Readonly<Record<string, ProblemInfo>> = {
   },
   orphan_class3: {
     title: 'Goods scanned but never finished',
-    check: 'Real goods are booked but the delivery was never closed. The receiver should finish it — never delete it.',
+    check:
+      'Real goods were scanned but the delivery was never closed, so they are not in Priority. The receiver should finish it — never delete it.',
   },
 };
 
@@ -162,9 +165,9 @@ export const REFUSAL_TEXT: Readonly<Record<string, string>> = {
   sibling_in_flight:
     'Another delivery with the same note number is already in Priority or on its way, so nothing was sent (it would make a duplicate draft). If this really is a second delivery, tell Tonmoy.',
   known_reject_supplier:
-    'Priority would refuse it again: the supplier is still not set up there. Open the supplier in Priority first; if it is open and this still appears, tell Tonmoy.',
+    "Priority would refuse it again: the supplier is still not set up there. Open the supplier in Priority first. Priority's lists are copied here periodically, so after opening it, try again after the next sync; if it still appears, tell Tonmoy.",
   known_reject_items:
-    'Make would fail again: items are still not linked to Priority items. Link the items first; if they are linked and this still appears, tell Tonmoy.',
+    "Priority or Make would refuse it again: items on it are still not linked to Priority items. Link the items in Priority first. Priority's lists are copied here periodically, so after linking, try again after the next sync; if it still appears, tell Tonmoy.",
 };
 
 /** priority_push_mark_found refusal codes, in plain English. */
@@ -201,10 +204,13 @@ export function markFoundRefusalText(code: string | null | undefined): string {
  * Send again: only where priority_push_resend could accept it — an outbox row
  * whose own status is failed or unconfirmed (an expired row shows as problem
  * 'failed' but is refused; a no_writeback row is still 'sent'), and Priority
- * has no GR for the delivery yet (that is a Mark as found).
+ * has no GR for the delivery yet (that is a Mark as found). A row Priority
+ * refused as 'already_in_priority' is a Mark as found too: the receipt is
+ * there, so it is never sent again.
  */
 export function canSendAgain(row: AttentionRow): boolean {
   if (row.outbox_id == null || row.gr_docno) return false;
+  if (row.error_class === 'already_in_priority') return false;
   return row.outbox_status != null
     ? RESENDABLE_STATUS.has(row.outbox_status)
     : RESENDABLE_PROBLEM.has(row.problem);
@@ -231,6 +237,38 @@ export function parseDocno(v: unknown): string | null {
   if (typeof v !== 'string') return null;
   const docno = v.trim().toUpperCase();
   return /^[A-Z0-9][A-Z0-9/-]{2,39}$/.test(docno) ? docno : null;
+}
+
+/**
+ * Mark as found typo guard: Priority's copy already says which GR this delivery
+ * has (gr_docno), and the typed number — after parseDocno's normalisation —
+ * is a different one. The page then asks for a second press before it sends.
+ * False when the row has no known GR, or the typed text is not a document number.
+ */
+export function markFoundNeedsConfirm(row: Pick<AttentionRow, 'gr_docno'>, typed: unknown): boolean {
+  const known = typeof row.gr_docno === 'string' ? row.gr_docno.trim().toUpperCase() : '';
+  if (!known) return false;
+  const clean = parseDocno(typed);
+  return clean !== null && clean !== known;
+}
+
+/** What the page says on the first press of a Mark as found that needs a second one; null when it does not. */
+export function markFoundConfirmText(row: Pick<AttentionRow, 'gr_docno'>, typed: unknown): string | null {
+  if (!markFoundNeedsConfirm(row, typed)) return null;
+  const known = (row.gr_docno ?? '').trim();
+  return `Priority's copy here says ${known}. You typed ${parseDocno(typed)}. Press Mark as found again to confirm.`;
+}
+
+/**
+ * Who received the delivery, for the card: the nickname when the row carries
+ * one, else "…" and the last 4 digits of the chat id (the chat id is the
+ * receiver's phone number, which a forwarded link must not expose), else null.
+ */
+export function receiverLabel(row: Pick<AttentionRow, 'receiver_name' | 'receiver_chat_id'>): string | null {
+  const name = typeof row.receiver_name === 'string' ? row.receiver_name.trim() : '';
+  if (name) return name;
+  const digits = row.receiver_chat_id == null ? '' : String(row.receiver_chat_id).replace(/\D/g, '');
+  return digits ? `…${digits.slice(-4)}` : null;
 }
 
 /** "07 Oct, 14:05" in Israel time; '—' when there is no time. */
@@ -270,7 +308,7 @@ export function groupFixLines(lines: readonly GapLine[]): FixDelivery[] {
     d.lines.push(line);
   }
   const out = [...byId.values()];
-  for (const d of out) d.lines.sort((a, b) => (a.code ?? '￿').localeCompare(b.code ?? '￿'));
+  for (const d of out) d.lines.sort((a, b) => (a.code ?? '\uFFFF').localeCompare(b.code ?? '\uFFFF'));
   return out;
 }
 

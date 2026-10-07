@@ -9,8 +9,11 @@ import {
   errorClassText,
   fixLineText,
   formatIsraelTime,
+  markFoundConfirmText,
+  markFoundNeedsConfirm,
   parseDocno,
   problemInfo,
+  receiverLabel,
   type AttentionRow,
   type FixDelivery,
 } from '@/lib/priority-attention';
@@ -144,7 +147,7 @@ export function AttentionBoard() {
           <>
             <p className="text-xs text-ink-muted">
               {load.rows.length === 0
-                ? 'Nothing needs attention. Every finished delivery is in Priority or on its way.'
+                ? 'Nothing is listed right now. Lines to fix inside a Priority draft, and receipts the bot could not close, are not listed here yet — the WhatsApp message has the details.'
                 : `${load.rows.length} to look at`}
               {' · updated '}
               {formatIsraelTime(load.at.toISOString())}
@@ -211,18 +214,36 @@ function AttentionCard({ row, link, onDone }: { row: AttentionRow; link: Link; o
   const tone = PROBLEM_TONE[row.problem] ?? 'muted';
   const gloss = errorClassText(row.error_class);
   const note = row.document_number || '—';
+  // never the raw chat id: it is the receiver's phone number and this link may be forwarded or screenshotted
+  const receiver = receiverLabel(row);
 
   const [panel, setPanel] = useState<'none' | 'resend' | 'found'>('none');
   const [priorityChecked, setPriorityChecked] = useState(false);
   const [makeChecked, setMakeChecked] = useState(false);
   // Prefilled when Priority already has a GR for the delivery (the view's gr_docno).
   const [docno, setDocno] = useState(row.gr_docno ?? '');
+  // The number the office already confirmed once although it differs from Priority's copy (typo guard).
+  const [confirmedFor, setConfirmedFor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Ticks and the typo-guard confirmation never outlive the press or the panel they were given for:
+  // a refused or failed press must not pre-confirm the next one.
+  const resetConfirmations = () => {
+    setPriorityChecked(false);
+    setMakeChecked(false);
+    setConfirmedFor(null);
+  };
+
   const open = (next: 'resend' | 'found') => {
     setPanel((p) => (p === next ? 'none' : next));
+    resetConfirmations();
     setError(null);
+  };
+
+  const close = () => {
+    setPanel('none');
+    resetConfirmations();
   };
 
   async function send(path: string, extra: Record<string, unknown>): Promise<Record<string, unknown> | null> {
@@ -250,6 +271,7 @@ function AttentionCard({ row, link, onDone }: { row: AttentionRow; link: Link; o
 
   async function sendAgain() {
     const data = await send('/api/priority/resend', { priority_checked: priorityChecked, make_checked: makeChecked });
+    resetConfirmations(); // accepted, refused or failed: the next press needs both ticks again
     if (!data) return;
     const attempt = typeof data.attempt === 'number' ? ` (send #${data.attempt})` : '';
     onDone(
@@ -260,7 +282,13 @@ function AttentionCard({ row, link, onDone }: { row: AttentionRow; link: Link; o
   async function markFound() {
     const clean = parseDocno(docno);
     if (!clean) return;
+    // Priority's copy already says another number: the first press only shows it, the second (same value) sends
+    if (markFoundNeedsConfirm(row, docno) && confirmedFor !== clean) {
+      setConfirmedFor(clean);
+      return;
+    }
     const data = await send('/api/priority/mark-found', { docno: clean });
+    resetConfirmations(); // accepted, refused or failed: a later press asks again
     if (!data) return;
     onDone(`Note ${note} is recorded as found in Priority (${clean}). Nothing was sent.`);
   }
@@ -285,7 +313,7 @@ function AttentionCard({ row, link, onDone }: { row: AttentionRow; link: Link; o
             {row.outbox_status && ` · status ${row.outbox_status}`}
             {row.status_code != null && ` · HTTP ${row.status_code}`}
             {` · sent ${formatIsraelTime(row.sent_at)}`}
-            {row.receiver_chat_id != null && ` · received by ${row.receiver_chat_id}`}
+            {receiver && ` · received by ${receiver}`}
           </div>
         </div>
         <span className={`flex-none border rounded-full px-2 py-[2px] text-[11px] font-extrabold ${TONE_CLASS[tone]}`}>
@@ -352,7 +380,7 @@ function AttentionCard({ row, link, onDone }: { row: AttentionRow; link: Link; o
             >
               {busy ? 'Sending…' : 'Send again'}
             </button>
-            <button onClick={() => setPanel('none')} className="px-3 py-2 text-sm font-bold text-ink-muted">
+            <button onClick={close} className="px-3 py-2 text-sm font-bold text-ink-muted">
               Cancel
             </button>
           </div>
@@ -365,13 +393,21 @@ function AttentionCard({ row, link, onDone }: { row: AttentionRow; link: Link; o
             <span className="font-bold text-ink">The Priority document number of the draft you found</span>
             <input
               value={docno}
-              onChange={(e) => setDocno(e.target.value)}
+              onChange={(e) => {
+                setDocno(e.target.value);
+                setConfirmedFor(null);
+              }}
               placeholder="GR26000049"
               dir="ltr"
               autoCapitalize="characters"
               className="mt-1 w-full bg-canvas border border-line-strong rounded-xl px-3 py-2 font-mono text-ink"
             />
           </label>
+          {confirmedFor !== null && markFoundConfirmText(row, docno) && (
+            <p className={`border rounded-[11px] px-3 py-[10px] text-sm font-semibold ${TONE_CLASS.warn}`}>
+              {markFoundConfirmText(row, docno)}
+            </p>
+          )}
           <div className="flex gap-2">
             <button
               onClick={() => void markFound()}
@@ -380,7 +416,7 @@ function AttentionCard({ row, link, onDone }: { row: AttentionRow; link: Link; o
             >
               {busy ? 'Saving…' : 'Mark as found'}
             </button>
-            <button onClick={() => setPanel('none')} className="px-3 py-2 text-sm font-bold text-ink-muted">
+            <button onClick={close} className="px-3 py-2 text-sm font-bold text-ink-muted">
               Cancel
             </button>
           </div>
