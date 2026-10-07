@@ -27,6 +27,7 @@ import {
   Package,
 } from 'lucide-react';
 import { SmartScanner } from '@/components/scanner/SmartScanner';
+import { PriorityPushStatus } from '@/components/terminal/PriorityPushStatus';
 import { LanguageContext, useLangDir, t } from '@/lib/i18n';
 import type { Language, MultiPalletSession, ParsedBarcode } from '@/types';
 import { matchInvoiceItem, type InvoiceItem } from '@/lib/invoice-match';
@@ -375,6 +376,11 @@ export function NonMeatTypeAFlow({
           {tr('nonmeatTypeA.allDone', { count: palletCount })}
         </h1>
         <p className="text-sm text-ink-muted">{tr('nonmeatTypeA.allDoneHint')}</p>
+        {/* Where the automatic Priority push stands — the same status row as
+            the meat all-done card; it updates by itself. */}
+        <div className="text-start">
+          <PriorityPushStatus token={token} />
+        </div>
         <div className="space-y-2 text-start">
           {(session.completed_pallets || []).map((p) => (
             <a

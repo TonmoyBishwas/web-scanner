@@ -629,20 +629,26 @@ export const he: Record<TranslationKey, string> = {
   'priority.closing': 'סוגר את התעודה — אחר כך היא נשלחת לפריוריטי אוטומטית',
   'priority.sending': 'נשלח לפריוריטי אוטומטית…',
   'priority.awaiting': 'נשלח — ממתין לאישור מפריוריטי',
-  'priority.unconfirmed': 'נשלח, אבל אין אישור מפריוריטי — נא לבקש מהמשרד לבדוק',
+  'priority.unconfirmed': 'נשלח — פריוריטי עדיין לא אישרה', // English: Sent — Priority has not confirmed it yet
+  // *Office keys: shown only once the office alert is on the outbox row.
+  'priority.unconfirmedOffice': 'נשמר. פריוריטי עדיין לא אישרה — המשרד בודק.', // English: Saved. Priority hasn't confirmed yet — the office is checking.
+  'priority.noWriteback': 'נשמר. פריוריטי עדיין לא אישרה — המשרד בודק.', // English: Saved. Priority hasn't confirmed yet — the office is checking.
   'priority.received': 'נקלט בפריוריטי כטיוטה {docno}',
   'priority.receivedFinal': 'נקלט ואושר בפריוריטי: {docno}',
   'priority.cancelled': 'קבלה {docno} בוטלה בפריוריטי',
   'priority.already': 'כבר קיים בפריוריטי — לא נשלח שוב',
   'priority.waitingPo': 'ממתין לבחירת הזמנת רכש בוואטסאפ, ואז נשלח אוטומטית',
   'priority.held': 'נשמר. בהמתנה — לא נשלח לפריוריטי אוטומטית',
-  'priority.waitingItems': 'נשמר. פריוריטי עדיין לא יכולה לקלוט: פריטים לא ממופים. המשרד עודכן.',
-  'priority.waitingSupplier': 'נשמר. פריוריטי עדיין לא יכולה לקלוט: הספק לא זוהה. המשרד עודכן.',
+  'priority.heldOffice': 'נשמר. ממתין לפריוריטי — המשרד יודע למה.', // English: Saved. Waiting for Priority — the office knows why.
+  'priority.waitingItems': 'נשמר. פריוריטי עדיין לא יכולה לקלוט: פריטים לא ממופים.', // English: Saved. Priority can't take it yet: items not mapped.
+  'priority.waitingSupplier': 'נשמר. פריוריטי עדיין לא יכולה לקלוט: הספק לא זוהה.', // English: Saved. Priority can't take it yet: supplier not matched.
   'priority.waitingNothing': 'נשמר. אין מה לשלוח לפריוריטי — לא נקלטה כמות.',
   'priority.waitingOther': 'נשמר. פריוריטי עדיין לא יכולה לקלוט — ננסה שוב אוטומטית.',
   'priority.codesLabel': 'קודי פריט',
-  'priority.failed': 'לא נכנס לפריוריטי — נא לעדכן את המשרד',
-  'priority.expired': 'לא נשלח לפריוריטי — לא היה מוכן לשליחה. נא לעדכן את המשרד.',
+  'priority.failed': 'נשמר במחסן, אבל פריוריטי לא קיבלה את הקבלה.', // English: Saved in the warehouse, but Priority did not accept the receipt.
+  'priority.failedOffice': 'נשמר במחסן. פריוריטי לא קיבלה את הקבלה — המשרד מטפל, אין צורך לעשות דבר.', // English: Saved in the warehouse. Priority did not accept the receipt — the office is handling it, nothing for you to do.
+  'priority.expired': 'נשמר במחסן. לא נשלח לפריוריטי — לא היה מוכן לשליחה.', // English: Saved in the warehouse. Not sent to Priority — it was never ready to send.
+  'priority.expiredOffice': 'נשמר במחסן. לא נשלח לפריוריטי — לא היה מוכן לשליחה. המשרד מטפל, אין צורך לעשות דבר.', // English: Saved in the warehouse. Not sent to Priority — it was never ready to send. The office is handling it, nothing for you to do.
   'priority.test': 'משתמש בדיקה — לא נשלח לפריוריטי',
   'priority.off': 'השליחה האוטומטית לפריוריטי כבויה',
   'priority.unknown': 'נשמר. מצב השליחה לפריוריטי עדיין לא ידוע',

@@ -27,10 +27,19 @@
  * A column that does not exist arrives as `undefined` (the route selects
  * `*`), and the check that needs it is skipped rather than guessed.
  *
- * The migration's plan() also holds a delivery whose supplier note is
- * already in Priority under ANOTHER deliveries row (hold_same_invoice — the
- * bot forks deliveries for one note). `heldBySameNote` mirrors it; the route
- * reads what it needs only for a queued row while the push is on.
+ * A queued row's holds (hold_same_invoice — the bot forks deliveries for one
+ * note — and the rest) come from the database's own
+ * priority_push_explain(delivery_id), the function the bot reads too
+ * (docs/migrations/2026-10-08-priority-push-02-outcomes-explain.sql). This
+ * file no longer re-implements a hold that needs other rows. When explain
+ * cannot be read (function missing, call failed) the column-only holds below
+ * still apply and a same-note hold is simply not claimed.
+ *
+ * The office (TonmoyWP + Mevaser) is alerted by the database, not by this
+ * card: our outcome trigger and priority_push_watch()
+ * (2026-10-08-priority-push-02 / -03) post to the bot and stamp the outbox
+ * row's alerted_at + alert_kind. The card says "the office has it" only when
+ * that stamp is there — never as a promise.
  */
 
 export type PriorityState =
@@ -57,6 +66,9 @@ export type PriorityState =
    *  office checks in Priority. The scenario's write-back can still turn it
    *  into received, so this is not final. */
   | 'unconfirmed'
+  /** Sent, Priority never wrote it back, and the office has been alerted
+   *  (outbox alert_kind 'no_writeback', from priority_push_watch()). */
+  | 'noWriteback'
   /** Priority has the goods receipt (`docno`). */
   | 'received'
   /** The Priority goods receipt was cancelled in Priority. */
@@ -82,6 +94,9 @@ export interface PriorityStatus {
   reason?: NotReadyReason;
   /** waiting with reason 'items': the item codes Priority cannot map. */
   codes?: string[];
+  /** held / failed / unconfirmed / noWriteback / expired: the office has
+   *  been alerted about this row (outbox alerted_at + a matching alert_kind). */
+  office?: boolean;
 }
 
 /** The parts of `priority_push_config` the status needs — never the URL. */
@@ -103,6 +118,13 @@ export interface PriorityReceiptRow {
   synced_at: string | null;
 }
 
+/** The part of priority_push_explain(delivery_id) the card needs. */
+export interface PriorityExplain {
+  /** What priority_push_plan() would decide for the row: 'send',
+   *  'send_unready', 'hold_same_invoice', 'wait_po', … */
+  decision: string;
+}
+
 export interface PriorityStatusInput {
   /** deliveries.status; null = no delivery row (or no receipt on the session). */
   deliveryStatus: string | null;
@@ -115,10 +137,10 @@ export interface PriorityStatusInput {
   /** A delivery_po_links row exists; null = not known. */
   hasPoLink: boolean | null;
   /**
-   * Another deliveries row of the same supplier note is already in Priority
-   * or on its way (`heldBySameNote`); null / absent = not known (not read).
+   * priority_push_explain for a queued row; null / absent = not read (the
+   * row is not queued, the function is missing, or the call failed).
    */
-  sameNote?: boolean | null;
+  explain?: PriorityExplain | null;
   now: Date;
 }
 
@@ -132,8 +154,30 @@ const LOCAL_DRAFT_ORIGIN = 'warehouse_bot';
 const CLOSED_STATUSES = new Set(['Complete', 'Has Discrepancy']);
 
 /** After this long in 'delivered' with no Priority receipt, stop saying
- *  "sending" and say "sent — waiting for Priority to confirm". */
-export const AWAIT_CONFIRM_MS = 15 * 60_000;
+ *  "sending" and say "sent — waiting for Priority to confirm". The same
+ *  5 minutes as priority_push_config.no_writeback_minutes, after which the
+ *  watch job alerts the office. */
+export const AWAIT_CONFIRM_MS = 5 * 60_000;
+
+/** priority_push_mark_found()'s note on a row the office found by hand. */
+const MARKED_FOUND = /^confirmed by hand: Priority draft (\S+)/;
+
+/** priority_push_explain decisions → the state the worker sees. A decision
+ *  not listed here falls back to the column-only holds in queued(). */
+const EXPLAIN_STATE: Readonly<Record<string, PriorityState>> = {
+  send: 'sending',
+  send_unready: 'sending',
+  wait_po: 'waitingPo',
+  hold_same_invoice: 'held',
+  hold_category: 'held',
+  hold_pre_enable: 'held',
+  hold_pre_category: 'held',
+  hold_local_draft: 'held',
+  hold_not_closed: 'closing',
+  already_in_priority: 'already',
+  skipped_test: 'test',
+  disabled: 'off',
+};
 
 function str(v: unknown): string | null {
   return typeof v === 'string' && v.trim() !== '' ? v : null;
@@ -173,6 +217,16 @@ export function summarizePushConfig(row: Record<string, unknown> | null): PushCo
   return summary;
 }
 
+/**
+ * Reduce priority_push_explain's jsonb to the decision. Lines, supplier and
+ * unit-risk details are for the office and the bot; they stay on the server.
+ */
+export function summarizeExplain(raw: unknown): PriorityExplain | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const decision = str((raw as Record<string, unknown>).decision);
+  return decision ? { decision } : null;
+}
+
 /** The newest receipt Priority itself holds (not the local pre-push draft). */
 function priorityReceipt(receipts: PriorityReceiptRow[]): PriorityReceiptRow | null {
   let best: PriorityReceiptRow | null = null;
@@ -181,6 +235,39 @@ function priorityReceipt(receipts: PriorityReceiptRow[]): PriorityReceiptRow | n
     if (!best || (time(r.synced_at) ?? 0) > (time(best.synced_at) ?? 0)) best = r;
   }
   return best;
+}
+
+/** The office was alerted about this row as one of `kinds` (alerted_at +
+ *  alert_kind, stamped by our outcome trigger / priority_push_watch()). */
+function alertedAs(outbox: Record<string, unknown>, ...kinds: string[]): boolean {
+  const kind = str(outbox.alert_kind);
+  return str(outbox.alerted_at) !== null && kind !== null && kinds.includes(kind);
+}
+
+/** `state`, plus office: true when the office was alerted as `kinds`. */
+function withOffice(state: PriorityState, outbox: Record<string, unknown>, ...kinds: string[]): PriorityStatus {
+  return alertedAs(outbox, ...kinds) ? { state, office: true } : { state };
+}
+
+/**
+ * The Priority draft a 'delivered' row already names, before (or without)
+ * the client's write-back: the office's "Mark as found"
+ * (priority_push_mark_found), or Make's own {"ok":true,"docno":…} reply.
+ */
+function deliveredDocno(outbox: Record<string, unknown>): string | null {
+  const marked = MARKED_FOUND.exec(str(outbox.not_ready_reason) ?? '');
+  if (marked) return marked[1];
+  let body: unknown = outbox.response_body;
+  if (typeof body === 'string') {
+    try {
+      body = JSON.parse(body);
+    } catch {
+      return null; // "Accepted" and other plain-text replies
+    }
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const reply = body as Record<string, unknown>;
+  return reply.ok === true ? str(reply.docno) : null;
 }
 
 function notReady(outbox: Record<string, unknown>): PriorityStatus {
@@ -198,36 +285,37 @@ function notReady(outbox: Record<string, unknown>): PriorityStatus {
 }
 
 /**
- * A 'queued' row is sent on the dispatcher's next minute unless one of its
- * holds applies — the same holds, in the same order, as priority_push_plan()
- * in the migration. Each check runs only when the column it needs exists.
+ * A 'queued' row is sent on the dispatcher's next run unless one of its
+ * holds applies. The database says which (priority_push_explain); without
+ * it, only the holds this row's own columns can show are checked, in
+ * plan()'s order.
  */
 function queued(input: PriorityStatusInput, outbox: Record<string, unknown>): PriorityStatus {
+  const decided = input.explain ? EXPLAIN_STATE[input.explain.decision] : undefined;
+  if (decided === 'held') return withOffice('held', outbox, 'held');
+  if (decided) return { state: decided };
+
   const { config, now } = input;
   const queuedAt = time(outbox.queued_at);
   const releasedAt = time(outbox.released_at);
 
   // A local warehouse_bot draft: a push by hand may be in flight.
-  if (input.receipts.some((r) => r.origin === LOCAL_DRAFT_ORIGIN)) return { state: 'held' };
-
-  // The same supplier note is already in Priority (or on its way) under
-  // another delivery row — plan()'s hold_same_invoice. A release lifts it.
-  if (input.sameNote === true && releasedAt === null) return { state: 'held' };
+  if (input.receipts.some((r) => r.origin === LOCAL_DRAFT_ORIGIN)) return withOffice('held', outbox, 'held');
 
   // Queued while the push was off: never sent by itself.
   if (config.enabledSince !== undefined && releasedAt === null) {
     const since = time(config.enabledSince);
-    if (since === null || queuedAt === null || queuedAt < since) return { state: 'held' };
+    if (since === null || queuedAt === null || queuedAt < since) return withOffice('held', outbox, 'held');
   }
 
   // Category not switched on (default: meat only), or switched on after this
   // row was queued. An unknown category is not guessed at.
   const category = str(outbox.category);
   if (category && Array.isArray(config.categories)) {
-    if (!config.categories.includes(category)) return { state: 'held' };
+    if (!config.categories.includes(category)) return withOffice('held', outbox, 'held');
     if (config.categorySince && releasedAt === null) {
       const since = time(config.categorySince[category]);
-      if (since === null || queuedAt === null || queuedAt < since) return { state: 'held' };
+      if (since === null || queuedAt === null || queuedAt < since) return withOffice('held', outbox, 'held');
     }
   }
 
@@ -245,14 +333,16 @@ function queued(input: PriorityStatusInput, outbox: Record<string, unknown>): Pr
  *   1. Priority has a receipt for it (beats any outbox status, even failed).
  *   2. Outbox states that stand whatever the config or delivery now say:
  *      already_in_priority, skipped (Test user, else held), failed,
- *      unconfirmed, expired, waiting.
+ *      unconfirmed (noWriteback once the office was alerted so), expired,
+ *      waiting, delivered naming its draft (Make's ok:true reply or the
+ *      office's Mark as found), sent with a no_writeback alert.
  *   3. No outbox row and a Test user → test.
  *   4. Push switched off → off.
  *   5. No delivery row → unknown; still In Progress → closing.
  *   6. Closed with no outbox row (the enqueue did not run) → unknown.
- *   7. queued → held / waitingPo / sending; sent → sending; delivered →
- *      sending, or awaiting once older than 15 minutes; anything else →
- *      unknown.
+ *   7. queued → priority_push_explain's decision, else the column holds;
+ *      sent → sending; delivered → sending, or awaiting once older than
+ *      5 minutes; anything else → unknown.
  */
 export function derivePriorityStatus(input: PriorityStatusInput): PriorityStatus {
   const { outbox, config } = input;
@@ -276,13 +366,22 @@ export function derivePriorityStatus(input: PriorityStatusInput): PriorityStatus
           ? { state: 'test' }
           : { state: 'held' };
       case 'failed':
-        return { state: 'failed' };
+        return withOffice('failed', outbox, 'failed');
       case 'unconfirmed':
-        return { state: 'unconfirmed' };
+        if (alertedAs(outbox, 'no_writeback')) return { state: 'noWriteback', office: true };
+        return withOffice('unconfirmed', outbox, 'unconfirmed');
       case 'expired':
-        return { state: 'expired' };
+        return withOffice('expired', outbox, 'expired');
       case 'waiting':
         return notReady(outbox);
+      case 'delivered': {
+        const docno = deliveredDocno(outbox);
+        if (docno) return { state: 'received', docno };
+        break;
+      }
+      case 'sent':
+        if (alertedAs(outbox, 'no_writeback')) return { state: 'noWriteback', office: true };
+        break;
     }
   }
 
@@ -308,79 +407,24 @@ export function derivePriorityStatus(input: PriorityStatusInput): PriorityStatus
   }
 }
 
-/** One outbox row of ANOTHER delivery with the same document_number. */
-export interface SameNoteOutboxRow {
-  id: number | string;
-  status: string | null;
-  queued_at: string | null;
-  /** Its delivery's created_at (for the ±90-day window). */
-  delivery_created_at: string | null;
-}
-
-/** One priority_goods_receipts row whose booknum is this note's number. */
-export interface SameNoteReceipt {
-  origin: string | null;
-  delivery_id: string | null;
-  curdate: string | null;
-  synced_at: string | null;
-}
-
-/** Window either side of the delivery in which a same-number note counts. */
-export const SAME_NOTE_WINDOW_MS = 90 * 24 * 60 * 60_000;
-
-const SAME_NOTE_GONE = new Set(['sent', 'unconfirmed', 'delivered', 'already_in_priority']);
-
-/**
- * Is this delivery's supplier note already in Priority, or on its way, under
- * ANOTHER deliveries row? The scanner's mirror of plan() step (3b),
- * hold_same_invoice, in docs/migrations/2026-10-01-priority-push-autofire.sql
- * (the bot forks deliveries for one note: a re-photographed note whose
- * delivery already closed, or "Separate delivery"). Either:
- *   a. another delivery's outbox row with this document_number was sent /
- *      unconfirmed / delivered / already_in_priority, or is queued / waiting
- *      and was queued first (two forks closing together send only one); or
- *   b. a Priority receipt (origin ≠ warehouse_bot) with this BOOKNUM belongs
- *      to another delivery, or to none (typed in Priority by the office).
- * Within 90 days either side of this delivery, as in the SQL.
- */
-export function heldBySameNote(input: {
-  outboxId: number | string;
-  queuedAt: string | null;
-  deliveryId: string;
-  deliveryCreatedAt: string | null;
-  siblings: ReadonlyArray<SameNoteOutboxRow>;
-  receipts: ReadonlyArray<SameNoteReceipt>;
-}): boolean {
-  const created = time(input.deliveryCreatedAt);
-  if (created === null) return false;
-  const selfQueued = time(input.queuedAt);
-  const selfId = Number(input.outboxId);
-
-  const sibling = input.siblings.some((o) => {
-    const at = time(o.delivery_created_at);
-    if (at === null || Math.abs(at - created) > SAME_NOTE_WINDOW_MS) return false;
-    if (o.status && SAME_NOTE_GONE.has(o.status)) return true;
-    if (o.status !== 'queued' && o.status !== 'waiting') return false;
-    const q = time(o.queued_at);
-    if (q === null || selfQueued === null) return false;
-    return q < selfQueued || (q === selfQueued && Number(o.id) < selfId);
-  });
-  if (sibling) return true;
-
-  return input.receipts.some((g) => {
-    if (!g.origin || g.origin === LOCAL_DRAFT_ORIGIN || g.delivery_id === input.deliveryId) return false;
-    const at = time(g.curdate) ?? time(g.synced_at);
-    return at !== null && at >= created - SAME_NOTE_WINDOW_MS;
-  });
-}
-
-/** States that cannot change by themselves any more: polling stops. */
+/** States that cannot change by themselves any more. */
 const FINAL_STATES: ReadonlySet<PriorityState> = new Set<PriorityState>([
   'received', 'cancelled', 'already', 'failed', 'expired', 'test', 'off',
 ]);
 
 export function isFinalPriorityState(state: PriorityState): boolean {
   return FINAL_STATES.has(state);
+}
+
+/**
+ * Stop polling once nothing can change by itself — except that a failure or
+ * an expiry keeps polling until the office alert is on record (the watch job
+ * stamps it within a minute), so the card can then say "the office has it".
+ */
+export function shouldStopPolling(status: PriorityStatus): boolean {
+  if (!isFinalPriorityState(status.state)) return false;
+  if ((status.state === 'failed' || status.state === 'expired') && status.office !== true) return false;
+  return true;
 }
 
 /** Poll every 4 s for the first 3 minutes after the card opens, then every 30 s. */

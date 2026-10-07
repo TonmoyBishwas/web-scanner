@@ -9,20 +9,23 @@
  * where that stands, and changes by itself:
  *   - polls GET /api/priority-status every 4 s for 3 minutes, then every
  *     30 s; pauses while the tab is hidden and picks up again on return;
- *   - stops once the state cannot change by itself (received, failed,
- *     test user, push switched off …) or the session expires.
+ *   - stops once the state cannot change by itself (received, test user,
+ *     push switched off …; failed / expired only once the office alert is
+ *     on record) or the session expires.
  *
  * Colour + icon per state (lib/priority-status.ts has the rules): green =
- * in Priority, blue = on its way, amber = needs attention, red = failed —
- * tell the office, grey = nothing will happen by itself.
+ * in Priority, blue = on its way, amber = needs attention, red = failed,
+ * grey = nothing will happen by itself. The worker is never asked to do
+ * anything about Priority: the database alerts the office, and the row says
+ * "the office has it" only once that alert is stamped on the outbox row.
  */
 
 import { useEffect, useState } from 'react';
 import { MI } from './MI';
 import { useT, type TranslationKey } from '@/lib/i18n';
 import {
-  isFinalPriorityState,
   nextPollDelay,
+  shouldStopPolling,
   type PriorityState,
   type PriorityStatus,
 } from '@/lib/priority-status';
@@ -45,6 +48,7 @@ const LOOK: Record<PriorityState, { icon: string; tone: Tone; busy?: boolean }> 
   received: { icon: 'check_circle', tone: 'ok' },
   already: { icon: 'check_circle', tone: 'ok' },
   unconfirmed: { icon: 'sync_problem', tone: 'warn' },
+  noWriteback: { icon: 'sync_problem', tone: 'warn' },
   waitingPo: { icon: 'receipt_long', tone: 'warn' },
   waiting: { icon: 'report_problem', tone: 'warn' },
   cancelled: { icon: 'report_problem', tone: 'warn' },
@@ -62,6 +66,7 @@ const TEXT: Record<Exclude<PriorityState, 'received' | 'waiting'>, TranslationKe
   sending: 'priority.sending',
   awaiting: 'priority.awaiting',
   unconfirmed: 'priority.unconfirmed',
+  noWriteback: 'priority.noWriteback',
   already: 'priority.already',
   waitingPo: 'priority.waitingPo',
   cancelled: 'priority.cancelled',
@@ -80,6 +85,14 @@ const WAITING_TEXT: Record<NonNullable<PriorityStatus['reason']>, TranslationKey
   other: 'priority.waitingOther',
 };
 
+/** The line once the office alert is on record (status.office). */
+const OFFICE_TEXT: Partial<Record<PriorityState, TranslationKey>> = {
+  failed: 'priority.failedOffice',
+  unconfirmed: 'priority.unconfirmedOffice',
+  expired: 'priority.expiredOffice',
+  held: 'priority.heldOffice',
+};
+
 /** At most this many unmapped item codes are listed; the rest are counted. */
 const MAX_CODES = 6;
 
@@ -90,7 +103,7 @@ function messageKey(status: PriorityStatus): TranslationKey {
     case 'waiting':
       return WAITING_TEXT[status.reason ?? 'other'] ?? WAITING_TEXT.other;
     default:
-      return TEXT[status.state] ?? TEXT.unknown;
+      return (status.office ? OFFICE_TEXT[status.state] : undefined) ?? TEXT[status.state] ?? TEXT.unknown;
   }
 }
 
@@ -139,9 +152,10 @@ export function PriorityPushStatus({ token }: { token: string }) {
           codes: Array.isArray(data.codes)
             ? data.codes.filter((c: unknown): c is string => typeof c === 'string')
             : undefined,
+          office: data.office === true,
         };
         setStatus(next);
-        if (isFinalPriorityState(next.state)) stopped = true;
+        if (shouldStopPolling(next)) stopped = true;
       } catch {
         // Network blip — the next tick tries again.
       } finally {
