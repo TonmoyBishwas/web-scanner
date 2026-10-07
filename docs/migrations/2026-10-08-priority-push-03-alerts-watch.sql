@@ -2,8 +2,12 @@
 -- 2026-10-08  priority_push_03_alerts_watch  (OUR Priority-push objects)
 -- =============================================================================
 --
--- STATUS: NOT APPLIED. Applied byte-exact via psycopg in one transaction (as M1 and
---         M2 were), only after Tonmoy's OK, and only when ALL of these hold:
+-- STATUS: APPLIED 2026-10-07 13:21:44 UTC with Tonmoy's OK, byte-exact via psycopg in one
+--         transaction, recorded as 20261007132144 priority_push_03_alerts_watch (rollback
+--         copy in the row), right after the slice-3 bot (595f25b, Railway ee00026a) went
+--         SUCCESS. Post-apply: M3/M2/M1 tests pass without --setup; cron jobs 57 watch /
+--         58 digest active; baseline stamped 14 rows; no alert sent about the past.
+--         It was applied only when ALL of these held:
 --           1. M1 2026-10-08-priority-push-01-safety-test-harness.sql is applied;
 --           2. M2 2026-10-08-priority-push-02-outcomes-explain.sql is applied
 --              (outbox alerted_at / alert_kind / alert_tries / worker_notified_at /

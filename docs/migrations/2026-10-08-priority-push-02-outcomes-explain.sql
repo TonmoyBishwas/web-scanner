@@ -2,8 +2,12 @@
 -- 2026-10-08  priority_push_02_outcomes_explain  (OUR Priority-push objects)
 -- =============================================================================
 --
--- STATUS: NOT APPLIED. Applied with mcp__supabase__apply_migration only after
---         Tonmoy's OK. Needs 2026-10-08-priority-push-01-safety-test-harness.sql
+-- STATUS: APPLIED 2026-10-07 13:08:34 UTC with Tonmoy's OK, byte-exact via psycopg in one
+--         transaction, recorded in supabase_migrations.schema_migrations as
+--         20261007130834 priority_push_02_outcomes_explain (rollback copy in the row).
+--         Post-apply: plan 1d4ccf3c… (unchanged), dispatch aea4b948…, M2 + M1 tests pass
+--         without --setup, job 8 succeeding, explain on 43/45/53/54/253 as expected.
+--         Needs 2026-10-08-priority-push-01-safety-test-harness.sql
 --         (M1) applied first; the guard below refuses to run without it, and
 --         refuses if priority_push_plan() / priority_push_dispatch() are no
 --         longer exactly M1's versions.
