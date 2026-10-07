@@ -8,7 +8,7 @@
 --   after  M5 is applied:  run_sql_test.py <this file>
 --
 -- Fixtures (all rolled back): one delivery_items row labelled 'M5TEST', with
--- no receipt. Nothing here calls net.* or touches a client object.
+-- no receipt. Nothing here calls net.*; the 14b blocks insert rolled-back priority_goods_receipts fixtures (as the M1 and M4 tests do) and never change a client object's definition.
 -- =============================================================================
 
 -- T0 schema ---------------------------------------------------------------------

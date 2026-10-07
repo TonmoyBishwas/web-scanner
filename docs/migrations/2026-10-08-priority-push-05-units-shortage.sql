@@ -7,13 +7,16 @@
 --         runs it inside BEGIN ... ROLLBACK for the tests), and records it in
 --         supabase_migrations.schema_migrations as priority_push_05_units_shortage. It is NOT
 --         applied through mcp apply_migration. Requires M1-M4 live.
+--         The Task 16 bot REQUIRES this file: without deliveries.invoice_date its create_receipt
+--         cannot store the date. Never roll M5 back while that bot is live; roll the bot back to
+--         595f25b first.
 --         Test: tests/2026-10-08-priority-push-05-units-shortage.test.sql
 --
 -- Spec: telegram-warehouse-bot/docs/superpowers/specs/
 --       2026-10-07-priority-push-dependable-design.md, component 4
 --       ("Units and shortages: make them visible, store the facts").
 --
--- WHAT THIS FILE DOES (columns only; no function, view or trigger changes)
+-- WHAT THIS FILE DOES (columns, plus the read-only view delivery_gaps_v appended as section 4; no function or trigger changes)
 --   delivery_items (ours):
 --     pack_count      numeric  outer packages the worker counted for the line
 --                              (cartons / crates / sacks). NULL = not said.
@@ -29,6 +32,10 @@
 --     rest_expected   text     'will_come' | 'wont_come' for a short line.
 --   deliveries (ours):
 --     invoice_date    date     the date printed on the supplier note.
+--   delivery_gaps_v (ours; read-only view, section 4, appended by Task 14b):
+--     per line of a closed delivery that is short, over, not counted, carries a
+--     reason or reached Priority with a unit risk: invoice vs received, unit,
+--     reason, rest_expected and the Priority GR. Read by the needs-attention page.
 --
 -- WHY NEW COLUMNS AND NOT EXISTING ONES (checked 2026-10-07):
 --   * delivery_items.discrepancy_note is NOT reused for gap_note: meat's
@@ -87,7 +94,7 @@ comment on column public.delivery_items.pack_count is
 comment on column public.delivery_items.units_per_pack is
   '2026-10-08 (M5): how many the worker said one package holds (e.g. 10 loaves per crate). NULL = not said. No conversion is applied on our side.';
 comment on column public.delivery_items.count_source is
-  '2026-10-08 (M5): counted = received figure came from the worker, the scanner or the scale; invoice_assumed = nobody stated the line, it was booked at the note''s figure.';
+  '2026-10-08 (M5): counted = received figure came from the worker, the scanner or the scale; invoice_assumed = nobody stated the line, it was booked at the note''s figure. Rows written before the Task 16 bot went live (2026-10-08) carry the default and say nothing about who counted.';
 comment on column public.delivery_items.gap_reason is
   '2026-10-08 (M5): per-line reason for a gap outside tolerance (only lines outside it get one).';
 comment on column public.delivery_items.gap_note is
@@ -205,7 +212,8 @@ comment on view public.delivery_gaps_v is
   '(count_source = invoice_assumed), carries a reason, or reached Priority with a unit risk '
   '(unit_risk, from priority_push_outbox.unit_risk_lines) or no linked item (item_not_linked): '
   'invoice vs received, unit, reason, rest_expected (will_come / wont_come) and the Priority GR. '
-  'Read by the needs-attention page; read-only; the client may query it.';
+  'Read by the needs-attention page; read-only; the client may query it. '
+  'Lines of a note whose push was skipped (test scan, pre-autofire) and that has no Priority GR are left out: they never reached Priority.';
 
 revoke all on public.delivery_gaps_v from public, anon, authenticated;
 grant select on public.delivery_gaps_v to service_role;
