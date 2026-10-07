@@ -42,6 +42,13 @@
 --   Part 2 (appended by Task 7): priority_push_explain(uuid), at the end.
 -- =============================================================================
 
+-- No statement below may queue behind another session for more than 5 s (the
+-- ALTER TABLEs below need ACCESS EXCLUSIVE). Past 5 s the statement errors, the
+-- whole migration rolls back, and nothing is changed. Transaction-local, set
+-- before the first lock, and outside every function body (so the md5 guard
+-- below, which covers function bodies only, is not affected).
+set local lock_timeout = '5s';
+
 -- Job 8 takes this lock on every tick; holding it here makes job 8 skip its
 -- ticks while this file runs instead of blocking on the ALTER TABLE locks.
 select pg_advisory_xact_lock(hashtext('public.priority_push_dispatch'));
@@ -169,7 +176,7 @@ create or replace function public.priority_push_archive_reply(
 returns integer
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, pg_temp
 as $function$
 declare
   v_attempt integer;
