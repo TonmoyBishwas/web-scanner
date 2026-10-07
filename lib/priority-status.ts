@@ -244,6 +244,15 @@ function alertedAs(outbox: Record<string, unknown>, ...kinds: string[]): boolean
   return str(outbox.alerted_at) !== null && kind !== null && kinds.includes(kind);
 }
 
+/** The HTTP status Make answered with was a server error (500-599) — the
+ *  scenario crashed. Only then does the bot message the office at
+ *  'unconfirmed'; a bare 200 "Accepted" or a timeout is told to the office at
+ *  the later 'no_writeback' (5 minutes). */
+function makeCrashed(outbox: Record<string, unknown>): boolean {
+  const code = Number(outbox.status_code);
+  return Number.isInteger(code) && code >= 500 && code <= 599;
+}
+
 /** `state`, plus office: true when the office was alerted as `kinds`. */
 function withOffice(state: PriorityState, outbox: Record<string, unknown>, ...kinds: string[]): PriorityStatus {
   return alertedAs(outbox, ...kinds) ? { state, office: true } : { state };
@@ -333,7 +342,8 @@ function queued(input: PriorityStatusInput, outbox: Record<string, unknown>): Pr
  *   1. Priority has a receipt for it (beats any outbox status, even failed).
  *   2. Outbox states that stand whatever the config or delivery now say:
  *      already_in_priority, skipped (Test user, else held), failed,
- *      unconfirmed (noWriteback once the office was alerted so), expired,
+ *      unconfirmed (noWriteback once the office was alerted so; office only
+ *      after a Make crash, HTTP 5xx), expired,
  *      waiting, delivered naming its draft (Make's ok:true reply or the
  *      office's Mark as found), sent with a no_writeback alert.
  *   3. No outbox row and a Test user → test.
@@ -369,7 +379,9 @@ export function derivePriorityStatus(input: PriorityStatusInput): PriorityStatus
         return withOffice('failed', outbox, 'failed');
       case 'unconfirmed':
         if (alertedAs(outbox, 'no_writeback')) return { state: 'noWriteback', office: true };
-        return withOffice('unconfirmed', outbox, 'unconfirmed');
+        // The 'unconfirmed' stamp means "the office was told" only after a Make
+        // crash (5xx); otherwise only the 'no_writeback' stamp above does.
+        return makeCrashed(outbox) ? withOffice('unconfirmed', outbox, 'unconfirmed') : { state: 'unconfirmed' };
       case 'expired':
         return withOffice('expired', outbox, 'expired');
       case 'waiting':

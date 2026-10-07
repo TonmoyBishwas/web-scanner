@@ -384,12 +384,39 @@ describe('derivePriorityStatus — the office alert on record', () => {
       .toEqual({ state: 'failed' });
   });
 
-  it('unconfirmed: soft line, office once alerted; noWriteback once the watch alerted so', () => {
+  it('unconfirmed: soft line, office once alerted after a Make crash (5xx); noWriteback once the watch alerted so', () => {
     expect(derivePriorityStatus(input({ outbox: liveRow({ status: 'unconfirmed' }) }))).toEqual({ state: 'unconfirmed' });
-    expect(derivePriorityStatus(input({ outbox: alerted('unconfirmed', { status: 'unconfirmed' }) })))
+    expect(derivePriorityStatus(input({ outbox: alerted('unconfirmed', { status: 'unconfirmed', status_code: 500 }) })))
       .toEqual({ state: 'unconfirmed', office: true });
     expect(derivePriorityStatus(input({ outbox: alerted('no_writeback', { status: 'unconfirmed' }) })))
       .toEqual({ state: 'noWriteback', office: true });
+  });
+
+  it('unconfirmed after a bare 200 "Accepted" (or a timeout): the stamp is NOT the office knowing — the bot only messages it at no_writeback', () => {
+    expect(derivePriorityStatus(input({ outbox: alerted('unconfirmed', { status: 'unconfirmed', status_code: 200 }) })))
+      .toEqual({ state: 'unconfirmed' });
+    expect(derivePriorityStatus(input({ outbox: alerted('unconfirmed', { status: 'unconfirmed', status_code: null }) })))
+      .toEqual({ state: 'unconfirmed' });
+  });
+
+  it('unconfirmed: office true for any 5xx with the stamp, never for a crash that is not stamped yet', () => {
+    for (const code of [500, 502, 503, 599]) {
+      expect(derivePriorityStatus(input({ outbox: alerted('unconfirmed', { status: 'unconfirmed', status_code: code }) })))
+        .toEqual({ state: 'unconfirmed', office: true });
+    }
+    for (const code of [400, 499, 600]) {
+      expect(derivePriorityStatus(input({ outbox: alerted('unconfirmed', { status: 'unconfirmed', status_code: code }) })))
+        .toEqual({ state: 'unconfirmed' });
+    }
+    expect(derivePriorityStatus(input({ outbox: liveRow({ status: 'unconfirmed', status_code: 500 }) })))
+      .toEqual({ state: 'unconfirmed' });
+  });
+
+  it('unconfirmed with the no_writeback stamp is the office on record, whatever the status code', () => {
+    for (const code of [200, 500, null]) {
+      expect(derivePriorityStatus(input({ outbox: alerted('no_writeback', { status: 'unconfirmed', status_code: code }) })))
+        .toEqual({ state: 'noWriteback', office: true });
+    }
   });
 
   it('sent with a no_writeback alert → noWriteback; without one → sending', () => {

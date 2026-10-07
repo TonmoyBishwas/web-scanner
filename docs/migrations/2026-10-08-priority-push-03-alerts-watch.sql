@@ -2,8 +2,8 @@
 -- 2026-10-08  priority_push_03_alerts_watch  (OUR Priority-push objects)
 -- =============================================================================
 --
--- STATUS: NOT APPLIED. Applied with mcp__supabase__apply_migration only after
---         Tonmoy's OK, and only when ALL of these hold:
+-- STATUS: NOT APPLIED. Applied byte-exact via psycopg in one transaction (as M1 and
+--         M2 were), only after Tonmoy's OK, and only when ALL of these hold:
 --           1. M1 2026-10-08-priority-push-01-safety-test-harness.sql is applied;
 --           2. M2 2026-10-08-priority-push-02-outcomes-explain.sql is applied
 --              (outbox alerted_at / alert_kind / alert_tries / worker_notified_at /
@@ -12,13 +12,13 @@
 --              priority_push_explain(uuid));
 --           3. the bot build that answers event 'priority_push_outcome' on
 --              /webhook/priority-receipt (bot/services/priority_alerts.py) is
---              LIVE on Railway (railway deployment list -> SUCCESS). The bot live
---              on 2026-10-07 (bb5d6d3) answers that event with 400 "priority_docno
---              required" and sends nothing, so every alert would be retried 3
---              times and then lost.
+--              LIVE on Railway (railway deployment list -> SUCCESS): slice 3's
+--              bot must be live before M3. The bot live before slice 3 (716a0b2)
+--              answers that event with 400 "priority_docno required" and sends
+--              nothing, so every alert would be retried 3 times and then lost.
 --         The guard below refuses to run without 1 and 2.
 --
--- NO BEGIN / COMMIT IN THIS FILE: apply_migration runs it in one transaction,
+-- NO BEGIN / COMMIT IN THIS FILE: the apply runs it in one transaction,
 --         and scripts/sql/run_sql_test.py runs it inside BEGIN ... ROLLBACK for
 --         the tests. A COMMIT here would make a test run permanent.
 --
