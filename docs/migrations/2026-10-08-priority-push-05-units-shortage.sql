@@ -135,3 +135,78 @@ begin
   raise notice 'M5: deliveries.invoice_date backfilled on % row(s)', n;
 end
 $m$;
+
+-- >>> Task 14b: delivery_gaps_v
+-- ---------------------------------------------------------------------------
+-- delivery_gaps_v (Task 14b — appended after Task 15's column changes)
+-- ---------------------------------------------------------------------------
+-- One row per line of a CLOSED delivery the office must look at in Priority: short / over,
+-- not counted, a unit risk or an item not linked to a Priority item. Invoice vs received, unit,
+-- the worker's reason, "will the rest come?", and the Priority GR once drafted. The needs-attention
+-- page (Task 13, "lines to check in Priority") reads it; the client's Make or Claude may query it
+-- too (read-only). The bot's gaps alert (Task 17.3) reads delivery_items itself.
+-- gap_reason falls back to discrepancy_note: before M5 the one reason per delivery was stamped
+-- there (סופקה בחוסר / סופקה בעודף / בעיה אחרת = supplied short / supplied over / other problem).
+-- DROP + CREATE (not CREATE OR REPLACE) so this definition wins over any earlier draft of the view.
+drop view if exists public.delivery_gaps_v;
+create view public.delivery_gaps_v
+with (security_invoker = true) as
+select d.id                                                 as delivery_id,
+       d.document_number,
+       d.supplier_hebrew                                    as supplier,
+       di.item_code                                         as code,
+       coalesce(di.item_name_hebrew, di.item_name_english)  as name,
+       di.invoice_qty_kg                                    as invoice_qty,
+       di.received_qty_kg                                   as received_qty,
+       di.unit,
+       coalesce(di.gap_reason, di.discrepancy_note)         as gap_reason,
+       di.gap_note,
+       di.rest_expected,
+       di.count_source,
+       coalesce(gr.docno,
+                substring(o.not_ready_reason from '^confirmed by hand: Priority draft (\S+)'))
+                                                            as gr_docno,
+       -- additive columns (not in the contract list)
+       di.id                                                as delivery_item_id,
+       d.status::text                                       as delivery_status,
+       di.discrepancy_status::text                          as discrepancy_status,
+       coalesce(di.received_qty_kg, 0) - coalesce(di.invoice_qty_kg, 0) as gap_qty,
+       d.invoice_date,
+       d.created_at,
+       -- what the push flagged for this line (M2): priority_push_explain's unit_risk at send
+       -- time, and whether the client's builder found no Priority item for the code
+       ur.unit_risk,
+       coalesce(di.item_code = any (o.unmapped_codes), false)  as item_not_linked
+  from public.delivery_items di
+  join public.deliveries d on d.id = di.receipt_id
+  left join public.priority_push_outbox o on o.delivery_id = d.id
+  left join lateral (select g.docno
+                       from public.priority_goods_receipts g
+                      where g.delivery_id = d.id and g.origin <> 'warehouse_bot'
+                      order by g.synced_at desc
+                      limit 1) gr on true
+  left join lateral (select x ->> 'unit_risk' as unit_risk
+                       from jsonb_array_elements(case when jsonb_typeof(o.unit_risk_lines) = 'array'
+                                                      then o.unit_risk_lines else '[]'::jsonb end) x
+                      where x ->> 'code' = di.item_code
+                      limit 1) ur on true
+ where d.status in ('Complete', 'Has Discrepancy')
+   -- a note whose push was skipped (test scan, pre-autofire) never reached Priority: nothing to fix in a draft
+   and (o.status is distinct from 'skipped' or gr.docno is not null)
+   and (   di.discrepancy_status <> 'None'
+        or di.count_source = 'invoice_assumed'
+        or di.gap_reason is not null
+        or di.rest_expected is not null
+        or ur.unit_risk is not null
+        or di.item_code = any (o.unmapped_codes));
+
+comment on view public.delivery_gaps_v is
+  '2026-10-08 (M5, Task 14b): per line of a closed delivery that is short, over, not counted '
+  '(count_source = invoice_assumed), carries a reason, or reached Priority with a unit risk '
+  '(unit_risk, from priority_push_outbox.unit_risk_lines) or no linked item (item_not_linked): '
+  'invoice vs received, unit, reason, rest_expected (will_come / wont_come) and the Priority GR. '
+  'Read by the needs-attention page; read-only; the client may query it.';
+
+revoke all on public.delivery_gaps_v from public, anon, authenticated;
+grant select on public.delivery_gaps_v to service_role;
+-- <<< Task 14b: delivery_gaps_v

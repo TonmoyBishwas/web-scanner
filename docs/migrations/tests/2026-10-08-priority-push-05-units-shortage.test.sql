@@ -210,3 +210,189 @@ end
 $t$;
 
 do $t$ begin raise notice 'ALL PASS 2026-10-08-priority-push-05-units-shortage'; end $t$;
+
+-- >>> Task 14b: delivery_gaps_v tests
+-- ---------- delivery_gaps_v (Task 14b) ----------
+-- Hebrew here: בדיקה = "test"; חסר = "short"; לא נספר = "not counted"; תקין = "OK"; ישן = "old";
+-- סופקה בחוסר = "supplied short" (the legacy per-delivery reason); טיוטא = "draft" (Priority status).
+create temp table t14g (k text primary key, delivery_id uuid not null);
+
+do $$
+declare
+  v_d uuid;
+begin
+  -- closed, one short line with a reason, one not-counted line, one clean line, and a GR
+  insert into public.deliveries (document_number, supplier_hebrew, status)
+  values ('TG-990414000201', 'בדיקה 990414', 'Has Discrepancy') returning id into v_d;
+  insert into t14g values ('closed', v_d);
+  insert into public.delivery_items (receipt_id, item_code, item_name_hebrew, invoice_qty_kg, received_qty_kg,
+                                     unit, discrepancy_status, gap_reason, gap_note, rest_expected, count_source)
+  values (v_d, 'TG-SHORT', 'חסר', 40, 32, 'kg', 'Short', 'supplier_short', 'driver said tomorrow', 'will_come', 'counted'),
+         (v_d, 'TG-ASSUMED', 'לא נספר', 10, 10, 'units', 'None', null, null, null, 'invoice_assumed'),
+         (v_d, 'TG-CLEAN', 'תקין', 5, 5, 'kg', 'None', null, null, null, 'counted');
+  insert into public.priority_goods_receipts (doc, docno, delivery_id, booknum, origin, statdes)
+  values (-990414201, 'GRTG990414201', v_d, 'TG-990414000201', 'priority', 'טיוטא');
+
+  -- legacy line: reason only in discrepancy_note; GR confirmed by hand on the outbox
+  insert into public.deliveries (document_number, supplier_hebrew, status)
+  values ('TG-990414000202', 'בדיקה 990414', 'Complete') returning id into v_d;
+  insert into t14g values ('legacy', v_d);
+  insert into public.delivery_items (receipt_id, item_code, item_name_hebrew, invoice_qty_kg, received_qty_kg,
+                                     unit, discrepancy_status, discrepancy_note)
+  values (v_d, 'TG-LEGACY', 'ישן', 12, 9, 'kg', 'Short', 'סופקה בחוסר');
+  insert into public.priority_push_outbox (delivery_id, document_number, delivery_status, category, status,
+                                           not_ready_reason)
+  values (v_d, 'TG-990414000202', 'Complete', 'non_meat', 'delivered',
+          'confirmed by hand: Priority draft GR26000777 (admin:1)');
+
+  -- closed and delivered to Priority: one line with a unit risk, one with no linked item, one clean
+  insert into public.deliveries (document_number, supplier_hebrew, status)
+  values ('TG-990414000204', 'בדיקה 990414', 'Complete') returning id into v_d;
+  insert into t14g values ('flagged', v_d);
+  insert into public.delivery_items (receipt_id, item_code, item_name_hebrew, invoice_qty_kg, received_qty_kg,
+                                     unit, discrepancy_status, count_source)
+  values (v_d, 'TG-RISK', 'תקין', 6, 6, 'unknown', 'None', 'counted'),
+         (v_d, 'TG-UNLINKED', 'תקין', 3, 3, 'units', 'None', 'counted'),
+         (v_d, 'TG-FINE', 'תקין', 2, 2, 'kg', 'None', 'counted');
+  insert into public.priority_push_outbox (delivery_id, document_number, delivery_status, category, status,
+                                           unit_risk_lines, unmapped_codes)
+  values (v_d, 'TG-990414000204', 'Complete', 'non_meat', 'delivered',
+          '[{"code":"TG-RISK","unit_risk":"unit_unknown"}]'::jsonb, array['TG-UNLINKED']);
+
+  -- still open: never listed
+  insert into public.deliveries (document_number, supplier_hebrew, status)
+  values ('TG-990414000203', 'בדיקה 990414', 'In Progress') returning id into v_d;
+  insert into t14g values ('open', v_d);
+  insert into public.delivery_items (receipt_id, item_code, invoice_qty_kg, received_qty_kg, unit, discrepancy_status)
+  values (v_d, 'TG-OPEN', 10, 2, 'kg', 'Short');
+end
+$$;
+
+do $$
+declare
+  v_rows text;
+  g      record;
+begin
+  select string_agg(v.code, ',' order by v.code) into v_rows
+    from public.delivery_gaps_v v where v.delivery_id = (select delivery_id from t14g where k = 'closed');
+  if v_rows is distinct from 'TG-ASSUMED,TG-SHORT' then
+    raise exception 'T14b gaps lines: %', v_rows;
+  end if;
+
+  select * into g from public.delivery_gaps_v v
+   where v.delivery_id = (select delivery_id from t14g where k = 'closed') and v.code = 'TG-SHORT';
+  if g.invoice_qty <> 40 or g.received_qty <> 32 or g.unit <> 'kg' or g.gap_reason <> 'supplier_short'
+     or g.gap_note <> 'driver said tomorrow' or g.rest_expected <> 'will_come' or g.count_source <> 'counted'
+     or g.gr_docno <> 'GRTG990414201' or g.gap_qty <> -8 or g.supplier <> 'בדיקה 990414' or g.name <> 'חסר' then
+    raise exception 'T14b short line: %', to_jsonb(g);
+  end if;
+
+  select * into g from public.delivery_gaps_v v
+   where v.delivery_id = (select delivery_id from t14g where k = 'legacy');
+  if g.gap_reason is distinct from 'סופקה בחוסר' or g.gr_docno is distinct from 'GR26000777' then
+    raise exception 'T14b legacy line: %', to_jsonb(g);
+  end if;
+
+  if exists (select 1 from public.delivery_gaps_v v where v.delivery_id = (select delivery_id from t14g where k = 'open')) then
+    raise exception 'T14b lists an open delivery';
+  end if;
+
+  -- unit risk and unlinked items reach the view; a clean line of the same delivery does not
+  select string_agg(v.code || ':' || coalesce(v.unit_risk, '-') || ':' || v.item_not_linked::text, ',' order by v.code)
+    into v_rows
+    from public.delivery_gaps_v v where v.delivery_id = (select delivery_id from t14g where k = 'flagged');
+  if v_rows is distinct from 'TG-RISK:unit_unknown:false,TG-UNLINKED:-:true' then
+    raise exception 'T14b flagged lines: %', v_rows;
+  end if;
+  -- lines with no outbox row carry no flags
+  if exists (select 1 from public.delivery_gaps_v v
+              where v.delivery_id = (select delivery_id from t14g where k = 'closed')
+                and (v.unit_risk is not null or v.item_not_linked)) then
+    raise exception 'T14b a line without an outbox row is flagged';
+  end if;
+
+  if has_table_privilege('anon', 'public.delivery_gaps_v', 'SELECT')
+     or has_table_privilege('authenticated', 'public.delivery_gaps_v', 'SELECT')
+     or has_table_privilege('public', 'public.delivery_gaps_v', 'SELECT')
+     or not has_table_privilege('service_role', 'public.delivery_gaps_v', 'SELECT') then
+    raise exception 'T14b grants on delivery_gaps_v are wrong';
+  end if;
+end
+$$;
+
+do $$
+begin
+  set local role service_role;
+  perform count(*) from public.delivery_gaps_v;
+  reset role;
+end
+$$;
+
+-- R-A-M-7: a note whose push was skipped (test scan, pre-autofire) never reached Priority, so
+-- there is nothing to fix in a draft: its lines are not listed. With a Priority GR on file they are.
+-- Hebrew here: בדיקה = "test"; חסר = "short"; טיוטא = "draft" (Priority status).
+do $$
+declare
+  v_d uuid;
+begin
+  -- closed, one Short line, outbox row 'skipped', no GR row: must NOT be listed
+  insert into public.deliveries (document_number, supplier_hebrew, status)
+  values ('TG-990414000205', 'בדיקה 990414', 'Complete') returning id into v_d;
+  insert into t14g values ('skipped', v_d);
+  insert into public.delivery_items (receipt_id, item_code, item_name_hebrew, invoice_qty_kg, received_qty_kg,
+                                     unit, discrepancy_status)
+  values (v_d, 'TG-SKIPPED', 'חסר', 20, 15, 'kg', 'Short');
+  insert into public.priority_push_outbox (delivery_id, document_number, delivery_status, category, status)
+  values (v_d, 'TG-990414000205', 'Complete', 'non_meat', 'skipped');
+
+  -- same, but a Priority GR exists for it: must be listed
+  insert into public.deliveries (document_number, supplier_hebrew, status)
+  values ('TG-990414000206', 'בדיקה 990414', 'Complete') returning id into v_d;
+  insert into t14g values ('skipped_gr', v_d);
+  insert into public.delivery_items (receipt_id, item_code, item_name_hebrew, invoice_qty_kg, received_qty_kg,
+                                     unit, discrepancy_status)
+  values (v_d, 'TG-SKIPPEDGR', 'חסר', 20, 15, 'kg', 'Short');
+  insert into public.priority_push_outbox (delivery_id, document_number, delivery_status, category, status)
+  values (v_d, 'TG-990414000206', 'Complete', 'non_meat', 'skipped');
+  insert into public.priority_goods_receipts (doc, docno, delivery_id, booknum, origin, statdes)
+  values (-990414206, 'GRTG990414206', v_d, 'TG-990414000206', 'priority', 'טיוטא');
+end
+$$;
+
+-- live counts the view returns today (the fixtures above are left out); the last figure is how many of
+-- those lines sit on a skipped outbox row with no GR - 0 once R-A-M-7 is in the view
+do $$
+declare
+  n_lines int;
+  n_deliveries int;
+  n_skipped int;
+begin
+  select count(*), count(distinct v.delivery_id) into n_lines, n_deliveries
+    from public.delivery_gaps_v v
+   where v.delivery_id not in (select delivery_id from t14g);
+  select count(*) into n_skipped
+    from public.delivery_gaps_v v
+    join public.priority_push_outbox o on o.delivery_id = v.delivery_id
+   where o.status = 'skipped' and v.gr_docno is null
+     and v.delivery_id not in (select delivery_id from t14g);
+  raise notice 'T14b live data (fixtures excluded): % line(s) in % delivery(ies); % on a skipped note with no GR',
+    n_lines, n_deliveries, n_skipped;
+end
+$$;
+
+do $$
+begin
+  if exists (select 1 from public.delivery_gaps_v v
+              where v.delivery_id = (select delivery_id from t14g where k = 'skipped')) then
+    raise exception 'T14b lists a line of a skipped note that never reached Priority';
+  end if;
+  if (select string_agg(v.code, ',' order by v.code) from public.delivery_gaps_v v
+       where v.delivery_id = (select delivery_id from t14g where k = 'skipped_gr')) is distinct from 'TG-SKIPPEDGR' then
+    raise exception 'T14b dropped the line of a skipped note that has a Priority GR';
+  end if;
+  raise notice 'PASS T14b skipped notes without a GR are not listed';
+end
+$$;
+
+do $$ begin raise notice 'T14b delivery_gaps_v tests: all passed'; end $$;
+-- <<< Task 14b: delivery_gaps_v tests
