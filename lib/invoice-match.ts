@@ -117,9 +117,23 @@ function hebrewWords(name: string | undefined): string[] {
   return (name || '').split(/[^\u05D0-\u05EA]+/).filter((w) => w.length >= 2);
 }
 
-/** Sticker word equals the invoice word, allowing a leading ו ("ושוקיים"). */
+/**
+ * Two words of 5+ letters that differ only by one pair of neighbouring letters
+ * swapped — a typing slip on the invoice ("שינצלון" for "שניצלון", IN264184055).
+ * Same length only, so a longer word never collapses onto a shorter one.
+ */
+function oneSwapApart(a: string, b: string): boolean {
+  if (a.length !== b.length || a.length < 5) return false;
+  const diff: number[] = [];
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) diff.push(i);
+  return diff.length === 2 && diff[1] === diff[0] + 1 && a[diff[0]] === b[diff[1]] && a[diff[1]] === b[diff[0]];
+}
+
+/** Sticker word equals the invoice word, allowing a leading ו ("ושוקיים") or one swapped letter pair. */
 function sameWord(stickerWord: string, invoiceWord: string): boolean {
-  return stickerWord === invoiceWord || stickerWord === 'ו' + invoiceWord;
+  return (
+    stickerWord === invoiceWord || stickerWord === 'ו' + invoiceWord || oneSwapApart(stickerWord, invoiceWord)
+  );
 }
 
 function clashes(sticker: string[], line: string[], vocab: string[]): boolean {

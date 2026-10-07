@@ -65,4 +65,31 @@ describe('matchInvoiceItem — brand-led sticker names', () => {
       matchInvoiceItem('פילה אמנון עם עור קפוא בציפוי קרח מכיל לפחות 80% דג', '', FISH)?.item_code,
     ).toBe('90500090');
   });
+
+  // IN264184055 (Baladi, 2026-10-07): the invoice misspells the product
+  // "שינצלון" (two letters swapped); the sticker prints "שניצלון". 33 cartons
+  // matched no line, so Priority got the line with no item code.
+  const BALADI: InvoiceItem[] = [
+    { item_code: '01135702', item_name_hebrew: 'טחון חזה הודו 500 גרם ארוז - בד"ץ העדה החרדית', item_name_english: '' },
+    { item_code: '7290003670383', item_name_hebrew: 'שניצל עוף 150 קפוא תפזורת - בד"ץ העדה החרדית', item_name_english: '' },
+    { item_code: '90300680', item_name_hebrew: 'שינצלון הודו זיווגו - מילגם - בד"ץ עדה חרדית', item_name_english: '' },
+  ];
+
+  it('matches a word whose two neighbouring letters are swapped', () => {
+    expect(matchInvoiceItem('שניצלון הודו בציפוי פירורי לחם', '', BALADI)?.item_code).toBe('90300680');
+  });
+
+  it('does not stretch a short word to a neighbouring spelling', () => {
+    const two: InvoiceItem[] = [
+      { item_code: 'a', item_name_hebrew: 'חזה עוף', item_name_english: '' },
+      { item_code: 'b', item_name_hebrew: 'כרעיים עוף', item_name_english: '' },
+    ];
+    // "זחה" is "חזה" with a swap, but 3-letter words get no tolerance.
+    expect(matchInvoiceItem('זחה מיוחד', '', two)).toBeNull();
+  });
+
+  it('a swap tolerance does not turn a longer word into a shorter one', () => {
+    const only = [{ item_code: '1', item_name_hebrew: 'שניצל עוף 150', item_name_english: '' }];
+    expect(matchInvoiceItem('שניצלון הודו', '', only)).toBeNull();
+  });
 });
