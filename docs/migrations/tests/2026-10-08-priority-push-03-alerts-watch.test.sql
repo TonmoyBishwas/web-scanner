@@ -365,3 +365,552 @@ begin
   raise notice 'T8.7 privileges and trigger ok';
 end
 $t$;
+
+-- ===================== Task 9: the watch, the digest, the cron jobs ==========
+
+-- answer this transaction's pending outcome alerts for an outbox row (or, with
+-- p_outbox NULL, for a delivery's not_queued alerts) as the bot would: a fake
+-- pg_net reply row with that HTTP status, or a timeout
+create function pg_temp.m3_reply(p_outbox bigint, p_delivery uuid, p_code integer,
+                                 p_timed_out boolean default false) returns integer
+language sql as $$
+  with ins as (
+    insert into net._http_response (id, status_code, content, timed_out, error_msg, created)
+    select l.request_id, p_code,
+           case when p_code is not null then 'zz m3 test reply' end,
+           p_timed_out,
+           case when p_timed_out then 'Timeout of 30000 ms reached' end,
+           now()
+      from public.bot_webhook_log l
+     where l.event = 'priority_push_outcome'
+       and l.created_at >= now()
+       and l.request_id is not null and l.status_code is null and l.reply_error is null
+       and ((p_outbox is not null and l.outbox_id = p_outbox)
+            or (p_outbox is null and l.outbox_id is null and l.delivery_id = p_delivery))
+       and not exists (select 1 from net._http_response h where h.id = l.request_id)
+    returning 1)
+  select count(*)::int from ins
+$$;
+
+-- T9.0 the functions exist
+do $t$
+begin
+  if to_regprocedure('public.priority_push_watch()') is null
+     or to_regprocedure('public.priority_push_digest()') is null
+     or to_regclass('public.priority_push_alert_log') is null then
+    raise exception 'T9.0 priority_push_watch() / priority_push_digest() / priority_push_alert_log missing';
+  end if;
+  raise notice 'T9.0 objects exist';
+end
+$t$;
+
+-- fixtures for T9.1-T9.6
+-- English: זזזספקבדיקהזזז = "zzz test supplier zzz" (the glosses for all Hebrew fixture text are repeated below)
+insert into public.deliveries (id, document_number, supplier_hebrew, received_by_chat_id, status, created_at)
+values ('00000000-0000-4000-8000-000000000901', 'ZZM3-901', 'זזזספקבדיקהזזז', 990000000081, 'Complete',    now() - interval '1 hour'),
+       ('00000000-0000-4000-8000-000000000902', 'ZZM3-902', 'זזזספקבדיקהזזז', 990000000081, 'Complete',    now() - interval '1 hour'),
+       ('00000000-0000-4000-8000-000000000903', 'ZZM3-903', 'זזזספקבדיקהזזז', 990000000081, 'Complete',    now() - interval '1 hour'),
+       ('00000000-0000-4000-8000-000000000904', 'ZZM3-904', 'זזזספקבדיקהזזז', 990000000081, 'In Progress', now() - interval '1 hour'),
+       ('00000000-0000-4000-8000-000000000905', 'ZZM3-905', 'זזזספקבדיקהזזז', 990000000081, 'In Progress', now() - interval '1 hour'),
+       ('00000000-0000-4000-8000-000000000906', 'ZZM3-906', 'זזזספקבדיקהזזז', 990000000081, 'Complete',    now() - interval '1 hour'),
+       ('00000000-0000-4000-8000-000000000907', 'ZZM3-907', 'זזזספקבדיקהזזז', 990000000081, 'Complete',    now() - interval '1 hour'),
+       ('00000000-0000-4000-8000-000000000908', 'ZZM3-908', 'זזזספקבדיקהזזז', 990000000081, 'Complete',    now() - interval '1 hour'),
+       ('00000000-0000-4000-8000-000000000909', 'ZZM3-909', 'זזזספקבדיקהזזז', 990000000081, 'Complete',    now() - interval '1 hour'),
+       ('00000000-0000-4000-8000-000000000912', 'ZZM3-912', 'זזזספקבדיקהזזז', 990000000081, 'Complete',    now() - interval '1 hour'),
+       ('00000000-0000-4000-8000-000000000913', 'ZZM3-913', 'זזזספקבדיקהזזז', 990000000081, 'In Progress', now() - interval '3 days');
+
+-- Hebrew in the fixtures: זזזספקבדיקהזזז = "zzz test supplier zzz", פריט בדיקה = "test item".
+insert into public.delivery_items (receipt_id, item_code, item_name_hebrew, unit, invoice_qty_kg, received_qty_kg)
+values ('00000000-0000-4000-8000-000000000904', 'ZZM3-NOITEM', 'פריט בדיקה', 'units', 3, 3),
+       ('00000000-0000-4000-8000-000000000905', 'ZZM3-NOITEM', 'פריט בדיקה', 'units', 3, 3),
+       ('00000000-0000-4000-8000-000000000912', 'ZZM3-NOITEM', 'פריט בדיקה', 'units', 3, 3);
+
+-- 901 sent 6 min ago, nothing back.  902 sent 2 min ago.  903 sent 6 min ago, then 500.
+-- 904 queued 31 min ago, delivery In Progress (held).  905 queued 5 min ago (held, too young).
+-- 906 closed, NO outbox row (not_queued).  907-909 retry cases.
+-- 912 closed, queued 31 min ago (whatever explain() says, a row this old is alerted).
+-- 913 queued 3 days ago but put back by Send again 5 min ago (held clock restarts).
+insert into public.priority_push_outbox
+       (id, delivery_id, document_number, delivery_status, category, status, target,
+        attempts, request_id, sent_at, queued_at, status_code, response_body)
+values (990000901, '00000000-0000-4000-8000-000000000901', 'ZZM3-901', 'Complete', 'non_meat', 'sent',   'make', 1, -990901, now() - interval '6 minutes', now() - interval '7 minutes', null, null),
+       (990000902, '00000000-0000-4000-8000-000000000902', 'ZZM3-902', 'Complete', 'non_meat', 'sent',   'make', 1, -990902, now() - interval '2 minutes', now() - interval '3 minutes', null, null),
+       (990000903, '00000000-0000-4000-8000-000000000903', 'ZZM3-903', 'Complete', 'non_meat', 'sent',   'make', 1, -990903, now() - interval '6 minutes', now() - interval '7 minutes', null, null),
+       (990000904, '00000000-0000-4000-8000-000000000904', 'ZZM3-904', 'Complete', 'non_meat', 'queued', 'make', 0, null,    null,                         now() - interval '31 minutes', null, null),
+       (990000905, '00000000-0000-4000-8000-000000000905', 'ZZM3-905', 'Complete', 'non_meat', 'queued', 'make', 0, null,    null,                         now() - interval '5 minutes', null, null),
+       (990000907, '00000000-0000-4000-8000-000000000907', 'ZZM3-907', 'Complete', 'non_meat', 'sent',   'make', 1, -990907, now() - interval '1 minute',  now() - interval '2 minutes', null, null),
+       (990000908, '00000000-0000-4000-8000-000000000908', 'ZZM3-908', 'Complete', 'non_meat', 'sent',   'make', 1, -990908, now() - interval '1 minute',  now() - interval '2 minutes', null, null),
+       (990000909, '00000000-0000-4000-8000-000000000909', 'ZZM3-909', 'Complete', 'non_meat', 'sent',   'make', 1, -990909, now() - interval '1 minute',  now() - interval '2 minutes', null, null),
+       (990000912, '00000000-0000-4000-8000-000000000912', 'ZZM3-912', 'Complete', 'non_meat', 'queued', 'make', 0, null,    null,                         now() - interval '31 minutes', null, null),
+       (990000913, '00000000-0000-4000-8000-000000000913', 'ZZM3-913', 'Complete', 'non_meat', 'queued', 'make', 0, null,    null,                         now() - interval '3 days', null, null);
+
+-- 913's Send again (M4's priority_push_resend archives the reply with reason 'resend')
+insert into public.priority_push_attempts (outbox_id, attempt, reason, archived_by, created_at)
+values (990000913, 1, 'resend', 'test:zz-m3', now() - interval '5 minutes');
+
+
+-- T9.1 no_writeback after 5 min, once per send
+do $t$
+begin
+  -- 903: Make answered 500 -> the trigger alerts 'unconfirmed' at once
+  update public.priority_push_outbox
+     set status = 'unconfirmed', status_code = 500, response_body = 'Scenario failed to complete.',
+         response_error = 'Scenario failed to complete.'
+   where id = 990000903;
+
+  if public.priority_push_watch() < 0 then raise exception 'T9.1 watch lock refused'; end if;
+  perform public.priority_push_watch();
+
+  if pg_temp.m3_sent(990000901, 'no_writeback') <> 1 then
+    raise exception 'T9.1 901: % no_writeback alerts, want 1', pg_temp.m3_sent(990000901, 'no_writeback');
+  end if;
+  if pg_temp.m3_body(990000901, 'no_writeback') ->> 'error_class' is distinct from 'no_reply' then
+    raise exception 'T9.1 901 error_class: %', pg_temp.m3_body(990000901, 'no_writeback');
+  end if;
+  if pg_temp.m3_sent(990000902, 'no_writeback') <> 0 then
+    raise exception 'T9.1 902 (sent 2 min ago) must not be alerted yet';
+  end if;
+  if pg_temp.m3_sent(990000903, 'unconfirmed') <> 1 or pg_temp.m3_sent(990000903, 'no_writeback') <> 1 then
+    raise exception 'T9.1 903: unconfirmed % / no_writeback %, want 1 / 1',
+      pg_temp.m3_sent(990000903, 'unconfirmed'), pg_temp.m3_sent(990000903, 'no_writeback');
+  end if;
+  if pg_temp.m3_body(990000903, 'no_writeback') ->> 'error_class' is distinct from 'make_crash' then
+    raise exception 'T9.1 903 error_class: %', pg_temp.m3_body(990000903, 'no_writeback');
+  end if;
+
+  -- 901 then turns 'unconfirmed' (job 8's 10-minute no-reply rule): the trigger
+  -- alerts that once, and no_writeback is not repeated for the same send
+  update public.priority_push_outbox
+     set status = 'unconfirmed',
+         response_error = 'no reply read back 00:10:00 after sending (pg_net request -990901 has no reply row and is no longer queued)'
+   where id = 990000901;
+  perform public.priority_push_watch();
+  perform public.priority_push_watch();
+  if pg_temp.m3_sent(990000901, 'unconfirmed') <> 1 or pg_temp.m3_sent(990000901, 'no_writeback') <> 1 then
+    raise exception 'T9.1 901 after unconfirmed: unconfirmed % / no_writeback %, want 1 / 1',
+      pg_temp.m3_sent(990000901, 'unconfirmed'), pg_temp.m3_sent(990000901, 'no_writeback');
+  end if;
+  raise notice 'T9.1 no_writeback after 5 min, once per send';
+end
+$t$;
+
+-- T9.1b the outcome trigger and the watch never both alert one outcome.
+--      Both claim with UPDATE ... WHERE alert_kind IS DISTINCT FROM <kind>; in two
+--      concurrent transactions (job 8's trigger vs the watch) the row lock makes
+--      the second UPDATE re-check that WHERE after the first commits, so it
+--      claims nothing. Inside one transaction the same rule is checked in both
+--      orders: trigger first (914), watch first (915).
+do $t$
+begin
+  -- English: זזזספקבדיקהזזז = "zzz test supplier zzz"
+  insert into public.deliveries (id, document_number, supplier_hebrew, received_by_chat_id, status, created_at)
+  values ('00000000-0000-4000-8000-000000000914', 'ZZM3-914', 'זזזספקבדיקהזזז', 990000000081, 'Complete', now() - interval '1 hour'),
+         ('00000000-0000-4000-8000-000000000915', 'ZZM3-915', 'זזזספקבדיקהזזז', 990000000081, 'Complete', now() - interval '1 hour');
+  insert into public.priority_push_outbox
+         (id, delivery_id, document_number, delivery_status, category, status, target,
+          attempts, request_id, sent_at, queued_at, status_code, response_body)
+  values (990000914, '00000000-0000-4000-8000-000000000914', 'ZZM3-914', 'Complete', 'non_meat', 'sent',   'make', 1, -990914, now() - interval '1 minute', now() - interval '2 minutes', null, null),
+         (990000915, '00000000-0000-4000-8000-000000000915', 'ZZM3-915', 'Complete', 'non_meat', 'failed', 'make', 1, -990915, now() - interval '1 minute', now() - interval '2 minutes', 400, '{"ok":false,"error":"x"}');
+
+  -- 914: job 8 reads a 400 -> the trigger claims and alerts; then two watch ticks
+  update public.priority_push_outbox set status = 'failed', status_code = 400, response_body = '{"ok":false,"error":"x"}'
+   where id = 990000914;
+  perform public.priority_push_watch();
+  perform public.priority_push_watch();
+  if pg_temp.m3_sent(990000914, 'failed') <> 1 then
+    raise exception 'T9.1b 914 (trigger first): % failed alerts, want 1', pg_temp.m3_sent(990000914, 'failed');
+  end if;
+
+  -- 915: inserted already failed (no trigger) -> the watch claims it; a later
+  --      write that keeps status 'failed' (job 8 re-reading the reply) is no new outcome
+  perform public.priority_push_watch();
+  update public.priority_push_outbox set status = 'failed', status_code = 400 where id = 990000915;
+  perform public.priority_push_watch();
+  if pg_temp.m3_sent(990000915, 'failed') <> 1 then
+    raise exception 'T9.1b 915 (watch first): % failed alerts, want 1', pg_temp.m3_sent(990000915, 'failed');
+  end if;
+  raise notice 'T9.1b trigger and watch alert each outcome once';
+end
+$t$;
+
+-- T9.2 no no_writeback when Priority has the GR (a real row that has one; rolled back)
+do $t$
+declare
+  v_o bigint;
+begin
+  select o.id into v_o
+    from public.priority_push_outbox o
+   where o.id not between 990000800 and 990000999
+     and exists (select 1 from public.priority_goods_receipts g
+                  where g.delivery_id = o.delivery_id and g.origin <> 'warehouse_bot')
+   order by o.id desc
+   limit 1;
+  if v_o is null then
+    raise notice 'T9.2 skipped: no outbox row has a Priority GR';
+    return;
+  end if;
+  update public.priority_push_outbox
+     set status = 'sent', sent_at = now() - interval '6 minutes',
+         alert_kind = null, alerted_at = null, alert_tries = 0
+   where id = v_o;
+  perform public.priority_push_watch();
+  if pg_temp.m3_sent(v_o, 'no_writeback') <> 0 then
+    raise exception 'T9.2 outbox % alerted no_writeback although Priority has its GR', v_o;
+  end if;
+  raise notice 'T9.2 GR present -> no no_writeback (outbox %)', v_o;
+end
+$t$;
+
+-- T9.3 held after 30 min, with hold_reason from priority_push_explain(), once
+do $t$
+declare
+  v_exp    jsonb;
+  v_reason text;
+  v_want   text;
+begin
+  perform public.priority_push_watch();
+  perform public.priority_push_watch();
+
+  begin
+    v_exp := public.priority_push_explain('00000000-0000-4000-8000-000000000904');
+  exception when others then
+    v_exp := null;
+  end;
+  select hold_reason into v_reason from public.priority_push_outbox where id = 990000904;
+  v_want := v_exp ->> 'hold_reason';
+  if v_reason is null
+     or (v_want is not null and v_reason is distinct from left(v_want, 1000))
+     or (v_exp is not null and v_want is null and v_reason not like 'not sent although nothing holds it (decision %')
+     or (v_exp is null and v_reason not like 'held for more than % min; the reason could not be read:%') then
+    raise exception 'T9.3 904 hold_reason %, want %', v_reason, coalesce(v_want, '(explain: ' || coalesce(v_exp ->> 'decision', 'error') || ')');
+  end if;
+  if pg_temp.m3_sent(990000904, 'held') <> 1 then
+    raise exception 'T9.3 904: % held alerts, want 1', pg_temp.m3_sent(990000904, 'held');
+  end if;
+  if pg_temp.m3_body(990000904, 'held') ->> 'hold_reason' is distinct from v_reason then
+    raise exception 'T9.3 904 body hold_reason: %', pg_temp.m3_body(990000904, 'held');
+  end if;
+  if (select alert_kind from public.priority_push_outbox where id = 990000904) is distinct from 'held' then
+    raise exception 'T9.3 904 not claimed as held';
+  end if;
+  if pg_temp.m3_sent(990000905, 'held') <> 0 then
+    raise exception 'T9.3 905 (queued 5 min ago) must not be alerted';
+  end if;
+  raise notice 'T9.3 held after 30 min, hold_reason "%", once', v_reason;
+end
+$t$;
+
+-- T9.3b every row queued that long is alerted, whatever explain() says (job 8
+--       acts on a due row within 15 s); Send again restarts the held clock
+do $t$
+declare
+  v_exp    jsonb;
+  v_reason text;
+begin
+  perform public.priority_push_watch();
+
+  begin
+    v_exp := public.priority_push_explain('00000000-0000-4000-8000-000000000912');
+  exception when others then
+    v_exp := null;
+  end;
+  select hold_reason into v_reason from public.priority_push_outbox where id = 990000912;
+  if pg_temp.m3_sent(990000912, 'held') <> 1
+     or (select alert_kind from public.priority_push_outbox where id = 990000912) is distinct from 'held' then
+    raise exception 'T9.3b 912 (explain: %): % held alerts, want 1',
+      v_exp ->> 'decision', pg_temp.m3_sent(990000912, 'held');
+  end if;
+  if v_reason is null
+     or (v_exp ->> 'hold_reason' is not null and v_reason is distinct from left(v_exp ->> 'hold_reason', 1000))
+     or (v_exp is not null and v_exp ->> 'hold_reason' is null
+         and v_reason not like 'not sent although nothing holds it (decision ' || (v_exp ->> 'decision') || ')%') then
+    raise exception 'T9.3b 912 hold_reason % (explain: %)', v_reason, v_exp;
+  end if;
+  if pg_temp.m3_sent(990000913, 'held') <> 0 then
+    raise exception 'T9.3b 913 was put back by Send again 5 min ago: must not be alerted yet';
+  end if;
+  raise notice 'T9.3b 912 (explain: %) alerted held once; 913 (Send again 5 min ago) not yet',
+    coalesce(v_exp ->> 'decision', 'error');
+end
+$t$;
+
+-- T9.4 closed but never queued: alerted once per delivery
+do $t$
+declare
+  b jsonb;
+begin
+  perform public.priority_push_watch();
+  perform public.priority_push_watch();
+  if (select count(*) from public.priority_push_alert_log
+       where delivery_id = '00000000-0000-4000-8000-000000000906' and kind = 'not_queued') <> 1 then
+    raise exception 'T9.4 906 has no not_queued alert-log row';
+  end if;
+  if (select count(*) from public.bot_webhook_log
+       where event = 'priority_push_outcome' and kind = 'not_queued' and outbox_id is null
+         and delivery_id = '00000000-0000-4000-8000-000000000906'
+         and request_id is not null and created_at >= now()) <> 1 then
+    raise exception 'T9.4 906: not exactly one not_queued alert';
+  end if;
+  select convert_from(q.body, 'UTF8')::jsonb into b
+    from public.bot_webhook_log l join net.http_request_queue q on q.id = l.request_id
+   where l.kind = 'not_queued' and l.delivery_id = '00000000-0000-4000-8000-000000000906'
+     and l.created_at >= now();
+  if b ->> 'document_number' is distinct from 'ZZM3-906'
+     or (b ->> 'delivery_id')::uuid is distinct from '00000000-0000-4000-8000-000000000906'::uuid
+     or b -> 'outbox_id' is distinct from 'null'::jsonb
+     or b ->> 'error_text' is null then
+    raise exception 'T9.4 906 body: %', b;
+  end if;
+  raise notice 'T9.4 not_queued once';
+end
+$t$;
+
+-- T9.4b (controller ruling) a Test user's never-queued delivery is flagged
+--       is_test in its not_queued alert, so the bot does not report it to the
+--       office as real; a Prod user's, and 906's unknown receiver's, are not
+create function pg_temp.m3_nq_body(p_delivery uuid) returns jsonb
+language sql as $$
+  select convert_from(q.body, 'UTF8')::jsonb
+    from public.bot_webhook_log l
+    join net.http_request_queue q on q.id = l.request_id
+   where l.event = 'priority_push_outcome' and l.kind = 'not_queued'
+     and l.outbox_id is null and l.delivery_id = p_delivery
+     and l.created_at >= now()
+   order by l.id desc
+   limit 1
+$$;
+
+do $t$
+begin
+  insert into public.users (chat_id, nickname, env)
+  values (990000000082, 'zz-m3-test-receiver', 'Test'),
+         (990000000083, 'zz-m3-prod-receiver', 'Prod');
+  -- English: זזזספקבדיקהזזז = "zzz test supplier zzz"
+  insert into public.deliveries (id, document_number, supplier_hebrew, received_by_chat_id, status, created_at)
+  values ('00000000-0000-4000-8000-000000000916', 'ZZM3-916', 'זזזספקבדיקהזזז', 990000000082, 'Complete', now() - interval '1 hour'),
+         ('00000000-0000-4000-8000-000000000917', 'ZZM3-917', 'זזזספקבדיקהזזז', 990000000083, 'Complete', now() - interval '1 hour');
+
+  perform public.priority_push_watch();
+  perform public.priority_push_watch();
+
+  if (select count(*) from public.bot_webhook_log
+       where event = 'priority_push_outcome' and kind = 'not_queued' and outbox_id is null
+         and delivery_id in ('00000000-0000-4000-8000-000000000916', '00000000-0000-4000-8000-000000000917')
+         and request_id is not null and created_at >= now()) <> 2 then
+    raise exception 'T9.4b 916 / 917: want exactly one not_queued alert each';
+  end if;
+  if pg_temp.m3_nq_body('00000000-0000-4000-8000-000000000916') -> 'is_test' is distinct from 'true'::jsonb then
+    raise exception 'T9.4b 916 (Test receiver) not_queued body is_test: %',
+      pg_temp.m3_nq_body('00000000-0000-4000-8000-000000000916') -> 'is_test';
+  end if;
+  if pg_temp.m3_nq_body('00000000-0000-4000-8000-000000000917') -> 'is_test' is distinct from 'false'::jsonb then
+    raise exception 'T9.4b 917 (Prod receiver) not_queued body is_test: %',
+      pg_temp.m3_nq_body('00000000-0000-4000-8000-000000000917') -> 'is_test';
+  end if;
+  if pg_temp.m3_nq_body('00000000-0000-4000-8000-000000000906') -> 'is_test' is distinct from 'false'::jsonb then
+    raise exception 'T9.4b 906 (receiver not in users) not_queued body is_test: %',
+      pg_temp.m3_nq_body('00000000-0000-4000-8000-000000000906') -> 'is_test';
+  end if;
+  raise notice 'T9.4b not_queued is_test: Test receiver true, Prod / unknown receiver false';
+end
+$t$;
+
+-- T9.5 the bot did not take it: retried up to 3 times; a 2xx is final
+do $t$
+declare
+  i integer;
+begin
+  -- 907: every send answered 502 - what Railway's edge answers while the bot is
+  --      mid-deploy (any non-2xx is treated the same; 906 below uses 500)
+  update public.priority_push_outbox set status = 'failed', status_code = 400 where id = 990000907;  -- send 1
+  for i in 1..3 loop
+    if pg_temp.m3_reply(990000907, null, 502) <> 1 then
+      raise exception 'T9.5 907 round %: no pending alert to answer', i;
+    end if;
+    perform public.priority_push_watch();          -- reads the 502, clears the claim
+    if (select alert_kind from public.priority_push_outbox where id = 990000907) is not null
+       or (select alert_tries from public.priority_push_outbox where id = 990000907) <> i then
+      raise exception 'T9.5 907 round %: claim not cleared / alert_tries %', i,
+        (select alert_tries from public.priority_push_outbox where id = 990000907);
+    end if;
+    perform public.priority_push_watch();          -- the next tick re-sends
+    if pg_temp.m3_sent(990000907, 'failed') <> i + 1 then
+      raise exception 'T9.5 907 round %: % sends, want %', i, pg_temp.m3_sent(990000907, 'failed'), i + 1;
+    end if;
+  end loop;
+  perform pg_temp.m3_reply(990000907, null, 502);  -- the 4th send fails too: no more tries
+  perform public.priority_push_watch();
+  perform public.priority_push_watch();
+  if pg_temp.m3_sent(990000907, 'failed') <> 4
+     or (select alert_tries from public.priority_push_outbox where id = 990000907) <> 3
+     or (select alert_kind from public.priority_push_outbox where id = 990000907) is distinct from 'failed' then
+    raise exception 'T9.5 907 after 3 retries: % sends, tries %', pg_temp.m3_sent(990000907, 'failed'),
+      (select alert_tries from public.priority_push_outbox where id = 990000907);
+  end if;
+  if exists (select 1 from public.bot_webhook_log
+              where outbox_id = 990000907 and created_at >= now() and status_code is distinct from 502) then
+    raise exception 'T9.5 907: a reply status was not copied into bot_webhook_log';
+  end if;
+
+  -- 908: answered 200 -> final, no retry
+  update public.priority_push_outbox set status = 'failed', status_code = 400 where id = 990000908;
+  perform pg_temp.m3_reply(990000908, null, 200);
+  perform public.priority_push_watch();
+  perform public.priority_push_watch();
+  if pg_temp.m3_sent(990000908, 'failed') <> 1
+     or (select alert_tries from public.priority_push_outbox where id = 990000908) <> 0
+     or not exists (select 1 from public.bot_webhook_log
+                     where outbox_id = 990000908 and status_code = 200 and reply_error is null
+                       and created_at >= now()) then
+    raise exception 'T9.5 908: a 200 reply must be final and recorded';
+  end if;
+
+  -- 909: timed out -> counts as not taken, retried
+  update public.priority_push_outbox set status = 'failed', status_code = 400 where id = 990000909;
+  perform pg_temp.m3_reply(990000909, null, null, true);
+  perform public.priority_push_watch();
+  perform public.priority_push_watch();
+  if pg_temp.m3_sent(990000909, 'failed') <> 2
+     or not exists (select 1 from public.bot_webhook_log
+                     where outbox_id = 990000909 and reply_error = 'timed out' and created_at >= now()) then
+    raise exception 'T9.5 909: a timed-out alert must be recorded and re-sent';
+  end if;
+
+  -- 906 (not_queued, T9.4): answered 500 -> alerted again
+  perform pg_temp.m3_reply(null, '00000000-0000-4000-8000-000000000906', 500);
+  perform public.priority_push_watch();
+  perform public.priority_push_watch();
+  if (select count(*) from public.bot_webhook_log
+       where event = 'priority_push_outcome' and kind = 'not_queued'
+         and delivery_id = '00000000-0000-4000-8000-000000000906' and created_at >= now()) <> 2 then
+    raise exception 'T9.5 906: a not_queued alert the bot refused must be sent again';
+  end if;
+  raise notice 'T9.5 retries: 502 x4 -> 3 retries then stop; 200 final; timeout retried; not_queued retried';
+end
+$t$;
+
+-- T9.6 an error on one row does not stop the others
+create function pg_temp.m3_boom() returns trigger
+language plpgsql as $$
+begin
+  if new.id = 990000910 and new.alert_kind is distinct from old.alert_kind then
+    raise exception 'zz m3 test: boom on outbox %', new.id;
+  end if;
+  return new;
+end
+$$;
+
+do $t$
+declare
+  v_n integer;
+begin
+  -- 910 / 911: 'failed' rows that were never alerted (inserted, so no trigger
+  -- ran): only the watch's step 2 picks them up. 910's claim raises.
+  -- English: זזזספקבדיקהזזז = "zzz test supplier zzz"
+  insert into public.deliveries (id, document_number, supplier_hebrew, received_by_chat_id, status, created_at)
+  values ('00000000-0000-4000-8000-000000000910', 'ZZM3-910', 'זזזספקבדיקהזזז', 990000000081, 'Complete', now() - interval '1 hour'),
+         ('00000000-0000-4000-8000-000000000911', 'ZZM3-911', 'זזזספקבדיקהזזז', 990000000081, 'Complete', now() - interval '1 hour');
+  insert into public.priority_push_outbox
+         (id, delivery_id, document_number, delivery_status, category, status, target,
+          attempts, request_id, sent_at, queued_at, status_code, response_body)
+  values (990000910, '00000000-0000-4000-8000-000000000910', 'ZZM3-910', 'Complete', 'non_meat', 'failed', 'make', 1, -990910, now() - interval '1 minute', now() - interval '2 minutes', 400, '{"ok":false,"error":"x"}'),
+         (990000911, '00000000-0000-4000-8000-000000000911', 'ZZM3-911', 'Complete', 'non_meat', 'failed', 'make', 1, -990911, now() - interval '1 minute', now() - interval '2 minutes', 400, '{"ok":false,"error":"x"}');
+
+  create trigger zz_m3_boom before update on public.priority_push_outbox
+    for each row execute function pg_temp.m3_boom();
+  v_n := public.priority_push_watch();
+  drop trigger zz_m3_boom on public.priority_push_outbox;
+
+  if v_n < 1 then
+    raise exception 'T9.6 the watch returned % (it must finish and count 911)', v_n;
+  end if;
+  if pg_temp.m3_sent(990000911, 'failed') <> 1 then
+    raise exception 'T9.6 911 was not alerted after 910 failed';
+  end if;
+  if pg_temp.m3_sent(990000910, 'failed') <> 0
+     or (select alert_kind from public.priority_push_outbox where id = 990000910) is not null then
+    raise exception 'T9.6 910 must stay unclaimed after its error';
+  end if;
+  if not exists (select 1 from public.bot_webhook_log
+                  where event = 'priority_push_watch' and outbox_id = 990000910
+                    and error like '%boom%' and created_at >= now()) then
+    raise exception 'T9.6 910 error not logged';
+  end if;
+  perform public.priority_push_watch();             -- next tick: 910 goes out
+  if pg_temp.m3_sent(990000910, 'failed') <> 1 then
+    raise exception 'T9.6 910 not alerted once the error is gone';
+  end if;
+  raise notice 'T9.6 one bad row does not stop the others';
+end
+$t$;
+
+-- T9.7 the digest: one post with items + orphan_counts; fake-Make rows left out
+do $t$
+declare
+  b jsonb;
+begin
+  -- 805 (failed, T8.5) becomes a fake-Make row: the office digest must not list it
+  update public.priority_push_outbox set target = 'test' where id = 990000805;
+  perform public.priority_push_digest();
+  if (select count(*) from public.bot_webhook_log
+       where event = 'priority_push_outcome' and kind = 'digest' and outbox_id is null
+         and request_id is not null and created_at >= now()) <> 1 then
+    raise exception 'T9.7 not exactly one digest post';
+  end if;
+  b := pg_temp.m3_body(null, 'digest');
+  if b ->> 'event' is distinct from 'priority_push_outcome' or b ->> 'kind' is distinct from 'digest'
+     or jsonb_typeof(b -> 'items') is distinct from 'array'
+     or not (b ? 'orphan_counts') then
+    raise exception 'T9.7 digest body: %', left(b::text, 500);
+  end if;
+  if not exists (select 1 from jsonb_array_elements(b -> 'items') e
+                  where (e ->> 'outbox_id')::bigint = 990000801) then
+    raise exception 'T9.7 failed row 990000801 missing from the digest items';
+  end if;
+  if exists (select 1 from jsonb_array_elements(b -> 'items') e
+              where (e ->> 'outbox_id')::bigint = 990000805) then
+    raise exception 'T9.7 fake-Make (target test) row 990000805 is in the office digest';
+  end if;
+  raise notice 'T9.7 digest ok (% items, test rows left out)', jsonb_array_length(b -> 'items');
+end
+$t$;
+
+-- T9.8 the cron jobs, privileges, RLS
+do $t$
+declare
+  f text;
+begin
+  if not exists (select 1 from cron.job where jobname = 'priority-push-watch'
+                    and schedule = '* * * * *' and command ilike '%public.priority_push_watch()%' and active) then
+    raise exception 'T9.8 cron job priority-push-watch missing or wrong';
+  end if;
+  if not exists (select 1 from cron.job where jobname = 'priority-push-digest'
+                    and schedule = '0 4,5 * * *' and command ilike '%public.priority_push_digest()%'
+                    and command ilike '%Asia/Jerusalem%' and active) then
+    raise exception 'T9.8 cron job priority-push-digest missing or wrong';
+  end if;
+  if not exists (select 1 from cron.job where jobname = 'priority-push-dispatch'
+                    and schedule = '15 seconds' and active) then
+    raise exception 'T9.8 job 8 priority-push-dispatch changed';
+  end if;
+  foreach f in array array['public.priority_push_watch()', 'public.priority_push_digest()'] loop
+    if has_function_privilege('anon', f, 'execute') or has_function_privilege('authenticated', f, 'execute') then
+      raise exception 'T9.8 % is executable by anon/authenticated', f;
+    end if;
+    -- I9: only pg_cron (the owner) runs these; service_role may not call them over RPC
+    if has_function_privilege('service_role', f, 'execute') then
+      raise exception 'T9.8 % is executable by service_role', f;
+    end if;
+    if exists (select 1 from pg_proc p, aclexplode(p.proacl) a
+                where p.oid = f::regprocedure and a.grantee = 0 and a.privilege_type = 'EXECUTE')
+       or (select proacl from pg_proc where oid = f::regprocedure) is null then
+      raise exception 'T9.8 % is executable by PUBLIC', f;
+    end if;
+  end loop;
+  if not (select relrowsecurity from pg_class where oid = 'public.priority_push_alert_log'::regclass) then
+    raise exception 'T9.8 RLS must be on for priority_push_alert_log';
+  end if;
+  raise notice 'T9.8 cron jobs, privileges, RLS ok';
+  raise notice 'ALL M3 TESTS PASSED';
+end
+$t$;

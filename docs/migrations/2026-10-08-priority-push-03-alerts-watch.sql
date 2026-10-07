@@ -420,3 +420,509 @@ begin
                 on c.secret_name = s.name where c.enabled);
 end
 $report_a$;
+
+-- =============================================================================
+-- Part B (Task 9): the watch, the daily digest, and their cron jobs
+-- =============================================================================
+--   * priority_push_alert_log(delivery_id, kind)  NEW: one row per alert about
+--       a delivery that has no outbox row (kind not_queued), so it is sent once.
+--   * priority_push_watch()  NEW, pg_cron job 'priority-push-watch' every minute
+--       (separate from job 8). Returns the number of alerts sent, -1 when
+--       another run holds its lock. Each row is handled in its own
+--       sub-transaction; an error is logged to bot_webhook_log
+--       (event 'priority_push_watch') and the loop goes on. Steps:
+--       0. retry: a row whose alert the bot did not take (step 5 cleared its
+--          claim) is sent again with the same kind, while that kind still holds
+--       1. no_writeback: sent / unconfirmed, sent_at older than
+--          no_writeback_minutes, no Priority GR (origin <> 'warehouse_bot'),
+--          once per send (alert_kind and this send's log rows)
+--       2. failed / expired rows whose outcome was never alerted
+--       3. held: queued / waiting longer than held_alert_minutes since it was
+--          queued or last put back by Send again -> hold_reason (explain's, or
+--          "the dispatcher is not sending" when nothing holds it), kind held once
+--       4. not_queued: a closed delivery (Complete / Has Discrepancy) with no
+--          outbox row -> once per delivery (priority_push_alert_log); flagged
+--          is_test when its receiver is a Test user
+--       5. bot replies: copies net._http_response (6 h TTL) into
+--          bot_webhook_log.status_code / reply_error; an outcome alert the bot
+--          did not answer 2xx (or timed out) gets its claim cleared and
+--          alert_tries + 1 while alert_tries < 3, so the next tick re-sends it
+--   * priority_push_digest()  NEW, pg_cron job 'priority-push-digest'
+--       '0 4,5 * * *' GMT; only the run at 07:00 Asia/Jerusalem calls it, so
+--       it is 07:00 Israel time in summer and after the clocks go back on
+--       2026-10-25. One kind 'digest' POST with
+--       items = the open problems and orphan_counts; nothing when all is clear.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- B1. priority_push_alert_log: alerts about deliveries that have no outbox row
+-- -----------------------------------------------------------------------------
+create table if not exists public.priority_push_alert_log (
+  delivery_id uuid        not null references public.deliveries(id) on delete cascade,
+  kind        text        not null,
+  created_at  timestamptz not null default now(),
+  primary key (delivery_id, kind)
+);
+alter table public.priority_push_alert_log enable row level security;
+revoke all on table public.priority_push_alert_log from anon, authenticated;
+comment on table public.priority_push_alert_log is
+  '2026-10-08: one row per (delivery, kind) alert about a delivery that has no priority_push_outbox row (kind not_queued), so the watch alerts it once. Deleted by the watch only to retry an alert the bot did not take.';
+
+-- -----------------------------------------------------------------------------
+-- B2. priority_push_watch: the every-minute check
+-- -----------------------------------------------------------------------------
+create or replace function public.priority_push_watch()
+returns integer
+language plpgsql
+security definer
+set search_path = public, net, pg_temp
+as $function$
+declare
+  cfg       public.priority_push_config%rowtype;
+  c_nw      interval;
+  c_held    interval;
+  r         record;
+  v_id      bigint;
+  v_did     uuid;
+  v_kind    text;
+  v_ok      boolean;
+  v_explain jsonb;
+  n         integer := 0;
+begin
+  -- one run at a time (cron every minute + any manual call)
+  if not pg_try_advisory_xact_lock(hashtext('public.priority_push_watch')) then
+    return -1;
+  end if;
+
+  select * into cfg from public.priority_push_config c where c.id = 1;
+  c_nw   := make_interval(mins => coalesce(cfg.no_writeback_minutes, 5));
+  c_held := make_interval(mins => coalesce(cfg.held_alert_minutes, 30));
+
+  -- 0. Retry an alert the bot did not take (step 5 of an earlier tick cleared
+  --    the claim): same kind again, while that kind still describes the row.
+  for r in
+    select o.id, o.status, o.delivery_id,
+           (select l.kind from public.bot_webhook_log l
+             where l.outbox_id = o.id and l.event = 'priority_push_outcome'
+             order by l.id desc limit 1) as last_kind
+      from public.priority_push_outbox o
+     where o.alert_kind is null
+       and o.alert_tries > 0
+  loop
+    begin
+      v_ok := case
+                when r.last_kind in ('failed', 'unconfirmed', 'expired', 'delivered')
+                  then r.status = r.last_kind
+                when r.last_kind = 'no_writeback'
+                  then r.status in ('sent', 'unconfirmed')
+                       and not exists (select 1 from public.priority_goods_receipts g
+                                        where g.delivery_id = r.delivery_id
+                                          and g.origin <> 'warehouse_bot')
+                when r.last_kind = 'held'
+                  then r.status in ('queued', 'waiting')
+                else false
+              end;
+      if coalesce(v_ok, false) then
+        update public.priority_push_outbox o
+           set alerted_at = now(), alert_kind = r.last_kind      -- alert_tries kept: it counts the retries
+         where o.id = r.id and o.alert_kind is null
+        returning o.id into v_id;
+        if v_id is not null then
+          perform public.priority_push_notify_bot(v_id, r.last_kind);
+          n := n + 1;
+        end if;
+      else
+        -- the row moved on: the checks below decide afresh
+        update public.priority_push_outbox o
+           set alert_tries = 0
+         where o.id = r.id and o.alert_kind is null;
+      end if;
+    exception when others then
+      begin
+        insert into public.bot_webhook_log(event, delivery_id, outbox_id, kind, error)
+        values ('priority_push_watch', r.delivery_id, r.id, r.last_kind, left('retry: ' || sqlerrm, 500));
+      exception when others then null;
+      end;
+    end;
+  end loop;
+
+  -- 1. No write-back: Make took it (or said nothing) and no GR came back.
+  --    Once per send: alert_kind, plus this send's own log rows (so a later
+  --    'unconfirmed' alert on the same send does not re-arm it).
+  for r in
+    select o.id, o.delivery_id
+      from public.priority_push_outbox o
+     where o.status in ('sent', 'unconfirmed')
+       and o.sent_at < now() - c_nw
+       and o.alert_kind is distinct from 'no_writeback'
+       and not (o.alert_kind is null and o.alert_tries > 0)
+       and not exists (select 1 from public.priority_goods_receipts g
+                        where g.delivery_id = o.delivery_id
+                          and g.origin <> 'warehouse_bot')
+       and not exists (select 1 from public.bot_webhook_log l
+                        where l.outbox_id = o.id
+                          and l.event = 'priority_push_outcome'
+                          and l.kind = 'no_writeback'
+                          and l.created_at >= o.sent_at)
+  loop
+    begin
+      update public.priority_push_outbox o
+         set alerted_at = now(), alert_kind = 'no_writeback', alert_tries = 0
+       where o.id = r.id and o.alert_kind is distinct from 'no_writeback'
+      returning o.id into v_id;
+      if v_id is not null then
+        perform public.priority_push_notify_bot(v_id, 'no_writeback');
+        n := n + 1;
+      end if;
+    exception when others then
+      begin
+        insert into public.bot_webhook_log(event, delivery_id, outbox_id, kind, error)
+        values ('priority_push_watch', r.delivery_id, r.id, 'no_writeback', left(sqlerrm, 500));
+      exception when others then null;
+      end;
+    end;
+  end loop;
+
+  -- 2. failed / expired whose outcome was never alerted (a hand UPDATE, or a
+  --    trigger claim that errored)
+  for r in
+    select o.id, o.delivery_id, o.status
+      from public.priority_push_outbox o
+     where o.status in ('failed', 'expired')
+       and o.alert_kind is distinct from o.status
+       and not (o.alert_kind is null and o.alert_tries > 0)
+  loop
+    begin
+      update public.priority_push_outbox o
+         set alerted_at = now(), alert_kind = o.status, alert_tries = 0
+       where o.id = r.id and o.alert_kind is distinct from o.status
+      returning o.id, o.status into v_id, v_kind;
+      if v_id is not null then
+        perform public.priority_push_notify_bot(v_id, v_kind);
+        n := n + 1;
+      end if;
+    exception when others then
+      begin
+        insert into public.bot_webhook_log(event, delivery_id, outbox_id, kind, error)
+        values ('priority_push_watch', r.delivery_id, r.id, r.status, left(sqlerrm, 500));
+      exception when others then null;
+      end;
+    end;
+  end loop;
+
+  -- 3. Held: still queued / waiting held_alert_minutes after it was queued or
+  --    last put back by Send again (held_since, the same rule as M4's
+  --    priority_push_attention_v). Job 8 acts on a due row within 15 s, so
+  --    every row this old is alerted: with explain()'s hold_reason (written
+  --    unchanged), or, when nothing holds it (send / send_unready / expired /
+  --    already_in_priority), as "the dispatcher is not sending".
+  for r in
+    select o.id, o.delivery_id, o.status, o.hold_reason
+      from public.priority_push_outbox o
+     where o.status in ('queued', 'waiting')
+       and greatest(o.queued_at,
+                    (select max(a.created_at) from public.priority_push_attempts a
+                      where a.outbox_id = o.id and a.reason = 'resend')) < now() - c_held
+       and o.alert_kind is distinct from 'held'
+       and not (o.alert_kind is null and o.alert_tries > 0)
+  loop
+    begin
+      begin
+        v_explain := public.priority_push_explain(r.delivery_id);
+      exception when others then
+        v_explain := jsonb_build_object(
+          'decision', 'unknown',
+          'hold_reason', left('held for more than ' || coalesce(cfg.held_alert_minutes, 30)
+                              || ' min; the reason could not be read: ' || sqlerrm, 1000));
+      end;
+      update public.priority_push_outbox o
+         set hold_reason = left(coalesce(
+                 v_explain ->> 'hold_reason',
+                 'not sent although nothing holds it (decision '
+                 || coalesce(v_explain ->> 'decision', 'unknown') || '): still ' || r.status
+                 || ' after more than ' || coalesce(cfg.held_alert_minutes, 30)
+                 || ' min, so the dispatcher (pg_cron job priority-push-dispatch) is not sending it;'
+                 || ' check cron.job_run_details, priority_push_config.url and the vault secret'
+                 || coalesce(' (last recorded hold: ' || r.hold_reason || ')', '')), 1000),
+             alerted_at  = now(),
+             alert_kind  = 'held',
+             alert_tries = 0
+       where o.id = r.id and o.alert_kind is distinct from 'held'
+      returning o.id into v_id;
+      if v_id is not null then
+        perform public.priority_push_notify_bot(v_id, 'held');
+        n := n + 1;
+      end if;
+    exception when others then
+      begin
+        insert into public.bot_webhook_log(event, delivery_id, outbox_id, kind, error)
+        values ('priority_push_watch', r.delivery_id, r.id, 'held', left(sqlerrm, 500));
+      exception when others then null;
+      end;
+    end;
+  end loop;
+
+  -- 4. Closed but never queued: the enqueue trigger writes an outbox row for
+  --    every close (Test users and re-closes get 'skipped'), so a closed
+  --    delivery without one means the enqueue failed. deliveries has no
+  --    closed_at column, so created_at bounds the scan: the last 30 days, or
+  --    everything since the push was switched on.
+  for r in
+    select d.id
+      from public.deliveries d
+     where d.status::text in ('Complete', 'Has Discrepancy')
+       and (d.created_at > now() - interval '30 days' or d.created_at >= cfg.enabled_since)
+       and not exists (select 1 from public.priority_push_outbox o where o.delivery_id = d.id)
+       and not exists (select 1 from public.priority_push_alert_log a
+                        where a.delivery_id = d.id and a.kind = 'not_queued')
+  loop
+    begin
+      v_did := null;
+      insert into public.priority_push_alert_log(delivery_id, kind)
+      values (r.id, 'not_queued')
+      on conflict do nothing
+      returning delivery_id into v_did;
+      if v_did is not null then
+        perform public.priority_push_notify_bot(null, 'not_queued', jsonb_build_object(
+          'delivery_id', r.id,
+          -- no outbox row to read target from, so a Test receiver's delivery is
+          -- flagged here (notify_bot merges extra after its own is_test default)
+          'is_test', coalesce(
+             (select u.env = 'Test'::public.user_env
+                from public.users u
+                join public.deliveries d2 on d2.received_by_chat_id = u.chat_id
+               where d2.id = r.id), false),
+          'error_text', coalesce(
+             (select l.error from public.bot_webhook_log l
+               where l.event = 'priority_push_enqueue' and l.delivery_id = r.id
+               order by l.id desc limit 1),
+             'closed in the warehouse, but no Priority outbox row was created')));
+        n := n + 1;
+      end if;
+    exception when others then
+      begin
+        insert into public.bot_webhook_log(event, delivery_id, kind, error)
+        values ('priority_push_watch', r.id, 'not_queued', left(sqlerrm, 500));
+      exception when others then null;
+      end;
+    end;
+  end loop;
+
+  -- 5. What the bot answered (pg_net keeps replies 6 h). Every bot_webhook_log
+  --    row gets its status; an outcome alert the bot did not take is retried.
+  begin
+    for r in
+      update public.bot_webhook_log l
+         set status_code = h.status_code,
+             reply_error = case
+                             when h.status_code between 200 and 299 then null
+                             when h.timed_out then 'timed out'
+                             when h.error_msg is not null then left(h.error_msg, 500)
+                             when h.status_code is not null then left(coalesce(h.content, ''), 500)
+                             else 'no status code'
+                           end
+        from net._http_response h
+       where h.id = l.request_id
+         and l.request_id is not null
+         and l.status_code is null
+         and l.reply_error is null
+         and l.created_at > now() - interval '6 hours'
+      returning l.id, l.event, l.kind, l.outbox_id, l.delivery_id, l.status_code
+    loop
+      if r.event = 'priority_push_outcome'
+         and (r.status_code is null or r.status_code not between 200 and 299) then
+        begin
+          if r.outbox_id is not null and r.kind not in ('digest', 'not_queued') then
+            update public.priority_push_outbox o
+               set alerted_at = null, alert_kind = null, alert_tries = o.alert_tries + 1
+             where o.id = r.outbox_id
+               and o.alert_kind = r.kind          -- a newer alert supersedes this one
+               and o.alert_tries < 3;
+          elsif r.kind = 'not_queued' and r.delivery_id is not null
+                and (select count(*) from public.bot_webhook_log l2
+                      where l2.event = 'priority_push_outcome' and l2.kind = 'not_queued'
+                        and l2.delivery_id = r.delivery_id) < 4 then
+            delete from public.priority_push_alert_log a
+             where a.delivery_id = r.delivery_id and a.kind = 'not_queued';
+          end if;
+        exception when others then
+          begin
+            insert into public.bot_webhook_log(event, delivery_id, outbox_id, kind, error)
+            values ('priority_push_watch', r.delivery_id, r.outbox_id, r.kind,
+                    left('reply ' || r.id || ': ' || sqlerrm, 500));
+          exception when others then null;
+          end;
+        end;
+      end if;
+    end loop;
+  exception when others then
+    begin
+      insert into public.bot_webhook_log(event, error)
+      values ('priority_push_watch', left('reading bot replies: ' || sqlerrm, 500));
+    exception when others then null;
+    end;
+  end;
+
+  return n;
+end
+$function$;
+
+comment on function public.priority_push_watch() is
+  '2026-10-08: pg_cron job priority-push-watch, every minute. Alerts the bot (priority_push_notify_bot) once per kind: no_writeback (sent/unconfirmed, no Priority GR after no_writeback_minutes), unalerted failed/expired, held (queued/waiting held_alert_minutes after queueing or the last Send again; hold_reason from priority_push_explain, or "the dispatcher is not sending" when nothing holds it), not_queued (closed delivery with no outbox row; priority_push_alert_log; is_test when its receiver is a Test user). Copies the bot''s pg_net replies into bot_webhook_log and retries an alert the bot did not take (alert_tries < 3). Each row in its own sub-transaction; errors go to bot_webhook_log event priority_push_watch. Returns alerts sent, -1 if another run holds the lock.';
+
+-- -----------------------------------------------------------------------------
+-- B3. priority_push_digest: one morning summary of everything still open
+-- -----------------------------------------------------------------------------
+create or replace function public.priority_push_digest()
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $function$
+declare
+  v_items   jsonb;
+  v_orphans jsonb;
+begin
+  -- the needs-attention view arrives with M4; read it dynamically so this
+  -- function works before and after it exists. Fake-Make rows (target
+  -- 'test') are left out: their alerts go to the tester only, and the
+  -- digest goes to the office (M4's view has a target column; reading it
+  -- through to_jsonb keeps this working if it ever loses it).
+  if to_regclass('public.priority_push_attention_v') is not null then
+    begin
+      execute $q$
+        select coalesce(jsonb_agg(to_jsonb(v) order by v.created_at nulls last), '[]'::jsonb)
+          from public.priority_push_attention_v v
+         where v.problem not like 'orphan%'
+           and (to_jsonb(v) ->> 'target') is distinct from 'test'
+      $q$ into v_items;
+      execute $q$
+        select jsonb_build_object(
+                 'class1', count(*) filter (where v.problem = 'orphan_class1'),
+                 'class2', count(*) filter (where v.problem = 'orphan_class2'),
+                 'class3', count(*) filter (where v.problem = 'orphan_class3'))
+          from public.priority_push_attention_v v
+      $q$ into v_orphans;
+    exception when others then
+      v_items := null;
+      v_orphans := null;
+    end;
+  end if;
+
+  if v_items is null then
+    -- until M4: the outbox rows that need a person, plus closed-but-never-queued
+    select coalesce(jsonb_agg(jsonb_build_object(
+             'outbox_id',        o.id,
+             'delivery_id',      o.delivery_id,
+             'document_number',  o.document_number,
+             'supplier',         coalesce(d.supplier_hebrew, d.supplier_english),
+             'category',         o.category,
+             'problem',          case when o.status in ('queued', 'waiting') then 'held'
+                                      when o.alert_kind = 'no_writeback' then 'no_writeback'
+                                      else o.status end,
+             'reason_text',      coalesce(o.hold_reason, o.response_error, o.not_ready_reason),
+             'status_code',      o.status_code,
+             'error_class',      public.priority_push_error_class(o.status, o.status_code,
+                                                                  o.response_body, o.response_error),
+             'sent_at',          o.sent_at,
+             'created_at',       o.queued_at,
+             'receiver_chat_id', d.received_by_chat_id) order by o.queued_at), '[]'::jsonb)
+      into v_items
+      from public.priority_push_outbox o
+      left join public.deliveries d on d.id = o.delivery_id
+     where o.target is distinct from 'test'
+       and (o.status in ('failed', 'unconfirmed', 'expired')
+            or (o.status = 'sent' and o.alert_kind = 'no_writeback')
+            or (o.status in ('queued', 'waiting') and o.alert_kind = 'held'));
+
+    v_items := v_items || coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'outbox_id',        null,
+               'delivery_id',      d.id,
+               'document_number',  d.document_number,
+               'supplier',         coalesce(d.supplier_hebrew, d.supplier_english),
+               'category',         public.priority_push_delivery_category(d.id),
+               'problem',          'not_queued',
+               'reason_text',      'closed in the warehouse, but no Priority outbox row was created',
+               'status_code',      null,
+               'error_class',      null,
+               'sent_at',          null,
+               'created_at',       a.created_at,
+               'receiver_chat_id', d.received_by_chat_id) order by a.created_at)
+        from public.priority_push_alert_log a
+        join public.deliveries d on d.id = a.delivery_id
+       where a.kind = 'not_queued'
+         and not exists (select 1 from public.priority_push_outbox o where o.delivery_id = d.id)),
+      '[]'::jsonb);
+    v_orphans := jsonb_build_object('class1', null, 'class2', null, 'class3', null);
+  end if;
+
+  if jsonb_array_length(v_items) = 0
+     and coalesce((v_orphans ->> 'class1')::int, 0)
+       + coalesce((v_orphans ->> 'class2')::int, 0)
+       + coalesce((v_orphans ->> 'class3')::int, 0) = 0 then
+    return;                                  -- all clear: no message
+  end if;
+
+  perform public.priority_push_notify_bot(null, 'digest',
+            jsonb_build_object('items', v_items, 'orphan_counts', v_orphans));
+exception when others then
+  begin
+    insert into public.bot_webhook_log(event, kind, error)
+    values ('priority_push_watch', 'digest', left('digest: ' || sqlerrm, 500));
+  exception when others then null;
+  end;
+end
+$function$;
+
+comment on function public.priority_push_digest() is
+  '2026-10-08: pg_cron job priority-push-digest, 07:00 Israel time daily (cron 04:00 and 05:00 GMT, the command runs it only at 07:00 Asia/Jerusalem). One priority_push_notify_bot(NULL, ''digest'', {items, orphan_counts}) with the open problems from priority_push_attention_v (orphans counted, not listed; fake-Make target=test rows left out); before that view exists, from the outbox and priority_push_alert_log (orphan_counts values NULL). Sends nothing when all is clear. Never raises.';
+
+-- -----------------------------------------------------------------------------
+-- B4. Privileges: server-side only
+-- -----------------------------------------------------------------------------
+-- Only pg_cron calls these (the jobs run as the owner), so service_role, the
+-- scanner's server key, may not call them over RPC either: the watch posts
+-- office alerts through priority_push_notify_bot(), which service_role cannot
+-- execute (part A), and both functions are SECURITY DEFINER.
+revoke execute on function public.priority_push_watch()  from public, anon, authenticated, service_role;
+revoke execute on function public.priority_push_digest() from public, anon, authenticated, service_role;
+
+-- -----------------------------------------------------------------------------
+-- B5. The two jobs (cron.schedule updates a job of the same name in place).
+--     Job 8 'priority-push-dispatch' is not touched.
+-- -----------------------------------------------------------------------------
+select cron.schedule('priority-push-watch',  '* * * * *', 'select public.priority_push_watch()');
+-- 07:00 Israel time all year: pg_cron runs in GMT, so the job wakes at 04:00 and
+-- 05:00 GMT and only the run that falls on 07:00 in Asia/Jerusalem sends
+-- (04:00 GMT in summer time, 05:00 GMT after the clocks go back on 2026-10-25).
+select cron.schedule('priority-push-digest', '0 4,5 * * *',
+  'select public.priority_push_digest() where extract(hour from now() at time zone ''Asia/Jerusalem'') = 7');
+
+do $report_b$
+begin
+  raise notice 'cron jobs: %',
+    (select jsonb_agg(jsonb_build_object('job', j.jobname, 'schedule', j.schedule, 'active', j.active) order by j.jobid)
+       from cron.job j where j.jobname like 'priority-push-%');
+  raise notice 'closed deliveries with no outbox row (each will be alerted once as not_queued): %',
+    (select count(*) from public.deliveries d
+      where d.status::text in ('Complete', 'Has Discrepancy')
+        and d.created_at > now() - interval '30 days'
+        and not exists (select 1 from public.priority_push_outbox o where o.delivery_id = d.id));
+end
+$report_b$;
+
+-- =============================================================================
+-- VERIFY after applying (SELECT-only)
+-- =============================================================================
+-- select jobid, jobname, schedule, active from cron.job where jobname like 'priority-push-%' order by jobid;
+--   -> priority-push-dispatch '15 seconds', priority-push-watch '* * * * *', priority-push-digest '0 4,5 * * *'
+-- select status, return_message, start_time from cron.job_run_details
+--  where jobid = (select jobid from cron.job where jobname = 'priority-push-watch')
+--  order by start_time desc limit 5;                       -- succeeded, returns 0 on a quiet minute
+-- select id, kind, outbox_id, delivery_id, request_id, status_code, reply_error, error, created_at
+--   from public.bot_webhook_log where event in ('priority_push_outcome', 'priority_push_watch')
+--  order by id desc limit 20;                              -- expect nothing right after the apply
+-- select id, status, alert_kind, alerted_at, alert_tries from public.priority_push_outbox
+--  where status in ('delivered', 'failed', 'expired', 'sent', 'unconfirmed')
+--  order by id;                                            -- every outcome row stamped
