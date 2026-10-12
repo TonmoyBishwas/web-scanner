@@ -91,26 +91,32 @@ export function expandIdenticalBoxes<T extends SampleRow>(
 }
 
 /** The fields the dedup bookkeeping below reads off a list row. */
-type ListedRow = { barcode: string; source_barcode?: string };
+type ListedRow = { barcode: string; source_barcode?: string; twin?: boolean };
 
 /**
  * Every code a list's rows hold in the page's dedup set: each row's own
  * barcode, plus the supplier code a minted row stands in for. Used to refill
  * the set from the browser cache after a reload, so a re-read of the sample
  * carton is still caught exactly as it was before the reload.
+ *
+ * A one-tap twin ("Another carton, same label") is a carton of its own, not a
+ * stand-in: it never holds the supplier code. Only the original row does, so
+ * a list restored after the original was deleted lets that carton be scanned
+ * again, exactly as the live page did before the reload.
  */
 export function dedupCodes(rows: ReadonlyArray<ListedRow>): string[] {
   const out = new Set<string>();
   for (const r of rows) {
     if (r.barcode) out.add(r.barcode);
-    if (r.source_barcode) out.add(r.source_barcode);
+    if (r.source_barcode && !r.twin) out.add(r.source_barcode);
   }
   return [...out];
 }
 
-/** True while some row on the list is, or stands in for, this supplier code. */
+/** True while some row on the list is, or stands in for, this supplier code
+ *  (a twin row does not stand in for it — see dedupCodes). */
 export function sourceStillListed(rows: ReadonlyArray<ListedRow>, source: string): boolean {
-  return rows.some((r) => r.barcode === source || r.source_barcode === source);
+  return rows.some((r) => r.barcode === source || (!r.twin && r.source_barcode === source));
 }
 
 /**

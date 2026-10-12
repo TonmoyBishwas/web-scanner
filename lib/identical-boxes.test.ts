@@ -79,6 +79,15 @@ describe('dedup bookkeeping for minted rows', () => {
     expect(dedupCodes([other])).toEqual([other.barcode]);
   });
 
+  it('a one-tap twin never holds the supplier code (a restored list matches the live one)', () => {
+    const X = '7290003570867015260157527072027';
+    const twin = { barcode: '2826101100000001', source_barcode: X, twin: true };
+    expect(dedupCodes([twin])).toEqual([twin.barcode]);
+    expect(dedupCodes([{ barcode: X }, twin]).sort()).toEqual([X, twin.barcode].sort());
+    expect(sourceStillListed([twin], X)).toBe(false);
+    expect(sourceStillListed([{ barcode: X }, twin], X)).toBe(true);
+  });
+
   it('keeps the supplier code while any row still stands in for it', () => {
     expect(releasedSources(rows, new Set([rows[0].barcode]))).toEqual([]);
     expect(releasedSources(rows, new Set([rows[0].barcode, rows[1].barcode]))).toEqual([]);

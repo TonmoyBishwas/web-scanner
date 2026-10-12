@@ -464,7 +464,9 @@ export default function PalletVerifyPage({
     const offer = hit ? differentCartonOffer(code, hit.row) : null;
     // Twins already added for this code are named, so a worker unsure whether
     // his tap registered sees that it did.
-    const twins = twinCount(rows, code);
+    // When no row carries the code any more (the original was deleted), the
+    // lookup falls back to a twin — which must not count itself as "more".
+    const twins = twinCount(rows, code) - (hit?.row.twin ? 1 : 0);
     const text = twins > 0
       ? t(lang, 'terminal.alreadyCountedPlusTwins', { n: hit?.n ?? '?', more: twins })
       : t(lang, opts.photo ? 'terminal.photoAlreadyCounted' : 'terminal.alreadyCounted', { n: hit?.n ?? '?' });
