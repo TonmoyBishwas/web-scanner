@@ -13,6 +13,7 @@ import {
   type DecodePass,
   type FrameRead,
 } from '@/lib/barcode-frame';
+import { preferCartonCodes as dropProductCodesBesideCartonCode } from '@/lib/frame-reads';
 import { useT } from '@/lib/i18n';
 import { useSettingsStore } from '@/stores/settings-store';
 
@@ -82,6 +83,13 @@ interface SmartScannerProps {
    * "Box N saved" counter.
    */
   paused?: boolean;
+  /**
+   * One frame decodes a product code (EAN-13 or shorter) AND a longer carton
+   * code: keep only the carton code (lib/frame-reads.ts). Set by the inbound
+   * pages (pallet-verify, /scan), where a carton is booked under the code it
+   * is read by; off elsewhere (/issue, non-meat), which keep every read.
+   */
+  preferCartonCodes?: boolean;
 }
 
 /**
@@ -511,6 +519,7 @@ export function SmartScanner({
   frame = 'square',
   paused = false,
   nudgeSuppressed = false,
+  preferCartonCodes = false,
 }: SmartScannerProps) {
   const tr = useT();
   // Tap anywhere on the camera = capture the label. Default ON — a torn or
@@ -588,6 +597,11 @@ export function SmartScanner({
   useEffect(() => {
     holdClaimRef.current = holdClaim;
   }, [holdClaim]);
+  // Read by `consume` inside the long-lived detection closure.
+  const preferCartonCodesRef = useRef(preferCartonCodes);
+  useEffect(() => {
+    preferCartonCodesRef.current = preferCartonCodes;
+  }, [preferCartonCodes]);
   // `detect` is a long-lived rAF closure, so the pause flag has to reach it
   // through a ref — reading the prop would pin the first render's value.
   const pausedRef = useRef(paused);
@@ -1185,8 +1199,13 @@ export function SmartScanner({
     const consume = async (reads: FrameRead[], via: string) => {
       const now = Date.now();
 
+      // A carton code and a product code in one frame: the carton code is the
+      // carton (David's Well Done 48288, 2026-10-11 — the EAN-13 on the brand
+      // sticker won the race and booked every carton as one).
+      const frameReads = preferCartonCodesRef.current ? dropProductCodesBesideCartonCode(reads) : reads;
+
       // Multi-read validation: 2 identical reads within 3 seconds, per value.
-      const { confirmed, progress } = confirmerRef.current.add(reads, now);
+      const { confirmed, progress } = confirmerRef.current.add(frameReads, now);
       if (!confirmed) {
         setCaptureCount(progress);
         return;

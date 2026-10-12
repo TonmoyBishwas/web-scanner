@@ -3351,6 +3351,7 @@ export default function PalletVerifyPage({
             <SmartScanner
               key="loose-scanner"
               paused={!!editForm || overlayOpen}
+              preferCartonCodes
               frame="corner"
               className="h-full"
               onBarcodeDetected={handleLooseBarcodeDetected}
@@ -3834,6 +3835,9 @@ export default function PalletVerifyPage({
             frame="corner"
             className="h-full"
             paused={!!editForm || overlayOpen}
+            // An EAN-13 product code beside the carton's own long code in one
+            // frame never wins (lib/frame-reads.ts).
+            preferCartonCodes
             onBarcodeDetected={handleBarcodeDetected}
             onManualCapture={handleManualCapture}
             onDuplicateFlash={(fn) => { dupFlashRef.current = fn; }}
