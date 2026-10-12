@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { dedupCodes, expandIdenticalBoxes, releasedSources, sourceSku, sourceStillListed } from './identical-boxes';
+import {
+  dedupCodes, expandIdenticalBoxes, identicalLabelPayload, postIdenticalLabels, releasedSources, sourceSku, sourceStillListed,
+} from './identical-boxes';
 
 const sample = {
   barcode: '7290004456825',
@@ -77,6 +79,15 @@ describe('dedup bookkeeping for minted rows', () => {
     expect(dedupCodes([other])).toEqual([other.barcode]);
   });
 
+  it('a one-tap twin never holds the supplier code (a restored list matches the live one)', () => {
+    const X = '7290003570867015260157527072027';
+    const twin = { barcode: '2826101100000001', source_barcode: X, twin: true };
+    expect(dedupCodes([twin])).toEqual([twin.barcode]);
+    expect(dedupCodes([{ barcode: X }, twin]).sort()).toEqual([X, twin.barcode].sort());
+    expect(sourceStillListed([twin], X)).toBe(false);
+    expect(sourceStillListed([{ barcode: X }, twin], X)).toBe(true);
+  });
+
   it('keeps the supplier code while any row still stands in for it', () => {
     expect(releasedSources(rows, new Set([rows[0].barcode]))).toEqual([]);
     expect(releasedSources(rows, new Set([rows[0].barcode, rows[1].barcode]))).toEqual([]);
@@ -103,5 +114,78 @@ describe('dedup bookkeeping for minted rows', () => {
 
   it('releases nothing for a row that is not minted', () => {
     expect(releasedSources([other], new Set([other.barcode]))).toEqual([]);
+  });
+});
+
+describe('identicalLabelPayload / postIdenticalLabels (the one save path)', () => {
+  const req = {
+    sourceBarcode: '7290003570867015260157527072027',
+    palletNumber: 2,
+    itemCode: '48288',
+    itemNameHebrew: 'סטרוגנוף',
+    itemNameEnglish: 'Stroganoff',
+    weightKg: 15.26,
+    quantity: 1,
+    productionDate: '',
+    expiryDate: '2027-07-27',
+  };
+
+  it('builds exactly the body IdenticalBoxesForm has always sent (origin identical, blanks as null)', () => {
+    expect(identicalLabelPayload(req)).toEqual({
+      origin: 'identical',
+      source_barcode: '7290003570867015260157527072027',
+      pallet_number: 2,
+      item_code: '48288',
+      item_name_hebrew: 'סטרוגנוף',
+      item_name_english: 'Stroganoff',
+      weight_kg: 15.26,
+      quantity: 1,
+      production_date: null,
+      expiry_date: '2027-07-27',
+      print_barcode: true,
+    });
+  });
+
+  it('a missing item code / name → null, never ""', () => {
+    const p = identicalLabelPayload({ ...req, itemCode: null, itemNameHebrew: '', itemNameEnglish: '' });
+    expect(p.item_code).toBeNull();
+    expect(p.item_name_hebrew).toBeNull();
+    expect(p.item_name_english).toBeNull();
+  });
+
+  const label = { barcode: '2826101100000001', batch_id: 'b-1' };
+  const reply = (status: number, body: unknown) =>
+    async () => ({ status, json: async () => body }) as unknown as Response;
+
+  it('POSTs token + batch_id + payload to /api/carton-labels and returns the labels', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const fetchFn = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return { status: 200, json: async () => ({ success: true, labels: [label] }) } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const payload = identicalLabelPayload(req);
+    const out = await postIdenticalLabels('tok', 'b-1', payload, fetchFn);
+    expect(out).toEqual({ ok: true, labels: [label] });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('/api/carton-labels');
+    expect(calls[0].init.method).toBe('POST');
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ token: 'tok', batch_id: 'b-1', ...payload });
+  });
+
+  it('401 → session expired', async () => {
+    const out = await postIdenticalLabels('tok', 'b', identicalLabelPayload(req), reply(401, {}) as unknown as typeof fetch);
+    expect(out).toEqual({ ok: false, reason: 'session' });
+  });
+
+  it('no labels back, or success false → failed', async () => {
+    expect(await postIdenticalLabels('t', 'b', identicalLabelPayload(req), reply(200, { success: true, labels: [] }) as unknown as typeof fetch))
+      .toEqual({ ok: false, reason: 'failed' });
+    expect(await postIdenticalLabels('t', 'b', identicalLabelPayload(req), reply(500, { success: false }) as unknown as typeof fetch))
+      .toEqual({ ok: false, reason: 'failed' });
+  });
+
+  it('a network error → failed, never a throw', async () => {
+    const boom = (async () => { throw new Error('offline'); }) as unknown as typeof fetch;
+    expect(await postIdenticalLabels('t', 'b', identicalLabelPayload(req), boom)).toEqual({ ok: false, reason: 'failed' });
   });
 });

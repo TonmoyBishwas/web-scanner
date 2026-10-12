@@ -21,6 +21,7 @@
  */
 
 import { isMintedLabelBarcode } from './label-batches';
+import { parseCartonBarcode } from './barcode-parser';
 
 /** How long a notice stays in the footer. */
 export const SCAN_NOTICE_MS = 4000;
@@ -87,6 +88,12 @@ interface CountedRow {
   source_barcode?: string;
   /** Minted by "all boxes identical" / "Different carton?". */
   minted?: boolean;
+  /**
+   * Minted for ONE more carton with a byte-identical label ("Another carton,
+   * same label" / "Different carton?"): a carton of its own, NOT a batch that
+   * declares every carton carrying `source_barcode` counted.
+   */
+  twin?: boolean;
 }
 
 const digitsOf = (code: string | undefined | null) => (code || '').replace(/\D/g, '');
@@ -101,7 +108,8 @@ const digitsOf = (code: string | undefined | null) => (code || '').replace(/\D/g
  */
 export function isBatchStandIn(code: string, row: CountedRow): boolean {
   const c = digitsOf(code);
-  if (!row.minted || !c || !row.source_barcode) return false;
+  // A twin row is one more carton, not a declaration that covers the code.
+  if (!row.minted || row.twin || !c || !row.source_barcode) return false;
   return digitsOf(row.source_barcode) === c && digitsOf(row.barcode) !== c;
 }
 
@@ -117,13 +125,27 @@ export interface CountedCarton<T> {
 }
 
 /**
- * The carton a re-read barcode refers to. A supplier code that an identical
- * batch stands in for points at the batch's first row: no row carries the
- * code itself any more.
+ * The carton a re-read barcode refers to: the row that carries the code
+ * itself, wherever it sits. Only when none does, a supplier code that an
+ * identical batch stands in for points at the batch's first row. (A twin row
+ * added before the original was rescanned sits ahead of it on the list; a
+ * first-match lookup named the twin, and the notice then said the code was
+ * covered by labels and offered nothing.)
  */
 export function findCountedCarton<T extends CountedRow>(rows: ReadonlyArray<T>, code: string): CountedCarton<T> | null {
-  const i = rows.findIndex((r) => r.barcode === code || r.source_barcode === code);
+  let i = rows.findIndex((r) => r.barcode === code);
+  if (i === -1) i = rows.findIndex((r) => r.source_barcode === code);
   return i === -1 ? null : { n: i + 1, row: rows[i] };
+}
+
+/**
+ * How many one-more-carton twins of `code` are on the list (rows minted by
+ * "Another carton, same label" / "Different carton?" for it).
+ */
+export function twinCount(rows: ReadonlyArray<CountedRow>, code: string): number {
+  const c = digitsOf(code);
+  if (!c) return 0;
+  return rows.filter((r) => r.twin && digitsOf(r.source_barcode) === c).length;
 }
 
 /**
@@ -144,7 +166,9 @@ export function findCountedCartonByDigits<T extends CountedRow>(
 ): CountedCarton<T> | null {
   if (!digits) return null;
   const same = (code: string | undefined) => !!code && code.replace(/\D/g, '') === digits;
-  const i = rows.findIndex((r) => r.barcode !== exceptBarcode && (same(r.barcode) || same(r.source_barcode)));
+  // The row that carries the digits itself first (see findCountedCarton).
+  let i = rows.findIndex((r) => r.barcode !== exceptBarcode && same(r.barcode));
+  if (i === -1) i = rows.findIndex((r) => r.barcode !== exceptBarcode && same(r.source_barcode));
   return i === -1 ? null : { n: i + 1, row: rows[i] };
 }
 
@@ -175,6 +199,72 @@ export function canOfferDifferentCarton(
   if (!/^\d/.test(c) || isMintedLabelBarcode(c)) return false;
   if (typeof row.barcode === 'string' && isBatchStandIn(c, row as CountedRow)) return false;
   return row.ocr_status !== 'processing';
+}
+
+/**
+ * What an already-counted notice offers for a carton with a byte-identical
+ * label (S1, David 2026-10-11).
+ *
+ * - `{ quick: true, weight }` — the code is a 31-digit catch-weight label
+ *   with a parseable net weight (`parseCartonBarcode`, chars 14–19 ÷ 1000).
+ *   Two cartons print the same code exactly when they weigh the same to the
+ *   10 g, so the twin's weight is the one its own barcode prints: the notice
+ *   shows a full-width "Another carton, same label · {kg} kg" button and ONE
+ *   tap saves it (no form). On IN264185523 pallet 2 there were ~20 such
+ *   collisions in 73 cartons; the link-plus-form took two taps each and was
+ *   never found, so the cartons were covered by a batch at a made-up weight.
+ * - `{ quick: false }` — no weight in the code: today's "Different carton?"
+ *   link and form, where the worker types the weight.
+ * - `null` — nothing is offered (see canOfferDifferentCarton).
+ */
+export type DifferentCartonOffer = { quick: true; weight: number } | { quick: false };
+
+export function differentCartonOffer(
+  code: string,
+  row: { ocr_status?: string } & Partial<CountedRow>,
+): DifferentCartonOffer | null {
+  if (!canOfferDifferentCarton(code, row)) return null;
+  const weight = parseCartonBarcode(code)?.weight ?? null;
+  return weight !== null ? { quick: true, weight } : { quick: false };
+}
+
+/**
+ * After "Another carton, same label" for a code, the camera is usually still
+ * on that sticker and re-reads it every ~3.3 s (the 3 s cooldown plus two
+ * reads). Offering the one-tap button again on those re-reads invites a
+ * second tap for a carton that does not exist. So the button for that code
+ * is held back until the code has gone unread for TWIN_REARM_GAP_MS (longer
+ * than the parked re-read cadence, so a parked camera never re-arms it) or
+ * a different code has been read. While it is held the notice still offers
+ * the "Different carton?" form — a deliberate two-step way in — so a third
+ * carton printing the same code can always be added.
+ */
+export const TWIN_REARM_GAP_MS = 5000;
+
+export interface TwinHold {
+  code: string;
+  lastRead: number;
+}
+
+/**
+ * Note one camera read for the twin hold and say whether the one-tap button
+ * is held back for it. A different code, or the same code after a gap of
+ * `gapMs`, releases the hold; a re-read inside the gap slides it.
+ */
+export function noteTwinHoldRead(
+  hold: { current: TwinHold | null },
+  code: string,
+  now: number,
+  gapMs: number = TWIN_REARM_GAP_MS,
+): boolean {
+  const h = hold.current;
+  if (!h) return false;
+  if (h.code !== code || now - h.lastRead >= gapMs) {
+    hold.current = null;
+    return false;
+  }
+  h.lastRead = now;
+  return true;
 }
 
 /**

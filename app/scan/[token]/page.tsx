@@ -1111,6 +1111,7 @@ export default function ScanPage({
             <SmartScanner
               frame="corner"
               className="h-full"
+              preferCartonCodes
               onBarcodeDetected={handleBarcodeDetected}
               onManualCapture={handleManualCapture}
               scannedBarcodes={scannedBarcodes}

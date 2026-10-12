@@ -139,6 +139,17 @@ export class ReadConfirmer {
     return { confirmed: null, progress };
   }
 
+  /**
+   * Drop the counts of the values `test` picks — reads that turn out to have
+   * been the wrong sticker (a product code whose carton code another decoder
+   * has just read), so their earlier frames cannot confirm them later.
+   */
+  forget(test: (value: string) => boolean): void {
+    for (const v of [...this.pending.keys()]) {
+      if (test(v)) this.pending.delete(v);
+    }
+  }
+
   reset(): void {
     this.pending.clear();
   }

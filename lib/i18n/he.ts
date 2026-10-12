@@ -672,7 +672,16 @@ export const he: Record<TranslationKey, string> = {
   'terminal.barcodeMisread': 'הברקוד נקרא לא נכון ({digits}) — ספרת הביקורת שגויה. סרוק שוב.',
   'terminal.alreadyCounted': 'קרטון מס׳ {n} כבר נספר — סרוק את הקרטון הבא.',
   'terminal.photoAlreadyCounted': 'המדבקה הזו היא קרטון מס׳ {n} — הוא כבר נספר.',
+  // English: "Carton #{n} and {more} more with this label are already counted."
+  'terminal.alreadyCountedPlusTwins': 'קרטון מס׳ {n} ועוד {more} עם אותה מדבקה כבר נספרו.',
   'terminal.differentCarton': 'קרטון אחר?',
+  // English: "➕ Another carton, same label · {kg} kg"
+  'terminal.anotherCartonSameLabel': '➕ קרטון נוסף, אותה מדבקה · {kg} ק״ג',
+  // English: "Carton added ({kg} kg) · print its label from Labels at the end"
+  'terminal.anotherCartonAdded': 'הקרטון נוסף ({kg} ק״ג) · הדפס את המדבקה שלו ממסך "מדבקות" בסוף',
+  // English: "The list closed before the carton was added — it is NOT counted.
+  // Its unused label is in Labels: delete it there."
+  'terminal.anotherCartonStale': 'הרשימה נסגרה לפני שהקרטון נוסף — הוא לא נספר. המדבקה שלו שלא נוצלה נמצאת במסך "מדבקות": מחק אותה שם.',
   'terminal.coveredByLabels': 'כבר נספר — {count} המדבקות הזהות שנשמרו למוצר הזה כוללות אותו. אין מה לסרוק.',
   'terminal.coveredByLabelOne': 'כבר נספר — המדבקה הזהה שנשמרה למוצר הזה כוללת אותו. אין מה לסרוק.',
   'terminal.barcodeAcceptedAsPrinted': 'נקרא זהה שלוש פעמים — התקבל כפי שמודפס ({digits}).',
@@ -903,6 +912,16 @@ export const he: Record<TranslationKey, string> = {
   'carton.saving': 'שומר…',
   'carton.saved': 'נשמרו {count} מדבקות · הדפס אותן ממסך "מדבקות" ואז סרוק כל קרטון',
   'carton.savedOne': 'המדבקה נשמרה · הדפס אותה ממסך "מדבקות" ואז סרוק את הקרטון',
+  // English: "Not counted until you scan the printed label. Carton whose label
+  // was already scanned? On the "already counted" notice use "Another carton,
+  // same label" or "Different carton?"."
+  'carton.notCountedWarning': 'שימו לב: הקרטון לא נספר עד שסורקים את המדבקה המודפסת. קרטון עם מדבקה שכבר נסרקה? בהודעה "כבר נספר" השתמשו ב"קרטון נוסף, אותה מדבקה" או ב"קרטון אחר?".',
+  // English: "{count} labels saved — NOT counted yet. Print them from Labels,
+  // stick one on each carton, then scan each label."
+  'carton.savedNotCounted': 'נשמרו {count} מדבקות — עדיין לא נספרו. הדפס אותן ממסך "מדבקות", הדבק אחת על כל קרטון וסרוק כל מדבקה.',
+  // English: "Label saved — NOT counted yet. Print it from Labels, stick it on
+  // the carton, then scan it."
+  'carton.savedNotCountedOne': 'המדבקה נשמרה — הקרטון עדיין לא נספר. הדפס אותה ממסך "מדבקות", הדבק על הקרטון וסרוק אותה.',
   'carton.error': 'שמירת המדבקות נכשלה. נסה שוב.',
   'carton.sessionExpired': 'הפעילות פגה. בקש קישור חדש.',
   'carton.printedNote': 'המדבקות נשמרות במסך "מדבקות". הדפס אותן משם, הדבק אחת על כל קרטון, ואז סרוק אותו כמו כל קרטון אחר.',

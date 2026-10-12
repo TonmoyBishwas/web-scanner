@@ -16,7 +16,7 @@
  * printed sticker finds exactly that row.
  */
 
-import type { MultiPalletBoxScan } from '@/types';
+import type { CartonLabel, MultiPalletBoxScan } from '@/types';
 
 /** What the confirmation form settles for the whole batch. */
 export interface IdenticalForm {
@@ -91,26 +91,32 @@ export function expandIdenticalBoxes<T extends SampleRow>(
 }
 
 /** The fields the dedup bookkeeping below reads off a list row. */
-type ListedRow = { barcode: string; source_barcode?: string };
+type ListedRow = { barcode: string; source_barcode?: string; twin?: boolean };
 
 /**
  * Every code a list's rows hold in the page's dedup set: each row's own
  * barcode, plus the supplier code a minted row stands in for. Used to refill
  * the set from the browser cache after a reload, so a re-read of the sample
  * carton is still caught exactly as it was before the reload.
+ *
+ * A one-tap twin ("Another carton, same label") is a carton of its own, not a
+ * stand-in: it never holds the supplier code. Only the original row does, so
+ * a list restored after the original was deleted lets that carton be scanned
+ * again, exactly as the live page did before the reload.
  */
 export function dedupCodes(rows: ReadonlyArray<ListedRow>): string[] {
   const out = new Set<string>();
   for (const r of rows) {
     if (r.barcode) out.add(r.barcode);
-    if (r.source_barcode) out.add(r.source_barcode);
+    if (r.source_barcode && !r.twin) out.add(r.source_barcode);
   }
   return [...out];
 }
 
-/** True while some row on the list is, or stands in for, this supplier code. */
+/** True while some row on the list is, or stands in for, this supplier code
+ *  (a twin row does not stand in for it — see dedupCodes). */
 export function sourceStillListed(rows: ReadonlyArray<ListedRow>, source: string): boolean {
-  return rows.some((r) => r.barcode === source || r.source_barcode === source);
+  return rows.some((r) => r.barcode === source || (!r.twin && r.source_barcode === source));
 }
 
 /**
@@ -128,4 +134,76 @@ export function releasedSources(rows: ReadonlyArray<ListedRow>, gone: ReadonlySe
     if (!sourceStillListed(remaining, r.source_barcode)) out.add(r.source_barcode);
   }
   return [...out];
+}
+
+// ─── Saving the labels: one path for the form and the one-tap twin ───
+
+/** What one "identical" label save asks for. */
+export interface IdenticalLabelRequest {
+  /** The supplier code the labels stand in for. */
+  sourceBarcode: string;
+  /** Pallet the batch is minted on; 0 = the loose pile. */
+  palletNumber: number;
+  itemCode?: string | null;
+  itemNameHebrew?: string | null;
+  itemNameEnglish?: string | null;
+  weightKg: number;
+  quantity: number;
+  /** ISO `YYYY-MM-DD`, '' when unknown. */
+  productionDate?: string | null;
+  expiryDate?: string | null;
+}
+
+/**
+ * The body fields of POST /api/carton-labels for an `identical` batch — the
+ * exact shape IdenticalBoxesForm has always sent. Also the key
+ * `batchIdForPayload` hashes, so it must stay a plain, stable object.
+ */
+export function identicalLabelPayload(req: IdenticalLabelRequest) {
+  return {
+    origin: 'identical' as const,
+    source_barcode: req.sourceBarcode,
+    pallet_number: req.palletNumber,
+    item_code: req.itemCode || null,
+    item_name_hebrew: req.itemNameHebrew || null,
+    item_name_english: req.itemNameEnglish || null,
+    weight_kg: req.weightKg,
+    quantity: req.quantity,
+    production_date: req.productionDate || null,
+    expiry_date: req.expiryDate || null,
+    print_barcode: true,
+  };
+}
+
+export type IdenticalLabelPayload = ReturnType<typeof identicalLabelPayload>;
+
+export type SaveLabelsResult =
+  | { ok: true; labels: CartonLabel[] }
+  | { ok: false; reason: 'session' | 'failed' };
+
+/**
+ * Save an identical batch: mints `quantity` unique `28…` labels in
+ * carton_labels (unprinted). Never throws — a network error is `failed`.
+ * `batchId` makes a retry of the same save idempotent server-side.
+ */
+export async function postIdenticalLabels(
+  token: string,
+  batchId: string,
+  payload: IdenticalLabelPayload,
+  fetchFn: typeof fetch = fetch,
+): Promise<SaveLabelsResult> {
+  try {
+    const res = await fetchFn('/api/carton-labels', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, batch_id: batchId, ...payload }),
+    });
+    if (res.status === 401) return { ok: false, reason: 'session' };
+    const data = await res.json();
+    const labels: CartonLabel[] = Array.isArray(data?.labels) ? data.labels : [];
+    if (!data?.success || labels.length === 0) return { ok: false, reason: 'failed' };
+    return { ok: true, labels };
+  } catch {
+    return { ok: false, reason: 'failed' };
+  }
 }

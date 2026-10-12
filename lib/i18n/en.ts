@@ -672,7 +672,13 @@ export const en = {
   'terminal.barcodeMisread': 'Barcode misread ({digits}) — the check digit is wrong. Scan it again.',
   'terminal.alreadyCounted': 'Carton #{n} is already counted — scan the next carton.',
   'terminal.photoAlreadyCounted': 'This label is carton #{n} — it is already counted.',
+  'terminal.alreadyCountedPlusTwins': 'Carton #{n} and {more} more with this label are already counted.',
   'terminal.differentCarton': 'Different carton?',
+  // One tap on an already-counted notice for a 31-digit weight label: a twin
+  // carton (same weight to the 10 g, so a byte-identical label) is added.
+  'terminal.anotherCartonSameLabel': '➕ Another carton, same label · {kg} kg',
+  'terminal.anotherCartonAdded': 'Carton added ({kg} kg) · print its label from Labels at the end',
+  'terminal.anotherCartonStale': 'The list closed before the carton was added — it is NOT counted. Its unused label is in Labels: delete it there.',
   // The supplier code of an "All boxes identical" batch read again: every
   // carton carrying it is already on the list, one row per saved label.
   'terminal.coveredByLabels': 'Already counted — the {count} identical labels saved for this product cover it. Nothing to scan.',
@@ -909,6 +915,10 @@ export const en = {
   'carton.saving': 'Saving…',
   'carton.saved': '{count} labels saved · print them from Labels, then scan each carton',
   'carton.savedOne': 'Label saved · print it from Labels, then scan the carton',
+  // pallet-verify: a New-carton label books nothing until it is scanned.
+  'carton.notCountedWarning': 'Not counted until you scan the printed label. Carton whose label was already scanned? On the "already counted" notice use "Another carton, same label" or "Different carton?".',
+  'carton.savedNotCounted': '{count} labels saved — NOT counted yet. Print them from Labels, stick one on each carton, then scan each label.',
+  'carton.savedNotCountedOne': 'Label saved — NOT counted yet. Print it from Labels, stick it on the carton, then scan it.',
   'carton.error': 'Could not save the labels. Try again.',
   'carton.sessionExpired': 'This session has expired. Ask for a fresh link.',
   'carton.printedNote': 'Saving keeps the labels in Labels. Print them from there, stick one on each carton, then scan it like any other box.',

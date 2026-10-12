@@ -36,9 +36,11 @@ import {
   expandIdenticalBoxes,
   releasedSources,
   sourceStillListed,
+  identicalLabelPayload,
+  postIdenticalLabels,
   type IdenticalForm,
 } from '@/lib/identical-boxes';
-import { isMintedLabelBarcode, labelSheetUrl, liveRowPlaces, loadLabelSize, openListsForPhase } from '@/lib/label-batches';
+import { isMintedLabelBarcode, newBatchId, labelSheetUrl, liveRowPlaces, loadLabelSize, openListsForPhase } from '@/lib/label-batches';
 import { blockingLabels, LABELS_NOT_PRINTED } from '@/lib/label-gate';
 import { useUnprintedLabels } from '@/lib/use-unprinted-labels';
 import { toIsoDate, normalizeExpiry } from '@/lib/expiry';
@@ -65,9 +67,12 @@ import {
   clearDuplicateSounds,
   findCountedCarton,
   findCountedCartonByDigits,
-  canOfferDifferentCarton,
+  differentCartonOffer,
   isBatchStandIn,
   standInCount,
+  twinCount,
+  noteTwinHoldRead,
+  type TwinHold,
   type CountedCarton,
 } from '@/lib/scan-notice';
 import {
@@ -137,6 +142,11 @@ interface BoxScan extends MultiPalletBoxScan {
   // The supplier barcode a minted row stands in for. It stays in the dedup
   // set while any row of that batch is on the list (lib/identical-boxes.ts).
   source_barcode?: string;
+  // Minted for ONE more carton whose label is byte-identical to a counted
+  // one ("Another carton, same label" / "Different carton?"): a carton of its
+  // own, never a batch that declares every carton with source_barcode
+  // counted (lib/scan-notice.ts isBatchStandIn).
+  twin?: boolean;
 }
 
 // Digits-only normaliser for comparing the full printed barcode number across
@@ -225,7 +235,18 @@ interface ScanNotice {
    * a label of its own when the worker says the carton in hand is another
    * one with a byte-identical label. `box.barcode` is the code just read.
    */
-  different?: { box: BoxScan; loose: boolean; n: number };
+  different?: {
+    box: BoxScan;
+    loose: boolean;
+    n: number;
+    /**
+     * The net weight the code itself prints (a 31-digit catch-weight label,
+     * lib/scan-notice.ts differentCartonOffer): the notice then offers the
+     * one-tap "Another carton, same label · {kg} kg" button instead of the
+     * "Different carton?" link and form.
+     */
+    quickWeight?: number;
+  };
 }
 
 // Shape persisted to localStorage so a reload restores in-progress scans.
@@ -427,7 +448,10 @@ export default function PalletVerifyPage({
     rows: BoxScan[],
     code: string,
     hit: CountedCarton<BoxScan> | null,
-    opts: { loose: boolean; photo: boolean },
+    /** `twinHeld`: a one-tap twin of this code was just added and the camera
+     *  is still on it (lib/scan-notice.ts noteTwinHoldRead) — no one-tap
+     *  button, only the "Different carton?" form. */
+    opts: { loose: boolean; photo: boolean; twinHeld?: boolean },
   ): ScanNotice {
     const lang = sessionRef.current?.language || 'English';
     if (hit && isBatchStandIn(code, hit.row)) {
@@ -437,11 +461,25 @@ export default function PalletVerifyPage({
         tone: 'info',
       };
     }
+    const offer = hit ? differentCartonOffer(code, hit.row) : null;
+    // Twins already added for this code are named, so a worker unsure whether
+    // his tap registered sees that it did.
+    // When no row carries the code any more (the original was deleted), the
+    // lookup falls back to a twin — which must not count itself as "more".
+    const twins = twinCount(rows, code) - (hit?.row.twin ? 1 : 0);
+    const text = twins > 0
+      ? t(lang, 'terminal.alreadyCountedPlusTwins', { n: hit?.n ?? '?', more: twins })
+      : t(lang, opts.photo ? 'terminal.photoAlreadyCounted' : 'terminal.alreadyCounted', { n: hit?.n ?? '?' });
     return {
-      text: t(lang, opts.photo ? 'terminal.photoAlreadyCounted' : 'terminal.alreadyCounted', { n: hit?.n ?? '?' }),
+      text,
       tone: 'info',
-      different: hit && canOfferDifferentCarton(code, hit.row)
-        ? { box: { ...hit.row, barcode: code }, loose: opts.loose, n: hit.n }
+      different: hit && offer
+        ? {
+            box: { ...hit.row, barcode: code },
+            loose: opts.loose,
+            n: hit.n,
+            quickWeight: offer.quick && !opts.twinHeld ? offer.weight : undefined,
+          }
         : undefined,
     };
   }
@@ -456,6 +494,19 @@ export default function PalletVerifyPage({
     }, HIGHLIGHT_ROW_MS);
   }
 
+  // The one-tap twin (addTwinCarton) awaits a POST: it checks after the
+  // await that the worker is still on the list it tapped from.
+  const phaseRef = useRef<Phase>(phase);
+  useEffect(() => { phaseRef.current = phase; }, [phase]);
+  // A one-tap twin's label POST is in flight: further taps do nothing (a
+  // double tap must never save two cartons).
+  const twinBusyRef = useRef(false);
+  const [twinBusy, setTwinBusy] = useState(false);
+  // The code a one-tap twin was just added for, while the camera keeps
+  // re-reading it: its button is held back (lib/scan-notice.ts
+  // noteTwinHoldRead) so a parked camera cannot re-offer the same tap.
+  const twinHoldRef = useRef<TwinHold | null>(null);
+
   // A notice belongs to the screen it was raised on: a phase change (confirm,
   // next pallet, loose phase) takes it down, and starts the re-read ticks
   // afresh.
@@ -467,6 +518,7 @@ export default function PalletVerifyPage({
     noticeHeldRef.current = false;
     setScanNotice(null);
     clearDuplicateSounds(dupSoundsRef.current);
+    twinHoldRef.current = null;
   }, [phase]);
 
   useEffect(() => () => {
@@ -966,10 +1018,12 @@ export default function PalletVerifyPage({
   const handleBarcodeDetected = useCallback(
     (_barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
       const read = _barcode.trim();
+      // Every camera read moves the twin hold on (a different code releases it).
+      const twinHeld = noteTwinHoldRead(twinHoldRef, read, Date.now());
       // A read that cannot be a carton barcode (a fragment, a failed check
       // digit) is a misread: show the digits, store nothing (SCN-13).
       const verdict = classifyRead(read);
-      trace('ui', 'scan_detected', { barcode: read, pallet: currentPalletRef.current, ok: verdict.ok, reason: verdict.ok ? undefined : verdict.reason, duplicate: processedRef.current.has(read), has_image: !!imageData });
+      trace('ui', 'scan_detected', { barcode: read, pallet: currentPalletRef.current, ok: verdict.ok, reason: verdict.ok ? undefined : verdict.reason, duplicate: processedRef.current.has(read), has_image: !!imageData, twin_held: twinHeld || undefined });
       if (!verdict.ok) {
         if (verdict.reason === 'pallet_label') {
           // The supplier's shipping-pallet label: keep it as the pallet's
@@ -1005,7 +1059,7 @@ export default function PalletVerifyPage({
         // different carton whose label is byte-identical.
         const hit = findCountedCarton(scannedBoxesRef.current, read);
         if (shouldSoundDuplicate(dupSoundsRef.current, read, Date.now())) scanAlreadyCountedFeedback();
-        showScanNotice(countedNotice(scannedBoxesRef.current, read, hit, { loose: false, photo: false }));
+        showScanNotice(countedNotice(scannedBoxesRef.current, read, hit, { loose: false, photo: false, twinHeld }));
         if (hit) highlightRow(hit.row.barcode);
         return;
       }
@@ -1510,8 +1564,10 @@ export default function PalletVerifyPage({
   const handleLooseBarcodeDetected = useCallback(
     (_barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
       const read = _barcode.trim();
+      // Every camera read moves the twin hold on (a different code releases it).
+      const twinHeld = noteTwinHoldRead(twinHoldRef, read, Date.now());
       const verdict = classifyRead(read);
-      trace('ui', 'loose_scan_detected', { barcode: read, ok: verdict.ok, reason: verdict.ok ? undefined : verdict.reason, duplicate: looseProcessedRef.current.has(read), has_image: !!imageData });
+      trace('ui', 'loose_scan_detected', { barcode: read, ok: verdict.ok, reason: verdict.ok ? undefined : verdict.reason, duplicate: looseProcessedRef.current.has(read), has_image: !!imageData, twin_held: twinHeld || undefined });
       if (!verdict.ok) {
         if (verdict.reason === 'pallet_label') {
           showToast(t(sessionRef.current?.language || 'English', 'terminal.palletLabelRead', { digits: read }), 'local_shipping');
@@ -1537,7 +1593,7 @@ export default function PalletVerifyPage({
         // Already on the loose list — same blue notice as the pallet phase.
         const hit = findCountedCarton(looseBoxesRef.current, read);
         if (shouldSoundDuplicate(dupSoundsRef.current, read, Date.now())) scanAlreadyCountedFeedback();
-        showScanNotice(countedNotice(looseBoxesRef.current, read, hit, { loose: true, photo: false }));
+        showScanNotice(countedNotice(looseBoxesRef.current, read, hit, { loose: true, photo: false, twinHeld }));
         if (hit) highlightRow(hit.row.barcode);
         return;
       }
@@ -1943,13 +1999,17 @@ export default function PalletVerifyPage({
     target: { box: BoxScan; loose: boolean; anotherOf?: number },
     labels: CartonLabel[],
     form: IdenticalForm,
+    /** The toast to show instead of the form's "Label saved" (the one-tap twin). */
+    savedText?: string,
   ) {
     trace('ui', 'identical_created', { barcode: target.box.barcode, loose: target.loose, labels: labels.length, form, another_of: target.anotherOf });
     const rows: BoxScan[] = expandIdenticalBoxes(
       target.box,
       labels.map((l) => ({ barcode: l.barcode, batch_id: l.batch_id })),
       form,
-    );
+      // One more carton with the same label is a twin, not a batch: a later
+      // read of the code must never be answered "covered by labels".
+    ).map((r) => ({ ...r, twin: target.anotherOf ? true : undefined }));
     const replaceSample = (prev: BoxScan[]): BoxScan[] => {
       // "Different carton?": the carton it was copied from is a counted
       // carton of its own and stays; the new one joins the end of the list.
@@ -1990,7 +2050,10 @@ export default function PalletVerifyPage({
       origin: 'identical', count: rows.length, batch_id: labels[0]?.batch_id, pallet: target.loose ? 0 : currentPallet,
       another_of: target.anotherOf,
     });
-    showToast(rows.length === 1 ? tr('identical.savedOne') : tr('identical.saved', { count: rows.length }), 'save');
+    showToast(
+      savedText ?? (rows.length === 1 ? tr('identical.savedOne') : tr('identical.saved', { count: rows.length })),
+      'save',
+    );
   }
 
   /**
@@ -2005,6 +2068,70 @@ export default function PalletVerifyPage({
     clearScanNotice();
     setSelectedBarcode(null);
     setIdenticalFor({ box: d.box, loose: d.loose, anotherOf: d.n });
+  }
+
+  /**
+   * "➕ Another carton, same label · {kg} kg" on an already-counted notice
+   * (S1, David 2026-10-11). The code is a 31-digit catch-weight label, so a
+   * carton printing the same code weighs what the code says: ONE tap saves
+   * it — the same `identical` label save "Different carton?" makes through
+   * its form (lib/identical-boxes.ts postIdenticalLabels), quantity 1,
+   * weight = the barcode's net weight, name and dates copied from the
+   * counted carton. The new row is `minted` and its label unprinted, so the
+   * print gate holds the LPN until it is printed, as for the form.
+   */
+  async function addTwinCarton(d: NonNullable<ScanNotice['different']>) {
+    if (twinBusyRef.current || d.quickWeight === undefined) return;
+    twinBusyRef.current = true;
+    setTwinBusy(true);
+    const weight = d.quickWeight;
+    const startPhase = phaseRef.current;
+    const startPallet = currentPalletRef.current;
+    trace('ui', 'different_carton_quick', { barcode: d.box.barcode, of: d.n, weight, loose: d.loose });
+    try {
+      const payload = identicalLabelPayload({
+        sourceBarcode: d.box.barcode,
+        palletNumber: d.loose ? 0 : startPallet,
+        itemCode: matchInvoiceItem(d.box.item_name_hebrew, d.box.item_name, sessionRef.current?.ocr_data)?.item_code ?? null,
+        itemNameHebrew: d.box.item_name_hebrew,
+        itemNameEnglish: d.box.item_name,
+        weightKg: weight,
+        quantity: 1,
+        productionDate: toIsoDate(d.box.production_date || ''),
+        expiryDate: toIsoDate(d.box.expiry || ''),
+      });
+      // A fresh batch per tap: every tap is one more physical carton.
+      const result = await postIdenticalLabels(token, newBatchId(), payload);
+      if (!result.ok) {
+        trace('ui', 'different_carton_quick_failed', { barcode: d.box.barcode, reason: result.reason });
+        showToast(tr(result.reason === 'session' ? 'carton.sessionExpired' : 'identical.error'), 'error', '#ef8a8a');
+        return;
+      }
+      if (phaseRef.current !== startPhase || currentPalletRef.current !== startPallet) {
+        // The list was closed while the label saved: never add a row to a
+        // list that is gone. The saved label waits in Labels (unprinted) —
+        // delete it there if it is not needed.
+        trace('ui', 'different_carton_quick_stale', {
+          barcode: d.box.barcode, from: startPhase, to: phaseRef.current, batch_id: result.labels[0]?.batch_id,
+        });
+        unprinted.refresh();
+        showToast(tr('terminal.anotherCartonStale'), 'error', '#ef8a8a');
+        return;
+      }
+      clearScanNotice();
+      // The camera is still on this sticker: no second one-tap for it until
+      // it has been away (or another code was read).
+      twinHoldRef.current = { code: d.box.barcode, lastRead: Date.now() };
+      handleIdenticalCreated(
+        { box: d.box, loose: d.loose, anotherOf: d.n },
+        result.labels,
+        { weight, expiry: payload.expiry_date || '', production_date: payload.production_date || '' },
+        tr('terminal.anotherCartonAdded', { kg: weight.toFixed(2) }),
+      );
+    } finally {
+      twinBusyRef.current = false;
+      setTwinBusy(false);
+    }
   }
 
   /** What the pallet-total input offers for this list: one per listed box,
@@ -2132,6 +2259,7 @@ export default function PalletVerifyPage({
           token={token}
           items={session?.ocr_data ?? []}
           palletNumber={looseCartonPhase ? 0 : currentPallet}
+          notCountedWarning
           onBack={() => setShowCartonCreator(false)}
           onCreated={(count, batchId) => {
             // Saved only — back to the scanner, no Labels screen. The worker
@@ -2141,7 +2269,9 @@ export default function PalletVerifyPage({
             trace('ui', 'labels_saved', {
               origin: 'new_carton', count, batch_id: batchId, pallet: looseCartonPhase ? 0 : currentPallet,
             });
-            showToast(count === 1 ? tr('carton.savedOne') : tr('carton.saved', { count }), 'save');
+            // Not counted until the printed label is scanned (David
+            // 2026-10-11 printed labels and never scanned them back).
+            showToast(count === 1 ? tr('carton.savedNotCountedOne') : tr('carton.savedNotCounted', { count }), 'save');
           }}
         />
       )}
@@ -2256,7 +2386,21 @@ export default function PalletVerifyPage({
           />
           {scanNotice.text}
         </p>
-        {scanNotice.different && (
+        {scanNotice.different && scanNotice.different.quickWeight !== undefined ? (
+          // One tap = one more carton (addTwinCarton). A solid button, not a
+          // link: on a 73-carton pallet it is tapped ~20 times with gloves.
+          <div className="border-t border-brand/40 p-[6px]">
+            <button
+              type="button"
+              disabled={twinBusy}
+              onClick={() => { void addTwinCarton(scanNotice.different!); }}
+              className="w-full min-h-[48px] rounded-[10px] flex items-center justify-center gap-[6px] bg-brand text-white px-3 py-2 text-[14px] font-black disabled:opacity-60"
+            >
+              {twinBusy && <Loader2 className="w-4 h-4 animate-spin flex-none" />}
+              <span>{tr('terminal.anotherCartonSameLabel', { kg: scanNotice.different.quickWeight.toFixed(2) })}</span>
+            </button>
+          </div>
+        ) : scanNotice.different ? (
           <button
             type="button"
             onClick={() => openDifferentCarton(scanNotice.different!)}
@@ -2265,7 +2409,7 @@ export default function PalletVerifyPage({
             <MI name="new_label" size={17} className="flex-none" />
             <span className="underline underline-offset-2">{tr('terminal.differentCarton')}</span>
           </button>
-        )}
+        ) : null}
       </div>
     </div>
   ) : null;
@@ -3351,6 +3495,7 @@ export default function PalletVerifyPage({
             <SmartScanner
               key="loose-scanner"
               paused={!!editForm || overlayOpen}
+              preferCartonCodes
               frame="corner"
               className="h-full"
               onBarcodeDetected={handleLooseBarcodeDetected}
@@ -3834,6 +3979,9 @@ export default function PalletVerifyPage({
             frame="corner"
             className="h-full"
             paused={!!editForm || overlayOpen}
+            // An EAN-13 product code beside the carton's own long code in one
+            // frame never wins (lib/frame-reads.ts).
+            preferCartonCodes
             onBarcodeDetected={handleBarcodeDetected}
             onManualCapture={handleManualCapture}
             onDuplicateFlash={(fn) => { dupFlashRef.current = fn; }}

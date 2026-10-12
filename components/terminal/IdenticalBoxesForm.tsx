@@ -31,7 +31,7 @@ import { CalendarPicker } from './CalendarPicker';
 import { CartonSticker } from './CartonSticker';
 import { Toast, useToast } from './Toast';
 import { useT } from '@/lib/i18n';
-import type { IdenticalForm } from '@/lib/identical-boxes';
+import { identicalLabelPayload, postIdenticalLabels, type IdenticalForm } from '@/lib/identical-boxes';
 import { toIsoDate, isoToDdmmyyyy } from '@/lib/expiry';
 import { batchIdForPayload } from '@/lib/label-batches';
 import type { CartonLabel } from '@/types';
@@ -122,43 +122,31 @@ export function IdenticalBoxesForm({
     if (!canSave) return;
     setSaving(true);
     try {
-      const payload = {
-        origin: 'identical',
-        source_barcode: sample.barcode,
-        pallet_number: palletNumber,
-        item_code: sample.item_code ?? null,
-        item_name_hebrew: sample.item_name_hebrew || null,
-        item_name_english: sample.item_name || null,
-        weight_kg: weightKg,
+      // The same save the page's one-tap "Another carton, same label" uses
+      // (lib/identical-boxes.ts).
+      const payload = identicalLabelPayload({
+        sourceBarcode: sample.barcode,
+        palletNumber,
+        itemCode: sample.item_code,
+        itemNameHebrew: sample.item_name_hebrew,
+        itemNameEnglish: sample.item_name,
+        weightKg,
         quantity: count,
-        production_date: productionDate || null,
-        expiry_date: expiryDate || null,
-        print_barcode: true,
-      };
-      const res = await fetch('/api/carton-labels', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, batch_id: batchIdForPayload(batchIdsRef.current, payload), ...payload }),
+        productionDate,
+        expiryDate,
       });
-      const data = await res.json();
-      if (res.status === 401) {
-        showToast(tr('carton.sessionExpired'), 'error', '#ef8a8a');
+      const result = await postIdenticalLabels(token, batchIdForPayload(batchIdsRef.current, payload), payload);
+      if (!result.ok) {
+        showToast(tr(result.reason === 'session' ? 'carton.sessionExpired' : 'identical.error'), 'error', '#ef8a8a');
         return;
       }
-      const labels: CartonLabel[] = Array.isArray(data?.labels) ? data.labels : [];
-      if (!data?.success || labels.length === 0) {
-        showToast(tr('identical.error'), 'error', '#ef8a8a');
-        return;
-      }
-      onCreated(labels, {
+      onCreated(result.labels, {
         weight: weightKg,
         // ISO, like every scan row. This line used to write DD/MM/YYYY, which
         // the bot stored as box_expiry NULL — see lib/expiry.ts.
         expiry: expiryDate || '',
         production_date: productionDate || '',
       });
-    } catch {
-      showToast(tr('identical.error'), 'error', '#ef8a8a');
     } finally {
       setSaving(false);
     }

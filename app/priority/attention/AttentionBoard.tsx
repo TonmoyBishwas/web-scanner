@@ -6,6 +6,7 @@ import { MI } from '@/components/terminal/MI';
 import {
   canMarkFound,
   canSendAgain,
+  emptyStateText,
   errorClassText,
   fixLineText,
   formatIsraelTime,
@@ -28,7 +29,7 @@ interface Link {
 type Load =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; rows: AttentionRow[]; truncated: boolean; fixes: FixDelivery[]; at: Date };
+  | { kind: 'ready'; rows: AttentionRow[]; truncated: boolean; fixes: FixDelivery[]; fixesAvailable: boolean; at: Date };
 
 type Tone = 'danger' | 'warn' | 'muted';
 
@@ -86,6 +87,7 @@ export function AttentionBoard() {
           rows: data.rows as AttentionRow[],
           truncated: data.truncated === true,
           fixes: Array.isArray(data.fixes) ? (data.fixes as FixDelivery[]) : [],
+          fixesAvailable: data.fixes_available === true,
           at: new Date(),
         });
       } catch {
@@ -146,9 +148,7 @@ export function AttentionBoard() {
         {load.kind === 'ready' && (
           <>
             <p className="text-xs text-ink-muted">
-              {load.rows.length === 0
-                ? 'Nothing is listed right now. Lines to fix inside a Priority draft, and receipts the bot could not close, are not listed here yet — the WhatsApp message has the details.'
-                : `${load.rows.length} to look at`}
+              {load.rows.length === 0 ? emptyStateText(load.fixesAvailable) : `${load.rows.length} to look at`}
               {' · updated '}
               {formatIsraelTime(load.at.toISOString())}
               {load.truncated && ' · showing the newest 200 only — tell Tonmoy'}
