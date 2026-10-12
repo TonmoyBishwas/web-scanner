@@ -5,6 +5,7 @@ import {
   findCountedCarton,
   findCountedCartonByDigits,
   canOfferDifferentCarton,
+  differentCartonOffer,
   isBatchStandIn,
   standInCount,
   scanNoticeMs,
@@ -153,6 +154,53 @@ describe('canOfferDifferentCarton', () => {
   });
 });
 
+describe('differentCartonOffer (S1, David 2026-10-11)', () => {
+  // Baladi stroganoff IN264185622: 15.26 kg net, no serial — two cartons of
+  // 15.26 kg print byte-identical codes.
+  const STROGANOFF = '7290003570867015260157527072027';
+
+  it('a 31-digit weight-bearing code → one-tap twin with the barcode\'s net weight', () => {
+    expect(differentCartonOffer(STROGANOFF, { barcode: STROGANOFF, ocr_status: 'done' }))
+      .toEqual({ quick: true, weight: 15.26 });
+    expect(differentCartonOffer(C8, { barcode: C8, ocr_status: 'failed' }))
+      .toEqual({ quick: true, weight: 12.35 });
+  });
+
+  it('a code with no parseable weight → today\'s "Different carton?" form', () => {
+    expect(differentCartonOffer('7290004456825', { barcode: '7290004456825', ocr_status: 'done' }))
+      .toEqual({ quick: false });
+    // 30-digit Sokołów carton code: not the measured 31-digit format.
+    expect(differentCartonOffer('388432467020926171026048702036', { ocr_status: 'done' }))
+      .toEqual({ quick: false });
+  });
+
+  it('a 31-digit code whose weight field is out of band → the form, never a made-up weight', () => {
+    // 000300 g = 0.3 kg: below parseCartonBarcode's 0.5 kg floor.
+    const light = '7290003570867000300157527072027';
+    expect(differentCartonOffer(light, { ocr_status: 'done' })).toEqual({ quick: false });
+  });
+
+  it('nothing offered wherever canOfferDifferentCarton says no', () => {
+    expect(differentCartonOffer(STROGANOFF, { ocr_status: 'processing' })).toBeNull();
+    expect(differentCartonOffer('2826100100000001', { ocr_status: 'done' })).toBeNull();
+    expect(differentCartonOffer('MANUAL-1727190556000-ab12cd', { ocr_status: 'done' })).toBeNull();
+    const minted = { barcode: '2826100100000001', source_barcode: STROGANOFF, minted: true, ocr_status: 'done' };
+    expect(differentCartonOffer(STROGANOFF, minted)).toBeNull();
+  });
+
+  it('agrees with canOfferDifferentCarton on whether anything is offered', () => {
+    const cases: Array<[string, { ocr_status?: string; barcode?: string }]> = [
+      [C8, { ocr_status: 'done' }],
+      [C9, { ocr_status: 'processing' }],
+      ['7290004456825', { ocr_status: 'done' }],
+      ['NOBC-IN264172-P3-1', { ocr_status: 'done' }],
+    ];
+    for (const [code, row] of cases) {
+      expect(differentCartonOffer(code, row) !== null).toBe(canOfferDifferentCarton(code, row));
+    }
+  });
+});
+
 describe('isBatchStandIn / standInCount', () => {
   const rows = [
     { barcode: C9 },
@@ -195,6 +243,8 @@ describe('scanNoticeMs', () => {
   it('a notice with an action stays up twice as long', () => {
     expect(scanNoticeMs({})).toBe(SCAN_NOTICE_MS);
     expect(scanNoticeMs({ different: { n: 3 } })).toBe(SCAN_NOTICE_ACTION_MS);
+    // The one-tap twin button is an action too: never shorter than the link.
+    expect(scanNoticeMs({ different: { n: 3, quickWeight: 15.26 } })).toBe(SCAN_NOTICE_ACTION_MS);
     expect(SCAN_NOTICE_ACTION_MS).toBeGreaterThan(SCAN_NOTICE_MS);
   });
 });

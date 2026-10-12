@@ -673,6 +673,11 @@ export const en = {
   'terminal.alreadyCounted': 'Carton #{n} is already counted — scan the next carton.',
   'terminal.photoAlreadyCounted': 'This label is carton #{n} — it is already counted.',
   'terminal.differentCarton': 'Different carton?',
+  // One tap on an already-counted notice for a 31-digit weight label: a twin
+  // carton (same weight to the 10 g, so a byte-identical label) is added.
+  'terminal.anotherCartonSameLabel': '➕ Another carton, same label · {kg} kg',
+  'terminal.anotherCartonAdded': 'Carton added ({kg} kg) · print its label from Labels at the end',
+  'terminal.anotherCartonStale': 'The list closed before the carton was added — it is NOT counted. Its unused label is in Labels: delete it there.',
   // The supplier code of an "All boxes identical" batch read again: every
   // carton carrying it is already on the list, one row per saved label.
   'terminal.coveredByLabels': 'Already counted — the {count} identical labels saved for this product cover it. Nothing to scan.',

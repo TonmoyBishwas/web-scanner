@@ -673,6 +673,13 @@ export const he: Record<TranslationKey, string> = {
   'terminal.alreadyCounted': 'קרטון מס׳ {n} כבר נספר — סרוק את הקרטון הבא.',
   'terminal.photoAlreadyCounted': 'המדבקה הזו היא קרטון מס׳ {n} — הוא כבר נספר.',
   'terminal.differentCarton': 'קרטון אחר?',
+  // English: "➕ Another carton, same label · {kg} kg"
+  'terminal.anotherCartonSameLabel': '➕ קרטון נוסף, אותה מדבקה · {kg} ק״ג',
+  // English: "Carton added ({kg} kg) · print its label from Labels at the end"
+  'terminal.anotherCartonAdded': 'הקרטון נוסף ({kg} ק״ג) · הדפס את המדבקה שלו ממסך "מדבקות" בסוף',
+  // English: "The list closed before the carton was added — it is NOT counted.
+  // Its unused label is in Labels: delete it there."
+  'terminal.anotherCartonStale': 'הרשימה נסגרה לפני שהקרטון נוסף — הוא לא נספר. המדבקה שלו שלא נוצלה נמצאת במסך "מדבקות": מחק אותה שם.',
   'terminal.coveredByLabels': 'כבר נספר — {count} המדבקות הזהות שנשמרו למוצר הזה כוללות אותו. אין מה לסרוק.',
   'terminal.coveredByLabelOne': 'כבר נספר — המדבקה הזהה שנשמרה למוצר הזה כוללת אותו. אין מה לסרוק.',
   'terminal.barcodeAcceptedAsPrinted': 'נקרא זהה שלוש פעמים — התקבל כפי שמודפס ({digits}).',

@@ -21,6 +21,7 @@
  */
 
 import { isMintedLabelBarcode } from './label-batches';
+import { parseCartonBarcode } from './barcode-parser';
 
 /** How long a notice stays in the footer. */
 export const SCAN_NOTICE_MS = 4000;
@@ -175,6 +176,33 @@ export function canOfferDifferentCarton(
   if (!/^\d/.test(c) || isMintedLabelBarcode(c)) return false;
   if (typeof row.barcode === 'string' && isBatchStandIn(c, row as CountedRow)) return false;
   return row.ocr_status !== 'processing';
+}
+
+/**
+ * What an already-counted notice offers for a carton with a byte-identical
+ * label (S1, David 2026-10-11).
+ *
+ * - `{ quick: true, weight }` — the code is a 31-digit catch-weight label
+ *   with a parseable net weight (`parseCartonBarcode`, chars 14–19 ÷ 1000).
+ *   Two cartons print the same code exactly when they weigh the same to the
+ *   10 g, so the twin's weight is the one its own barcode prints: the notice
+ *   shows a full-width "Another carton, same label · {kg} kg" button and ONE
+ *   tap saves it (no form). On IN264185523 pallet 2 there were ~20 such
+ *   collisions in 73 cartons; the link-plus-form took two taps each and was
+ *   never found, so the cartons were covered by a batch at a made-up weight.
+ * - `{ quick: false }` — no weight in the code: today's "Different carton?"
+ *   link and form, where the worker types the weight.
+ * - `null` — nothing is offered (see canOfferDifferentCarton).
+ */
+export type DifferentCartonOffer = { quick: true; weight: number } | { quick: false };
+
+export function differentCartonOffer(
+  code: string,
+  row: { ocr_status?: string } & Partial<CountedRow>,
+): DifferentCartonOffer | null {
+  if (!canOfferDifferentCarton(code, row)) return null;
+  const weight = parseCartonBarcode(code)?.weight ?? null;
+  return weight !== null ? { quick: true, weight } : { quick: false };
 }
 
 /**
