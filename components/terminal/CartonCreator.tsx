@@ -42,6 +42,14 @@ interface CartonCreatorProps {
    * page has no pallet notion.
    */
   palletNumber: number | null;
+  /**
+   * Say above Save that the label counts nothing until it is scanned
+   * (pallet-verify). David (2026-10-11) took "צור קרטון" (New carton) for
+   * "add a carton": he printed labels for cartons the scanner had refused as
+   * already counted, never scanned them, and the count stayed 12/15. The
+   * line points him at "Another carton, same label" for that case.
+   */
+  notCountedWarning?: boolean;
   onBack: () => void;
   /** Fired after the batch is saved — the page closes this screen. */
   onCreated?: (count: number, batchId: string | null) => void;
@@ -55,7 +63,7 @@ function displayDate(iso: string): string {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
 }
 
-export function CartonCreator({ token, items, palletNumber, onBack, onCreated }: CartonCreatorProps) {
+export function CartonCreator({ token, items, palletNumber, notCountedWarning = false, onBack, onCreated }: CartonCreatorProps) {
   const tr = useT();
   const { toast, showToast } = useToast();
 
@@ -345,6 +353,12 @@ export function CartonCreator({ token, items, palletNumber, onBack, onCreated }:
           </div>
 
           <div className="flex-none px-3 py-[11px] border-t border-line bg-header safe-bottom">
+            {notCountedWarning && (
+              <p className="flex items-start gap-1.5 mb-[9px] text-[11.5px] font-bold leading-snug text-warn-weak-ink">
+                <MI name="warning" size={16} className="shrink-0 mt-px" />
+                <span className="min-w-0">{tr('carton.notCountedWarning')}</span>
+              </p>
+            )}
             <button
               onClick={handleSave}
               disabled={saving || count < 1}

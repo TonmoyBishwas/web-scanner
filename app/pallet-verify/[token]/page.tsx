@@ -2226,6 +2226,7 @@ export default function PalletVerifyPage({
           token={token}
           items={session?.ocr_data ?? []}
           palletNumber={looseCartonPhase ? 0 : currentPallet}
+          notCountedWarning
           onBack={() => setShowCartonCreator(false)}
           onCreated={(count, batchId) => {
             // Saved only — back to the scanner, no Labels screen. The worker
@@ -2235,7 +2236,9 @@ export default function PalletVerifyPage({
             trace('ui', 'labels_saved', {
               origin: 'new_carton', count, batch_id: batchId, pallet: looseCartonPhase ? 0 : currentPallet,
             });
-            showToast(count === 1 ? tr('carton.savedOne') : tr('carton.saved', { count }), 'save');
+            // Not counted until the printed label is scanned (David
+            // 2026-10-11 printed labels and never scanned them back).
+            showToast(count === 1 ? tr('carton.savedNotCountedOne') : tr('carton.savedNotCounted', { count }), 'save');
           }}
         />
       )}
