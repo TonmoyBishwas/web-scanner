@@ -13,7 +13,7 @@ import {
   type DecodePass,
   type FrameRead,
 } from '@/lib/barcode-frame';
-import { preferCartonCodes as dropProductCodesBesideCartonCode } from '@/lib/frame-reads';
+import { CartonCodeMemory } from '@/lib/frame-reads';
 import { useT } from '@/lib/i18n';
 import { useSettingsStore } from '@/stores/settings-store';
 
@@ -84,10 +84,12 @@ interface SmartScannerProps {
    */
   paused?: boolean;
   /**
-   * One frame decodes a product code (EAN-13 or shorter) AND a longer carton
-   * code: keep only the carton code (lib/frame-reads.ts). Set by the inbound
-   * pages (pallet-verify, /scan), where a carton is booked under the code it
-   * is read by; off elsewhere (/issue, non-meat), which keep every read.
+   * A product code (EAN-13 or shorter, or a fragment) that a carton code read
+   * in the last 3 s carries — by either decoder — is not the carton: drop it
+   * (lib/frame-reads.ts). Unrelated codes are kept and the nearest the centre
+   * wins as before. Set by the inbound pages (pallet-verify, /scan), where a
+   * carton is booked under the code it is read by; off elsewhere (/issue,
+   * non-meat), which keep every read.
    */
   preferCartonCodes?: boolean;
 }
@@ -634,6 +636,8 @@ export function SmartScanner({
   // Multi-read validation: two identical reads within 3 s, counted per value
   // so a second sticker in the frame cannot keep resetting the aimed one.
   const confirmerRef = useRef(new ReadConfirmer(2, 3000));
+  // Carton codes read in the last 3 s, by either decoder (preferCartonCodes).
+  const cartonCodesRef = useRef(new CartonCodeMemory(3000));
   // Background thread running the edge-to-edge Code 128 reader (see
   // scanContinuously). Owned by the scan loop; stopped with the camera.
   const e2eWorkerRef = useRef<Worker | null>(null);
@@ -1199,10 +1203,21 @@ export function SmartScanner({
     const consume = async (reads: FrameRead[], via: string) => {
       const now = Date.now();
 
-      // A carton code and a product code in one frame: the carton code is the
+      // A carton code and the product code it carries: the carton code is the
       // carton (David's Well Done 48288, 2026-10-11 — the EAN-13 on the brand
-      // sticker won the race and booked every carton as one).
-      const frameReads = preferCartonCodesRef.current ? dropProductCodesBesideCartonCode(reads) : reads;
+      // sticker won the race and booked every carton as one). The two
+      // decoders hand over their reads of one frame separately, so carton
+      // codes are remembered for the confirmer's window, and a product code
+      // already counting from earlier frames loses its count once its carton
+      // code shows up. A fragment of the carton code goes the same way (it
+      // would confirm, be refused as too short, and start the 3 s cooldown
+      // that then discards the carton code's own confirmation).
+      let frameReads = reads;
+      if (preferCartonCodesRef.current) {
+        const memory = cartonCodesRef.current;
+        frameReads = memory.filter(reads, now);
+        confirmerRef.current.forget((v) => memory.claims(v));
+      }
 
       // Multi-read validation: 2 identical reads within 3 seconds, per value.
       const { confirmed, progress } = confirmerRef.current.add(frameReads, now);
