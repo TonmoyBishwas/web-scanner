@@ -10,6 +10,10 @@ import {
   standInCount,
   scanNoticeMs,
   nearestScrollTop,
+  twinCount,
+  noteTwinHoldRead,
+  TWIN_REARM_GAP_MS,
+  type TwinHold,
   DUPLICATE_QUIET_MS,
   SCAN_NOTICE_MS,
   SCAN_NOTICE_ACTION_MS,
@@ -236,6 +240,76 @@ describe('isBatchStandIn / standInCount', () => {
   it('standInCount is the number of labels the batch saved', () => {
     expect(standInCount(rows, C8)).toBe(3);
     expect(standInCount(rows, C9)).toBe(0);
+  });
+});
+
+describe('twin rows (one more carton, same label) are not a batch', () => {
+  // Stroganoff: original A (code X) rescanned AFTER a one-tap twin was added,
+  // so the twin now sits ahead of A on the list.
+  const X = '7290003570867015260157527072027';
+  const rows = [
+    { barcode: C9 },
+    { barcode: '2826101100000001', source_barcode: X, minted: true, twin: true },
+    { barcode: X },
+  ];
+
+  it('findCountedCarton names the row carrying the code itself, not the twin ahead of it', () => {
+    expect(findCountedCarton(rows, X)).toEqual({ n: 3, row: rows[2] });
+  });
+
+  it('findCountedCartonByDigits does the same for a photo', () => {
+    expect(findCountedCartonByDigits(rows, X)).toEqual({ n: 3, row: rows[2] });
+  });
+
+  it('a twin row is never a batch stand-in, so the twin button stays on offer', () => {
+    expect(isBatchStandIn(X, rows[1])).toBe(false);
+    expect(standInCount(rows, X)).toBe(0);
+    expect(differentCartonOffer(X, { ...rows[1], ocr_status: 'done' })).toEqual({ quick: true, weight: 15.26 });
+  });
+
+  it('even when only twins of the code are left, the hit still offers the twin button', () => {
+    const onlyTwins = rows.slice(0, 2);
+    const hit = findCountedCarton(onlyTwins, X);
+    expect(hit?.n).toBe(2);
+    expect(differentCartonOffer(X, { ...hit!.row, ocr_status: 'done' })).toEqual({ quick: true, weight: 15.26 });
+  });
+
+  it('twinCount counts the twins of a code only', () => {
+    expect(twinCount(rows, X)).toBe(1);
+    expect(twinCount(rows, C9)).toBe(0);
+    // A real batch row is not a twin.
+    expect(twinCount([{ barcode: '2826100100000001', source_barcode: X, minted: true }], X)).toBe(0);
+  });
+});
+
+describe('noteTwinHoldRead (no second one-tap from a parked camera)', () => {
+  const X = '7290003570867015260157527072027';
+
+  it('no hold → never held', () => {
+    expect(noteTwinHoldRead({ current: null }, X, 0)).toBe(false);
+  });
+
+  it('a camera parked on the sticker (re-read every ~3.3 s) stays held however long it sits', () => {
+    const hold: { current: TwinHold | null } = { current: { code: X, lastRead: 0 } };
+    for (let t = 3_300; t <= 30_000; t += 3_300) {
+      expect(noteTwinHoldRead(hold, X, t)).toBe(true);
+    }
+  });
+
+  it('the code unread for the gap → released', () => {
+    const hold: { current: TwinHold | null } = { current: { code: X, lastRead: 0 } };
+    expect(noteTwinHoldRead(hold, X, TWIN_REARM_GAP_MS)).toBe(false);
+    expect(hold.current).toBeNull();
+  });
+
+  it('a different code read → released, and the code is offered again next time', () => {
+    const hold: { current: TwinHold | null } = { current: { code: X, lastRead: 0 } };
+    expect(noteTwinHoldRead(hold, C9, 1_000)).toBe(false);
+    expect(noteTwinHoldRead(hold, X, 2_000)).toBe(false);
+  });
+
+  it('the gap is longer than the parked re-read cadence', () => {
+    expect(TWIN_REARM_GAP_MS).toBeGreaterThan(3_300);
   });
 });
 

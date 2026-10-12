@@ -672,6 +672,8 @@ export const he: Record<TranslationKey, string> = {
   'terminal.barcodeMisread': 'הברקוד נקרא לא נכון ({digits}) — ספרת הביקורת שגויה. סרוק שוב.',
   'terminal.alreadyCounted': 'קרטון מס׳ {n} כבר נספר — סרוק את הקרטון הבא.',
   'terminal.photoAlreadyCounted': 'המדבקה הזו היא קרטון מס׳ {n} — הוא כבר נספר.',
+  // English: "Carton #{n} and {more} more with this label are already counted."
+  'terminal.alreadyCountedPlusTwins': 'קרטון מס׳ {n} ועוד {more} עם אותה מדבקה כבר נספרו.',
   'terminal.differentCarton': 'קרטון אחר?',
   // English: "➕ Another carton, same label · {kg} kg"
   'terminal.anotherCartonSameLabel': '➕ קרטון נוסף, אותה מדבקה · {kg} ק״ג',
@@ -911,8 +913,9 @@ export const he: Record<TranslationKey, string> = {
   'carton.saved': 'נשמרו {count} מדבקות · הדפס אותן ממסך "מדבקות" ואז סרוק כל קרטון',
   'carton.savedOne': 'המדבקה נשמרה · הדפס אותה ממסך "מדבקות" ואז סרוק את הקרטון',
   // English: "Not counted until you scan the printed label. Carton whose label
-  // was already scanned? Use "Another carton, same label"."
-  'carton.notCountedWarning': 'שימו לב: הקרטון לא נספר עד שסורקים את המדבקה המודפסת. קרטון עם מדבקה שכבר נסרקה? השתמשו ב"קרטון נוסף, אותה מדבקה".',
+  // was already scanned? On the "already counted" notice use "Another carton,
+  // same label" or "Different carton?"."
+  'carton.notCountedWarning': 'שימו לב: הקרטון לא נספר עד שסורקים את המדבקה המודפסת. קרטון עם מדבקה שכבר נסרקה? בהודעה "כבר נספר" השתמשו ב"קרטון נוסף, אותה מדבקה" או ב"קרטון אחר?".',
   // English: "{count} labels saved — NOT counted yet. Print them from Labels,
   // stick one on each carton, then scan each label."
   'carton.savedNotCounted': 'נשמרו {count} מדבקות — עדיין לא נספרו. הדפס אותן ממסך "מדבקות", הדבק אחת על כל קרטון וסרוק כל מדבקה.',
