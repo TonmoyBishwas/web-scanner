@@ -155,9 +155,12 @@ const LineCard = memo(function LineCard({ line, d, errKey, language, today, onCh
       ? tr('receive.qtyUnit', { unit: line.unit_label })
       : tr('receive.qtyPlain');
   const packWord = line.packaging ? PACKAGING_LABELS[line.packaging][lang] : tr('receive.packsWord');
+  // Each figure+word is a bidi isolate, so a Hebrew unit on an English page
+  // (or the reverse) cannot swap places with its number.
+  const iso = (v: string) => `\u2068${v}\u2069`;
   const onNote =
-    tr('receive.onNote', { qty: fmtQty(line.qty), unit: line.unit_label || '' }).trim() +
-    (line.cartons !== null ? ` · ${tr('receive.onNotePacks', { n: line.cartons, pack: packWord })}` : '');
+    tr('receive.onNote', { what: iso(`${fmtQty(line.qty)} ${line.unit_label || ''}`.trim()) }) +
+    (line.cartons !== null ? ` · ${iso(tr('receive.onNotePacks', { n: line.cartons, pack: packWord }))}` : '');
 
   const set = (patch: Partial<LineDraft>) => onChange(line.index, patch);
   const gapChoice = (g: Gap) => set({ gap: d.gap === g ? null : g });
@@ -214,7 +217,7 @@ const LineCard = memo(function LineCard({ line, d, errKey, language, today, onCh
         )}
         {over && (
           <p className="mt-1 text-sm font-bold text-info-weak-ink">
-            {tr('receive.over', { x: fmtQty(received - line.qty) })}
+            {tr('receive.over', { x: `\u2066+${fmtQty(received - line.qty)}\u2069` })}
           </p>
         )}
       </div>
@@ -645,7 +648,7 @@ export function ReceiptForm({
               value={draft.pallets}
               placeholder={tr('receive.optional')}
               onChange={(e) => setDraft((d) => ({ ...d, pallets: e.target.value }))}
-              className={`${INPUT} w-28 flex-none font-mono ${palletsBad ? BAD_BORDER : OK_BORDER}`}
+              className={`${INPUT.replace('w-full ', '')} w-28 flex-none font-mono ${palletsBad ? BAD_BORDER : OK_BORDER}`}
             />
           </div>
           <FieldError text={palletsBad ? tr('receive.err.pallets') : null} />
