@@ -257,6 +257,8 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.deferredCountHint': 'הזן את הסך הכל — כולל {scanned} שכבר נסרקו.',
   'palletVerify.singleMultiplyNote': 'כל קופסה במשקל {weight} ק״ג — נכפיל בסך שתזין. אין צורך לסרוק את השאר.',
   'palletVerify.deferredCountTooLow': 'הסך הכל חייב להיות לפחות {min} (קופסאות שכבר נסרקו).',
+  'palletVerify.prefillFromNote': 'לפי התעודה',
+  'palletVerify.prefillFromScans': 'נסרקו',
   'palletVerify.deleteScan': 'מחק סריקה זו',
 
   'palletVerify.editScan': 'ערוך',

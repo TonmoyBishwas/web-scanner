@@ -57,6 +57,7 @@ import { matchInvoiceItem } from '@/lib/invoice-match';
 import { isSplitSession } from '@/lib/session-mode';
 import { findDuplicateOwner } from '@/lib/duplicate-guard';
 import { classifyRead, noteRepeatedRead } from '@/lib/carton-barcode';
+import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
 import { useBackClose } from '@/lib/use-back-close';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback, scanAlreadyCountedFeedback } from '@/lib/scan-feedback';
@@ -643,6 +644,11 @@ export default function PalletVerifyPage({
     avg_weight: number;
     sample_barcodes: string[];
   } | null>(null);
+  // SCN-14: the figure the pallet-total input was pre-filled with, and for
+  // which pallet/path ("3:m" mixed, "3:s:<name_key>" single-item). Only a
+  // suggestion — the worker still taps Set; see lib/count-prefill.ts.
+  const [countPrefillShown, setCountPrefillShown] = useState<CountPrefill | null>(null);
+  const countPrefillKeyRef = useRef('');
   // AI consolidation state: worker-accepted merges (originalKey → canonicalKey).
   // These get applied wherever we call `groupBoxesByName` and threaded into
   // the webhook so the bot's Pallet Items rows reflect the merged groups.
@@ -2810,7 +2816,7 @@ export default function PalletVerifyPage({
 
   function handlePalletCountSubmit() {
     const count = parseInt(boxCountInput, 10);
-    trace('ui', 'count_submit', { pallet: currentPallet, input: boxCountInput, scanned: scannedBoxes.length });
+    trace('ui', 'count_submit', { pallet: currentPallet, input: boxCountInput, scanned: scannedBoxes.length, prefill: countPrefillShown });
     // Typing the total answers whatever the footer was saying.
     clearScanNotice();
     if (isNaN(count) || count < 1) {
@@ -3176,6 +3182,73 @@ export default function PalletVerifyPage({
     (committed < confirmedBoxCount || (hasUnresolvedWarnings && softWarnings));
   // Cartons still to scan against the worker's total (0 when none is set).
   const shortCount = Math.max(0, confirmedBoxCount - committed);
+
+  // The deferred pallet-total input: after enough OCR'd boxes (or the worker
+  // said mix / single-item, or a minted batch put the count on the list), or
+  // reopened by the pencil to change the total.
+  const showCountInput = confirmedBoxCount === 0 && (
+    totalEdit !== null
+    || (!anyProcessing && (doneCount >= 4 || forcedMix || !!pendingSingleGroup || scannedBoxes.some((b) => b.minted)))
+  );
+
+  // SCN-14: what the input offers before the worker types — the note's
+  // cartons for this pallet when knowable, else (mixed only) the scanned
+  // count. Never submitted for him: he still confirms with Set.
+  const countPrefillKey = `${currentPallet}:${pendingSingleGroup ? 's:' + pendingSingleGroup.name_key : 'm'}`;
+  let countPrefillNow: CountPrefill | null = null;
+  if (showCountInput && totalEdit === null && session) {
+    const lines = session.ocr_data ?? [];
+    const matched = pendingSingleGroup
+      ? matchInvoiceItem(pendingSingleGroup.item_name_hebrew, pendingSingleGroup.item_name, lines)
+      : null;
+    countPrefillNow = countPrefill({
+      lines,
+      palletCount: pallet_count,
+      currentPallet,
+      looseBoxCount: session.loose_box_count || 0,
+      isSplit: isSplitSession(session),
+      completedBoxCounts: (session.completed_pallets || []).map((p) => p.box_count),
+      meatCommitted: session.meat_committed,
+      singleItemLine: pendingSingleGroup ? (lines.find((l) => l === matched) ?? null) : undefined,
+      scannedTotal: listTotal(scannedBoxes),
+      minRequired: Math.max(2, scannedBoxes.length),
+    });
+  }
+  const countPrefillValue = countPrefillNow?.value ?? null;
+  const countPrefillSource = countPrefillNow?.source ?? null;
+  useEffect(() => {
+    if (countPrefillValue === null && countPrefillKeyRef.current === countPrefillKey) return;
+    const next = countPrefillValue !== null && countPrefillSource
+      ? { value: countPrefillValue, source: countPrefillSource }
+      : null;
+    if (countPrefillKeyRef.current !== countPrefillKey) {
+      // New pallet / path. Fill only an empty input: a restored or
+      // worker-typed number is never overwritten.
+      if (next === null) {
+        // Input not open yet, or nothing to offer. Drop a tag left from the
+        // previous pallet/path so it can't label a number he types now.
+        if (countPrefillShown) setCountPrefillShown(null);
+        return;
+      }
+      countPrefillKeyRef.current = countPrefillKey;
+      if (boxCountInput !== '') { setCountPrefillShown(null); return; }
+      setBoxCountInput(String(next.value));
+      setCountPrefillShown(next);
+      trace('ui', 'count_prefill', { pallet: currentPallet, value: next.value, source: next.source });
+      return;
+    }
+    // Same pallet/path: keep an UNTOUCHED prefill current (the scanned count
+    // rises as he scans). Once he edits it, it is his number.
+    if (next && countPrefillShown && boxCountInput === String(countPrefillShown.value)
+        && (next.value !== countPrefillShown.value || next.source !== countPrefillShown.source)) {
+      setBoxCountInput(String(next.value));
+      setCountPrefillShown(next);
+    }
+  }, [countPrefillKey, countPrefillValue, countPrefillSource, boxCountInput, countPrefillShown, currentPallet]);
+  // The source line shows only while the input still holds the prefill.
+  const countPrefillTag = countPrefillShown && boxCountInput === String(countPrefillShown.value)
+    ? countPrefillShown.source
+    : null;
 
   // Group scanned boxes by normalized OCR'd Hebrew name (with worker-accepted
   // AI merges applied). Barcode digits are intentionally NOT used — they're
@@ -3729,14 +3802,6 @@ export default function PalletVerifyPage({
     ? (committed < 2 ? tr('palletVerify.scanToStart') : tr('palletVerify.setTotalBelow'))
     : tr('palletVerify.leftToScan', { left: shortCount, total: confirmedBoxCount });
 
-  // The deferred pallet-total input: after enough OCR'd boxes (or the worker
-  // said mix / single-item, or a minted batch put the count on the list), or
-  // reopened by the pencil to change the total.
-  const showCountInput = confirmedBoxCount === 0 && (
-    totalEdit !== null
-    || (!anyProcessing && (doneCount >= 4 || forcedMix || !!pendingSingleGroup || scannedBoxes.some((b) => b.minted)))
-  );
-
   // "Done scanning? Enter the pallet total" — the way off a pallet the
   // scanner can't classify on its own (1–3 read boxes, no total yet).
   const showDoneScanning =
@@ -3797,6 +3862,13 @@ export default function PalletVerifyPage({
             <label className="block min-w-0 text-xs text-ink-body font-medium">
               {tr('palletVerify.deferredCountTitle')}
             </label>
+            {/* Where the pre-filled number came from — on the title line, not
+                a new one (same 641px footer budget as Cancel). */}
+            {totalEdit === null && countPrefillTag && (
+              <span className="shrink-0 text-[11px] text-ink-muted">
+                {tr(countPrefillTag === 'note' ? 'palletVerify.prefillFromNote' : 'palletVerify.prefillFromScans')}
+              </span>
+            )}
             {totalEdit !== null && (
               <button
                 type="button"
@@ -3825,6 +3897,9 @@ export default function PalletVerifyPage({
                 setPalletCountError(null);
               }}
               onKeyDown={(e) => e.key === 'Enter' && handlePalletCountSubmit()}
+              // A pre-filled figure is replaced by the first digit typed,
+              // not appended to.
+              onFocus={(e) => e.currentTarget.select()}
               placeholder={tr('palletVerify.boxCountPlaceholder')}
               className="flex-1 min-w-0 text-center text-xl font-black font-mono text-ink bg-sunken border-2 border-line-strong rounded-[12px] py-2 px-3 transition outline-none focus:border-brand focus:ring-4 focus:ring-brand/20 placeholder:text-ink-muted placeholder:font-medium placeholder:text-base placeholder:font-sans"
               autoFocus

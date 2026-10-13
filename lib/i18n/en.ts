@@ -254,6 +254,8 @@ export const en = {
   'palletVerify.deferredCountHint': 'Enter the total — including the {scanned} you already scanned.',
   'palletVerify.singleMultiplyNote': 'Every box weighs {weight} kg — we multiply by the total you enter. No need to scan the rest.',
   'palletVerify.deferredCountTooLow': 'Total must be at least {min} (boxes already scanned).',
+  'palletVerify.prefillFromNote': 'according to the note',
+  'palletVerify.prefillFromScans': 'scanned',
   'palletVerify.deleteScan': 'Delete this scan',
 
   'palletVerify.editScan': 'Edit',
