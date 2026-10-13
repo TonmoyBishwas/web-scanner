@@ -11,6 +11,7 @@ import { normalizeBoxExpiries } from '@/lib/expiry';
 import { findUnprintedForSession } from '@/lib/carton-labels';
 import { blockingLabels, barcodesBeingBooked, labelGateError, unprintedOnList } from '@/lib/label-gate';
 import { sessionBookedBarcodes } from '@/lib/label-batches';
+import { isEmptySummaryLine } from '@/lib/pallet-lines';
 
 const SESSION_TTL = 7200;
 // "Same weight" means the printed weights are EXACTLY equal — a fixed-weight
@@ -553,7 +554,26 @@ export async function POST(request: NextRequest) {
       // to prevent duplicate scans of the same physical box.
       const grouped = groupBoxesByName(scanned_boxes, mergeMap);
 
-      const items = Array.from(grouped.entries()).map(([nameKey, itemBoxes]) => {
+      // SCN-11: a group with no name and no weight (a row whose OCR read
+      // nothing) would become a ghost pallet item the bot books no box for.
+      // Left out of `items` — its row still travels in scanned_boxes below —
+      // unless it is all there is (the bot never gets an empty item list).
+      const allGroups = Array.from(grouped.entries());
+      const lineGroups = allGroups.filter(([nameKey, itemBoxes]) => {
+        const empty = isEmptySummaryLine(
+          {
+            // The line's item_code is matched from these names below, so a
+            // line with no name has none either.
+            item_code: null,
+            item_name: itemBoxes.find((b) => b.item_name)?.item_name,
+            item_name_hebrew: itemBoxes.find((b) => b.item_name_hebrew)?.item_name_hebrew,
+          },
+          itemBoxes,
+        );
+        if (empty) console.warn(`[multi-pallet-complete] SCN-11 empty summary line (${itemBoxes.length} box(es), key ${JSON.stringify(nameKey)}) on ${session.document_number} P${palletNumber}`);
+        return !empty;
+      });
+      const items = (lineGroups.length > 0 ? lineGroups : allGroups).map(([nameKey, itemBoxes]) => {
         const override =
           uniform_groups?.find((g) => g.name_key === nameKey) ??
           // Backward-compat: older clients sent `sku` (which used to be the
