@@ -670,6 +670,7 @@ export const he: Record<TranslationKey, string> = {
   'terminal.barcodeNeedName': 'הגדר תחילה את שם הפריט — המדבקה חייבת לציין מהו',
   'terminal.barcodeNoneBtn': 'אין ברקוד קריא על הקרטון',
   'terminal.barcodeNoneSet': 'נקלט ללא ברקוד',
+  'terminal.barcodeAddBtn': 'הוסף ברקוד',
   'terminal.barcodeDuplicate': 'לקרטון אחר על המשטח כבר יש ברקוד זה',
   'terminal.barcodeMisread': 'הברקוד נקרא לא נכון ({digits}) — ספרת הביקורת שגויה. סרוק שוב.',
   'terminal.alreadyCounted': 'קרטון מס׳ {n} כבר נספר — סרוק את הקרטון הבא.',

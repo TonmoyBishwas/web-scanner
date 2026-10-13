@@ -670,6 +670,7 @@ export const en = {
   'terminal.barcodeNeedName': 'Set the item name first — the sticker has to say what it is',
   'terminal.barcodeNoneBtn': 'No readable barcode on this carton',
   'terminal.barcodeNoneSet': 'Booked without a barcode',
+  'terminal.barcodeAddBtn': 'Add barcode',
   'terminal.barcodeDuplicate': 'Another carton on this pallet already has that barcode',
   'terminal.barcodeMisread': 'Barcode misread ({digits}) — the check digit is wrong. Scan it again.',
   'terminal.alreadyCounted': 'Carton #{n} is already counted — scan the next carton.',

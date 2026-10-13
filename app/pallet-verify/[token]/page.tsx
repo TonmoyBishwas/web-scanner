@@ -58,6 +58,7 @@ import { isSplitSession } from '@/lib/session-mode';
 import { findDuplicateOwner } from '@/lib/duplicate-guard';
 import { classifyRead, noteRepeatedRead } from '@/lib/carton-barcode';
 import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
+import { freeNoBarcodeId, isNoBarcodeId, unreadDigitsOutcome } from '@/lib/no-barcode';
 import { useBackClose } from '@/lib/use-back-close';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback, scanAlreadyCountedFeedback } from '@/lib/scan-feedback';
@@ -165,14 +166,8 @@ function digitsOnly(s: string | null | undefined): string {
 const PROVISIONAL_PREFIX = 'MANUAL-';
 const isProvisional = (barcode: string) => barcode.startsWith(PROVISIONAL_PREFIX);
 
-// What a carton with no readable barcode at all is booked as. It has to be
-// non-empty — the bot skips any box whose barcode is falsy
-// (`airtable_service.create_pallet_box_inventory`), so an empty string would
-// silently drop the carton out of `box_inventory` — and it has to be visibly
-// not-a-barcode so nothing ever tries to match it against a scan.
-const NO_BARCODE_PREFIX = 'NOBC-';
-const noBarcodeId = (doc: string, pallet: number, n: number) =>
-  `${NO_BARCODE_PREFIX}${(doc || 'DOC').replace(/[^A-Za-z0-9]/g, '').slice(0, 10)}-P${pallet}-${n}`;
+// What a carton with no readable barcode at all is booked as: the NOBC-
+// marker from lib/no-barcode.ts (non-empty, visibly not a barcode).
 
 /** A real GS1 carton barcode carries at least the 13-digit item prefix. */
 const MIN_BARCODE_DIGITS = 13;
@@ -189,11 +184,14 @@ function stripProvisionalIds<T extends { barcode: string; sku?: string }>(
   doc: string,
   pallet: number,
 ): T[] {
-  return boxes.map((b, i) =>
-    isProvisional(b.barcode)
-      ? { ...b, barcode: noBarcodeId(doc, pallet, i + 1), sku: b.sku && !isProvisional(b.sku) ? b.sku : '' }
-      : b,
-  );
+  // Never a marker another row already carries (lib/no-barcode.ts).
+  const taken = boxes.map((b) => b.barcode);
+  return boxes.map((b, i) => {
+    if (!isProvisional(b.barcode)) return b;
+    const id = freeNoBarcodeId(doc, pallet, i + 1, taken);
+    taken.push(id);
+    return { ...b, barcode: id, sku: b.sku && !isProvisional(b.sku) ? b.sku : '' };
+  });
 }
 
 /** `2027-06-16` → `16/06/27`, for a toast that has to stay one short line. */
@@ -1418,8 +1416,23 @@ export default function PalletVerifyPage({
               processedRef.current.add(digits); // so a later bar-scan of this sticker is caught
               setError(null); // clear any earlier rejection banner now that this box committed
               clearScanNotice();
+            } else if (unreadDigitsOutcome({
+              nameHebrew: data.ocr_data.product_name_hebrew,
+              nameEnglish: data.ocr_data.product_name_english,
+              weightKg: data.ocr_data.weight_kg,
+            }) === 'book_without_barcode') {
+              // BOT-32: the digits were not read, but the name and the weight
+              // were — the carton is captured. Book it under a no-barcode
+              // marker, no warning, no gate. "Type digits" / "Create label"
+              // stay one tap away in the edit panel.
+              resolvedBarcode = freeNoBarcodeId(
+                sessionRef.current?.document_number || '', currentPalletRef.current, idx + 1,
+                prev.filter((_, i) => i !== idx).map((b) => b.barcode),
+              );
+              resolvedSku = '';
+              trace('ui', 'manual_capture_no_digits', { provisional: lookupKey, booked_as: resolvedBarcode });
             } else {
-              needsReview = true; // OCR couldn't read the digits → can't dedupe
+              needsReview = true; // nothing usable read → the worker has to look
             }
           }
           // Even when OCR "succeeded", flag the box if the model didn't return
@@ -1830,7 +1843,10 @@ export default function PalletVerifyPage({
     setEditError(null);
     setEditForm({
       ...editForm,
-      forcedId: noBarcodeId(session?.document_number || '', currentPallet, n || list.length + 1),
+      forcedId: freeNoBarcodeId(
+        session?.document_number || '', editForm.isLoose ? 0 : currentPallet, n || list.length + 1,
+        list.map((b) => b.barcode),
+      ),
       unidentified: false,
       barcodeInput: '',
     });
@@ -2225,7 +2241,7 @@ export default function PalletVerifyPage({
    *  that is not itself minted and not still in OCR. */
   function canDeclareIdentical(box: BoxScan): boolean {
     return box.ocr_status !== 'processing' && !box.minted
-      && !isProvisional(box.barcode) && !box.barcode.startsWith(NO_BARCODE_PREFIX);
+      && !isProvisional(box.barcode) && !isNoBarcodeId(box.barcode);
   }
 
   function buildDockChips(opts: { gap: () => void }): ToolChip[] {
@@ -2500,6 +2516,14 @@ export default function PalletVerifyPage({
       minting={mintingBarcode}
       onNoBarcode={handleNoBarcode}
       showNoBarcode={mintFailed}
+      // BOT-32: a carton booked without a barcode can still get one — typed
+      // or minted — but only if the worker goes looking for it.
+      onAddBarcode={!editForm.unidentified && isNoBarcodeId(editForm.forcedId || editForm.barcode)
+        ? () => {
+            trace('ui', 'add_barcode_open', { barcode: editForm.barcode });
+            setEditForm({ ...editForm, unidentified: true, forcedId: undefined, barcodeInput: '' });
+          }
+        : undefined}
       itemChips={itemOptions(session?.ocr_data ?? []).map((it) => ({
         label: it.he || it.en,
         code: it.codes.join(' · '),
@@ -2616,6 +2640,19 @@ export default function PalletVerifyPage({
               resolvedSku = digits.slice(0, 13);
               looseProcessedRef.current.add(digits);
               clearScanNotice();
+            } else if (unreadDigitsOutcome({
+              nameHebrew: data.ocr_data.product_name_hebrew,
+              nameEnglish: data.ocr_data.product_name_english,
+              weightKg: data.ocr_data.weight_kg,
+            }) === 'book_without_barcode') {
+              // BOT-32, loose pile: same as the pallet phase (P0 = loose, as
+              // stripProvisionalIds books it).
+              resolvedBarcode = freeNoBarcodeId(
+                sessionRef.current?.document_number || '', 0, idx + 1,
+                prev.filter((_, i) => i !== idx).map((b) => b.barcode),
+              );
+              resolvedSku = '';
+              trace('ui', 'loose_manual_capture_no_digits', { provisional: lookupKey, booked_as: resolvedBarcode });
             } else {
               needsReview = true;
             }
@@ -3670,7 +3707,7 @@ export default function PalletVerifyPage({
                     key={box.barcode + i}
                     index={looseBoxes.length - 1 - i}
                     name={box.item_name_hebrew || box.item_name || '—'}
-                    barcode={box.barcode}
+                    barcode={isNoBarcodeId(box.barcode) ? undefined : box.barcode}
                     weight={box.weight > 0 ? box.weight.toFixed(2) : undefined}
                     unitLabel={tr('common.kg')}
                     status={
@@ -4224,7 +4261,7 @@ export default function PalletVerifyPage({
                   key={box.barcode + i}
                   index={scannedBoxes.length - 1 - i}
                   name={box.item_name_hebrew || box.item_name || '—'}
-                  barcode={box.barcode}
+                  barcode={isNoBarcodeId(box.barcode) ? undefined : box.barcode}
                   weight={box.weight > 0 ? box.weight.toFixed(2) : undefined}
                   unitLabel={tr('common.kg')}
                   status={
