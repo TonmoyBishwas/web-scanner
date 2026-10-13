@@ -148,14 +148,21 @@ export function gateMissing(args: { name: string; weight: string; barcodeMissing
 /**
  * A flagged carton (needs review, or a barcode-vs-OCR conflict) can ALWAYS be
  * saved, even untouched: saving is how the worker says "I looked, it is
- * right", and a disabled Save would strand it.
+ * right", and a disabled Save would strand it — unless its dates are refused:
+ * the worker can always clear the expiry, so that never strands it.
  */
 export function saveMode(args: {
   dirty: boolean;
   hasConflict: boolean;
   needsReview: boolean;
   gateMissing: boolean;
+  /**
+   * The expiry is refused by lib/date-validation.ts (on/before today or on/
+   * before the production date). Nothing saves until it is fixed or cleared.
+   */
+  datesInvalid?: boolean;
 }): SaveMode {
+  if (args.datesInvalid) return 'disabled';
   if (!args.dirty && !args.hasConflict && !args.needsReview) return 'disabled';
   return args.gateMissing ? 'warn' : 'ready';
 }

@@ -24,6 +24,8 @@ import { Toast, useToast } from './Toast';
 import { useT } from '@/lib/i18n';
 import { normalizeString } from '@/lib/string-utils';
 import { batchIdForPayload } from '@/lib/label-batches';
+import { validateCartonDates } from '@/lib/date-validation';
+import { localIsoDate } from '@/lib/edit-panel-state';
 import type { CartonLabel } from '@/types';
 
 /** The subset of an invoice line this screen needs, shared by both session shapes. */
@@ -96,6 +98,9 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
   }, [items, query]);
 
   const count = Math.min(Math.max(parseInt(quantity, 10) || 0, 0), 500);
+  // The label prints these dates: a refused expiry (on/before today or on/
+  // before the production date) blocks Save; a blank one never does.
+  const dateError = validateCartonDates({ production: productionDate, expiry: expiryDate, receiptDate: localIsoDate() }).expiryError;
 
   // The preview is the real sticker component fed placeholder identifiers, so
   // what the worker approves is what comes out of the printer.
@@ -126,7 +131,7 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
   };
 
   async function handleSave() {
-    if (!selected || saving || count < 1) return;
+    if (!selected || saving || count < 1 || dateError) return;
     setSaving(true);
     try {
       const payload = {
@@ -280,26 +285,48 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
             {/* Dates */}
             <div className="flex gap-2">
               {([
-                { field: 'production' as DateField, label: tr('carton.production'), value: productionDate },
-                { field: 'expiry' as DateField, label: tr('carton.expiry'), value: expiryDate },
-              ]).map(d => (
-                <div key={d.field} className="flex-1 min-w-0">
-                  <div className={fieldLabel}>{d.label}</div>
-                  <button
-                    onClick={() => setCalendarFor(d.field)}
-                    className={`${tile} w-full h-[52px] px-3 flex items-center gap-2 text-start`}
-                  >
-                    <MI name="event" size={18} className="text-brand-weak-ink" />
-                    <span
-                      dir="ltr"
-                      className={`flex-1 min-w-0 truncate font-mono text-[14px] font-extrabold ${d.value ? 'text-ink-inverse' : 'text-search-ink'}`}
-                    >
-                      {d.value ? displayDate(d.value) : '—'}
-                    </span>
-                  </button>
-                </div>
-              ))}
+                { field: 'production' as DateField, label: tr('carton.production'), value: productionDate, clear: () => setProductionDate(''), clearLabel: tr('terminal.clearProduction') },
+                { field: 'expiry' as DateField, label: tr('carton.expiry'), value: expiryDate, clear: () => setExpiryDate(''), clearLabel: tr('terminal.clearExpiry') },
+              ]).map(d => {
+                const bad = d.field === 'expiry' && !!dateError;
+                return (
+                  <div key={d.field} className="flex-1 min-w-0">
+                    <div className={fieldLabel}>{d.label}</div>
+                    <div className="relative">
+                      <button
+                        onClick={() => setCalendarFor(d.field)}
+                        className={`${bad ? 'bg-tile border-2 border-danger rounded-[12px]' : tile} w-full h-[52px] ps-3 pe-[38px] flex items-center gap-2 text-start`}
+                      >
+                        <MI name="event" size={18} className={bad ? 'text-danger' : 'text-brand-weak-ink'} />
+                        <span
+                          dir="ltr"
+                          className={`flex-1 min-w-0 truncate font-mono text-[14px] font-extrabold ${bad ? 'text-danger-weak-ink' : d.value ? 'text-ink-inverse' : 'text-search-ink'}`}
+                        >
+                          {d.value ? displayDate(d.value) : '—'}
+                        </span>
+                      </button>
+                      {/* Clearing is always allowed: "no expiry" never blocks. */}
+                      {d.value && (
+                        <button
+                          onClick={d.clear}
+                          aria-label={d.clearLabel}
+                          title={d.clearLabel}
+                          className="absolute top-1/2 -translate-y-1/2 end-[6px] flex items-center justify-center w-[30px] h-[30px] rounded-full text-ink-muted"
+                        >
+                          <MI name="close" size={16} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
+            {dateError && (
+              <p role="alert" className="-mt-[6px] flex items-start gap-[5px] text-[11px] font-extrabold text-danger-weak-ink mx-[2px]">
+                <MI name="error" size={15} className="flex-none mt-[1px]" />
+                <span className="min-w-0">{tr(dateError)}</span>
+              </p>
+            )}
 
             {/* Barcode toggle — default on, because a sticker without bars
                 cannot be scanned into stock. */}
@@ -361,7 +388,7 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
             )}
             <button
               onClick={handleSave}
-              disabled={saving || count < 1}
+              disabled={saving || count < 1 || !!dateError}
               className="w-full h-[50px] rounded-[12px] bg-brand text-white text-[14px] font-black flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <MI name="save" size={20} />

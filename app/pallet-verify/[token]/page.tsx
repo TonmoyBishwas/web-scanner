@@ -44,7 +44,8 @@ import { isMintedLabelBarcode, newBatchId, labelSheetUrl, liveRowPlaces, loadLab
 import { blockingLabels, LABELS_NOT_PRINTED } from '@/lib/label-gate';
 import { useUnprintedLabels } from '@/lib/use-unprinted-labels';
 import { toIsoDate, normalizeExpiry } from '@/lib/expiry';
-import { itemOptions } from '@/lib/edit-panel-state';
+import { itemOptions, localIsoDate } from '@/lib/edit-panel-state';
+import { validateCartonDates } from '@/lib/date-validation';
 import type { CartonLabel } from '@/types';
 import SplitJobScreen, { SPLIT_CLAIM_ERROR_KEYS } from '@/components/terminal/SplitJobScreen';
 import { installDebugLogCapture } from '@/lib/debug-log';
@@ -586,6 +587,8 @@ export default function PalletVerifyPage({
       name_en: string;
       weight: string;
       expiry: string;
+      /** ISO; shown and editable next to the expiry (lib/date-validation.ts). */
+      production_date: string;
       /** Supplier batch/lot. Free text — OCR leaves it blank far more often
           than it fills it, so this is usually the only way it gets entered. */
       batch: string;
@@ -1423,6 +1426,16 @@ export default function PalletVerifyPage({
           if ((!heName && !enName) || !(ocrWeight > 0)) {
             needsReview = true;
           }
+          // A read expiry on/before today or on/before the read production
+          // date is refused, not booked: the worker must fix or clear it in
+          // the edit panel before the pallet closes (lib/date-validation.ts).
+          if (validateCartonDates({
+            production: data.ocr_data.production_date,
+            expiry: data.ocr_data.expiry_date,
+            receiptDate: localIsoDate(),
+          }).expiryError) {
+            needsReview = true;
+          }
 
           const updated = prev.map((b, i) => {
             if (i !== idx) return b;
@@ -1719,6 +1732,7 @@ export default function PalletVerifyPage({
       weight: box.weight > 0 ? String(box.weight) : '',
       // Always ISO in the editor, whatever an older row carries — see lib/expiry.ts.
       expiry: normalizeExpiry(box.expiry),
+      production_date: normalizeExpiry(box.production_date),
       batch: box.supplier_batch || '',
       conflict: box.barcode_conflict,
       image_data: box.image_data,
@@ -1771,7 +1785,7 @@ export default function PalletVerifyPage({
           item_name_hebrew: nameHe || null,
           item_name_english: nameEn || null,
           weight_kg: parseFloat(editForm.weight) > 0 ? parseFloat(editForm.weight) : null,
-          production_date: box?.production_date || null,
+          production_date: toIsoDate(editForm.production_date) || box?.production_date || null,
           expiry_date: toIsoDate(editForm.expiry) || null,
           notes: 'Minted in receiving: the carton\'s printed barcode could not be read.',
           label_size: '10x15',
@@ -1821,9 +1835,17 @@ export default function PalletVerifyPage({
     const { barcode, name_he, name_en, isLoose } = editForm;
     // Stored as ISO: a DD/MM/YYYY here reached the bot as box_expiry NULL.
     const expiry = normalizeExpiry(editForm.expiry);
+    const production_date = normalizeExpiry(editForm.production_date);
     const batch = editForm.batch.trim();
     const w = parseFloat(editForm.weight);
-    trace('ui', 'edit_save', { barcode, isLoose, name_he, name_en, weight: w, expiry, batch, barcodeInput: editForm.barcodeInput, forcedId: editForm.forcedId, unidentified: editForm.unidentified });
+    // The panel's Save is already disabled for refused dates; this is the
+    // same rule again so no other path can book one (lib/date-validation.ts).
+    const dateError = validateCartonDates({ production: production_date, expiry, receiptDate: localIsoDate() }).expiryError;
+    if (dateError) {
+      setEditError(t(session?.language || 'English', dateError));
+      return;
+    }
+    trace('ui', 'edit_save', { barcode, isLoose, name_he, name_en, weight: w, expiry, production_date, batch, barcodeInput: editForm.barcodeInput, forcedId: editForm.forcedId, unidentified: editForm.unidentified });
     clearScanNotice();
 
     // ── Identity for a manual capture ──
@@ -1883,6 +1905,7 @@ export default function PalletVerifyPage({
         item_name_hebrew: name_he,
         weight: newWeight,
         expiry,
+        production_date,
         supplier_batch: batch,
         // An identity is part of "resolved". A carton still carrying its
         // placeholder stays flagged however good its name and weight are —
@@ -2488,7 +2511,9 @@ export default function PalletVerifyPage({
       // item and would otherwise be sent on as item_name.
       onNameChange={(v) => { setEditForm({ ...editForm, name_he: v, name_en: '' }); setEditError(null); }}
       onWeightChange={(v) => setEditForm({ ...editForm, weight: v })}
-      onExpiryChange={(v) => setEditForm({ ...editForm, expiry: v })}
+      onExpiryChange={(v) => { setEditForm({ ...editForm, expiry: v }); setEditError(null); }}
+      productionDate={editForm.production_date}
+      onProductionDateChange={(v) => { setEditForm({ ...editForm, production_date: v }); setEditError(null); }}
       batch={editForm.batch}
       onBatchChange={(v) => setEditForm({ ...editForm, batch: v })}
       barcodeWeight={editForm.conflict?.weight?.barcode.toFixed(2)}
@@ -2596,6 +2621,16 @@ export default function PalletVerifyPage({
           const enName = (data.ocr_data.product_name_english || '').trim();
           const ocrWeight = data.ocr_data.weight_kg ?? 0;
           if ((!heName && !enName) || !(ocrWeight > 0)) {
+            needsReview = true;
+          }
+          // A read expiry on/before today or on/before the read production
+          // date is refused, not booked: the worker must fix or clear it in
+          // the edit panel before the pallet closes (lib/date-validation.ts).
+          if (validateCartonDates({
+            production: data.ocr_data.production_date,
+            expiry: data.ocr_data.expiry_date,
+            receiptDate: localIsoDate(),
+          }).expiryError) {
             needsReview = true;
           }
 
