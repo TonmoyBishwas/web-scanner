@@ -167,6 +167,11 @@ describe('saveMode', () => {
   it('dirty and complete → ready', () => {
     expect(saveMode({ ...base, dirty: true })).toBe('ready');
   });
+  it('refused dates → disabled, even dirty, flagged or in conflict', () => {
+    expect(saveMode({ ...base, dirty: true, datesInvalid: true })).toBe('disabled');
+    expect(saveMode({ ...base, needsReview: true, datesInvalid: true })).toBe('disabled');
+    expect(saveMode({ ...base, hasConflict: true, datesInvalid: true })).toBe('disabled');
+  });
 });
 
 describe('tileState', () => {

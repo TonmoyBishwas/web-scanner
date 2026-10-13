@@ -723,6 +723,11 @@ export const en = {
   'terminal.changeDate': 'Change date',
   'terminal.expiryPast': 'Expires today or already expired — check the sticker',
   'terminal.checkExpiry': 'Check the expiry date',
+  // lib/date-validation.ts — a carton's expiry is refused, never just warned.
+  'dates.expiryNotFuture': 'Expiry has passed or is today — fix or clear it',
+  'dates.expiryNotAfterProduction': 'Expiry is on/before the production date — probably swapped',
+  'terminal.clearExpiry': 'No expiry',
+  'terminal.clearProduction': 'No production date',
   // Supplier's own batch/lot code off the carton label — Priority carries it
   // on the batch (מנה) for traceability and recalls.
   'terminal.batchLabel': 'Supplier batch / lot · optional',

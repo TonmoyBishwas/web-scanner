@@ -7,6 +7,7 @@ import { Keypad } from './Keypad';
 import { CalendarPicker } from './CalendarPicker';
 import { LanguageContext, useT, type TranslationKey } from '@/lib/i18n';
 import { toIsoDate, isoToDdmmyyyy } from '@/lib/expiry';
+import { validateCartonDates } from '@/lib/date-validation';
 import {
   weightState, nameState, expiryState, localIsoDate,
   firstField, fieldAfterItemPick, fieldAfterExpiryPick,
@@ -29,6 +30,11 @@ interface EditPanelProps {
   weight: string;
   /** Expiry as ISO `YYYY-MM-DD` ('' when unknown). Shown as DD/MM/YYYY. */
   expiry: string;
+  /**
+   * Production date as ISO ('' when unknown). Shown and editable next to the
+   * expiry: an expiry on/before it is refused (lib/date-validation.ts).
+   */
+  productionDate: string;
   /** Supplier's own batch/lot code, free text. Often blank — see below. */
   batch: string;
   /**
@@ -87,6 +93,7 @@ interface EditPanelProps {
   onNameChange: (v: string) => void;
   onWeightChange: (v: string) => void;
   onExpiryChange: (v: string) => void;
+  onProductionDateChange: (v: string) => void;
   onBatchChange: (v: string) => void;
   onSave: () => void;
   onCancel: () => void;
@@ -154,22 +161,30 @@ const TILE_BADGE: Record<TileState, { cls: string; icon: string }> = {
  * it opened with.
  */
 export function EditPanel({
-  cartonNumber, name, weight, expiry, batch, barcode, itemChips,
+  cartonNumber, name, weight, expiry, productionDate, batch, barcode, itemChips,
   imageData, onViewImage,
   barcodeWeight, barcodeExpiry, onUseBarcodeWeight, onUseBarcodeExpiry,
   barcodeEditable, barcodeInput = '', onBarcodeChange,
   onCreateBarcode, minting, onNoBarcode, showNoBarcode,
   needsReview, saveError,
-  onNameChange, onWeightChange, onExpiryChange, onBatchChange, onSave, onCancel,
+  onNameChange, onWeightChange, onExpiryChange, onProductionDateChange, onBatchChange, onSave, onCancel,
 }: EditPanelProps) {
   const tr = useT();
   const isHe = useContext(LanguageContext) === 'Hebrew';
   // What the panel opened with — "changed" and Save's state compare against it.
-  const [initial] = useState(() => ({ name, weight, expiry, batch, barcode, barcodeInput }));
+  const [initial] = useState(() => ({ name, weight, expiry, productionDate, batch, barcode, barcodeInput }));
   const [todayIso] = useState(() => localIsoDate());
-  // Open on the first field that still needs the worker, not always Weight.
-  const [field, setField] = useState<EditField>(() => firstField(name, weight, expiry));
-  const [calOpen, setCalOpen] = useState(false);
+  // An expiry on/before today or on/before the production date. It is not a
+  // warning: Save stays disabled until the date is fixed or cleared.
+  const dateError = validateCartonDates({ production: productionDate, expiry, receiptDate: todayIso }).expiryError;
+  // Open on the first field that still needs the worker, not always Weight —
+  // and on the dates when they are what stops this carton being saved.
+  const [field, setField] = useState<EditField>(() => {
+    const f = firstField(name, weight, expiry);
+    return dateError && f === 'weight' && weightState(weight) === 'ok' ? 'expiry' : f;
+  });
+  // Which date the calendar is open for, if any.
+  const [calFor, setCalFor] = useState<'production' | 'expiry' | null>(null);
   // "Different name — type it" was tapped: the free-text box replaces that row.
   const [typing, setTyping] = useState(false);
 
@@ -184,15 +199,19 @@ export function EditPanel({
   const states = {
     weight: weightState(weight),
     name: nameState(name, chips),
-    expiry: expiryState(expiry, todayIso),
+    // A refused date draws as the red "wrong value" tile ('past' → invalid).
+    expiry: dateError ? 'past' as const : expiryState(expiry, todayIso),
   };
   const changed: Record<EditField, boolean> = {
     name: name !== initial.name,
     weight: weight !== initial.weight,
-    expiry: expiry !== initial.expiry,
+    // One tile holds both dates.
+    expiry: expiry !== initial.expiry || productionDate !== initial.productionDate,
   };
   const nChanged = [
-    changed.name, changed.weight, changed.expiry,
+    changed.name, changed.weight,
+    expiry !== initial.expiry,
+    productionDate !== initial.productionDate,
     batch !== initial.batch,
     barcode !== initial.barcode || barcodeInput !== initial.barcodeInput,
   ].filter(Boolean).length;
@@ -204,6 +223,7 @@ export function EditPanel({
     hasConflict,
     needsReview: !!needsReview,
     gateMissing: gateMissing({ name, weight, barcodeMissing }),
+    datesInvalid: !!dateError,
   });
 
   const handleKey = (k: string) => {
@@ -216,11 +236,12 @@ export function EditPanel({
   // The header's one-line status: what is missing (or doubtful), else what
   // Save will do.
   let status: { icon: string; cls: string; text: string };
-  if (missing.length) {
+  if (dateError) {
+    // First: it is the one thing that keeps Save disabled.
+    status = { icon: 'error', cls: 'text-danger-weak-ink', text: tr(dateError) };
+  } else if (missing.length) {
     const fields = missing.map((m) => tr(MISSING_KEY[m])).join(', ');
     status = { icon: 'warning', cls: 'text-warn-weak-ink', text: tr('terminal.missingList', { fields }) };
-  } else if (states.expiry === 'past') {
-    status = { icon: 'warning', cls: 'text-warn-weak-ink', text: tr('terminal.checkExpiry') };
   } else if (dirty) {
     const text = nChanged === 1 ? tr('terminal.changeReadyOne') : tr('terminal.changesReady', { n: nChanged });
     status = { icon: 'check_circle', cls: 'text-ok-weak-ink', text };
@@ -301,6 +322,47 @@ export function EditPanel({
         {tr('terminal.useBarcodeValue')}
       </span>
     </button>
+  );
+
+  // One date: its label, its value (a tap opens the calendar) and a clear
+  // button. A blank date is a valid answer for both.
+  const dateRow = (
+    which: 'production' | 'expiry', label: string, value: string, invalid: boolean,
+    onClear: () => void, clearLabel: string,
+  ) => (
+    <div>
+      <div className="text-[10.5px] font-extrabold text-ink-body mb-[4px]">{label}</div>
+      <div className="flex items-stretch gap-[7px]">
+        <button
+          onClick={() => setCalFor(which)}
+          className={`flex-1 min-w-0 flex items-center justify-between gap-[10px] bg-sunken border-2 rounded-[12px] px-[13px] py-[9px] text-start ${
+            invalid ? 'border-danger' : value ? 'border-line-strong' : 'border-dashed border-line-strong'
+          }`}
+        >
+          <span
+            className={`text-[16px] font-extrabold font-mono ${invalid ? 'text-danger-weak-ink' : value ? 'text-ink-inverse' : 'text-ink-muted'}`}
+            dir="ltr"
+          >
+            {value ? isoToDdmmyyyy(value) : '—'}
+          </span>
+          <span className="flex-none flex items-center gap-[5px] text-[11.5px] font-extrabold text-brand-weak-ink">
+            <MI name="edit_calendar" size={18} />
+            {value ? tr('terminal.changeDate') : tr('carton.pickDate')}
+          </span>
+        </button>
+        {value && (
+          <button
+            onClick={onClear}
+            aria-label={clearLabel}
+            title={clearLabel}
+            className="flex-none flex items-center gap-[4px] px-[10px] rounded-[12px] border border-line-strong text-[11px] font-extrabold text-ink-body"
+          >
+            <MI name="close" size={16} />
+            <span className="hidden min-[380px]:inline">{clearLabel}</span>
+          </button>
+        )}
+      </div>
+    </div>
   );
 
   // Text that may be Hebrew or English in either page direction: `dir="auto"`
@@ -596,37 +658,19 @@ export function EditPanel({
             <>
               {barcodeExpiry && onUseBarcodeExpiry
                 && suggestion(barcodeExpiry, onUseBarcodeExpiry)}
-              {!expiry ? (
-                <button
-                  onClick={() => setCalOpen(true)}
-                  className="w-full min-h-[56px] flex items-center gap-[10px] bg-amber-card border-2 border-dashed border-warn rounded-[12px] px-[13px] py-[11px] text-start"
-                >
-                  <MI name="event" size={24} className="flex-none text-warn" />
-                  <span className="min-w-0 text-[13px] font-extrabold text-warn-weak-ink">{tr('terminal.pickExpiry')}</span>
-                </button>
-              ) : (
-                <button
-                  onClick={() => setCalOpen(true)}
-                  className={`w-full flex items-center justify-between gap-[10px] bg-sunken border-2 rounded-[12px] px-[13px] py-[11px] text-start ${
-                    states.expiry === 'past' ? 'border-danger' : 'border-line-strong'
-                  }`}
-                >
-                  <span
-                    className={`text-[17px] font-extrabold font-mono ${states.expiry === 'past' ? 'text-danger-weak-ink' : 'text-ink-inverse'}`}
-                    dir="ltr"
-                  >
-                    {isoToDdmmyyyy(expiry)}
-                  </span>
-                  <span className="flex-none flex items-center gap-[5px] text-[11.5px] font-extrabold text-brand-weak-ink">
-                    <MI name="edit_calendar" size={18} />
-                    {tr('terminal.changeDate')}
-                  </span>
-                </button>
-              )}
-              {states.expiry === 'past' && (
+              {/* Both dates, each pre-filled with what was read and each
+                  editable. The expiry is checked against today and against the
+                  production date (lib/date-validation.ts); either may be
+                  cleared — "no expiry" never blocks. */}
+              {dateRow('production', tr('carton.production'), productionDate, false,
+                () => onProductionDateChange(''), tr('terminal.clearProduction'))}
+              <div className="h-[8px]" />
+              {dateRow('expiry', tr('carton.expiry'), expiry, !!dateError,
+                () => onExpiryChange(''), tr('terminal.clearExpiry'))}
+              {dateError && (
                 <div role="alert" className="flex items-start gap-[5px] mt-[8px] text-[11.5px] font-extrabold text-danger-weak-ink">
                   <MI name="error" size={15} className="flex-none mt-[1px]" />
-                  <span className="min-w-0">{tr('terminal.expiryPast')}</span>
+                  <span className="min-w-0">{tr(dateError)}</span>
                 </div>
               )}
             </>
@@ -678,19 +722,26 @@ export function EditPanel({
         )}
       </div>
 
-      {calOpen && (
+      {calFor && (
         <CalendarPicker
-          value={toIsoDate(expiry)}
-          // No silent "today": an empty expiry opens with no day chosen.
+          value={toIsoDate(calFor === 'production' ? productionDate : expiry)}
+          // No silent "today": an empty date opens with no day chosen.
           requirePick
-          fieldTitle={tr('terminal.expiryDate')}
+          fieldTitle={calFor === 'production' ? tr('carton.production') : tr('terminal.expiryDate')}
           // Stored as ISO; only the tiles above show DD/MM/YYYY.
           onPick={iso => {
+            if (calFor === 'production') {
+              onProductionDateChange(iso);
+              setCalFor(null);
+              return; // stay on the dates: the expiry is checked against it
+            }
             onExpiryChange(iso);
-            setCalOpen(false);
-            setField(fieldAfterExpiryPick(name, weight));
+            setCalFor(null);
+            // A refused date keeps the worker here; a good one moves on.
+            const err = validateCartonDates({ production: productionDate, expiry: iso, receiptDate: todayIso }).expiryError;
+            setField(err ? 'expiry' : fieldAfterExpiryPick(name, weight));
           }}
-          onClose={() => setCalOpen(false)}
+          onClose={() => setCalFor(null)}
         />
       )}
     </div>
