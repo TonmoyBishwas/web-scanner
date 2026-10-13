@@ -13,6 +13,11 @@
  * record. The worker prints the label, puts it on the carton, and scans it
  * through the ordinary receiving flow — so the meat and non-meat inbound paths
  * are untouched by this feature.
+ *
+ * Except with `countOnSave` (pallet-verify, Q5 2026-10-13): the page puts one
+ * row per saved label on the open list at once, counted at the weight typed
+ * here — so the weight is required — and the pallet may close before the
+ * labels are printed (lib/label-gate.ts).
  */
 
 import { useMemo, useRef, useState } from 'react';
@@ -52,9 +57,16 @@ interface CartonCreatorProps {
    * line points him at "Another carton, same label" for that case.
    */
   notCountedWarning?: boolean;
+  /**
+   * Q5: the page counts each saved label as a carton at the typed weight
+   * (no scan of the printed label needed). Weight becomes required and the
+   * line above Save says the carton is counted now.
+   */
+  countOnSave?: boolean;
   onBack: () => void;
-  /** Fired after the batch is saved — the page closes this screen. */
-  onCreated?: (count: number, batchId: string | null) => void;
+  /** Fired after the batch is saved — the page closes this screen. `labels`
+   *  = the saved rows as the server returned them (may be empty). */
+  onCreated?: (count: number, batchId: string | null, labels: CartonLabel[]) => void;
 }
 
 type Step = 'item' | 'form';
@@ -65,7 +77,7 @@ function displayDate(iso: string): string {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
 }
 
-export function CartonCreator({ token, items, palletNumber, notCountedWarning = false, onBack, onCreated }: CartonCreatorProps) {
+export function CartonCreator({ token, items, palletNumber, notCountedWarning = false, countOnSave = false, onBack, onCreated }: CartonCreatorProps) {
   const tr = useT();
   const { toast, showToast } = useToast();
 
@@ -98,6 +110,9 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
   }, [items, query]);
 
   const count = Math.min(Math.max(parseInt(quantity, 10) || 0, 0), 500);
+  // Counted at this weight (countOnSave): a carton with none can't be booked
+  // (the bot skips a box with no weight), so Save waits for one.
+  const weightMissing = countOnSave && !(Number(weight) > 0);
   // The label prints these dates: a refused expiry (on/before today or on/
   // before the production date) blocks Save; a blank one never does.
   const dateError = validateCartonDates({ production: productionDate, expiry: expiryDate, receiptDate: localIsoDate() }).expiryError;
@@ -131,7 +146,7 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
   };
 
   async function handleSave() {
-    if (!selected || saving || count < 1 || dateError) return;
+    if (!selected || saving || count < 1 || dateError || weightMissing) return;
     setSaving(true);
     try {
       const payload = {
@@ -160,7 +175,8 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
         showToast(tr('carton.error'), 'error', '#ef8a8a');
         return;
       }
-      onCreated?.(data.labels?.length ?? count, data.batch_id ?? null);
+      const labels: CartonLabel[] = Array.isArray(data.labels) ? data.labels : [];
+      onCreated?.(labels.length || count, data.batch_id ?? null, labels);
     } catch {
       showToast(tr('carton.error'), 'error', '#ef8a8a');
     } finally {
@@ -270,7 +286,8 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
             {/* Weight */}
             <div>
               <div className={fieldLabel}>
-                {tr('carton.weight')} <span className="text-ink-muted font-bold">· {tr('carton.optional')}</span>
+                {tr('carton.weight')}{' '}
+                {!countOnSave && <span className="text-ink-muted font-bold">· {tr('carton.optional')}</span>}
               </div>
               <input
                 value={weight}
@@ -380,7 +397,13 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
           </div>
 
           <div className="flex-none px-3 py-[11px] border-t border-line bg-header safe-bottom">
-            {notCountedWarning && (
+            {countOnSave && (
+              <p className="flex items-start gap-1.5 mb-[9px] text-[11.5px] font-bold leading-snug text-ink-muted">
+                <MI name="inventory_2" size={16} className="shrink-0 mt-px" />
+                <span className="min-w-0">{tr(weightMissing ? 'carton.countOnSaveNeedWeight' : 'carton.countOnSaveNote')}</span>
+              </p>
+            )}
+            {notCountedWarning && !countOnSave && (
               <p className="flex items-start gap-1.5 mb-[9px] text-[11.5px] font-bold leading-snug text-warn-weak-ink">
                 <MI name="warning" size={16} className="shrink-0 mt-px" />
                 <span className="min-w-0">{tr('carton.notCountedWarning')}</span>
@@ -388,7 +411,7 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
             )}
             <button
               onClick={handleSave}
-              disabled={saving || count < 1 || !!dateError}
+              disabled={saving || count < 1 || !!dateError || weightMissing}
               className="w-full h-[50px] rounded-[12px] bg-brand text-white text-[14px] font-black flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <MI name="save" size={20} />

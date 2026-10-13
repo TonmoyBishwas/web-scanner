@@ -207,3 +207,58 @@ export async function postIdenticalLabels(
     return { ok: false, reason: 'failed' };
   }
 }
+
+// ─── Q5: a New carton counted at its saved weight ───
+
+/**
+ * Q5 (client, 2026-10-13): a New carton saved on pallet-verify is counted at
+ * once — through the same expansion as an identical batch — at the weight
+ * the worker typed, before its label is printed. This is the sample row and
+ * form `expandIdenticalBoxes` turns into one row per saved label. Null when
+ * there is nothing to count: no label, or a label with no positive weight
+ * (the bot books no box without a weight, so such a carton must not look
+ * counted). One save = one form, so every label of the batch shares it.
+ */
+export function newCartonBatch(
+  labels: ReadonlyArray<Pick<CartonLabel, 'barcode' | 'batch_id' | 'weight_kg' | 'expiry_date' | 'production_date' | 'item_name_hebrew' | 'item_name_english'>>,
+): { sample: MultiPalletBoxScan; refs: MintedLabelRef[]; form: IdenticalForm } | null {
+  if (labels.length === 0) return null;
+  if (labels.some((l) => !(Number(l.weight_kg) > 0))) return null;
+  const first = labels[0];
+  return {
+    sample: {
+      // No supplier code: the carton has only the warehouse label.
+      barcode: '',
+      sku: '',
+      item_name: first.item_name_english || '',
+      item_name_hebrew: first.item_name_hebrew || '',
+      weight: Number(first.weight_kg),
+      expiry: first.expiry_date || '',
+      production_date: first.production_date || '',
+      scanned_at: new Date().toISOString(),
+    },
+    refs: labels.map((l) => ({ barcode: l.barcode, batch_id: l.batch_id })),
+    form: {
+      weight: Number(first.weight_kg),
+      expiry: first.expiry_date || '',
+      production_date: first.production_date || '',
+    },
+  };
+}
+
+/**
+ * The rows `expandIdenticalBoxes` made for a New carton batch, as such: the
+ * SKU is the label's own 13-digit prefix (what scanning the printed label
+ * has always booked), no supplier code is stood in for, and `new_carton`
+ * marks the row for the "label not printed" badge.
+ */
+export function asNewCartonRows<T extends { barcode: string; source_barcode?: string }>(
+  rows: T[],
+): Array<T & { new_carton: true }> {
+  return rows.map((r) => ({
+    ...r,
+    sku: r.barcode.slice(0, 13),
+    source_barcode: undefined,
+    new_carton: true as const,
+  }));
+}

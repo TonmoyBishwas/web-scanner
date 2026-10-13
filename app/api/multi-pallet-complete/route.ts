@@ -9,7 +9,8 @@ import { markDone, isComplete } from '@/lib/pallet-slots';
 import { isSplitSession, splitStateOf, applySplitState } from '@/lib/session-mode';
 import { normalizeBoxExpiries } from '@/lib/expiry';
 import { findUnprintedForSession } from '@/lib/carton-labels';
-import { blockingLabels, barcodesBeingBooked, labelGateError } from '@/lib/label-gate';
+import { blockingLabels, barcodesBeingBooked, labelGateError, unprintedOnList } from '@/lib/label-gate';
+import { sessionBookedBarcodes } from '@/lib/label-batches';
 
 const SESSION_TTL = 7200;
 // "Same weight" means the printed weights are EXACTLY equal — a fixed-weight
@@ -214,14 +215,19 @@ export async function POST(request: NextRequest) {
     // not move and no bot webhook fires — and with no webhook, the last pallet
     // cannot close the delivery or start the Priority push. The page shows its
     // amber "Print N labels first" for this code, never the raw string.
-    const labelGate = blockingLabels(
-      await findUnprintedForSession(token),
-      barcodesBeingBooked({ scanned_boxes, nonmeat_items, manual_items }),
-    );
+    const unprintedLabels = await findUnprintedForSession(token);
+    const beingBooked = barcodesBeingBooked({ scanned_boxes, nonmeat_items, manual_items });
+    const labelGate = blockingLabels(unprintedLabels, beingBooked, sessionBookedBarcodes(session));
     if (labelGate.count > 0) {
       errorResult = { status: 409, body: labelGateError(labelGate) };
       return;
     }
+    // Q5: New carton rows booked before their label was printed. Each such
+    // box goes to the bot with `label_printed: false` (the key is absent on
+    // every other box), and the payload carries `unprinted_labels` = how many.
+    const unprintedBooked = unprintedOnList(unprintedLabels, beingBooked);
+    const labelPrintedFlag = (barcode: string): { label_printed?: false } =>
+      unprintedBooked.has((barcode || '').trim()) ? { label_printed: false } : {};
 
     // ── Weight-based non-meat (Type A): invoice-authoritative math ──────────
     // The worker scanned one box per item on this pallet; the total for each
@@ -631,7 +637,9 @@ export async function POST(request: NextRequest) {
           // own lot code for traceability/recall.
           production_date: b.production_date || null,
           supplier_batch: b.supplier_batch || null,
+          ...labelPrintedFlag(b.barcode),
         })),
+        unprinted_labels: unprintedBooked.size,
       };
     } else {
       // Single-item pallet — exactly one name-group.
@@ -685,7 +693,9 @@ export async function POST(request: NextRequest) {
           image_url: b.image_url ?? null,
           production_date: b.production_date || null,
           supplier_batch: b.supplier_batch || null,
+          ...labelPrintedFlag(b.barcode),
         })),
+        unprinted_labels: unprintedBooked.size,
       };
     }
 

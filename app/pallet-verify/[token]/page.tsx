@@ -38,9 +38,11 @@ import {
   sourceStillListed,
   identicalLabelPayload,
   postIdenticalLabels,
+  newCartonBatch,
+  asNewCartonRows,
   type IdenticalForm,
 } from '@/lib/identical-boxes';
-import { isMintedLabelBarcode, newBatchId, labelSheetUrl, liveRowPlaces, loadLabelSize, openListsForPhase } from '@/lib/label-batches';
+import { isMintedLabelBarcode, newBatchId, labelSheetUrl, liveRowPlaces, loadLabelSize, openListsForPhase, sessionBookedBarcodes } from '@/lib/label-batches';
 import { blockingLabels, LABELS_NOT_PRINTED } from '@/lib/label-gate';
 import { useUnprintedLabels } from '@/lib/use-unprinted-labels';
 import { toIsoDate, normalizeExpiry } from '@/lib/expiry';
@@ -150,6 +152,10 @@ interface BoxScan extends MultiPalletBoxScan {
   // own, never a batch that declares every carton with source_barcode
   // counted (lib/scan-notice.ts isBatchStandIn).
   twin?: boolean;
+  // Q5: saved with "New carton" and counted at the weight typed there, before
+  // its label was printed. Booked as is; the row says "label not printed"
+  // while the label is unprinted.
+  new_carton?: boolean;
 }
 
 // Digits-only normaliser for comparing the full printed barcode number across
@@ -702,6 +708,9 @@ export default function PalletVerifyPage({
   const labelGate = blockingLabels(
     unprinted.labels,
     (openListsForPhase(phase).loose ? looseBoxes : scannedBoxes).map((b) => b.barcode),
+    // Q5: a New carton counted on a pallet already booked is not "outside
+    // the job" — its unprinted label must not hold the next list.
+    sessionBookedBarcodes(session),
   );
   const [activeExpanded, setActiveExpanded] = useState(false);
   const [pendingNextPallet, setPendingNextPallet] = useState<number | null>(null);
@@ -2041,20 +2050,22 @@ export default function PalletVerifyPage({
   // and the supplier code stays in the set too — the worker said every carton
   // carries it, so a further read of it adds nothing.
   function handleIdenticalCreated(
-    target: { box: BoxScan; loose: boolean; anotherOf?: number },
-    labels: CartonLabel[],
+    target: { box: BoxScan; loose: boolean; anotherOf?: number; newCarton?: boolean },
+    labels: Array<Pick<CartonLabel, 'barcode' | 'batch_id'>>,
     form: IdenticalForm,
     /** The toast to show instead of the form's "Label saved" (the one-tap twin). */
     savedText?: string,
   ) {
-    trace('ui', 'identical_created', { barcode: target.box.barcode, loose: target.loose, labels: labels.length, form, another_of: target.anotherOf });
-    const rows: BoxScan[] = expandIdenticalBoxes(
+    trace('ui', target.newCarton ? 'new_carton_counted' : 'identical_created', { barcode: target.box.barcode, loose: target.loose, labels: labels.length, form, another_of: target.anotherOf });
+    const expanded: BoxScan[] = expandIdenticalBoxes(
       target.box,
       labels.map((l) => ({ barcode: l.barcode, batch_id: l.batch_id })),
       form,
       // One more carton with the same label is a twin, not a batch: a later
       // read of the code must never be answered "covered by labels".
     ).map((r) => ({ ...r, twin: target.anotherOf ? true : undefined }));
+    // Q5: a New carton stands in for no supplier code (its sample is empty).
+    const rows: BoxScan[] = target.newCarton ? asNewCartonRows(expanded) : expanded;
     const replaceSample = (prev: BoxScan[]): BoxScan[] => {
       // "Different carton?": the carton it was copied from is a counted
       // carton of its own and stays; the new one joins the end of the list.
@@ -2092,8 +2103,8 @@ export default function PalletVerifyPage({
     setIdenticalFor(null);
     unprinted.refresh();
     trace('ui', 'labels_saved', {
-      origin: 'identical', count: rows.length, batch_id: labels[0]?.batch_id, pallet: target.loose ? 0 : currentPallet,
-      another_of: target.anotherOf,
+      origin: target.newCarton ? 'new_carton' : 'identical', count: rows.length, batch_id: labels[0]?.batch_id, pallet: target.loose ? 0 : currentPallet,
+      another_of: target.anotherOf, counted: target.newCarton || undefined,
     });
     showToast(
       savedText ?? (rows.length === 1 ? tr('identical.savedOne') : tr('identical.saved', { count: rows.length })),
@@ -2304,12 +2315,30 @@ export default function PalletVerifyPage({
           token={token}
           items={session?.ocr_data ?? []}
           palletNumber={looseCartonPhase ? 0 : currentPallet}
-          notCountedWarning
+          // Q5 (client 2026-10-13): counted now, at the typed weight.
+          countOnSave
           onBack={() => setShowCartonCreator(false)}
-          onCreated={(count, batchId) => {
-            // Saved only — back to the scanner, no Labels screen. The worker
-            // prints from Labels (amber badge), then scans each carton.
+          onCreated={(count, batchId, labels) => {
+            // Back to the scanner, no Labels screen (SCN-18).
             setShowCartonCreator(false);
+            const batch = newCartonBatch(labels);
+            if (batch) {
+              // Q5: one row per saved label on the open list, through the
+              // same path as an identical batch (dedup set, uniform retract,
+              // pallet-total offer). Booked "label not printed" if it never
+              // reaches the printer; Labels can still print it any time.
+              const sample: BoxScan = { ...batch.sample, ocr_status: 'done' };
+              handleIdenticalCreated(
+                { box: sample, loose: looseCartonPhase, newCarton: true },
+                batch.refs,
+                batch.form,
+                count === 1 ? tr('carton.addedToListOne') : tr('carton.addedToList', { count }),
+              );
+              return;
+            }
+            // Nothing to count (the save returned no labels): the old label-
+            // only outcome — the gate holds the list until it is printed and
+            // scanned, or deleted in Labels.
             unprinted.refresh();
             trace('ui', 'labels_saved', {
               origin: 'new_carton', count, batch_id: batchId, pallet: looseCartonPhase ? 0 : currentPallet,
@@ -2948,6 +2977,8 @@ export default function PalletVerifyPage({
     data: PalletCompleteResult,
     palletTypeLabel: 'single' | 'mix',
     boxCount: number,
+    /** The scan rows just booked — mirrors the server's completed_pallets[].barcodes. */
+    bookedBarcodes?: string[],
   ) {
     trace('ui', 'pallet_completed', { pallet: currentPallet, lpn: data.lpn, type: palletTypeLabel, boxCount, next_pallet: data.next_pallet, all_done: data.all_done });
     setLpn(data.lpn || '');
@@ -2983,6 +3014,7 @@ export default function PalletVerifyPage({
                 lpn: data.lpn ?? '',
                 pallet_type: palletTypeLabel,
                 box_count: boxCount,
+                barcodes: bookedBarcodes,
               },
             ],
           }
@@ -3167,7 +3199,7 @@ export default function PalletVerifyPage({
       // same-weight counts as single. Advance via the shared helper.
       const palletTypeLabel: 'single' | 'mix' =
         detectedType === 'single-uniform' ? 'single' : 'mix';
-      applyCompletion(data, palletTypeLabel, declaredCount);
+      applyCompletion(data, palletTypeLabel, declaredCount, scannedBoxes.map((b) => b.barcode));
     } catch {
       setError(tr('palletVerify.networkError'));
       setPhase('scanning');
@@ -3443,6 +3475,16 @@ export default function PalletVerifyPage({
                 <div className="text-[9px] font-bold text-ink-muted mt-[2px]">{tr('terminal.statCartons')}</div>
               </div>
             </div>
+
+            {/* Q5: New cartons booked with their label still unprinted. */}
+            {unprinted.labels.some((l) => l.origin === 'new_carton') && (
+              <p className="flex items-center justify-center gap-[5px] mt-3 text-[12px] font-extrabold text-[#fbbf5c] text-center">
+                <MI name="print_disabled" size={15} className="shrink-0" />
+                <span className="min-w-0">
+                  {tr('palletVerify.unprintedSummary', { count: unprinted.labels.filter((l) => l.origin === 'new_carton').length })}
+                </span>
+              </p>
+            )}
 
             {/* Right under the stats so it is in view without scrolling on a
                 long pallet list. */}
@@ -3751,6 +3793,8 @@ export default function PalletVerifyPage({
     const doneBoxCount =
       session?.completed_pallets?.[session.completed_pallets.length - 1]?.box_count || committed;
     const doneWeight = scannedBoxes.reduce((s, b) => s + (b.weight > 0 ? b.weight : 0), 0);
+    // Q5: New cartons booked on this pallet whose label is still unprinted.
+    const doneUnprinted = scannedBoxes.filter((b) => b.new_carton && unprintedBarcodes.has(b.barcode)).length;
     return withLang(
       <div className="h-dvh relative bg-canvas overflow-hidden">
         <DoneOverlay
@@ -3768,6 +3812,12 @@ export default function PalletVerifyPage({
             },
           ]}
         >
+          {doneUnprinted > 0 && (
+            <p className="flex items-center justify-center gap-[5px] mt-3 text-[12px] font-extrabold text-[#fbbf5c] text-center">
+              <MI name="print_disabled" size={15} className="shrink-0" />
+              <span className="min-w-0">{tr('palletVerify.unprintedSummary', { count: doneUnprinted })}</span>
+            </p>
+          )}
           {lpnUrl && (
             <a
               href={`${lpnUrl}?token=${encodeURIComponent(token)}${language === 'Hebrew' ? '&lang=Hebrew' : ''}`}

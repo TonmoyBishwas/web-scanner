@@ -929,6 +929,11 @@ export const he: Record<TranslationKey, string> = {
   // English: "Label saved — NOT counted yet. Print it from Labels, stick it on
   // the carton, then scan it."
   'carton.savedNotCountedOne': 'המדבקה נשמרה — הקרטון עדיין לא נספר. הדפס אותה ממסך "מדבקות", הדבק על הקרטון וסרוק אותה.',
+  'carton.countOnSaveNote': 'נספר ברשימה עכשיו, לפי המשקל שלמעלה. אפשר להדפיס את המדבקה אחר כך ממסך מדבקות.',
+  'carton.countOnSaveNeedWeight': 'הזן משקל — הקרטון נספר לפיו.',
+  'carton.addedToList': '{count} קרטונים נוספו לרשימה · המדבקה לא הודפסה עדיין',
+  'carton.addedToListOne': 'הקרטון נוסף לרשימה · המדבקה לא הודפסה עדיין',
+  'palletVerify.unprintedSummary': '{count} קרטונים נקלטו — מדבקה לא הודפסה',
   'carton.error': 'שמירת המדבקות נכשלה. נסה שוב.',
   'carton.sessionExpired': 'הפעילות פגה. בקש קישור חדש.',
   'carton.printedNote': 'המדבקות נשמרות במסך "מדבקות". הדפס אותן משם, הדבק אחת על כל קרטון, ואז סרוק אותו כמו כל קרטון אחר.',
