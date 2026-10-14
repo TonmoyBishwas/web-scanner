@@ -173,6 +173,8 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.looseHeader': 'קופסאות בודדות · {scanned} / {declared} נסרקו',
   'palletVerify.barcodeConflictWeight': '{item}: ברקוד {bc} ק"ג, תווית {ocr}',
   'palletVerify.barcodeConflictExpiry': '{item}: ברקוד {bc}, תווית {ocr}',
+  'palletVerify.weightSuspectName': '{item}: משקל {w} ק"ג נראה כמו מספר משם המוצר. בדוק את המדבקה ותקן את המשקל.',
+  'palletVerify.weightSuspectRatio': '{item}: משקל {w} ק"ג רחוק מהמשקל הרגיל של הפריט ({typical} ק"ג). בדוק את המדבקה ותקן את המשקל.',
   'palletVerify.docPrefix': 'מסמך: {doc}',
   'palletVerify.savingLoose': 'שומר קופסאות בודדות…',
   'palletVerify.savingPallet': 'שומר משטח…',

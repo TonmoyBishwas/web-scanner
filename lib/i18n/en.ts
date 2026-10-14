@@ -170,6 +170,8 @@ export const en = {
   // Barcode-vs-OCR disagreement. A warning, never a block — see lib/barcode-parser.
   'palletVerify.barcodeConflictWeight': '{item}: barcode says {bc} kg, label read {ocr}',
   'palletVerify.barcodeConflictExpiry': '{item}: barcode says {bc}, label read {ocr}',
+  'palletVerify.weightSuspectName': '{item}: weight {w} kg looks like a number from the product name. Check the sticker and fix the weight.',
+  'palletVerify.weightSuspectRatio': '{item}: weight {w} kg is far from this item\'s usual {typical} kg. Check the sticker and fix the weight.',
   'palletVerify.docPrefix': 'Doc: {doc}',
   'palletVerify.savingLoose': 'Saving loose boxes…',
   'palletVerify.savingPallet': 'Saving pallet…',
