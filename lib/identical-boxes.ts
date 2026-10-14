@@ -51,6 +51,8 @@ type SampleRow = MultiPalletBoxScan & {
   minted?: boolean;
   label_batch_id?: string;
   source_barcode?: string;
+  weight_suspect?: unknown;
+  weight_checked?: boolean;
 };
 
 /**
@@ -84,6 +86,10 @@ export function expandIdenticalBoxes<T extends SampleRow>(
     image_data: i === 0 ? sample.image_data : undefined,
     needs_review: undefined,
     barcode_conflict: undefined,
+    // The weight check (lib/weight-sanity.ts) judges each new row afresh; a
+    // weight the worker already confirmed on the sample stays confirmed.
+    weight_suspect: undefined,
+    weight_checked: sample.weight_checked && form.weight === sample.weight ? true : undefined,
     minted: true as const,
     label_batch_id: label.batch_id,
     source_barcode: sample.barcode,

@@ -17,6 +17,12 @@ describe('nonKgNumbers', () => {
     expect(nonKgNumbers('שניצל תירס 1X10 ק"ג בד"ץ מעשרת')).toEqual([]);
     expect(nonKgNumbers('אפונה תפד\' 18 ק"ג (6*3ק"ג) בד"ץ פריניר')).toEqual([]);
     expect(nonKgNumbers('Frozen peas 18 kg')).toEqual([]);
+    expect(nonKgNumbers('חזה 10-12 ק"ג')).toEqual([]);
+    expect(nonKgNumbers('כרעיים 12 ק.ג')).toEqual([]);
+    expect(nonKgNumbers('כרעיים 12 ק ג')).toEqual([]);
+    expect(nonKgNumbers('קציצות 1.5 ק"ג X 8')).toEqual([]);
+    expect(nonKgNumbers('תירס 2.5ק"ג*4')).toEqual([]);
+    expect(nonKgNumbers('שוקיים 230-250 מוסדי')).toEqual([230, 250]);
   });
 });
 

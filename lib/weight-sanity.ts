@@ -26,8 +26,15 @@ export const WEIGHT_RATIO_LIMIT = 3;
 const MIN_GROUP = 3;
 
 // A number immediately followed by a kg unit is a pack weight, not a label
-// artefact: ק"ג / ק״ג / קג / ק'ג / קילו / kg.
-const KG_AFTER = /^\s*(?:ק["'״׳]?ג|קילו|kg)/i;
+// artefact: ק"ג / ק״ג / קג / ק'ג / ק.ג / ק ג / קילו / kg.
+const KG = String.raw`(?:ק\s*[."'״׳]?\s*ג|קילו|kg)`;
+const KG_AFTER = new RegExp(String.raw`^\s*${KG}`, 'i');
+// "10-12 ק"ג": the low end of a kg range.
+const KG_RANGE_AFTER = new RegExp(String.raw`^\s*-\s*\d+(?:[.,]\d+)?\s*${KG}`, 'i');
+// "6*3ק"ג" / "1X10 ק"ג": the multiplier before a kg pack is part of it.
+const KG_MULT_AFTER = new RegExp(String.raw`^\s*[*xX×]\s*\d+(?:[.,]\d+)?\s*${KG}`, 'i');
+// "1.5 ק"ג X 8": a count after a kg pack.
+const KG_MULT_BEFORE = new RegExp(String.raw`${KG}\s*[*xX×]\s*$`, 'i');
 
 /** Numbers in a product name that are not followed by a kg unit. */
 export function nonKgNumbers(name: string | null | undefined): number[] {
@@ -37,9 +44,9 @@ export function nonKgNumbers(name: string | null | undefined): number[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(s))) {
     const after = s.slice(m.index + m[0].length);
-    if (KG_AFTER.test(after)) continue;
-    // "6*3ק"ג" / "1X10 ק"ג": the multiplier before a kg pack is part of it.
-    if (/^\s*[*xX×]\s*\d+(?:[.,]\d+)?\s*(?:ק["'״׳]?ג|קילו|kg)/i.test(after)) continue;
+    const before = s.slice(0, m.index);
+    if (KG_AFTER.test(after) || KG_RANGE_AFTER.test(after) || KG_MULT_AFTER.test(after)) continue;
+    if (KG_MULT_BEFORE.test(before)) continue;
     out.push(Number(m[0].replace(',', '.')));
   }
   return out;

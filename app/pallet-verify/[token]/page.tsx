@@ -2124,9 +2124,11 @@ export default function PalletVerifyPage({
     const replaceSample = (prev: BoxScan[]): BoxScan[] => {
       // "Different carton?": the carton it was copied from is a counted
       // carton of its own and stays; the new one joins the end of the list.
-      if (target.anotherOf) return [...prev, ...rows];
+      if (target.anotherOf) return flagSuspectWeights([...prev, ...rows]);
       const idx = prev.findIndex((b) => b.barcode === target.box.barcode);
-      return idx === -1 ? [...prev, ...rows] : [...prev.slice(0, idx), ...rows, ...prev.slice(idx + 1)];
+      return flagSuspectWeights(
+        idx === -1 ? [...prev, ...rows] : [...prev.slice(0, idx), ...rows, ...prev.slice(idx + 1)],
+      );
     };
     if (target.loose) {
       for (const r of rows) looseProcessedRef.current.add(r.barcode);
@@ -2306,7 +2308,8 @@ export default function PalletVerifyPage({
   /** The action is offered on a captured row with a real supplier barcode
    *  that is not itself minted and not still in OCR. */
   function canDeclareIdentical(box: BoxScan): boolean {
-    return box.ocr_status !== 'processing' && !box.minted
+    // A doubted weight is confirmed first: the form copies it onto every label.
+    return box.ocr_status !== 'processing' && !box.minted && !box.weight_suspect
       && !isProvisional(box.barcode) && !isNoBarcodeId(box.barcode);
   }
 
