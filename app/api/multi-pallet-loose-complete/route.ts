@@ -6,7 +6,8 @@ import { isComplete } from '@/lib/pallet-slots';
 import { isSplitSession, splitStateOf, applySplitState } from '@/lib/session-mode';
 import { normalizeBoxExpiries } from '@/lib/expiry';
 import { findUnprintedForSession } from '@/lib/carton-labels';
-import { blockingLabels, barcodesBeingBooked, labelGateError } from '@/lib/label-gate';
+import { blockingLabels, barcodesBeingBooked, labelGateError, unprintedOnList } from '@/lib/label-gate';
+import { sessionBookedBarcodes } from '@/lib/label-batches';
 
 const SESSION_TTL = 7200;
 
@@ -106,14 +107,16 @@ export async function POST(request: NextRequest) {
       // label in the session (lib/label-gate.ts). Before the session is saved
       // and before the webhook, so a 409 leaves the session active and sends
       // nothing to the bot: no close, no Priority push.
-      const labelGate = blockingLabels(
-        await findUnprintedForSession(token),
-        barcodesBeingBooked({ scanned_boxes }),
-      );
+      const unprintedLabels = await findUnprintedForSession(token);
+      const beingBooked = barcodesBeingBooked({ scanned_boxes });
+      const labelGate = blockingLabels(unprintedLabels, beingBooked, sessionBookedBarcodes(session));
       if (labelGate.count > 0) {
         errorResult = { status: 409, body: labelGateError(labelGate) };
         return;
       }
+      // Q5: New carton rows booked before their label was printed — see the
+      // pallet route: `label_printed: false` on each such box, and a count.
+      const unprintedBooked = unprintedOnList(unprintedLabels, beingBooked);
 
       // To the bot once the response is out — see the after() below.
       const boxes: MultiPalletBoxScan[] = scanned_boxes || [];
@@ -125,7 +128,10 @@ export async function POST(request: NextRequest) {
         chat_id: session.chat_id,
         document_number: session.document_number,
         receipt_id: session.receipt_id,
-        scanned_boxes: boxes,
+        scanned_boxes: boxes.map((b) =>
+          unprintedBooked.has((b.barcode || '').trim()) ? { ...b, label_printed: false } : b,
+        ),
+        unprinted_labels: unprintedBooked.size,
         worker_chat_id: workerChatId,
         owner_chat_id: session.owner_chat_id ?? session.chat_id,
         is_final: isFinal,

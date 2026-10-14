@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   blockingLabels,
   barcodesBeingBooked,
+  unprintedOnList,
   labelGateError,
   LABELS_NOT_PRINTED,
   type GateLabel,
@@ -68,6 +69,39 @@ describe('blockingLabels', () => {
     expect(blockingLabels([identical('2826100100000001')], list).count).toBe(1);
     expect(blockingLabels([identical('2826100100000001')], [' 2826100100000001 ']).count).toBe(1);
   });
+});
+
+describe('Q5 — a New carton counted at its saved weight never blocks', () => {
+  it('its label on the list being booked does not block; it is flagged instead', () => {
+    const labels = [newCarton('2826101300000001', 'N')];
+    const list = ['7290003670444015320158115072027', '2826101300000001'];
+    expect(blockingLabels(labels, list)).toEqual({ count: 0, batchIds: [] });
+    expect([...unprintedOnList(labels, list)]).toEqual(['2826101300000001']);
+  });
+
+  it('its label already booked on an earlier pallet / the loose pile does not block the next list', () => {
+    const labels = [newCarton('2826101300000001', 'N')];
+    expect(blockingLabels(labels, ['7290003670444015320158115072027'], ['2826101300000001']).count).toBe(0);
+  });
+
+  it('a New carton label on NO list still blocks (row deleted, or saved before Q5)', () => {
+    expect(blockingLabels([newCarton('2826101300000009', 'N')], ['7290003670444015320158115072027'], ['2826101300000001']))
+      .toEqual({ count: 1, batchIds: ['N'] });
+  });
+
+  it('twin / identical / receiving labels on the list still block exactly as before', () => {
+    const labels = [identical('2826101300000002', 'T'), receiving('2826101300000003', 'R'), newCarton('2826101300000004', 'N')];
+    const list = ['2826101300000002', '2826101300000003', '2826101300000004'];
+    expect(blockingLabels(labels, list, list)).toEqual({ count: 2, batchIds: ['T', 'R'] });
+    // A booked identical label is not this list's business (rule i only).
+    expect(blockingLabels([identical('2826101300000002', 'T')], [], ['2826101300000002']).count).toBe(0);
+  });
+
+  it('unprintedOnList ignores labels off the list', () => {
+    expect(unprintedOnList([newCarton('2826101300000001'), newCarton('2826101300000005')], ['2826101300000001']).size).toBe(1);
+    expect(unprintedOnList([], ['2826101300000001']).size).toBe(0);
+  });
+
 });
 
 describe('barcodesBeingBooked', () => {

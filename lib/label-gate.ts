@@ -9,9 +9,18 @@
  *
  *   (i)  its carton is ON that list — an "all boxes identical" or edit-panel
  *        ("receiving") label whose row is about to be booked; or
- *   (ii) it is a New carton label, anywhere in the session. That sticker is
- *        on no list yet: it can only be scanned once it is printed, so an
- *        unprinted one is a carton still waiting outside the job.
+ *   (ii) it is a New carton label that is on NO list — neither the one being
+ *        booked nor one already booked. Such a sticker is a carton still
+ *        waiting outside the job (a label saved before Q5, or whose row the
+ *        worker deleted: the server never deletes a New carton label).
+ *
+ * Q5 (client, 2026-10-13): a New carton saved on pallet-verify becomes a
+ * scan row at once, counted at the weight the worker entered. Its label on
+ * the list being booked — or on a list already booked — never blocks: the
+ * carton is booked "label not printed" (the row carries a badge, the
+ * pallet-complete payload carries `label_printed: false` per box and an
+ * `unprinted_labels` count, see `unprintedOnList`). Printing stays possible
+ * later from Labels.
  *
  * An identical / receiving label whose row was deleted (an orphan, batch
  * 0877ca78) is on no list and never blocks. Printed labels never block — the
@@ -40,25 +49,56 @@ export interface LabelGate {
   batchIds: string[];
 }
 
+function codeSet(codes: Iterable<string> | undefined): Set<string> {
+  const out = new Set<string>();
+  if (!codes) return out;
+  for (const code of codes) {
+    if (typeof code === 'string' && code) out.add(code.trim());
+  }
+  return out;
+}
+
 export function blockingLabels(
   unprinted: readonly GateLabel[],
   listBarcodes: Iterable<string>,
+  /** Barcodes already booked on this session's closed pallets / loose pile. */
+  bookedBarcodes?: Iterable<string>,
 ): LabelGate {
-  const onList = new Set<string>();
-  for (const code of listBarcodes) {
-    if (typeof code === 'string' && code) onList.add(code.trim());
-  }
+  const onList = codeSet(listBarcodes);
+  const booked = codeSet(bookedBarcodes);
   const seen = new Set<string>();
   const batchIds: string[] = [];
   let count = 0;
   for (const label of unprinted) {
     if (!label || seen.has(label.barcode)) continue;
-    if (label.origin !== 'new_carton' && !onList.has(label.barcode)) continue;
+    if (label.origin === 'new_carton') {
+      // Q5: counted on a list (this one or a booked one) → booked unprinted.
+      if (onList.has(label.barcode) || booked.has(label.barcode)) continue;
+    } else if (!onList.has(label.barcode)) continue;
     seen.add(label.barcode);
     count += 1;
     if (!batchIds.includes(label.batch_id)) batchIds.push(label.batch_id);
   }
   return { count, batchIds };
+}
+
+/**
+ * Q5: the barcodes on the list being booked whose saved label is still
+ * unprinted — what the completion routes flag to the bot (`label_printed:
+ * false` per box, `unprinted_labels` = the size of this set). Only New
+ * carton labels can get this far: any other unprinted label on the list
+ * blocks the booking (blockingLabels).
+ */
+export function unprintedOnList(
+  unprinted: readonly GateLabel[],
+  listBarcodes: Iterable<string>,
+): Set<string> {
+  const onList = codeSet(listBarcodes);
+  const out = new Set<string>();
+  for (const label of unprinted) {
+    if (label && onList.has(label.barcode)) out.add(label.barcode);
+  }
+  return out;
 }
 
 /**

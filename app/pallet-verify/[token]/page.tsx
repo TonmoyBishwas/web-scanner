@@ -38,9 +38,11 @@ import {
   sourceStillListed,
   identicalLabelPayload,
   postIdenticalLabels,
+  newCartonBatch,
+  asNewCartonRows,
   type IdenticalForm,
 } from '@/lib/identical-boxes';
-import { isMintedLabelBarcode, newBatchId, labelSheetUrl, liveRowPlaces, loadLabelSize, openListsForPhase } from '@/lib/label-batches';
+import { isMintedLabelBarcode, newBatchId, labelSheetUrl, liveRowPlaces, loadLabelSize, openListsForPhase, sessionBookedBarcodes } from '@/lib/label-batches';
 import { blockingLabels, LABELS_NOT_PRINTED } from '@/lib/label-gate';
 import { useUnprintedLabels } from '@/lib/use-unprinted-labels';
 import { toIsoDate, normalizeExpiry } from '@/lib/expiry';
@@ -57,6 +59,8 @@ import { matchInvoiceItem } from '@/lib/invoice-match';
 import { isSplitSession } from '@/lib/session-mode';
 import { findDuplicateOwner } from '@/lib/duplicate-guard';
 import { classifyRead, noteRepeatedRead } from '@/lib/carton-barcode';
+import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
+import { freeNoBarcodeId, isNoBarcodeId, unreadDigitsOutcome } from '@/lib/no-barcode';
 import { useBackClose } from '@/lib/use-back-close';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback, scanAlreadyCountedFeedback } from '@/lib/scan-feedback';
@@ -148,6 +152,10 @@ interface BoxScan extends MultiPalletBoxScan {
   // own, never a batch that declares every carton with source_barcode
   // counted (lib/scan-notice.ts isBatchStandIn).
   twin?: boolean;
+  // Q5: saved with "New carton" and counted at the weight typed there, before
+  // its label was printed. Booked as is; the row says "label not printed"
+  // while the label is unprinted.
+  new_carton?: boolean;
 }
 
 // Digits-only normaliser for comparing the full printed barcode number across
@@ -164,14 +172,8 @@ function digitsOnly(s: string | null | undefined): string {
 const PROVISIONAL_PREFIX = 'MANUAL-';
 const isProvisional = (barcode: string) => barcode.startsWith(PROVISIONAL_PREFIX);
 
-// What a carton with no readable barcode at all is booked as. It has to be
-// non-empty — the bot skips any box whose barcode is falsy
-// (`airtable_service.create_pallet_box_inventory`), so an empty string would
-// silently drop the carton out of `box_inventory` — and it has to be visibly
-// not-a-barcode so nothing ever tries to match it against a scan.
-const NO_BARCODE_PREFIX = 'NOBC-';
-const noBarcodeId = (doc: string, pallet: number, n: number) =>
-  `${NO_BARCODE_PREFIX}${(doc || 'DOC').replace(/[^A-Za-z0-9]/g, '').slice(0, 10)}-P${pallet}-${n}`;
+// What a carton with no readable barcode at all is booked as: the NOBC-
+// marker from lib/no-barcode.ts (non-empty, visibly not a barcode).
 
 /** A real GS1 carton barcode carries at least the 13-digit item prefix. */
 const MIN_BARCODE_DIGITS = 13;
@@ -188,11 +190,14 @@ function stripProvisionalIds<T extends { barcode: string; sku?: string }>(
   doc: string,
   pallet: number,
 ): T[] {
-  return boxes.map((b, i) =>
-    isProvisional(b.barcode)
-      ? { ...b, barcode: noBarcodeId(doc, pallet, i + 1), sku: b.sku && !isProvisional(b.sku) ? b.sku : '' }
-      : b,
-  );
+  // Never a marker another row already carries (lib/no-barcode.ts).
+  const taken = boxes.map((b) => b.barcode);
+  return boxes.map((b, i) => {
+    if (!isProvisional(b.barcode)) return b;
+    const id = freeNoBarcodeId(doc, pallet, i + 1, taken);
+    taken.push(id);
+    return { ...b, barcode: id, sku: b.sku && !isProvisional(b.sku) ? b.sku : '' };
+  });
 }
 
 /** `2027-06-16` → `16/06/27`, for a toast that has to stay one short line. */
@@ -643,6 +648,11 @@ export default function PalletVerifyPage({
     avg_weight: number;
     sample_barcodes: string[];
   } | null>(null);
+  // SCN-14: the figure the pallet-total input was pre-filled with, and for
+  // which pallet/path ("3:m" mixed, "3:s:<name_key>" single-item). Only a
+  // suggestion — the worker still taps Set; see lib/count-prefill.ts.
+  const [countPrefillShown, setCountPrefillShown] = useState<CountPrefill | null>(null);
+  const countPrefillKeyRef = useRef('');
   // AI consolidation state: worker-accepted merges (originalKey → canonicalKey).
   // These get applied wherever we call `groupBoxesByName` and threaded into
   // the webhook so the bot's Pallet Items rows reflect the merged groups.
@@ -698,6 +708,9 @@ export default function PalletVerifyPage({
   const labelGate = blockingLabels(
     unprinted.labels,
     (openListsForPhase(phase).loose ? looseBoxes : scannedBoxes).map((b) => b.barcode),
+    // Q5: a New carton counted on a pallet already booked is not "outside
+    // the job" — its unprinted label must not hold the next list.
+    sessionBookedBarcodes(session),
   );
   const [activeExpanded, setActiveExpanded] = useState(false);
   const [pendingNextPallet, setPendingNextPallet] = useState<number | null>(null);
@@ -1412,8 +1425,23 @@ export default function PalletVerifyPage({
               processedRef.current.add(digits); // so a later bar-scan of this sticker is caught
               setError(null); // clear any earlier rejection banner now that this box committed
               clearScanNotice();
+            } else if (unreadDigitsOutcome({
+              nameHebrew: data.ocr_data.product_name_hebrew,
+              nameEnglish: data.ocr_data.product_name_english,
+              weightKg: data.ocr_data.weight_kg,
+            }) === 'book_without_barcode') {
+              // BOT-32: the digits were not read, but the name and the weight
+              // were — the carton is captured. Book it under a no-barcode
+              // marker, no warning, no gate. "Type digits" / "Create label"
+              // stay one tap away in the edit panel.
+              resolvedBarcode = freeNoBarcodeId(
+                sessionRef.current?.document_number || '', currentPalletRef.current, idx + 1,
+                prev.filter((_, i) => i !== idx).map((b) => b.barcode),
+              );
+              resolvedSku = '';
+              trace('ui', 'manual_capture_no_digits', { provisional: lookupKey, booked_as: resolvedBarcode });
             } else {
-              needsReview = true; // OCR couldn't read the digits → can't dedupe
+              needsReview = true; // nothing usable read → the worker has to look
             }
           }
           // Even when OCR "succeeded", flag the box if the model didn't return
@@ -1824,7 +1852,10 @@ export default function PalletVerifyPage({
     setEditError(null);
     setEditForm({
       ...editForm,
-      forcedId: noBarcodeId(session?.document_number || '', currentPallet, n || list.length + 1),
+      forcedId: freeNoBarcodeId(
+        session?.document_number || '', editForm.isLoose ? 0 : currentPallet, n || list.length + 1,
+        list.map((b) => b.barcode),
+      ),
       unidentified: false,
       barcodeInput: '',
     });
@@ -2019,20 +2050,22 @@ export default function PalletVerifyPage({
   // and the supplier code stays in the set too — the worker said every carton
   // carries it, so a further read of it adds nothing.
   function handleIdenticalCreated(
-    target: { box: BoxScan; loose: boolean; anotherOf?: number },
-    labels: CartonLabel[],
+    target: { box: BoxScan; loose: boolean; anotherOf?: number; newCarton?: boolean },
+    labels: Array<Pick<CartonLabel, 'barcode' | 'batch_id'>>,
     form: IdenticalForm,
     /** The toast to show instead of the form's "Label saved" (the one-tap twin). */
     savedText?: string,
   ) {
-    trace('ui', 'identical_created', { barcode: target.box.barcode, loose: target.loose, labels: labels.length, form, another_of: target.anotherOf });
-    const rows: BoxScan[] = expandIdenticalBoxes(
+    trace('ui', target.newCarton ? 'new_carton_counted' : 'identical_created', { barcode: target.box.barcode, loose: target.loose, labels: labels.length, form, another_of: target.anotherOf });
+    const expanded: BoxScan[] = expandIdenticalBoxes(
       target.box,
       labels.map((l) => ({ barcode: l.barcode, batch_id: l.batch_id })),
       form,
       // One more carton with the same label is a twin, not a batch: a later
       // read of the code must never be answered "covered by labels".
     ).map((r) => ({ ...r, twin: target.anotherOf ? true : undefined }));
+    // Q5: a New carton stands in for no supplier code (its sample is empty).
+    const rows: BoxScan[] = target.newCarton ? asNewCartonRows(expanded) : expanded;
     const replaceSample = (prev: BoxScan[]): BoxScan[] => {
       // "Different carton?": the carton it was copied from is a counted
       // carton of its own and stays; the new one joins the end of the list.
@@ -2070,8 +2103,8 @@ export default function PalletVerifyPage({
     setIdenticalFor(null);
     unprinted.refresh();
     trace('ui', 'labels_saved', {
-      origin: 'identical', count: rows.length, batch_id: labels[0]?.batch_id, pallet: target.loose ? 0 : currentPallet,
-      another_of: target.anotherOf,
+      origin: target.newCarton ? 'new_carton' : 'identical', count: rows.length, batch_id: labels[0]?.batch_id, pallet: target.loose ? 0 : currentPallet,
+      another_of: target.anotherOf, counted: target.newCarton || undefined,
     });
     showToast(
       savedText ?? (rows.length === 1 ? tr('identical.savedOne') : tr('identical.saved', { count: rows.length })),
@@ -2219,7 +2252,7 @@ export default function PalletVerifyPage({
    *  that is not itself minted and not still in OCR. */
   function canDeclareIdentical(box: BoxScan): boolean {
     return box.ocr_status !== 'processing' && !box.minted
-      && !isProvisional(box.barcode) && !box.barcode.startsWith(NO_BARCODE_PREFIX);
+      && !isProvisional(box.barcode) && !isNoBarcodeId(box.barcode);
   }
 
   function buildDockChips(opts: { gap: () => void }): ToolChip[] {
@@ -2282,12 +2315,30 @@ export default function PalletVerifyPage({
           token={token}
           items={session?.ocr_data ?? []}
           palletNumber={looseCartonPhase ? 0 : currentPallet}
-          notCountedWarning
+          // Q5 (client 2026-10-13): counted now, at the typed weight.
+          countOnSave
           onBack={() => setShowCartonCreator(false)}
-          onCreated={(count, batchId) => {
-            // Saved only — back to the scanner, no Labels screen. The worker
-            // prints from Labels (amber badge), then scans each carton.
+          onCreated={(count, batchId, labels) => {
+            // Back to the scanner, no Labels screen (SCN-18).
             setShowCartonCreator(false);
+            const batch = newCartonBatch(labels);
+            if (batch) {
+              // Q5: one row per saved label on the open list, through the
+              // same path as an identical batch (dedup set, uniform retract,
+              // pallet-total offer). Booked "label not printed" if it never
+              // reaches the printer; Labels can still print it any time.
+              const sample: BoxScan = { ...batch.sample, ocr_status: 'done' };
+              handleIdenticalCreated(
+                { box: sample, loose: looseCartonPhase, newCarton: true },
+                batch.refs,
+                batch.form,
+                count === 1 ? tr('carton.addedToListOne') : tr('carton.addedToList', { count }),
+              );
+              return;
+            }
+            // Nothing to count (the save returned no labels): the old label-
+            // only outcome — the gate holds the list until it is printed and
+            // scanned, or deleted in Labels.
             unprinted.refresh();
             trace('ui', 'labels_saved', {
               origin: 'new_carton', count, batch_id: batchId, pallet: looseCartonPhase ? 0 : currentPallet,
@@ -2494,6 +2545,14 @@ export default function PalletVerifyPage({
       minting={mintingBarcode}
       onNoBarcode={handleNoBarcode}
       showNoBarcode={mintFailed}
+      // BOT-32: a carton booked without a barcode can still get one — typed
+      // or minted — but only if the worker goes looking for it.
+      onAddBarcode={!editForm.unidentified && isNoBarcodeId(editForm.forcedId || editForm.barcode)
+        ? () => {
+            trace('ui', 'add_barcode_open', { barcode: editForm.barcode });
+            setEditForm({ ...editForm, unidentified: true, forcedId: undefined, barcodeInput: '' });
+          }
+        : undefined}
       itemChips={itemOptions(session?.ocr_data ?? []).map((it) => ({
         label: it.he || it.en,
         code: it.codes.join(' · '),
@@ -2610,6 +2669,19 @@ export default function PalletVerifyPage({
               resolvedSku = digits.slice(0, 13);
               looseProcessedRef.current.add(digits);
               clearScanNotice();
+            } else if (unreadDigitsOutcome({
+              nameHebrew: data.ocr_data.product_name_hebrew,
+              nameEnglish: data.ocr_data.product_name_english,
+              weightKg: data.ocr_data.weight_kg,
+            }) === 'book_without_barcode') {
+              // BOT-32, loose pile: same as the pallet phase (P0 = loose, as
+              // stripProvisionalIds books it).
+              resolvedBarcode = freeNoBarcodeId(
+                sessionRef.current?.document_number || '', 0, idx + 1,
+                prev.filter((_, i) => i !== idx).map((b) => b.barcode),
+              );
+              resolvedSku = '';
+              trace('ui', 'loose_manual_capture_no_digits', { provisional: lookupKey, booked_as: resolvedBarcode });
             } else {
               needsReview = true;
             }
@@ -2810,7 +2882,7 @@ export default function PalletVerifyPage({
 
   function handlePalletCountSubmit() {
     const count = parseInt(boxCountInput, 10);
-    trace('ui', 'count_submit', { pallet: currentPallet, input: boxCountInput, scanned: scannedBoxes.length });
+    trace('ui', 'count_submit', { pallet: currentPallet, input: boxCountInput, scanned: scannedBoxes.length, prefill: countPrefillShown });
     // Typing the total answers whatever the footer was saying.
     clearScanNotice();
     if (isNaN(count) || count < 1) {
@@ -2905,6 +2977,8 @@ export default function PalletVerifyPage({
     data: PalletCompleteResult,
     palletTypeLabel: 'single' | 'mix',
     boxCount: number,
+    /** The scan rows just booked — mirrors the server's completed_pallets[].barcodes. */
+    bookedBarcodes?: string[],
   ) {
     trace('ui', 'pallet_completed', { pallet: currentPallet, lpn: data.lpn, type: palletTypeLabel, boxCount, next_pallet: data.next_pallet, all_done: data.all_done });
     setLpn(data.lpn || '');
@@ -2940,6 +3014,7 @@ export default function PalletVerifyPage({
                 lpn: data.lpn ?? '',
                 pallet_type: palletTypeLabel,
                 box_count: boxCount,
+                barcodes: bookedBarcodes,
               },
             ],
           }
@@ -3124,7 +3199,7 @@ export default function PalletVerifyPage({
       // same-weight counts as single. Advance via the shared helper.
       const palletTypeLabel: 'single' | 'mix' =
         detectedType === 'single-uniform' ? 'single' : 'mix';
-      applyCompletion(data, palletTypeLabel, declaredCount);
+      applyCompletion(data, palletTypeLabel, declaredCount, scannedBoxes.map((b) => b.barcode));
     } catch {
       setError(tr('palletVerify.networkError'));
       setPhase('scanning');
@@ -3176,6 +3251,73 @@ export default function PalletVerifyPage({
     (committed < confirmedBoxCount || (hasUnresolvedWarnings && softWarnings));
   // Cartons still to scan against the worker's total (0 when none is set).
   const shortCount = Math.max(0, confirmedBoxCount - committed);
+
+  // The deferred pallet-total input: after enough OCR'd boxes (or the worker
+  // said mix / single-item, or a minted batch put the count on the list), or
+  // reopened by the pencil to change the total.
+  const showCountInput = confirmedBoxCount === 0 && (
+    totalEdit !== null
+    || (!anyProcessing && (doneCount >= 4 || forcedMix || !!pendingSingleGroup || scannedBoxes.some((b) => b.minted)))
+  );
+
+  // SCN-14: what the input offers before the worker types — the note's
+  // cartons for this pallet when knowable, else (mixed only) the scanned
+  // count. Never submitted for him: he still confirms with Set.
+  const countPrefillKey = `${currentPallet}:${pendingSingleGroup ? 's:' + pendingSingleGroup.name_key : 'm'}`;
+  let countPrefillNow: CountPrefill | null = null;
+  if (showCountInput && totalEdit === null && session) {
+    const lines = session.ocr_data ?? [];
+    const matched = pendingSingleGroup
+      ? matchInvoiceItem(pendingSingleGroup.item_name_hebrew, pendingSingleGroup.item_name, lines)
+      : null;
+    countPrefillNow = countPrefill({
+      lines,
+      palletCount: pallet_count,
+      currentPallet,
+      looseBoxCount: session.loose_box_count || 0,
+      isSplit: isSplitSession(session),
+      completedBoxCounts: (session.completed_pallets || []).map((p) => p.box_count),
+      meatCommitted: session.meat_committed,
+      singleItemLine: pendingSingleGroup ? (lines.find((l) => l === matched) ?? null) : undefined,
+      scannedTotal: listTotal(scannedBoxes),
+      minRequired: Math.max(2, scannedBoxes.length),
+    });
+  }
+  const countPrefillValue = countPrefillNow?.value ?? null;
+  const countPrefillSource = countPrefillNow?.source ?? null;
+  useEffect(() => {
+    if (countPrefillValue === null && countPrefillKeyRef.current === countPrefillKey) return;
+    const next = countPrefillValue !== null && countPrefillSource
+      ? { value: countPrefillValue, source: countPrefillSource }
+      : null;
+    if (countPrefillKeyRef.current !== countPrefillKey) {
+      // New pallet / path. Fill only an empty input: a restored or
+      // worker-typed number is never overwritten.
+      if (next === null) {
+        // Input not open yet, or nothing to offer. Drop a tag left from the
+        // previous pallet/path so it can't label a number he types now.
+        if (countPrefillShown) setCountPrefillShown(null);
+        return;
+      }
+      countPrefillKeyRef.current = countPrefillKey;
+      if (boxCountInput !== '') { setCountPrefillShown(null); return; }
+      setBoxCountInput(String(next.value));
+      setCountPrefillShown(next);
+      trace('ui', 'count_prefill', { pallet: currentPallet, value: next.value, source: next.source });
+      return;
+    }
+    // Same pallet/path: keep an UNTOUCHED prefill current (the scanned count
+    // rises as he scans). Once he edits it, it is his number.
+    if (next && countPrefillShown && boxCountInput === String(countPrefillShown.value)
+        && (next.value !== countPrefillShown.value || next.source !== countPrefillShown.source)) {
+      setBoxCountInput(String(next.value));
+      setCountPrefillShown(next);
+    }
+  }, [countPrefillKey, countPrefillValue, countPrefillSource, boxCountInput, countPrefillShown, currentPallet]);
+  // The source line shows only while the input still holds the prefill.
+  const countPrefillTag = countPrefillShown && boxCountInput === String(countPrefillShown.value)
+    ? countPrefillShown.source
+    : null;
 
   // Group scanned boxes by normalized OCR'd Hebrew name (with worker-accepted
   // AI merges applied). Barcode digits are intentionally NOT used — they're
@@ -3333,6 +3475,16 @@ export default function PalletVerifyPage({
                 <div className="text-[9px] font-bold text-ink-muted mt-[2px]">{tr('terminal.statCartons')}</div>
               </div>
             </div>
+
+            {/* Q5: New cartons booked with their label still unprinted. */}
+            {unprinted.labels.some((l) => l.origin === 'new_carton') && (
+              <p className="flex items-center justify-center gap-[5px] mt-3 text-[12px] font-extrabold text-[#fbbf5c] text-center">
+                <MI name="print_disabled" size={15} className="shrink-0" />
+                <span className="min-w-0">
+                  {tr('palletVerify.unprintedSummary', { count: unprinted.labels.filter((l) => l.origin === 'new_carton').length })}
+                </span>
+              </p>
+            )}
 
             {/* Right under the stats so it is in view without scrolling on a
                 long pallet list. */}
@@ -3597,7 +3749,7 @@ export default function PalletVerifyPage({
                     key={box.barcode + i}
                     index={looseBoxes.length - 1 - i}
                     name={box.item_name_hebrew || box.item_name || '—'}
-                    barcode={box.barcode}
+                    barcode={isNoBarcodeId(box.barcode) ? undefined : box.barcode}
                     weight={box.weight > 0 ? box.weight.toFixed(2) : undefined}
                     unitLabel={tr('common.kg')}
                     status={
@@ -3641,6 +3793,8 @@ export default function PalletVerifyPage({
     const doneBoxCount =
       session?.completed_pallets?.[session.completed_pallets.length - 1]?.box_count || committed;
     const doneWeight = scannedBoxes.reduce((s, b) => s + (b.weight > 0 ? b.weight : 0), 0);
+    // Q5: New cartons booked on this pallet whose label is still unprinted.
+    const doneUnprinted = scannedBoxes.filter((b) => b.new_carton && unprintedBarcodes.has(b.barcode)).length;
     return withLang(
       <div className="h-dvh relative bg-canvas overflow-hidden">
         <DoneOverlay
@@ -3658,6 +3812,12 @@ export default function PalletVerifyPage({
             },
           ]}
         >
+          {doneUnprinted > 0 && (
+            <p className="flex items-center justify-center gap-[5px] mt-3 text-[12px] font-extrabold text-[#fbbf5c] text-center">
+              <MI name="print_disabled" size={15} className="shrink-0" />
+              <span className="min-w-0">{tr('palletVerify.unprintedSummary', { count: doneUnprinted })}</span>
+            </p>
+          )}
           {lpnUrl && (
             <a
               href={`${lpnUrl}?token=${encodeURIComponent(token)}${language === 'Hebrew' ? '&lang=Hebrew' : ''}`}
@@ -3729,14 +3889,6 @@ export default function PalletVerifyPage({
     ? (committed < 2 ? tr('palletVerify.scanToStart') : tr('palletVerify.setTotalBelow'))
     : tr('palletVerify.leftToScan', { left: shortCount, total: confirmedBoxCount });
 
-  // The deferred pallet-total input: after enough OCR'd boxes (or the worker
-  // said mix / single-item, or a minted batch put the count on the list), or
-  // reopened by the pencil to change the total.
-  const showCountInput = confirmedBoxCount === 0 && (
-    totalEdit !== null
-    || (!anyProcessing && (doneCount >= 4 || forcedMix || !!pendingSingleGroup || scannedBoxes.some((b) => b.minted)))
-  );
-
   // "Done scanning? Enter the pallet total" — the way off a pallet the
   // scanner can't classify on its own (1–3 read boxes, no total yet).
   const showDoneScanning =
@@ -3797,6 +3949,13 @@ export default function PalletVerifyPage({
             <label className="block min-w-0 text-xs text-ink-body font-medium">
               {tr('palletVerify.deferredCountTitle')}
             </label>
+            {/* Where the pre-filled number came from — on the title line, not
+                a new one (same 641px footer budget as Cancel). */}
+            {totalEdit === null && countPrefillTag && (
+              <span className="shrink-0 text-[11px] text-ink-muted">
+                {tr(countPrefillTag === 'note' ? 'palletVerify.prefillFromNote' : 'palletVerify.prefillFromScans')}
+              </span>
+            )}
             {totalEdit !== null && (
               <button
                 type="button"
@@ -3825,6 +3984,9 @@ export default function PalletVerifyPage({
                 setPalletCountError(null);
               }}
               onKeyDown={(e) => e.key === 'Enter' && handlePalletCountSubmit()}
+              // A pre-filled figure is replaced by the first digit typed,
+              // not appended to.
+              onFocus={(e) => e.currentTarget.select()}
               placeholder={tr('palletVerify.boxCountPlaceholder')}
               className="flex-1 min-w-0 text-center text-xl font-black font-mono text-ink bg-sunken border-2 border-line-strong rounded-[12px] py-2 px-3 transition outline-none focus:border-brand focus:ring-4 focus:ring-brand/20 placeholder:text-ink-muted placeholder:font-medium placeholder:text-base placeholder:font-sans"
               autoFocus
@@ -4149,7 +4311,7 @@ export default function PalletVerifyPage({
                   key={box.barcode + i}
                   index={scannedBoxes.length - 1 - i}
                   name={box.item_name_hebrew || box.item_name || '—'}
-                  barcode={box.barcode}
+                  barcode={isNoBarcodeId(box.barcode) ? undefined : box.barcode}
                   weight={box.weight > 0 ? box.weight.toFixed(2) : undefined}
                   unitLabel={tr('common.kg')}
                   status={

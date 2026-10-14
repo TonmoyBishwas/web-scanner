@@ -33,7 +33,7 @@ export function gtinCheckDigitValid(digits: string): boolean {
 
 export type ReadVerdict =
   | { ok: true }
-  | { ok: false; reason: 'too_short' | 'checksum' | 'pallet_label' };
+  | { ok: false; reason: 'too_short' | 'checksum' | 'pallet_label' | 'not_digits' };
 
 /**
  * The supplier's own SHIPPING-PALLET label (MEV-10, 2026-09-22): Baladi prints
@@ -48,21 +48,49 @@ export function isSupplierPalletLabel(digits: string): boolean {
 
 /**
  * Can this read be a carton barcode?
+ *  * anything but digits → refuse (SCN-13: `729011535108401430767802907229:`
+ *    was booked on 2026-10-04 with its `:`; the digits-only check below used
+ *    to strip it and wave the read through). Surrounding whitespace is not
+ *    part of the read; the callers trim it;
  *  * fewer than 12 digits → a fragment of a longer code or a stray small
  *    symbol on the sticker (IN264171048 stored `15928481` off a 31-digit
  *    catch-weight label) → refuse;
  *  * 12 / 13 / 14 digits → must pass the GTIN check digit (`7290001456825`,
  *    a one-digit misread of `7290004456825`, fails it) → else refuse;
- *  * 15+ digits → a GS1-128; the symbology has its own checksum → accept.
+ *  * 15+ digits → a GS1-128; the symbology has its own checksum → accept,
+ *    EXCEPT an Israeli (`729…`) catch-weight code whose leading 13 digits
+ *    fail the GTIN check (`729010351484015205456509092027`, a shifted read of
+ *    `7290115351484…`, 2026-10-04) — see `isIsraeliGtinPrefixed`.
  */
 export function classifyRead(barcode: string): ReadVerdict {
-  const d = digitsOf(barcode);
+  const raw = (barcode || '').trim();
+  if (/\D/.test(raw)) return { ok: false, reason: 'not_digits' };
+  const d = raw;
   if (isSupplierPalletLabel(d)) return { ok: false, reason: 'pallet_label' };
   if (d.length < 12) return { ok: false, reason: 'too_short' };
   if (d.length <= 14 && !gtinCheckDigitValid(d) && !isInHouseCode(d)) {
     return { ok: false, reason: 'checksum' };
   }
+  if (d.length >= 15 && isIsraeliGtinPrefixed(d) && !gtinCheckDigitValid(d.slice(0, 13))) {
+    return { ok: false, reason: 'checksum' };
+  }
   return { ok: true };
+}
+
+/**
+ * Does a 15+ digit read claim to start with an Israeli GTIN-13 (prefix 729),
+ * so its first 13 digits must carry a valid check digit?
+ *
+ * Not `7290000…`: one supplier (invoices 251068506 / 251068650, 2026-10-03..05,
+ * 37 cartons) prints `7290000` + his own zero-padded item number
+ * (`7290000000101`, `7290000002283`, `7290000000550` = note lines 101 / 2283 /
+ * 550) — read identically every time, and none of them passes the GTIN check.
+ * Every other `729…` prefix in 90 days of box_inventory does. Other prefixes
+ * (`10…`, `28…` minted labels, …) are not touched: `1014721100101` is
+ * legitimate and fails a GTIN check.
+ */
+export function isIsraeliGtinPrefixed(digits: string): boolean {
+  return digits.startsWith('729') && !digits.startsWith('7290000');
 }
 
 /**

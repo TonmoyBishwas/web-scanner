@@ -89,6 +89,13 @@ export function HistoryRow({
                 {name}
               </span>
             </div>
+            {unprinted && unprintedLabel && (
+              // Q5: said in words, not only the icon — a carton booked before
+              // its label came out of the printer.
+              <span className="block text-[10px] font-extrabold text-[#fbbf5c] whitespace-nowrap overflow-hidden text-ellipsis">
+                {unprintedLabel}
+              </span>
+            )}
             {barcode && (
               // Barcodes here run to 31 digits — without its own clamp this
               // line pushed the weight off the row.

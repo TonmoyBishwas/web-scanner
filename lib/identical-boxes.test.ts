@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   dedupCodes, expandIdenticalBoxes, identicalLabelPayload, postIdenticalLabels, releasedSources, sourceSku, sourceStillListed,
+  newCartonBatch, asNewCartonRows,
 } from './identical-boxes';
 
 const sample = {
@@ -187,5 +188,45 @@ describe('identicalLabelPayload / postIdenticalLabels (the one save path)', () =
   it('a network error → failed, never a throw', async () => {
     const boom = (async () => { throw new Error('offline'); }) as unknown as typeof fetch;
     expect(await postIdenticalLabels('t', 'b', identicalLabelPayload(req), boom)).toEqual({ ok: false, reason: 'failed' });
+  });
+});
+
+describe('Q5 — a New carton counted at its saved weight', () => {
+  const label = (barcode: string, weight: number | null) => ({
+    barcode,
+    batch_id: 'nc-1',
+    weight_kg: weight,
+    expiry_date: '2027-01-31',
+    production_date: '2026-10-10',
+    item_name_hebrew: 'שוקיים עוף',
+    item_name_english: 'Chicken legs',
+  });
+
+  it('turns each saved label into one counted row at the typed weight', () => {
+    const batch = newCartonBatch([label('2826101300000001', 14.2), label('2826101300000002', 14.2)]);
+    expect(batch).not.toBeNull();
+    const rows = asNewCartonRows(expandIdenticalBoxes({ ...batch!.sample, ocr_status: 'done' }, batch!.refs, batch!.form));
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.barcode)).toEqual(['2826101300000001', '2826101300000002']);
+    for (const r of rows) {
+      expect(r.weight).toBe(14.2);
+      expect(r.expiry).toBe('2027-01-31');
+      expect(r.production_date).toBe('2026-10-10');
+      expect(r.item_name_hebrew).toBe('שוקיים עוף');
+      expect(r.new_carton).toBe(true);
+      expect(r.minted).toBe(true);
+      expect(r.label_batch_id).toBe('nc-1');
+      // The label's own prefix, as scanning the printed label always booked it.
+      expect((r as { sku: string }).sku).toBe(r.barcode.slice(0, 13));
+      // Stands in for no supplier code: the dedup set holds only the label.
+      expect(r.source_barcode).toBeUndefined();
+    }
+    expect(dedupCodes(rows)).toEqual(['2826101300000001', '2826101300000002']);
+  });
+
+  it('counts nothing when a label has no weight, or nothing was saved', () => {
+    expect(newCartonBatch([label('2826101300000001', null)])).toBeNull();
+    expect(newCartonBatch([label('2826101300000001', 0)])).toBeNull();
+    expect(newCartonBatch([])).toBeNull();
   });
 });

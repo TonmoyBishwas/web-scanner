@@ -8,6 +8,7 @@ import { CalendarPicker } from './CalendarPicker';
 import { LanguageContext, useT, type TranslationKey } from '@/lib/i18n';
 import { toIsoDate, isoToDdmmyyyy } from '@/lib/expiry';
 import { validateCartonDates } from '@/lib/date-validation';
+import { isNoBarcodeId } from '@/lib/no-barcode';
 import {
   weightState, nameState, expiryState, localIsoDate,
   firstField, fieldAfterItemPick, fieldAfterExpiryPick,
@@ -74,6 +75,12 @@ interface EditPanelProps {
    */
   onNoBarcode?: () => void;
   showNoBarcode?: boolean;
+  /**
+   * BOT-32: the carton was booked without a barcode (its digits were not
+   * read, its name and weight were). A quiet link on the barcode row reopens
+   * "type the digits / create a label" — secondary, never a warning.
+   */
+  onAddBarcode?: () => void;
   /**
    * The carton carries a warning. Save stays enabled even with nothing
    * changed: saving is how the worker confirms what is there, and a disabled
@@ -165,7 +172,7 @@ export function EditPanel({
   imageData, onViewImage,
   barcodeWeight, barcodeExpiry, onUseBarcodeWeight, onUseBarcodeExpiry,
   barcodeEditable, barcodeInput = '', onBarcodeChange,
-  onCreateBarcode, minting, onNoBarcode, showNoBarcode,
+  onCreateBarcode, minting, onNoBarcode, showNoBarcode, onAddBarcode,
   needsReview, saveError,
   onNameChange, onWeightChange, onExpiryChange, onProductionDateChange, onBatchChange, onSave, onCancel,
 }: EditPanelProps) {
@@ -713,11 +720,22 @@ export function EditPanel({
               style={{ textAlign: isHe ? 'left' : 'right' }}
               dir="ltr"
             >
-              {barcode}
+              {/* The NOBC- marker is a booking key, not something to read. */}
+              {isNoBarcodeId(barcode) ? tr('terminal.barcodeNoneSet') : barcode}
             </span>
-            <span role="img" aria-label={tr('terminal.readOnly')} title={tr('terminal.readOnly')} className="flex-none flex text-ink-muted">
-              <MI name="lock" size={14} />
-            </span>
+            {onAddBarcode ? (
+              <button
+                type="button"
+                onClick={onAddBarcode}
+                className="flex-none text-[11px] font-extrabold underline text-ink-muted"
+              >
+                {tr('terminal.barcodeAddBtn')}
+              </button>
+            ) : (
+              <span role="img" aria-label={tr('terminal.readOnly')} title={tr('terminal.readOnly')} className="flex-none flex text-ink-muted">
+                <MI name="lock" size={14} />
+              </span>
+            )}
           </div>
         )}
       </div>
