@@ -62,6 +62,7 @@ import { classifyRead, noteRepeatedRead } from '@/lib/carton-barcode';
 import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
 import { freeNoBarcodeId, isNoBarcodeId, unreadDigitsOutcome } from '@/lib/no-barcode';
 import { useBackClose } from '@/lib/use-back-close';
+import { findWeightSuspects } from '@/lib/weight-sanity';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback, scanAlreadyCountedFeedback } from '@/lib/scan-feedback';
 import {
@@ -156,11 +157,48 @@ interface BoxScan extends MultiPalletBoxScan {
   // its label was printed. Booked as is; the row says "label not printed"
   // while the label is unprinted.
   new_carton?: boolean;
+  // lib/weight-sanity.ts: the OCR weight looks wrong (a number from the
+  // product name, or 3x off the item's median on this list). Folded into
+  // needs_review, so the worker has to confirm or fix it in the edit panel.
+  weight_suspect?: { typical?: number; reason: 'name_number' | 'ratio' };
+  // The worker saved this carton in the edit panel: its weight is theirs.
+  weight_checked?: boolean;
 }
 
 // Digits-only normaliser for comparing the full printed barcode number across
 // bar-scanned and OCR-captured boxes (NOT the 13-digit SKU, which repeats
 // across every box of one product).
+/**
+ * Flag every carton on the list whose weight looks wrong (lib/weight-sanity.ts)
+ * — a new read can also expose an earlier one, e.g. a first carton read as
+ * 120 kg once three real 12 kg ones are in. Only ever ADDS a flag: other
+ * reasons may hold needs_review, and the worker's Save is what clears it.
+ */
+function flagSuspectWeights(
+  list: BoxScan[],
+  extraNames: Record<string, Array<string | null | undefined>> = {},
+): BoxScan[] {
+  const suspects = findWeightSuspects(list, extraNames);
+  if (!suspects.length) return list;
+  const by = new Map(suspects.map((x) => [x.barcode, x]));
+  return list.map((b) => {
+    const x = by.get(b.barcode);
+    if (!x || b.weight_suspect) return b;
+    return { ...b, needs_review: true, weight_suspect: { typical: x.typical, reason: x.reason } };
+  });
+}
+
+/** What the worker is told about a flagged weight (toast + edit panel). */
+function weightWarningText(
+  b: Pick<BoxScan, 'weight' | 'weight_suspect' | 'item_name_hebrew' | 'item_name'>,
+  tr: (k: Parameters<typeof t>[1], v?: Parameters<typeof t>[2]) => string,
+): string {
+  const item = (b.item_name_hebrew || b.item_name || '').trim();
+  return b.weight_suspect?.typical
+    ? tr('palletVerify.weightSuspectRatio', { item, w: b.weight, typical: b.weight_suspect.typical.toFixed(2) })
+    : tr('palletVerify.weightSuspectName', { item, w: b.weight });
+}
+
 function digitsOnly(s: string | null | undefined): string {
   return (s || '').replace(/\D/g, '');
 }
@@ -682,6 +720,19 @@ export default function PalletVerifyPage({
   const looseSheetRef = useRef<BottomSheetHandle>(null);
   const drawer = useDrawerHost(token);
   const { toast, showToast, showLockToast } = useLockToast(tr('terminal.lockedToast'));
+
+  // A carton just flagged by the weight check (flagSuspectWeights) is said
+  // once, out loud — the row only turns amber, and the worker is still
+  // holding the box. Here, not in the state updaters, which may run twice.
+  const weightToldRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const b of [...scannedBoxes, ...looseBoxes]) {
+      if (!b.weight_suspect || weightToldRef.current.has(b.barcode)) continue;
+      weightToldRef.current.add(b.barcode);
+      trace('ui', 'weight_suspect', { barcode: b.barcode, weight: b.weight, ...b.weight_suspect });
+      showToast(weightWarningText(b, tr), 'report_problem', '#fbbf5c');
+    }
+  }, [scannedBoxes, looseBoxes, showToast, tr]);
   const [showPallets, setShowPallets] = useState(false);
   // צור קרטון / מדבקות — mint and print a sticker for a carton that arrived
   // with none. Both are label-only: no stock is written here, the printed
@@ -1485,15 +1536,16 @@ export default function PalletVerifyPage({
               barcode_conflict: conflict || undefined,
             };
           });
-          setDetectedType(detectType(updated, acceptedMerges));
+          const checked = flagSuspectWeights(updated, { [resolvedBarcode]: [rawHe, rawEn] });
+          setDetectedType(detectType(checked, acceptedMerges));
           // Check if the box that just finished OCR triggers a uniform-pair prompt.
-          maybeTriggerUniformPrompt(updated, resolvedBarcode);
+          maybeTriggerUniformPrompt(checked, resolvedBarcode);
           // Manual capture had no decoded barcode at scan time, so this is the
           // first moment the photo can be filed under the box's real identity.
           // (Bar-scanned boxes already uploaded at detection; the ref guard
           // makes a second call here a no-op either way.)
           if (manual) archiveStickerPhoto(resolvedBarcode, imageData, 'pallet');
-          return updated;
+          return checked;
         });
 
         // Warn, don't block: the worker is still holding the carton, and the
@@ -1946,6 +1998,9 @@ export default function PalletVerifyPage({
         // The worker has now looked at both readings and chosen. Whatever they
         // chose is the answer — don't keep flagging it.
         barcode_conflict: undefined,
+        // Same for a suspect weight: saved = confirmed (lib/weight-sanity.ts).
+        weight_suspect: undefined,
+        weight_checked: true,
       };
     }
 
@@ -2069,9 +2124,11 @@ export default function PalletVerifyPage({
     const replaceSample = (prev: BoxScan[]): BoxScan[] => {
       // "Different carton?": the carton it was copied from is a counted
       // carton of its own and stays; the new one joins the end of the list.
-      if (target.anotherOf) return [...prev, ...rows];
+      if (target.anotherOf) return flagSuspectWeights([...prev, ...rows]);
       const idx = prev.findIndex((b) => b.barcode === target.box.barcode);
-      return idx === -1 ? [...prev, ...rows] : [...prev.slice(0, idx), ...rows, ...prev.slice(idx + 1)];
+      return flagSuspectWeights(
+        idx === -1 ? [...prev, ...rows] : [...prev.slice(0, idx), ...rows, ...prev.slice(idx + 1)],
+      );
     };
     if (target.loose) {
       for (const r of rows) looseProcessedRef.current.add(r.barcode);
@@ -2251,7 +2308,8 @@ export default function PalletVerifyPage({
   /** The action is offered on a captured row with a real supplier barcode
    *  that is not itself minted and not still in OCR. */
   function canDeclareIdentical(box: BoxScan): boolean {
-    return box.ocr_status !== 'processing' && !box.minted
+    // A doubted weight is confirmed first: the form copies it onto every label.
+    return box.ocr_status !== 'processing' && !box.minted && !box.weight_suspect
       && !isProvisional(box.barcode) && !isNoBarcodeId(box.barcode);
   }
 
@@ -2528,6 +2586,8 @@ export default function PalletVerifyPage({
       key={editForm.barcode}
       cartonNumber={editIndex >= 0 ? editIndex + 1 : '—'}
       needsReview={editIndex >= 0 && !!editList[editIndex].needs_review}
+      weightWarning={editIndex >= 0 && editList[editIndex].weight_suspect
+        ? weightWarningText(editList[editIndex], tr) : undefined}
       // The panel's own error, never the footer's `error`: a scan clash from a
       // background OCR is not this carton's save error.
       saveError={editError}
@@ -2710,7 +2770,7 @@ export default function PalletVerifyPage({
           // exists once OCR has read the printed digits.
           if (manual) archiveStickerPhoto(resolvedBarcode, imageData, 'loose');
 
-          return prev.map((b, i) => {
+          return flagSuspectWeights(prev.map((b, i) => {
             if (i !== idx) return b;
             return {
               ...b,
@@ -2726,7 +2786,7 @@ export default function PalletVerifyPage({
               needs_review: needsReview || undefined,
               barcode_conflict: conflict || undefined,
             };
-          });
+          }), { [resolvedBarcode]: [data.ocr_data.product_name_hebrew, data.ocr_data.product_name_english] });
         });
 
         if (conflict) {

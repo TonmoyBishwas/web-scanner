@@ -230,3 +230,16 @@ describe('Q5 — a New carton counted at its saved weight', () => {
     expect(newCartonBatch([])).toBeNull();
   });
 });
+
+describe('expandIdenticalBoxes and the weight check', () => {
+  const form = { weight: 12, expiry: '2026-12-31', production_date: '2026-09-10' };
+  it('never copies a weight doubt onto the new rows', () => {
+    const rows = expandIdenticalBoxes({ ...sample, weight: 120, weight_suspect: { reason: 'name_number' } }, labels, form);
+    for (const r of rows) expect(r.weight_suspect).toBeUndefined();
+  });
+  it('keeps a confirmed weight confirmed only when the form kept it', () => {
+    const confirmed = { ...sample, weight: 12, weight_checked: true };
+    expect(expandIdenticalBoxes(confirmed, labels, form)[0].weight_checked).toBe(true);
+    expect(expandIdenticalBoxes(confirmed, labels, { ...form, weight: 13 })[0].weight_checked).toBeUndefined();
+  });
+});

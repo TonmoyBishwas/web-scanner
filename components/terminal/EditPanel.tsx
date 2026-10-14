@@ -88,6 +88,11 @@ interface EditPanelProps {
    */
   needsReview?: boolean;
   /**
+   * The weight check (lib/weight-sanity.ts) doubts the OCR weight: shown as the
+   * panel's status, and the panel opens on Weight, until the weight is edited.
+   */
+  weightWarning?: string;
+  /**
    * Why the last Save (or barcode mint) did not go through. Drawn INSIDE the
    * panel: the page's own error line sits under this full-screen overlay,
    * where a worker never saw "5 digits — need at least 13".
@@ -173,7 +178,7 @@ export function EditPanel({
   barcodeWeight, barcodeExpiry, onUseBarcodeWeight, onUseBarcodeExpiry,
   barcodeEditable, barcodeInput = '', onBarcodeChange,
   onCreateBarcode, minting, onNoBarcode, showNoBarcode, onAddBarcode,
-  needsReview, saveError,
+  needsReview, weightWarning, saveError,
   onNameChange, onWeightChange, onExpiryChange, onProductionDateChange, onBatchChange, onSave, onCancel,
 }: EditPanelProps) {
   const tr = useT();
@@ -188,6 +193,7 @@ export function EditPanel({
   // and on the dates when they are what stops this carton being saved.
   const [field, setField] = useState<EditField>(() => {
     const f = firstField(name, weight, expiry);
+    if (weightWarning && !dateError) return 'weight';
     return dateError && f === 'weight' && weightState(weight) === 'ok' ? 'expiry' : f;
   });
   // Which date the calendar is open for, if any.
@@ -249,6 +255,8 @@ export function EditPanel({
   } else if (missing.length) {
     const fields = missing.map((m) => tr(MISSING_KEY[m])).join(', ');
     status = { icon: 'warning', cls: 'text-warn-weak-ink', text: tr('terminal.missingList', { fields }) };
+  } else if (weightWarning && !changed.weight) {
+    status = { icon: 'warning', cls: 'text-warn-weak-ink', text: weightWarning };
   } else if (dirty) {
     const text = nChanged === 1 ? tr('terminal.changeReadyOne') : tr('terminal.changesReady', { n: nChanged });
     status = { icon: 'check_circle', cls: 'text-ok-weak-ink', text };

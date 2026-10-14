@@ -49,17 +49,24 @@ function Notice({
   refreshHref?: string;
   bilingual?: boolean;
 }) {
-  const icon = { ok: 'check_circle', warn: 'hourglass_top', danger: 'link_off', info: 'info' }[tone];
-  const color = { ok: 'text-ok', warn: 'text-warn', danger: 'text-danger', info: 'text-info' }[tone];
+  const icon = { ok: 'check', warn: 'hourglass_top', danger: 'link_off', info: 'info' }[tone];
+  const ring = {
+    ok: 'bg-ok text-[#04210f] shadow-[0_0_60px_rgba(34,197,94,0.55)]',
+    warn: 'bg-warn text-[#1a1100] shadow-[0_0_60px_rgba(245,158,11,0.5)]',
+    danger: 'bg-danger text-white shadow-[0_0_60px_rgba(239,68,68,0.5)]',
+    info: 'bg-info text-[#160a33] shadow-[0_0_60px_rgba(167,139,250,0.5)]',
+  }[tone];
+  const glow = { ok: 'rgba(34,197,94,0.22)', warn: 'rgba(245,158,11,0.2)', danger: 'rgba(239,68,68,0.2)', info: 'rgba(167,139,250,0.2)' }[tone];
   const other: FormLanguage = language === 'Hebrew' ? 'English' : 'Hebrew';
   return (
     <main
       dir={language === 'Hebrew' ? 'rtl' : 'ltr'}
       lang={language === 'Hebrew' ? 'he' : 'en'}
-      className="min-h-dvh bg-canvas text-ink flex items-center justify-center px-4"
+      className="min-h-dvh text-ink flex items-center justify-center px-4"
+      style={{ background: `radial-gradient(circle at 50% 30%, ${glow}, var(--surface-canvas) 65%)` }}
     >
-      <div className="w-full max-w-md rounded-2xl border border-line bg-raised p-6 text-center space-y-3">
-        <span aria-hidden className={`mi ${color}`} style={{ fontSize: 48 }}>
+      <div className="w-full max-w-md rounded-3xl border-2 border-line bg-raised/90 p-7 text-center space-y-4 shadow-2xl shadow-black/40">
+        <span aria-hidden className={`mi mx-auto grid h-24 w-24 place-items-center rounded-full ${ring}`} style={{ fontSize: 60 }}>
           {icon}
         </span>
         <h1 className="text-xl font-extrabold">{t(language, title)}</h1>
@@ -73,7 +80,7 @@ function Notice({
         {refreshHref && (
           <a
             href={refreshHref}
-            className="inline-flex min-h-12 items-center justify-center rounded-xl border border-line-strong px-6 font-bold text-ink"
+            className="inline-flex min-h-12 items-center justify-center rounded-2xl bg-brand px-6 font-extrabold text-white"
           >
             {t(language, 'receive.refresh')}
           </a>
