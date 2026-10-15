@@ -28,7 +28,7 @@ import { Toast, useLockToast } from '@/components/terminal/Toast';
 import { PriorityPushStatus } from '@/components/terminal/PriorityPushStatus';
 import { useDrawerHost } from '@/components/terminal/DrawerHost';
 import { PalletsBrowser } from '@/components/terminal/PalletsBrowser';
-import { CartonCreator } from '@/components/terminal/CartonCreator';
+import { CartonCreator, type CartonCreatorPreset } from '@/components/terminal/CartonCreator';
 import { LabelsBrowser } from '@/components/terminal/LabelsBrowser';
 import { IdenticalBoxesForm } from '@/components/terminal/IdenticalBoxesForm';
 import {
@@ -58,13 +58,15 @@ import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
 import { matchInvoiceItem } from '@/lib/invoice-match';
 import { isSplitSession } from '@/lib/session-mode';
 import { findDuplicateOwner } from '@/lib/duplicate-guard';
-import { classifyRead, noteRepeatedRead } from '@/lib/carton-barcode';
+import { classifyRead, matchInvoiceShortCode, noteRepeatedRead, shortCodeDefaults } from '@/lib/carton-barcode';
 import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
 import { freeNoBarcodeId, isNoBarcodeId, unreadDigitsOutcome } from '@/lib/no-barcode';
 import { useBackClose } from '@/lib/use-back-close';
 import { findWeightSuspects } from '@/lib/weight-sanity';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback, scanAlreadyCountedFeedback } from '@/lib/scan-feedback';
+import { photoBelongsTo, photoUploadKey } from '@/lib/photo-rows';
+import { compressPhoto, dataUrlBytes } from '@/lib/photo-compress';
 import {
   SCAN_NOTICE_ACTION_MS,
   HIGHLIGHT_ROW_MS,
@@ -163,6 +165,8 @@ interface BoxScan extends MultiPalletBoxScan {
   weight_suspect?: { typical?: number; reason: 'name_number' | 'ratio' };
   // The worker saved this carton in the edit panel: its weight is theirs.
   weight_checked?: boolean;
+  // Its sticker photo is still uploading (archiveStickerPhoto). Never cached.
+  photo_pending?: boolean;
 }
 
 // Digits-only normaliser for comparing the full printed barcode number across
@@ -275,6 +279,12 @@ interface ScanNotice {
   text: string;
   tone: 'info' | 'warn';
   /**
+   * A short read (lib/carton-barcode.ts): offer New carton — prefilled with
+   * the invoice line when the read is that line's item code, empty when it is
+   * a fragment the page refused (the way out David never had, 2026-10-15).
+   */
+  newCarton?: { preset?: CartonCreatorPreset; label: string };
+  /**
    * "Different carton?": the counted carton a re-read matched, to copy into
    * a label of its own when the worker says the carton in hand is another
    * one with a byte-identical label. `box.barcode` is the code just read.
@@ -313,7 +323,7 @@ interface LooseScanSnapshot {
   looseBoxes: BoxScan[];
 }
 const stripImage = (b: BoxScan): BoxScan => {
-  const { image_data: _img, ...rest } = b;
+  const { image_data: _img, photo_pending: _pending, ...rest } = b;
   return rest;
 };
 
@@ -738,6 +748,8 @@ export default function PalletVerifyPage({
   // with none. Both are label-only: no stock is written here, the printed
   // sticker is scanned onto the pallet through the normal flow.
   const [showCartonCreator, setShowCartonCreator] = useState(false);
+  // New carton opened from a short item-code read: the line it is prefilled with.
+  const [cartonPreset, setCartonPreset] = useState<CartonCreatorPreset | null>(null);
   // "All boxes identical" — the captured row the worker tapped it on, and
   // which phase's list it belongs to. See IdenticalBoxesForm. `anotherOf` is
   // the "Different carton?" link on an already-counted notice: the form then
@@ -1100,17 +1112,13 @@ export default function PalletVerifyPage({
           showToast(t(sessionRef.current?.language || 'English', 'terminal.palletLabelRead', { digits: read }), 'local_shipping');
           return;
         }
+        if (verdict.reason === 'too_short' && handleShortItemCode(read, false)) return;
         const acceptAnyway = verdict.reason === 'checksum' && noteRepeatedRead(refusedReadsRef.current, read);
         if (!acceptAnyway) {
           dupFlashRef.current?.('rejected');
           scanDuplicateFeedback();
           // Amber: one small action (scan it again), nothing failed for good.
-          showScanNotice({
-            text: t(sessionRef.current?.language || 'English',
-              verdict.reason === 'too_short' ? 'terminal.barcodeTooShort' : 'terminal.barcodeMisread',
-              { digits: read }),
-            tone: 'warn',
-          });
+          showScanNotice(refusedReadNotice(read, verdict.reason));
           return;
         }
         trace('ui', 'scan_accepted_as_printed', { barcode: read, pallet: currentPalletRef.current });
@@ -1193,6 +1201,80 @@ export default function PalletVerifyPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
+
+  // ── Short reads (2026-10-15, IN26013461) ──
+  // SmartScanner: a too-short read never arms its 3 s cooldown (that dropped
+  // the carton's real code read a moment later — 192 drops on 10-15). The
+  // page still hears it (throttled) for its notice; nothing is counted from
+  // a short read either way, so it never gets the "saved" hold.
+  const acceptScannerValue = useCallback((v: string) => {
+    const verdict = classifyRead(v.trim());
+    return verdict.ok || verdict.reason !== 'too_short';
+  }, []);
+
+  // Plain functions over refs and setters: the frozen-closure detect handlers
+  // call the first render's copies.
+
+  /** The amber "misread / only part of the barcode" notice. A fragment also
+   *  offers New carton — a carton whose only code is short has no other way
+   *  onto the list. */
+  function refusedReadNotice(read: string, reason: string): ScanNotice {
+    const lang = sessionRef.current?.language || 'English';
+    const tooShort = reason === 'too_short';
+    return {
+      text: t(lang, tooShort ? 'terminal.barcodeTooShort' : 'terminal.barcodeMisread', { digits: read }),
+      tone: 'warn',
+      newCarton: tooShort ? { label: t(lang, 'terminal.tooShortNewCarton') } : undefined,
+    };
+  }
+
+  /**
+   * A short read that is an invoice line's item code (`501004`): the carton
+   * has no unique barcode, so nothing is counted from the read. Calm notice,
+   * and New carton opens prefilled with that line — once per code per list;
+   * after that the notice's button reopens it (the camera re-reads the code
+   * the moment the form closes). The worker states the count and expiry and
+   * saves. Returns false when the read matches no line.
+   */
+  const shortCodeOpenedRef = useRef<Set<string>>(new Set());
+  function handleShortItemCode(read: string, loose: boolean): boolean {
+    const lines = sessionRef.current?.ocr_data ?? [];
+    const line = matchInvoiceShortCode(read, lines);
+    if (!line) return false;
+    const lang = sessionRef.current?.language || 'English';
+    const list = loose ? looseBoxesRef.current : scannedBoxesRef.current;
+    const counted = list.filter(
+      (b) => matchInvoiceItem(b.item_name_hebrew, b.item_name, lines)?.item_code === line.item_code,
+    ).length;
+    const { weight, quantity } = shortCodeDefaults(line, counted);
+    const preset: CartonCreatorPreset = {
+      item: line, weight, quantity, notice: t(lang, 'carton.shortCodeNotice', { code: read }),
+    };
+    const key = `${loose ? 0 : currentPalletRef.current}:${read}`;
+    const open = !shortCodeOpenedRef.current.has(key);
+    trace('ui', 'scan_short_item_code', {
+      barcode: read, item_code: line.item_code, pallet: loose ? 0 : currentPalletRef.current,
+      counted, weight, quantity, opened: open,
+    });
+    showScanNotice({
+      text: t(lang, 'terminal.shortItemCode', { code: read }),
+      tone: 'info',
+      newCarton: { preset, label: t(lang, 'terminal.shortItemCodeAction') },
+    });
+    if (open) {
+      shortCodeOpenedRef.current.add(key);
+      openCartonCreator(preset);
+    }
+    return true;
+  }
+
+  function openCartonCreator(preset?: CartonCreatorPreset) {
+    trace('ui', 'carton_creator_open', preset
+      ? { item_code: preset.item.item_code, weight: preset.weight, quantity: preset.quantity }
+      : undefined);
+    setCartonPreset(preset ?? null);
+    setShowCartonCreator(true);
+  }
 
   // ── Manual capture — barcode wouldn't decode (glare/fold/tear) ──
   // No decoded barcode here, so we register a provisional box and let OCR
@@ -1284,7 +1366,10 @@ export default function PalletVerifyPage({
 
       return filtered;
     });
-    for (const code of gone) processedRef.current.delete(code);
+    for (const code of gone) {
+      processedRef.current.delete(code);
+      uploadedStickersRef.current.delete(photoUploadKey('pallet', currentPalletRef.current, code));
+    }
     for (const code of released) processedRef.current.delete(code);
     // A delete answers any notice about the list, and a re-scan of the
     // carton just taken off must tick again, never be muted.
@@ -1321,6 +1406,12 @@ export default function PalletVerifyPage({
   // Deliberately fire-and-forget. A slow or failed upload must never hold up
   // scanning or block a pallet, and a box with no photo behaves exactly as it
   // did before this existed.
+  //
+  // One upload per list row (lib/photo-rows.ts), not per barcode for the
+  // page's life: pallet 2's sample of a product photographed on pallet 1 has
+  // to upload too (IN26013461). The URL lands on the row and on every row
+  // minted from it, even when "all boxes identical" replaced the sample
+  // before the upload finished; until then those rows say "uploading".
   const uploadedStickersRef = useRef<Set<string>>(new Set());
 
   function archiveStickerPhoto(
@@ -1332,34 +1423,47 @@ export default function PalletVerifyPage({
     if (!barcode || !imageData) return;
     // Guards a retried OCR, a re-render, and StrictMode's double-invoked
     // updater — all three would otherwise upload the same frame twice.
-    if (uploadedStickersRef.current.has(barcode)) return;
-    uploadedStickersRef.current.add(barcode);
+    const key = photoUploadKey(target, currentPalletRef.current, barcode);
+    if (uploadedStickersRef.current.has(key)) return;
+    uploadedStickersRef.current.add(key);
 
+    const setRows = target === 'loose' ? setLooseBoxes : setScannedBoxes;
+    const mark = (fields: Partial<BoxScan>) =>
+      setRows((prev) => prev.map((b) => (photoBelongsTo(b, barcode) ? { ...b, ...fields } : b)));
+    mark({ photo_pending: true });
+
+    const started = Date.now();
+    let bytes = 0;
     (after ?? Promise.resolve())
       .catch(() => {})
-      .then(() =>
-        fetch('/api/cloudinary/upload', {
+      .then(() => compressPhoto(imageData))
+      .then((image) => {
+        bytes = dataUrlBytes(image);
+        return fetch('/api/cloudinary/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            image: imageData,
+            image,
             barcode,
             document_number: sessionRef.current?.document_number,
             image_type: 'box',
           }),
-        }),
-      )
+        });
+      })
       .then((r) => r.json())
       .then((data) => {
         if (!data?.success || !data.secure_url) throw new Error(data?.error || 'no url');
-        const patch = (prev: BoxScan[]) =>
-          prev.map((b) => (b.barcode === barcode ? { ...b, image_url: data.secure_url } : b));
-        if (target === 'loose') setLooseBoxes(patch);
-        else setScannedBoxes(patch);
+        mark({ image_url: data.secure_url, photo_pending: undefined });
+        trace('ui', 'photo_upload_ok', { barcode, target, ms: Date.now() - started, bytes });
       })
-      .catch(() => {
+      .catch((e) => {
+        mark({ photo_pending: undefined });
+        trace('ui', 'photo_upload_failed', {
+          barcode, target, ms: Date.now() - started, bytes,
+          error: e instanceof Error ? e.message : String(e),
+        });
         // Let a later retry try again rather than marking this frame done.
-        uploadedStickersRef.current.delete(barcode);
+        uploadedStickersRef.current.delete(key);
       });
   }
 
@@ -1666,16 +1770,12 @@ export default function PalletVerifyPage({
           showToast(t(sessionRef.current?.language || 'English', 'terminal.palletLabelRead', { digits: read }), 'local_shipping');
           return;
         }
+        if (verdict.reason === 'too_short' && handleShortItemCode(read, true)) return;
         const acceptAnyway = verdict.reason === 'checksum' && noteRepeatedRead(refusedReadsRef.current, read);
         if (!acceptAnyway) {
           looseDupFlashRef.current?.('rejected');
           scanDuplicateFeedback();
-          showScanNotice({
-            text: t(sessionRef.current?.language || 'English',
-              verdict.reason === 'too_short' ? 'terminal.barcodeTooShort' : 'terminal.barcodeMisread',
-              { digits: read }),
-            tone: 'warn',
-          });
+          showScanNotice(refusedReadNotice(read, verdict.reason));
           return;
         }
         trace('ui', 'loose_scan_accepted_as_printed', { barcode: read });
@@ -1749,6 +1849,7 @@ export default function PalletVerifyPage({
     trace('ui', 'loose_delete_box', { barcode, released: released.length ? released : undefined });
     setLooseBoxes((prev) => prev.filter((b) => b.barcode !== barcode));
     looseProcessedRef.current.delete(barcode);
+    uploadedStickersRef.current.delete(photoUploadKey('loose', 0, barcode));
     for (const code of released) looseProcessedRef.current.delete(code);
     clearDuplicateSounds(dupSoundsRef.current);
     clearScanNotice();
@@ -2317,7 +2418,7 @@ export default function PalletVerifyPage({
     return [
       {
         id: 'create', icon: 'add', label: tr('terminal.toolCreateCarton'), tint: 'blue', iconColor: '#33b1f0',
-        onPress: () => setShowCartonCreator(true),
+        onPress: () => openCartonCreator(),
       },
       {
         // Amber + count while saved labels wait for the printer.
@@ -2370,15 +2471,18 @@ export default function PalletVerifyPage({
     <>
       {showCartonCreator && (
         <CartonCreator
+          key={cartonPreset ? `preset:${cartonPreset.item.item_code}` : 'blank'}
           token={token}
           items={session?.ocr_data ?? []}
+          preset={cartonPreset ?? undefined}
           palletNumber={looseCartonPhase ? 0 : currentPallet}
           // Q5 (client 2026-10-13): counted now, at the typed weight.
           countOnSave
-          onBack={() => setShowCartonCreator(false)}
+          onBack={() => { setShowCartonCreator(false); setCartonPreset(null); }}
           onCreated={(count, batchId, labels) => {
             // Back to the scanner, no Labels screen (SCN-18).
             setShowCartonCreator(false);
+            setCartonPreset(null);
             const batch = newCartonBatch(labels);
             if (batch) {
               // Q5: one row per saved label on the open list, through the
@@ -2500,10 +2604,10 @@ export default function PalletVerifyPage({
     >
       <div
         role="status"
-        onPointerDown={scanNotice.different ? holdScanNotice : undefined}
-        onPointerUp={scanNotice.different ? releaseScanNotice : undefined}
-        onPointerCancel={scanNotice.different ? releaseScanNotice : undefined}
-        onPointerLeave={scanNotice.different ? releaseScanNotice : undefined}
+        onPointerDown={scanNotice.different || scanNotice.newCarton ? holdScanNotice : undefined}
+        onPointerUp={scanNotice.different || scanNotice.newCarton ? releaseScanNotice : undefined}
+        onPointerCancel={scanNotice.different || scanNotice.newCarton ? releaseScanNotice : undefined}
+        onPointerLeave={scanNotice.different || scanNotice.newCarton ? releaseScanNotice : undefined}
         className={`pointer-events-auto max-w-[420px] min-w-0 rounded-[12px] border-2 text-xs font-bold leading-[1.45] text-center shadow-[0_10px_28px_rgba(0,0,0,.6)] animate-fadeIn overflow-hidden ${
           scanNotice.tone === 'info'
             ? 'bg-overlay-card border-brand text-brand-weak-ink'
@@ -2512,7 +2616,7 @@ export default function PalletVerifyPage({
       >
         <p className="px-3 py-[7px] wrap-anywhere">
           <MI
-            name={scanNotice.tone === 'info' ? 'done_all' : 'report_problem'}
+            name={scanNotice.tone === 'info' ? (scanNotice.newCarton ? 'info' : 'done_all') : 'report_problem'}
             size={15}
             className="align-[-3px] me-1"
           />
@@ -2540,6 +2644,21 @@ export default function PalletVerifyPage({
           >
             <MI name="new_label" size={17} className="flex-none" />
             <span className="underline underline-offset-2">{tr('terminal.differentCarton')}</span>
+          </button>
+        ) : scanNotice.newCarton ? (
+          <button
+            type="button"
+            onClick={() => {
+              const nc = scanNotice.newCarton!;
+              clearScanNotice();
+              openCartonCreator(nc.preset);
+            }}
+            className={`w-full min-h-[40px] flex items-center justify-center gap-[5px] border-t px-3 py-2 font-black ${
+              scanNotice.tone === 'info' ? 'border-brand/40 bg-brand-weak' : 'border-warn/50 bg-warn/10'
+            }`}
+          >
+            <MI name="add_box" size={17} className="flex-none" />
+            <span className="underline underline-offset-2">{scanNotice.newCarton.label}</span>
           </button>
         ) : null}
       </div>
@@ -2580,6 +2699,10 @@ export default function PalletVerifyPage({
   // nothing gets scanned into the pallet while they are typing.
   const editList = editForm ? (editForm.isLoose ? looseBoxes : scannedBoxes) : [];
   const editIndex = editForm ? editList.findIndex((b) => b.barcode === editForm.barcode) : -1;
+  // The local frame, else the uploaded copy: a reload drops `image_data`, and
+  // identical rows 2..N never had it — both still have `image_url`.
+  const editRow = editIndex >= 0 ? editList[editIndex] : undefined;
+  const editImage = editForm ? (editForm.image_data || editRow?.image_url) : undefined;
   const editPanelNode = editForm ? (
     <EditPanel
       // One mount per carton: the panel compares against the values it opened with.
@@ -2624,8 +2747,9 @@ export default function PalletVerifyPage({
           setEditError(null);
         },
       }))}
-      imageData={editForm.image_data}
-      onViewImage={editForm.image_data ? () => setViewingImage(editForm.image_data!) : undefined}
+      imageData={editImage}
+      photoPending={!editImage && !!editRow?.photo_pending}
+      onViewImage={editImage ? () => setViewingImage(editImage) : undefined}
       // A typed name drops the OCR's English one, which may belong to another
       // item and would otherwise be sent on as item_name.
       onNameChange={(v) => { setEditForm({ ...editForm, name_he: v, name_en: '' }); setEditError(null); }}
@@ -3743,6 +3867,7 @@ export default function PalletVerifyPage({
               key="loose-scanner"
               paused={!!editForm || overlayOpen}
               preferCartonCodes
+              acceptValue={acceptScannerValue}
               frame="corner"
               className="h-full"
               onBarcodeDetected={handleLooseBarcodeDetected}
@@ -4239,6 +4364,7 @@ export default function PalletVerifyPage({
             // An EAN-13 product code beside the carton's own long code in one
             // frame never wins (lib/frame-reads.ts).
             preferCartonCodes
+            acceptValue={acceptScannerValue}
             onBarcodeDetected={handleBarcodeDetected}
             onManualCapture={handleManualCapture}
             onDuplicateFlash={(fn) => { dupFlashRef.current = fn; }}

@@ -1,3 +1,4 @@
+import { logServerEvent, errorData } from '@/lib/server-events';
 import { NextRequest, NextResponse } from 'next/server';
 import { touchSession } from '@/lib/redis';
 
@@ -14,8 +15,13 @@ import { touchSession } from '@/lib/redis';
  * Returns: { success: boolean, ocr_data?: { product_name_hebrew, product_name_english, weight_kg, expiry_date, ... } }
  */
 export async function POST(request: NextRequest) {
+  let traceToken = '';
+  let traceBarcode = '';
+  const started = Date.now();
   try {
     const { image, barcode, candidates, token } = await request.json();
+    traceToken = typeof token === 'string' ? token : '';
+    traceBarcode = typeof barcode === 'string' ? barcode : '';
 
     // Every scan is activity: keep the session alive while the worker is
     // working on it (SCN-24). Fire-and-forget — OCR must not wait on it.
@@ -41,6 +47,10 @@ export async function POST(request: NextRequest) {
 
     if (!res.ok) {
       console.error('[multi-pallet-ocr] Bot OCR failed:', res.status, res.statusText);
+      await logServerEvent(traceToken, 'bot_callback', {
+        route: 'multi-pallet-ocr', path: '/webhook/process-box-ocr', status: res.status, ok: false,
+        ms: Date.now() - started, barcode: traceBarcode,
+      });
       return NextResponse.json({ success: false, error: 'OCR service error' }, { status: 502 });
     }
 
@@ -54,6 +64,9 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const isTimeout = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
     console.error('[multi-pallet-ocr] error:', isTimeout ? 'timeout' : error);
+    await logServerEvent(traceToken, 'route_error', errorData(error, {
+      route: 'multi-pallet-ocr', timeout: isTimeout, ms: Date.now() - started, barcode: traceBarcode,
+    }));
     return NextResponse.json(
       { success: false, error: isTimeout ? 'OCR timed out (30s)' : 'Internal error' },
       { status: 500 }

@@ -101,6 +101,8 @@ interface EditPanelProps {
   /** Invoice item chips for name snapping (design's iField) */
   itemChips?: EditItemChip[];
   imageData?: string;
+  /** The sticker photo is still uploading (no local frame, no URL yet). */
+  photoPending?: boolean;
   onViewImage?: () => void;
   onNameChange: (v: string) => void;
   onWeightChange: (v: string) => void;
@@ -174,7 +176,7 @@ const TILE_BADGE: Record<TileState, { cls: string; icon: string }> = {
  */
 export function EditPanel({
   cartonNumber, name, weight, expiry, productionDate, batch, barcode, itemChips,
-  imageData, onViewImage,
+  imageData, photoPending = false, onViewImage,
   barcodeWeight, barcodeExpiry, onUseBarcodeWeight, onUseBarcodeExpiry,
   barcodeEditable, barcodeInput = '', onBarcodeChange,
   onCreateBarcode, minting, onNoBarcode, showNoBarcode, onAddBarcode,
@@ -444,8 +446,10 @@ export function EditPanel({
           </button>
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-ink-muted">
-            <MI name="no_photography" size={30} />
-            <span className="text-[11px] font-bold">{tr('terminal.noStickerPhoto')}</span>
+            <MI name={photoPending ? 'cloud_upload' : 'no_photography'} size={30} />
+            <span className="text-[11px] font-bold">
+              {tr(photoPending ? 'terminal.stickerPhotoUploading' : 'terminal.noStickerPhoto')}
+            </span>
           </div>
         )}
       </div>

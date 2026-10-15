@@ -117,3 +117,73 @@ export function noteRepeatedRead(counts: Map<string, number>, digits: string): b
   counts.set(digits, n);
   return n >= REPEATED_READ_ACCEPT_AT;
 }
+
+/**
+ * A short read that IS an invoice line's item code (2026-10-15, IN26013461):
+ * Milgam's corn-schnitzel cartons carry one barcode, `501004` — the supplier's
+ * item code, equal to the note's מק"ט. `classifyRead` refused it as a fragment
+ * 27 times in a row ("only part of the barcode was read") and the worker
+ * never found the way out. Such a carton has no unique code, so it cannot be
+ * booked under the read; the page opens New carton prefilled with this line
+ * instead (the worker states the count — nothing is counted from the read).
+ *
+ * Match: the read (digits only, ≥ SHORT_ITEM_CODE_MIN digits) equals a line's
+ * item code, or does once leading zeros are stripped from both (`0501004` /
+ * `501004`; the stripped form must still be ≥ SHORT_ITEM_CODE_MIN digits, so
+ * `0300` never matches `300`). Lines are matched on `item_code` and, when a
+ * session carries one, `supplier_code` / `supplier_item_code`. Two different
+ * items matching is ambiguous → no match (refused as before).
+ */
+export const SHORT_ITEM_CODE_MIN = 4;
+
+export interface ShortCodeLine {
+  item_code?: string | null;
+  supplier_code?: string | null;
+  supplier_item_code?: string | null;
+}
+
+function stripZeros(d: string): string {
+  return d.replace(/^0+/, '');
+}
+
+export function matchInvoiceShortCode<T extends ShortCodeLine>(
+  read: string | null | undefined,
+  lines: readonly T[] | null | undefined,
+): T | null {
+  const raw = (read || '').trim();
+  if (!/^\d+$/.test(raw) || raw.length < SHORT_ITEM_CODE_MIN) return null;
+  const stripped = stripZeros(raw);
+  let hit: T | null = null;
+  for (const line of lines ?? []) {
+    const codes = [line.item_code, line.supplier_code, line.supplier_item_code]
+      .map((c) => digitsOf(c == null ? '' : String(c)))
+      .filter((c) => c.length > 0);
+    const matches = codes.some((c) =>
+      c === raw || (stripped.length >= SHORT_ITEM_CODE_MIN && stripZeros(c) === stripped));
+    if (!matches) continue;
+    if (hit && stripZeros(String(hit.item_code ?? '').trim()) !== stripZeros(String(line.item_code ?? '').trim())) return null;
+    if (!hit) hit = line;
+  }
+  return hit;
+}
+
+/**
+ * New-carton defaults for a short-code match: weight per carton from the
+ * invoice when derivable (`unit_weight_kg`, else `quantity_kg / box_count`,
+ * rounded to 3 decimals) and the cartons of that line still to count
+ * (`box_count − counted`, at least 1). Both are only defaults on the form —
+ * the worker sees, changes and saves them himself.
+ */
+export function shortCodeDefaults(
+  line: { quantity_kg?: number | null; box_count?: number | null; unit_weight_kg?: number | null },
+  counted: number,
+): { weight: number | null; quantity: number } {
+  const boxes = Number(line.box_count) || 0;
+  const kg = Number(line.quantity_kg) || 0;
+  const unit = Number(line.unit_weight_kg) || 0;
+  let weight: number | null = null;
+  if (unit > 0) weight = unit;
+  else if (boxes > 0 && kg > 0) weight = Math.round((kg / boxes) * 1000) / 1000;
+  const quantity = boxes > 0 ? Math.max(1, boxes - Math.max(0, counted)) : 1;
+  return { weight, quantity };
+}

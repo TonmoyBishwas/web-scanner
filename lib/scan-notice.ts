@@ -35,8 +35,8 @@ export const SCAN_NOTICE_MS = 4000;
 export const SCAN_NOTICE_ACTION_MS = 8000;
 
 /** How long this notice stays up. */
-export function scanNoticeMs(notice: { different?: unknown }): number {
-  return notice.different ? SCAN_NOTICE_ACTION_MS : SCAN_NOTICE_MS;
+export function scanNoticeMs(notice: { different?: unknown; newCarton?: unknown }): number {
+  return notice.different || notice.newCarton ? SCAN_NOTICE_ACTION_MS : SCAN_NOTICE_MS;
 }
 
 /** How long the carton a notice names stays highlighted in the list. */
