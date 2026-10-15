@@ -158,6 +158,11 @@ export interface IdenticalLabelRequest {
   /** ISO `YYYY-MM-DD`, '' when unknown. */
   productionDate?: string | null;
   expiryDate?: string | null;
+  /**
+   * Default `identical`. "Change count" growing a New carton group saves
+   * more New carton labels (no supplier code) the same way.
+   */
+  origin?: 'identical' | 'new_carton';
 }
 
 /**
@@ -167,7 +172,7 @@ export interface IdenticalLabelRequest {
  */
 export function identicalLabelPayload(req: IdenticalLabelRequest) {
   return {
-    origin: 'identical' as const,
+    origin: req.origin ?? ('identical' as const),
     source_barcode: req.sourceBarcode,
     pallet_number: req.palletNumber,
     item_code: req.itemCode || null,

@@ -25,6 +25,9 @@ interface ActiveScanCardProps {
   /** "All boxes identical" — the worker declares every carton of this product
    *  the same and mints a printed label per carton (pallet-verify only). */
   onIdentical?: () => void;
+  /** Identical-label group: change its carton count (see ScanActions). */
+  onChangeCount?: () => void;
+  groupCount?: number;
   tone?: 'brand' | 'warn';
   /** This row's barcode is a saved label that has not been printed yet. */
   unprinted?: boolean;
@@ -45,7 +48,7 @@ interface ActiveScanCardProps {
 export function ActiveScanCard({
   index, name, value, unit, barcode, expiry,
   status = 'done', expanded, onToggleExpand,
-  onEdit, onDelete, onRetry, onViewImage, onIdentical, tone = 'brand', unprinted = false,
+  onEdit, onDelete, onRetry, onViewImage, onIdentical, onChangeCount, groupCount, tone = 'brand', unprinted = false,
   highlight = false,
 }: ActiveScanCardProps) {
   const tr = useT();
@@ -125,6 +128,8 @@ export function ActiveScanCard({
           onRetry={failed ? onRetry : undefined}
           onEdit={onEdit}
           onIdentical={onIdentical}
+          onChangeCount={failed ? undefined : onChangeCount}
+          groupCount={groupCount}
           onDelete={onDelete}
         />
       </div>

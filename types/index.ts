@@ -459,7 +459,8 @@ export interface CartonLabel {
   /** False when the worker chose a barcode-free sticker (default is true). */
   print_barcode: boolean;
   label_size: LabelSize;
-  status: 'created' | 'printed';
+  /** 'void' = printed, then cancelled before its carton was booked (Delete sheet, 2026-10-15). */
+  status: 'created' | 'printed' | 'void';
   print_count: number;
   printed_at: string | null;
   created_at: string;

@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Inlined at build time into the page AND the API routes, so both always
+  // read the same print-gate setting (lib/label-gate.ts labelPrintGateEnabled).
+  // Default off (client request (d), 2026-10-15). A change needs a redeploy.
+  env: {
+    LABEL_PRINT_GATE: process.env.LABEL_PRINT_GATE ?? 'off',
+  },
   async headers() {
     return [
       {

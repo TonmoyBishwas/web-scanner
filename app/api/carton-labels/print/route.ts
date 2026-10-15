@@ -6,30 +6,61 @@ import {
   markCartonBatchesPrinted,
   markCartonLabelsPrinted,
   LABEL_SIZES,
+  type LabelScope,
   type LabelSize,
 } from '@/lib/carton-labels';
+import { verifyLabelsLink } from '@/lib/label-link';
 
 const splitCsv = (v: string | null) => (v ?? '').split(',').map(s => s.trim()).filter(Boolean);
 
+const unauthorized = () =>
+  NextResponse.json({ success: false, error: 'Invalid or expired session' }, { status: 401 });
+
 /**
- * GET /api/carton-labels/print?token&batches|ids
+ * Who is asking, and which labels that lets them reach:
+ *   token (a live scanner session) → that session's labels; with
+ *     `scope=all` (the Labels screen's "all jobs" reprint, whose list
+ *     GET /api/carton-labels?scope=all already shows) → unscoped;
+ *   doc + sig (the signed pending-labels page, lib/label-link.ts) → that
+ *     delivery note's labels, no session needed.
+ * Null = refused.
+ */
+async function resolveScope(
+  token: string | null,
+  doc: string | null,
+  sig: string | null,
+  wantAll: boolean,
+): Promise<LabelScope | null> {
+  if (doc && sig) return verifyLabelsLink(doc, sig) ? { documentNumber: doc } : null;
+  const context = await getSessionContext(token);
+  if (!context || !token) return null;
+  return wantAll ? {} : { sessionToken: token };
+}
+
+/**
+ * GET /api/carton-labels/print?(token[&scope=all] | doc&sig)&batches|ids
  *
  * Feeds the print sheet. Selection on the Labels screen is per batch, so the
  * sheet is normally addressed by `batches` — a URL carrying 200 individual
- * label ids would blow past what some browsers accept.
+ * label ids would blow past what some browsers accept. Scoped (2026-10-15):
+ * a session's token reaches only its own batches unless the Labels screen
+ * is on "all jobs"; a signed link reaches only its delivery note.
  */
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = request.nextUrl;
-    const context = await getSessionContext(searchParams.get('token'));
-    if (!context) {
-      return NextResponse.json({ success: false, error: 'Invalid or expired session' }, { status: 401 });
-    }
+    const scope = await resolveScope(
+      searchParams.get('token'),
+      searchParams.get('doc'),
+      searchParams.get('sig'),
+      searchParams.get('scope') === 'all',
+    );
+    if (!scope) return unauthorized();
 
     const batches = splitCsv(searchParams.get('batches'));
     const labels = batches.length
-      ? await getCartonLabelsByBatches(batches)
-      : await getCartonLabelsByIds(splitCsv(searchParams.get('ids')));
+      ? await getCartonLabelsByBatches(batches, scope)
+      : await getCartonLabelsByIds(splitCsv(searchParams.get('ids')), scope);
     return NextResponse.json({ success: true, labels });
   } catch (error) {
     console.error('[api/carton-labels/print] GET error:', error);
@@ -58,9 +89,18 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const context = await getSessionContext(body.token ?? null);
-    if (!context) {
-      return NextResponse.json({ success: false, error: 'Invalid or expired session' }, { status: 401 });
+    // A signed pending-labels page marks only its own delivery's labels; a
+    // session token keeps the old unscoped mark (the "all jobs" reprint
+    // marks labels of earlier sessions too).
+    const doc = typeof body.doc === 'string' ? body.doc : null;
+    const sig = typeof body.sig === 'string' ? body.sig : null;
+    let scope: LabelScope | undefined;
+    if (doc && sig) {
+      if (!verifyLabelsLink(doc, sig)) return unauthorized();
+      scope = { documentNumber: doc };
+    } else {
+      const context = await getSessionContext(body.token ?? null);
+      if (!context) return unauthorized();
     }
 
     const asStrings = (v: unknown) => (Array.isArray(v) ? v.filter((i): i is string => typeof i === 'string') : []);
@@ -75,9 +115,11 @@ export async function POST(request: NextRequest) {
       : undefined;
 
     const via = body.via === 'sheet' || body.via === 'manual' ? body.via : 'unknown';
-    const updated = batchIds.length
+    // By batch only for a session (Labels' "Mark as printed"); a signed page
+    // always marks the exact ids it rendered.
+    const updated = batchIds.length && !scope
       ? await markCartonBatchesPrinted(batchIds, labelSize)
-      : await markCartonLabelsPrinted(ids, labelSize);
+      : await markCartonLabelsPrinted(ids, labelSize, scope);
     console.log(`[api/carton-labels/print] marked ${updated} printed via=${via}`);
     return NextResponse.json({ success: true, updated, via });
   } catch (error) {

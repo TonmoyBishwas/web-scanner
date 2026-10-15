@@ -7,7 +7,8 @@ import { isComplete } from '@/lib/pallet-slots';
 import { isSplitSession, splitStateOf, applySplitState } from '@/lib/session-mode';
 import { normalizeBoxExpiries } from '@/lib/expiry';
 import { findUnprintedForSession } from '@/lib/carton-labels';
-import { blockingLabels, barcodesBeingBooked, labelGateError, unprintedOnList } from '@/lib/label-gate';
+import { printGate, barcodesBeingBooked, labelGateError, unprintedOnList } from '@/lib/label-gate';
+import { pendingLabelsUrl } from '@/lib/label-link';
 import { sessionBookedBarcodes } from '@/lib/label-batches';
 
 const SESSION_TTL = 7200;
@@ -112,7 +113,8 @@ export async function POST(request: NextRequest) {
       // nothing to the bot: no close, no Priority push.
       const unprintedLabels = await findUnprintedForSession(token);
       const beingBooked = barcodesBeingBooked({ scanned_boxes });
-      const labelGate = blockingLabels(unprintedLabels, beingBooked, sessionBookedBarcodes(session));
+      // LABEL_PRINT_GATE off (the default since 2026-10-15) → never blocks.
+      const labelGate = printGate(unprintedLabels, beingBooked, sessionBookedBarcodes(session));
       if (labelGate.count > 0) {
         errorResult = { status: 409, body: labelGateError(labelGate) };
         return;
@@ -120,6 +122,11 @@ export async function POST(request: NextRequest) {
       // Q5: New carton rows booked before their label was printed — see the
       // pallet route: `label_printed: false` on each such box, and a count.
       const unprintedBooked = unprintedOnList(unprintedLabels, beingBooked);
+      // The signed "print later" page (lib/label-link.ts), as the pallet route.
+      const labelsUrl = pendingLabelsUrl(
+        process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin,
+        session.document_number,
+      );
 
       // To the bot once the response is out — see the after() below.
       const boxes: MultiPalletBoxScan[] = scanned_boxes || [];
@@ -135,6 +142,7 @@ export async function POST(request: NextRequest) {
           unprintedBooked.has((b.barcode || '').trim()) ? { ...b, label_printed: false } : b,
         ),
         unprinted_labels: unprintedBooked.size,
+        labels_url: unprintedBooked.size > 0 ? labelsUrl : undefined,
         worker_chat_id: workerChatId,
         owner_chat_id: session.owner_chat_id ?? session.chat_id,
         is_final: isFinal,
@@ -173,7 +181,7 @@ export async function POST(request: NextRequest) {
           .catch((err) => console.error('[multi-pallet-loose-complete] bot webhook error:', err)),
       );
 
-      okResult = { success: true };
+      okResult = { success: true, labels_url: labelsUrl };
     });
 
     if (errorResult) {
