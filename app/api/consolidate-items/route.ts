@@ -132,6 +132,7 @@ export async function POST(request: NextRequest) {
         // appear; Layer A grouping still works.
         let content = await complete(model, [{ role: 'user', content: prompt }], {
           timeoutMs: 12_000,
+          json: true,
         });
         // Models occasionally wrap JSON in ```json fences despite the prompt.
         if (content.startsWith('```')) {
