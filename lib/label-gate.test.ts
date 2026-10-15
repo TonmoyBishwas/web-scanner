@@ -5,6 +5,8 @@ import {
   unprintedOnList,
   labelGateError,
   LABELS_NOT_PRINTED,
+  labelPrintGateEnabled,
+  printGate,
   type GateLabel,
 } from './label-gate';
 
@@ -136,5 +138,36 @@ describe('labelGateError', () => {
       batch_ids: ['A', 'N'],
     });
     expect(LABELS_NOT_PRINTED).toBe('labels_not_printed');
+  });
+});
+
+describe('LABEL_PRINT_GATE', () => {
+  it('is off unless the env says on / true / 1', () => {
+    expect(labelPrintGateEnabled(undefined)).toBe(false);
+    expect(labelPrintGateEnabled('')).toBe(false);
+    expect(labelPrintGateEnabled('off')).toBe(false);
+    expect(labelPrintGateEnabled('no')).toBe(false);
+    expect(labelPrintGateEnabled('on')).toBe(true);
+    expect(labelPrintGateEnabled(' ON ')).toBe(true);
+    expect(labelPrintGateEnabled('true')).toBe(true);
+    expect(labelPrintGateEnabled('1')).toBe(true);
+  });
+
+  const labels = [identical('2826100100000001'), receiving('2826100100000002'), newCarton('2826100100000003')];
+  const list = ['2826100100000001', '2826100100000002'];
+
+  it('off: nothing blocks, not even a New carton on no list', () => {
+    expect(printGate(labels, list, [], false)).toEqual({ count: 0, batchIds: [] });
+  });
+
+  it('on: the same rules as blockingLabels', () => {
+    expect(printGate(labels, list, [], true)).toEqual(blockingLabels(labels, list, []));
+    expect(printGate(labels, list, [], true).count).toBe(3);
+  });
+
+  it('off: every unprinted label on the list goes to the bot as label_printed:false', () => {
+    // The completion routes flag exactly unprintedOnList — with the gate off
+    // that now includes identical / receiving labels, not only New cartons.
+    expect([...unprintedOnList(labels, list)].sort()).toEqual(['2826100100000001', '2826100100000002']);
   });
 });

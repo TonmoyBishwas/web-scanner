@@ -17,6 +17,8 @@ import {
   sessionBookedBarcodes,
   loadLabelSize,
   labelSheetUrl,
+  signedLabelSheetUrl,
+  groupLabelsByPallet,
   type LiveRowPlace,
 } from './label-batches';
 
@@ -247,5 +249,35 @@ describe('labelSheetUrl', () => {
   it('addresses the sheet by batch, size and language', () => {
     expect(labelSheetUrl({ token: 'Zr1/Ys', batchIds: ['b1', 'b2'], size: 'a4', language: 'Hebrew' }))
       .toBe('/labels/print?token=Zr1%2FYs&batches=b1%2Cb2&size=a4&lang=Hebrew');
+  });
+});
+
+describe('signed print sheet + pending grouping (2026-10-15)', () => {
+  it('labelSheetUrl adds scope=all only for the all-jobs reprint', () => {
+    const base = { token: 't', batchIds: ['b1'], size: '10x15' as const, language: 'Hebrew' as const };
+    expect(labelSheetUrl(base)).not.toContain('scope=');
+    expect(labelSheetUrl({ ...base, scope: 'all' })).toContain('&scope=all');
+  });
+
+  it('signedLabelSheetUrl carries doc, sig and exact ids, no token', () => {
+    const url = signedLabelSheetUrl({ doc: 'IN 1', sig: 'ab', ids: ['i1', 'i2'], size: 'a4', language: 'English' });
+    expect(url).toBe('/labels/print?doc=IN%201&sig=ab&ids=i1%2Ci2&size=a4&lang=English');
+    expect(url).not.toContain('token=');
+  });
+
+  it('groups by pallet ascending, loose pile after, unknown last, order kept', () => {
+    const rows = [
+      { id: 'a', pallet_number: 2 },
+      { id: 'b', pallet_number: 0 },
+      { id: 'c', pallet_number: null },
+      { id: 'd', pallet_number: 1 },
+      { id: 'e', pallet_number: 2 },
+    ];
+    expect(groupLabelsByPallet(rows).map((g) => [g.pallet_number, g.labels.map((l) => l.id)])).toEqual([
+      [1, ['d']],
+      [2, ['a', 'e']],
+      [0, ['b']],
+      [null, ['c']],
+    ]);
   });
 });

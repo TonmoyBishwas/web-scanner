@@ -31,6 +31,10 @@ import { PalletsBrowser } from '@/components/terminal/PalletsBrowser';
 import { CartonCreator } from '@/components/terminal/CartonCreator';
 import { LabelsBrowser } from '@/components/terminal/LabelsBrowser';
 import { IdenticalBoxesForm } from '@/components/terminal/IdenticalBoxesForm';
+import { DeleteAllSheet, type DeleteAllAction } from '@/components/terminal/DeleteAllSheet';
+import { GroupCountSheet } from '@/components/terminal/GroupCountSheet';
+import { PendingLabelsLink } from '@/components/terminal/PendingLabelsLink';
+import { countGroupOf, groupRows, growGroupRows, rowsToShrink } from '@/lib/pallet-clear';
 import {
   dedupCodes,
   expandIdenticalBoxes,
@@ -43,7 +47,7 @@ import {
   type IdenticalForm,
 } from '@/lib/identical-boxes';
 import { isMintedLabelBarcode, newBatchId, labelSheetUrl, liveRowPlaces, loadLabelSize, openListsForPhase, sessionBookedBarcodes } from '@/lib/label-batches';
-import { blockingLabels, LABELS_NOT_PRINTED } from '@/lib/label-gate';
+import { printGate, LABELS_NOT_PRINTED } from '@/lib/label-gate';
 import { useUnprintedLabels } from '@/lib/use-unprinted-labels';
 import { toIsoDate, normalizeExpiry } from '@/lib/expiry';
 import { itemOptions, localIsoDate } from '@/lib/edit-panel-state';
@@ -145,6 +149,9 @@ interface BoxScan extends MultiPalletBoxScan {
   // never offered the single-item shortcut — their count is already exact.
   minted?: boolean;
   label_batch_id?: string;
+  // "Change count" grew this row's identical group: the batch the group was
+  // first saved as (its own label is a newer batch). lib/pallet-clear.ts.
+  count_group?: string;
   // The supplier barcode a minted row stands in for. It stays in the dedup
   // set while any row of that batch is on the list (lib/identical-boxes.ts).
   source_barcode?: string;
@@ -745,6 +752,10 @@ export default function PalletVerifyPage({
   // counted carton stays on the list (the new row is added, not swapped in).
   const [identicalFor, setIdenticalFor] = useState<{ box: BoxScan; loose: boolean; anotherOf?: number } | null>(null);
   const [showLabels, setShowLabels] = useState(false);
+  // The Delete chip's sheet (DeleteAllSheet) and "change count" on an
+  // identical-label group (GroupCountSheet) — client request (c), 2026-10-15.
+  const [showDeleteAll, setShowDeleteAll] = useState(false);
+  const [countGroupFor, setCountGroupFor] = useState<{ group: string; loose: boolean } | null>(null);
   // Labels SAVED this session but not printed yet (identical / New carton /
   // edit-panel barcode). Server truth, refreshed after every save, print or
   // delete and whenever the tab comes back from the print sheet. Drives the
@@ -756,7 +767,8 @@ export default function PalletVerifyPage({
   // plus every New carton label. While it is non-empty the confirm slide
   // becomes an amber "Print N labels first", and the confirm handlers refuse.
   // The completion routes enforce the same rule with a 409; this is the UX.
-  const labelGate = blockingLabels(
+  // LABEL_PRINT_GATE off (the default since 2026-10-15): never blocks.
+  const labelGate = printGate(
     unprinted.labels,
     (openListsForPhase(phase).loose ? looseBoxes : scannedBoxes).map((b) => b.barcode),
     // Q5: a New carton counted on a pallet already booked is not "outside
@@ -1299,10 +1311,10 @@ export default function PalletVerifyPage({
   // 'created', never a New carton label (that one exists for itself; deleting
   // its scan row just un-scans the carton). A printed label stays, because
   // the sticker exists. Only warehouse-minted codes are ever sent.
-  function discardSavedLabel(barcode: string | undefined) {
+  function discardSavedLabel(barcode: string | undefined, includeNewCarton = false) {
     if (!barcode || !isMintedLabelBarcode(barcode)) return;
     fetch(
-      `/api/carton-labels?token=${encodeURIComponent(token)}&barcode=${encodeURIComponent(barcode)}`,
+      `/api/carton-labels?token=${encodeURIComponent(token)}&barcode=${encodeURIComponent(barcode)}${includeNewCarton ? '&include_new=1' : ''}`,
       { method: 'DELETE' },
     )
       .then(() => unprinted.refresh())
@@ -2305,6 +2317,209 @@ export default function PalletVerifyPage({
     setSelectedBarcode(null);
   }
 
+  // ── Delete chip → bulk sheet (client request (c), 2026-10-15) ──
+  //
+  // 'rows': the open list starts again (the pallet's per-pallet state is
+  // reset as for a new pallet) and the unprinted identical / receiving labels
+  // of this pallet are deleted with it — the per-row Delete rule, in bulk.
+  // 'unprinted' / 'void_printed': the server clears this pallet's labels and
+  // answers the barcodes; their rows leave the list through the same path as
+  // Labels → Delete. Booked cartons are never touched (server-side). Every
+  // run is traced as delete_all with the before-values.
+  async function handleDeleteAll(action: DeleteAllAction) {
+    const loose = phase === 'loose_scanning';
+    const pallet = loose ? 0 : currentPallet;
+    const rows = loose ? looseBoxesRef.current : scannedBoxesRef.current;
+    const before = {
+      rows: rows.length,
+      barcodes: rows.slice(0, 120).map((b) => b.barcode),
+      confirmed_box_count: loose ? undefined : confirmedBoxCount,
+      box_count_input: loose ? undefined : boxCountInput,
+      uniform_groups: loose ? undefined : Array.from(uniformGroups.values()).map((g) => ({ name_key: g.name_key, total: g.total_count })),
+      unprinted_labels: unprinted.labels.filter((l) => l.pallet_number === pallet).length,
+    };
+    if (action === 'rows') {
+      if (loose) {
+        setLooseBoxes([]);
+        looseProcessedRef.current.clear();
+        clearDuplicateSounds(dupSoundsRef.current);
+        clearScanNotice();
+        setSelectedBarcode(null);
+      } else {
+        resetPalletUiState();
+        fetch('/api/multi-pallet-session', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, current_box_count: 0 }),
+        }).catch(() => {});
+      }
+    }
+    let result: { count: number; action: string; barcodes: string[]; before: unknown[] } | null = null;
+    try {
+      const res = await fetch(
+        `/api/carton-labels?token=${encodeURIComponent(token)}&scope=session&pallet=${pallet}&labels=${action}`,
+        { method: 'DELETE' },
+      );
+      const data = await res.json();
+      if (!data?.success) throw new Error(data?.error || `HTTP ${res.status}`);
+      result = {
+        count: Number(data.count) || 0,
+        action: String(data.action || ''),
+        barcodes: Array.isArray(data.barcodes) ? data.barcodes : [],
+        before: Array.isArray(data.before) ? data.before : [],
+      };
+    } catch (err) {
+      trace('ui', 'delete_all_failed', { pallet, action, error: String(err) });
+      // The rows are already off the list ('rows'); only the label half failed.
+      if (action !== 'rows') {
+        showToast(tr('terminal.deleteAllFailed'), 'error', '#ef8a8a');
+        return;
+      }
+    }
+    let dropped = action === 'rows' ? rows.length : 0;
+    if (action !== 'rows' && result && result.barcodes.length) {
+      const gone = new Set(result.barcodes);
+      dropped = rows.filter((b) => gone.has(b.barcode)).length;
+      handleLabelBatchDeleted('delete_all', result.barcodes, null);
+    }
+    trace('ui', 'delete_all', {
+      pallet, action, rows: dropped, labels: result?.count ?? 0, label_action: result?.action,
+      before, labels_before: result?.before.slice(0, 120),
+    });
+    unprinted.refresh();
+    setShowDeleteAll(false);
+    if (action === 'void_printed') {
+      showToast(tr('terminal.voidDone', { count: result?.count ?? 0 }), 'block', '#fbbf5c');
+    } else if (action === 'unprinted') {
+      showToast(tr('terminal.deleteAllLabelsDone', { count: result?.count ?? 0 }), 'delete');
+    } else {
+      showToast(tr('terminal.deleteAllRowsDone', { count: dropped }), 'delete');
+    }
+  }
+
+  // ── "N cartons · change" on an identical-label group ──
+  //
+  // Fewer: the last rows of the group leave the list (unprinted labels
+  // first) and their unprinted labels are deleted. More: k more labels are
+  // saved with the group's data (same origin, supplier code, weight, dates)
+  // and k rows join it. A pallet total that equalled the list follows it.
+  function groupCountAction(box: BoxScan, loose: boolean): { onChangeCount?: () => void; groupCount?: number } {
+    if (phase !== (loose ? 'loose_scanning' : 'scanning')) return {};
+    const group = countGroupOf(box);
+    if (!group || box.twin) return {};
+    const n = groupRows(loose ? looseBoxes : scannedBoxes, group).length;
+    return {
+      groupCount: n,
+      onChangeCount: () => {
+        trace('ui', 'count_group_open', { group, loose, count: n });
+        setSelectedBarcode(null);
+        setCountGroupFor({ group, loose });
+      },
+    };
+  }
+
+  async function handleGroupCountSave(next: number) {
+    const target = countGroupFor;
+    if (!target) return;
+    const { group, loose } = target;
+    const startPallet = currentPalletRef.current;
+    const startPhase = phaseRef.current;
+    const list = loose ? looseBoxesRef.current : scannedBoxesRef.current;
+    const members = groupRows(list, group);
+    const from = members.length;
+    const template = members[from - 1];
+    if (!template || next === from) {
+      setCountGroupFor(null);
+      return;
+    }
+    const totalBefore = loose ? 0 : listTotal(list);
+    let changed: { removed?: string[]; added?: string[]; batch_id?: string } = {};
+
+    if (next < from) {
+      const gone = rowsToShrink(list, group, from - next, unprintedBarcodes);
+      const goneSet = new Set(gone);
+      if (loose) {
+        const released = releasedSources(list, goneSet);
+        setLooseBoxes((prev) => prev.filter((b) => !goneSet.has(b.barcode)));
+        for (const code of gone) looseProcessedRef.current.delete(code);
+        for (const code of released) looseProcessedRef.current.delete(code);
+        clearDuplicateSounds(dupSoundsRef.current);
+        clearScanNotice();
+      } else {
+        dropPalletRows(goneSet);
+      }
+      // A New carton group's labels go too: the cartons are no longer there.
+      for (const code of gone) discardSavedLabel(code, true);
+      changed = { removed: gone };
+    } else {
+      const payload = identicalLabelPayload({
+        sourceBarcode: template.source_barcode || '',
+        palletNumber: loose ? 0 : startPallet,
+        itemCode: matchInvoiceItem(template.item_name_hebrew, template.item_name, sessionRef.current?.ocr_data)?.item_code ?? null,
+        itemNameHebrew: template.item_name_hebrew,
+        itemNameEnglish: template.item_name,
+        weightKg: template.weight,
+        quantity: next - from,
+        productionDate: toIsoDate(template.production_date || ''),
+        expiryDate: toIsoDate(template.expiry || ''),
+        origin: template.new_carton ? 'new_carton' : 'identical',
+      });
+      const result = await postIdenticalLabels(token, newBatchId(), payload);
+      if (!result.ok) {
+        trace('ui', 'count_group_failed', { group, from, to: next, reason: result.reason });
+        showToast(tr(result.reason === 'session' ? 'carton.sessionExpired' : 'terminal.groupCountFailed'), 'error', '#ef8a8a');
+        return;
+      }
+      if (phaseRef.current !== startPhase || currentPalletRef.current !== startPallet) {
+        // The list closed while the labels saved: never add rows to a list
+        // that is gone. The labels wait in Labels (unprinted).
+        trace('ui', 'count_group_stale', { group, batch_id: result.labels[0]?.batch_id });
+        unprinted.refresh();
+        setCountGroupFor(null);
+        showToast(tr('terminal.anotherCartonStale'), 'error', '#ef8a8a');
+        return;
+      }
+      const refs = result.labels.map((l) => ({ barcode: l.barcode, batch_id: l.batch_id }));
+      if (loose) {
+        for (const r of refs) looseProcessedRef.current.add(r.barcode);
+        setLooseBoxes((prev) => growGroupRows(prev, group, refs));
+      } else {
+        for (const r of refs) processedRef.current.add(r.barcode);
+        setScannedBoxes((prev) => {
+          const nextRows = growGroupRows(prev, group, refs);
+          setDetectedType(detectType(nextRows, acceptedMerges));
+          return nextRows;
+        });
+      }
+      changed = { added: refs.map((r) => r.barcode), batch_id: refs[0]?.batch_id };
+    }
+
+    // The pallet total follows when it was just the list's own count.
+    let total: { from: number; to: number } | undefined;
+    if (!loose) {
+      const totalAfter = totalBefore + (next - from);
+      if (confirmedBoxCount > 0 && confirmedBoxCount === totalBefore) {
+        setConfirmedBoxCount(totalAfter);
+        setBoxCountInput(String(totalAfter));
+        fetch('/api/multi-pallet-session', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, current_box_count: totalAfter }),
+        }).catch(() => {});
+        total = { from: totalBefore, to: totalAfter };
+      } else if (confirmedBoxCount === 0 && boxCountInput === String(totalBefore)) {
+        setBoxCountInput(totalAfter > 0 ? String(totalAfter) : '');
+      }
+    }
+    trace('ui', 'count_changed', {
+      scope: 'identical_group', group, pallet: loose ? 0 : startPallet, from, to: next,
+      new_carton: template.new_carton || undefined, total, ...changed,
+    });
+    unprinted.refresh();
+    setCountGroupFor(null);
+    showToast(tr('terminal.groupCountSaved', { from, to: next }), 'edit_note');
+  }
+
   /** The action is offered on a captured row with a real supplier barcode
    *  that is not itself minted and not still in OCR. */
   function canDeclareIdentical(box: BoxScan): boolean {
@@ -2331,7 +2546,12 @@ export default function PalletVerifyPage({
       { id: 'pallets', icon: <PalletIcon />, label: tr('terminal.toolPallets'), tint: 'neutral', onPress: () => setShowPallets(true) },
       {
         id: 'delete', icon: 'delete_sweep', label: tr('terminal.toolDelete'), tint: 'red',
-        onPress: () => showToast(tr('terminal.deleteHint'), 'delete_sweep', '#ef8a8a'),
+        // The bulk sheet only while a list is open for scanning; the rows of
+        // a booked list are on an LPN and cannot be deleted from here.
+        onPress: () =>
+          phase === 'scanning' || phase === 'loose_scanning'
+            ? (trace('ui', 'delete_all_open', { pallet: phase === 'loose_scanning' ? 0 : currentPallet }), setShowDeleteAll(true))
+            : showToast(tr('terminal.deleteHint'), 'delete_sweep', '#ef8a8a'),
       },
       { id: 'share', icon: 'ios_share', label: tr('terminal.toolShare'), tint: 'blue', onPress: handleShareSummary },
       { id: 'assign', icon: 'send', flip: true, label: tr('terminal.toolAssign'), tint: 'green', locked: true },
@@ -2364,7 +2584,7 @@ export default function PalletVerifyPage({
   // identical / Different carton?, Labels): the scanner reads nothing under
   // it. A carton the camera happened to face would otherwise be added — with
   // a success beep the worker cannot see — while they fill the form.
-  const overlayOpen = showCartonCreator || showLabels || !!identicalFor;
+  const overlayOpen = showCartonCreator || showLabels || !!identicalFor || showDeleteAll || !!countGroupFor;
 
   const cartonOverlays = (
     <>
@@ -2437,6 +2657,35 @@ export default function PalletVerifyPage({
           onCreated={(labels, form) => handleIdenticalCreated(identicalFor, labels, form)}
         />
       )}
+      {showDeleteAll && (phase === 'scanning' || phase === 'loose_scanning') && (() => {
+        const loose = phase === 'loose_scanning';
+        const pallet = loose ? 0 : currentPallet;
+        return (
+          <DeleteAllSheet
+            token={token}
+            pallet={pallet}
+            rowCount={(loose ? looseBoxes : scannedBoxes).length}
+            unprintedCount={unprinted.labels.filter((l) => l.pallet_number === pallet).length}
+            booked={sessionBookedBarcodes(session)}
+            onAction={handleDeleteAll}
+            onClose={() => setShowDeleteAll(false)}
+          />
+        );
+      })()}
+      {countGroupFor && (() => {
+        const members = groupRows(countGroupFor.loose ? looseBoxes : scannedBoxes, countGroupFor.group);
+        const last = members[members.length - 1];
+        if (!last) return null;
+        return (
+          <GroupCountSheet
+            name={last.item_name_hebrew || last.item_name || '—'}
+            current={members.length}
+            unprinted={members.filter((b) => unprintedBarcodes.has(b.barcode)).length}
+            onSave={handleGroupCountSave}
+            onClose={() => setCountGroupFor(null)}
+          />
+        );
+      })()}
     </>
   );
 
@@ -2955,13 +3204,45 @@ export default function PalletVerifyPage({
       setPalletCountError(tr('palletVerify.deferredCountTooLow', { min: minRequired }));
       return;
     }
+    // A single-item pallet whose total was just changed (canEditTotal): the
+    // total is its one locked group's count, plus any carton counted on its
+    // own beside it.
+    const editedSingle =
+      totalEdit !== null && !pendingSingleGroup && uniformGroups.size === 1
+        ? Array.from(uniformGroups.values())[0]
+        : null;
+    const othersBeside = editedSingle ? committedCount() - editedSingle.total_count : 0;
+    if (editedSingle && count - othersBeside < 2) {
+      setPalletCountError(tr('palletVerify.deferredCountTooLow', { min: othersBeside + 2 }));
+      return;
+    }
     setPalletCountError(null);
     setConfirmedBoxCount(count);
     if (totalEdit !== null) {
       // A changed total is the one figure a worker could lower to dodge the
       // shortfall modal, so every change is on the trace.
-      trace('ui', 'count_changed', { pallet: currentPallet, from: totalEdit, to: count });
+      trace('ui', 'count_changed', {
+        pallet: currentPallet, from: totalEdit, to: count,
+        scope: editedSingle ? 'single_item' : 'pallet_total',
+        group: editedSingle ? { name_key: editedSingle.name_key, from: editedSingle.total_count } : undefined,
+      });
       setTotalEdit(null);
+    }
+
+    if (editedSingle) {
+      // Same as the first single-item count below: re-lock the group at the
+      // new count and confirm with BOTH handed over explicitly — a deferred
+      // callback reading them off state would post the old values.
+      const nextGroups = new Map(uniformGroups);
+      nextGroups.set(editedSingle.name_key, { ...editedSingle, total_count: count - othersBeside });
+      setUniformGroups(nextGroups);
+      fetch('/api/multi-pallet-session', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, current_box_count: count }),
+      }).catch(() => {});
+      setTimeout(() => handleConfirmPallet({ boxCount: count, groups: nextGroups }), 0);
+      return;
     }
 
     if (pendingSingleGroup) {
@@ -3004,8 +3285,12 @@ export default function PalletVerifyPage({
   // the chicken line's 15), and it used to be fixed once set. This reopens the
   // same input, prefilled; the minimum is unchanged (max(2, scanned)). Not on
   // a single-item pallet: there the total IS the locked group's count.
+  // Since 2026-10-15 (client request (c)) a single-item pallet's total can be
+  // changed too, any time before the LPN: one locked group whose count is
+  // the total. Saving re-locks the group and confirms with the new count
+  // passed explicitly (handlePalletCountSubmit) — as the first count did.
   const canEditTotal =
-    phase === 'scanning' && confirmedBoxCount > 0 && uniformGroups.size === 0 && !pendingSingleGroup;
+    phase === 'scanning' && confirmedBoxCount > 0 && uniformGroups.size <= 1 && !pendingSingleGroup;
 
   function startTotalEdit() {
     if (!canEditTotal) return;
@@ -3536,15 +3821,14 @@ export default function PalletVerifyPage({
               </div>
             </div>
 
-            {/* Q5: New cartons booked with their label still unprinted. */}
-            {unprinted.labels.some((l) => l.origin === 'new_carton') && (
-              <p className="flex items-center justify-center gap-[5px] mt-3 text-[12px] font-extrabold text-[#fbbf5c] text-center">
-                <MI name="print_disabled" size={15} className="shrink-0" />
-                <span className="min-w-0">
-                  {tr('palletVerify.unprintedSummary', { count: unprinted.labels.filter((l) => l.origin === 'new_carton').length })}
-                </span>
-              </p>
-            )}
+            {/* Labels still waiting for the printer (Q5 New cartons, and with
+                the print gate off any label): the signed "print later" page. */}
+            <PendingLabelsLink
+              count={unprinted.labels.length}
+              url={unprinted.labelsUrl}
+              from="all_done"
+              onCopied={() => showToast(tr('labels.linkCopied'), 'content_copy')}
+            />
 
             {/* Right under the stats so it is in view without scrolling on a
                 long pallet list. */}
@@ -3649,6 +3933,7 @@ export default function PalletVerifyPage({
           key={box.barcode}
           onEdit={() => openEdit(box, true)}
           onIdentical={canDeclareIdentical(box) ? () => setIdenticalFor({ box, loose: true }) : undefined}
+          {...groupCountAction(box, true)}
           onDelete={onDelete}
         />
       );
@@ -3798,6 +4083,7 @@ export default function PalletVerifyPage({
                     onEdit={() => openEdit(looseActive, true)}
                     onDelete={() => { rescanLooseBox(looseActive.barcode); setSelectedBarcode(null); }}
                     onIdentical={canDeclareIdentical(looseActive) ? () => setIdenticalFor({ box: looseActive, loose: true }) : undefined}
+                    {...groupCountAction(looseActive, true)}
                     onRetry={looseActive.ocr_status === 'failed' ? () => retryLooseOcr(looseActive.barcode) : undefined}
                     onViewImage={looseActive.image_data ? () => setViewingImage(looseActive.image_data!) : undefined}
                     unprinted={unprintedBarcodes.has(looseActive.barcode)}
@@ -3853,8 +4139,6 @@ export default function PalletVerifyPage({
     const doneBoxCount =
       session?.completed_pallets?.[session.completed_pallets.length - 1]?.box_count || committed;
     const doneWeight = scannedBoxes.reduce((s, b) => s + (b.weight > 0 ? b.weight : 0), 0);
-    // Q5: New cartons booked on this pallet whose label is still unprinted.
-    const doneUnprinted = scannedBoxes.filter((b) => b.new_carton && unprintedBarcodes.has(b.barcode)).length;
     return withLang(
       <div className="h-dvh relative bg-canvas overflow-hidden">
         <DoneOverlay
@@ -3872,12 +4156,14 @@ export default function PalletVerifyPage({
             },
           ]}
         >
-          {doneUnprinted > 0 && (
-            <p className="flex items-center justify-center gap-[5px] mt-3 text-[12px] font-extrabold text-[#fbbf5c] text-center">
-              <MI name="print_disabled" size={15} className="shrink-0" />
-              <span className="min-w-0">{tr('palletVerify.unprintedSummary', { count: doneUnprinted })}</span>
-            </p>
-          )}
+          {/* Labels still waiting for the printer — this pallet's and any
+              earlier one's: the signed "print later" page for the note. */}
+          <PendingLabelsLink
+            count={unprinted.labels.length}
+            url={unprinted.labelsUrl}
+            from="pallet_done"
+            onCopied={() => showToast(tr('labels.linkCopied'), 'content_copy')}
+          />
           {lpnUrl && (
             <a
               href={`${lpnUrl}?token=${encodeURIComponent(token)}${language === 'Hebrew' ? '&lang=Hebrew' : ''}`}
@@ -3898,6 +4184,7 @@ export default function PalletVerifyPage({
             {tr('terminal.nextPalletBtn', { n: pendingNextPallet ?? currentPallet + 1, total: pallet_count })}
           </button>
         </DoneOverlay>
+        <Toast toast={toast} />
         {debugPanel}
       </div>
     );
@@ -3935,6 +4222,7 @@ export default function PalletVerifyPage({
         key={box.barcode}
         onEdit={() => openEdit(box)}
         onIdentical={canDeclareIdentical(box) ? () => setIdenticalFor({ box, loose: false }) : undefined}
+        {...groupCountAction(box, false)}
         onDelete={onDelete}
       />
     );
@@ -4359,6 +4647,7 @@ export default function PalletVerifyPage({
                   onEdit={() => openEdit(activeBox)}
                   onDelete={() => { rescanPalletBox(activeBox.barcode); setSelectedBarcode(null); }}
                   onIdentical={canDeclareIdentical(activeBox) ? () => setIdenticalFor({ box: activeBox, loose: false }) : undefined}
+                  {...groupCountAction(activeBox, false)}
                   onRetry={activeBox.ocr_status === 'failed' ? () => retryPalletOcr(activeBox.barcode) : undefined}
                   onViewImage={activeBox.image_data ? () => setViewingImage(activeBox.image_data!) : undefined}
                   unprinted={unprintedBarcodes.has(activeBox.barcode)}
