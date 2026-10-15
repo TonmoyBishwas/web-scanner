@@ -1,3 +1,4 @@
+import { logServerEvent, errorData } from '@/lib/server-events';
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionContext } from '@/lib/session-guard';
 import {
@@ -49,6 +50,8 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error('[api/carton-labels] GET error:', error);
+    await logServerEvent(request.nextUrl.searchParams.get('token'), 'route_error',
+      errorData(error, { route: 'carton-labels', method: 'GET' }));
     return NextResponse.json({ success: false, error: 'Failed to load labels' }, { status: 500 });
   }
 }
@@ -65,9 +68,11 @@ export async function GET(request: NextRequest) {
  * retry after a lost response return the same batch instead of a second one.
  */
 export async function POST(request: NextRequest) {
+  let traceToken = '';
   try {
     const body = await request.json();
     const token: string | undefined = body.token;
+    traceToken = typeof token === 'string' ? token : '';
     const context = await getSessionContext(token ?? null);
     if (!context || !token) return unauthorized();
 
@@ -136,6 +141,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, labels, batch_id: labels[0]?.batch_id ?? null });
   } catch (error) {
     console.error('[api/carton-labels] POST error:', error);
+    await logServerEvent(traceToken, 'route_error', errorData(error, { route: 'carton-labels', method: 'POST' }));
     return NextResponse.json({ success: false, error: 'Failed to create labels' }, { status: 500 });
   }
 }
@@ -185,6 +191,8 @@ export async function DELETE(request: NextRequest) {
     });
   } catch (error) {
     console.error('[api/carton-labels] DELETE error:', error);
+    await logServerEvent(request.nextUrl.searchParams.get('token'), 'route_error',
+      errorData(error, { route: 'carton-labels', method: 'DELETE' }));
     return NextResponse.json({ success: false, error: 'Failed to delete labels' }, { status: 500 });
   }
 }

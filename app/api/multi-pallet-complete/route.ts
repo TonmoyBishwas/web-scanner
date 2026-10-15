@@ -1,3 +1,4 @@
+import { logServerEvent, errorData, postToBot } from '@/lib/server-events';
 import { NextRequest, NextResponse, after } from 'next/server';
 import { getRedisClient, sessionStorage } from '@/lib/redis';
 import { t } from '@/lib/i18n/server';
@@ -134,8 +135,10 @@ type UniformGroupOverride = {
 };
 
 export async function POST(request: NextRequest) {
+  let traceToken = '';
   try {
     const body = await request.json();
+    traceToken = typeof body?.token === 'string' ? body.token : '';
     const { token, scanned_boxes: rawScannedBoxes, box_count, uniform_groups, merge_map, nonmeat_items,
       manual_declared, manual_items, worker_chat_id, supplier_pallet_ref } = body as {
       token: string;
@@ -353,11 +356,8 @@ export async function POST(request: NextRequest) {
         // moved — and the worker's retry booked the same boxes again.
         const botBody = JSON.stringify(nmPayload); // serialized now, sent after the response
         after(() =>
-          fetch(`${botUrl}/webhook/pallet-complete`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: botBody,
-          }).catch((err) => console.error('[multi-pallet-complete] Bot webhook (non_meat) failed:', err)),
+          postToBot(token, `${botUrl}/webhook/pallet-complete`, botBody, { route: 'multi-pallet-complete', branch: 'non_meat', pallet: palletNumber })
+            .catch((err) => console.error('[multi-pallet-complete] Bot webhook (non_meat) failed:', err)),
         );
       }
 
@@ -514,11 +514,8 @@ export async function POST(request: NextRequest) {
         // it is registered only once the session write above succeeded.
         const botBody = JSON.stringify(mPayload); // serialized now, sent after the response
         after(() =>
-          fetch(`${botUrl}/webhook/pallet-complete`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: botBody,
-          }).catch((err) => console.error('[multi-pallet-complete] Bot webhook (manual) failed:', err)),
+          postToBot(token, `${botUrl}/webhook/pallet-complete`, botBody, { route: 'multi-pallet-complete', branch: 'manual', pallet: palletNumber })
+            .catch((err) => console.error('[multi-pallet-complete] Bot webhook (manual) failed:', err)),
         );
       }
 
@@ -794,11 +791,8 @@ export async function POST(request: NextRequest) {
       // whose session did not move is booked twice by the worker's retry.
       const botBody = JSON.stringify(webhookPayload); // serialized now, sent after the response
       after(() =>
-        fetch(`${botUrl}/webhook/pallet-complete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: botBody,
-        }).catch((err) => console.error('[multi-pallet-complete] Bot webhook failed:', err)),
+        postToBot(token, `${botUrl}/webhook/pallet-complete`, botBody, { route: 'multi-pallet-complete', pallet: palletNumber })
+          .catch((err) => console.error('[multi-pallet-complete] Bot webhook failed:', err)),
       );
     }
 
@@ -825,6 +819,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(okResult);
   } catch (error) {
     console.error('[multi-pallet-complete] POST error:', error);
+    await logServerEvent(traceToken, 'route_error', errorData(error, { route: 'multi-pallet-complete' }));
     return NextResponse.json({ success: false, error: t(undefined, 'errors.serverError') }, { status: 500 });
   }
 }

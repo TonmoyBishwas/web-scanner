@@ -40,6 +40,14 @@ export interface CartonItemOption {
   item_name_hebrew?: string;
 }
 
+/** New carton opened for one invoice line — see `CartonCreatorProps.preset`. */
+export interface CartonCreatorPreset {
+  item: CartonItemOption;
+  weight?: number | null;
+  quantity?: number;
+  notice?: string;
+}
+
 interface CartonCreatorProps {
   token: string;
   items: CartonItemOption[];
@@ -63,6 +71,15 @@ interface CartonCreatorProps {
    * line above Save says the carton is counted now.
    */
   countOnSave?: boolean;
+  /**
+   * Open straight on the form for one invoice line (2026-10-15: a carton
+   * whose only barcode is the supplier's short item code, e.g. `501004`).
+   * Weight and count are DEFAULTS the worker sees and can change; nothing is
+   * saved until he taps Save. With a preset the expiry is required (the
+   * carton has no sticker the date could be read from later). `notice` is
+   * the calm line shown above the form.
+   */
+  preset?: CartonCreatorPreset;
   onBack: () => void;
   /** Fired after the batch is saved — the page closes this screen. `labels`
    *  = the saved rows as the server returned them (may be empty). */
@@ -77,16 +94,16 @@ function displayDate(iso: string): string {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
 }
 
-export function CartonCreator({ token, items, palletNumber, notCountedWarning = false, countOnSave = false, onBack, onCreated }: CartonCreatorProps) {
+export function CartonCreator({ token, items, palletNumber, notCountedWarning = false, countOnSave = false, preset, onBack, onCreated }: CartonCreatorProps) {
   const tr = useT();
   const { toast, showToast } = useToast();
 
-  const [step, setStep] = useState<Step>('item');
+  const [step, setStep] = useState<Step>(preset ? 'form' : 'item');
   const [query, setQuery] = useState('');
-  const [selected, setSelected] = useState<CartonItemOption | null>(null);
+  const [selected, setSelected] = useState<CartonItemOption | null>(preset?.item ?? null);
 
-  const [quantity, setQuantity] = useState('1');
-  const [weight, setWeight] = useState('');
+  const [quantity, setQuantity] = useState(String(preset?.quantity && preset.quantity > 0 ? preset.quantity : 1));
+  const [weight, setWeight] = useState(preset?.weight && preset.weight > 0 ? String(preset.weight) : '');
   const [productionDate, setProductionDate] = useState('');
   const [expiryDate, setExpiryDate] = useState('');
   const [notes, setNotes] = useState('');
@@ -116,6 +133,9 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
   // The label prints these dates: a refused expiry (on/before today or on/
   // before the production date) blocks Save; a blank one never does.
   const dateError = validateCartonDates({ production: productionDate, expiry: expiryDate, receiptDate: localIsoDate() }).expiryError;
+  // A preset (short item code) carton has no sticker to read the date off
+  // later, so its expiry is required.
+  const expiryMissing = !!preset && !expiryDate;
 
   // The preview is the real sticker component fed placeholder identifiers, so
   // what the worker approves is what comes out of the printer.
@@ -146,7 +166,7 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
   };
 
   async function handleSave() {
-    if (!selected || saving || count < 1 || dateError || weightMissing) return;
+    if (!selected || saving || count < 1 || dateError || weightMissing || expiryMissing) return;
     setSaving(true);
     try {
       const payload = {
@@ -237,6 +257,12 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
       ) : (
         <>
           <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 flex flex-col gap-[13px]">
+            {preset?.notice ? (
+              <p role="status" className="flex items-start gap-[6px] rounded-[12px] border border-brand/50 bg-brand-weak px-3 py-[9px] text-[12px] font-bold leading-[1.45] text-brand-weak-ink">
+                <MI name="info" size={16} className="flex-none mt-[1px]" />
+                <span className="min-w-0">{preset.notice}</span>
+              </p>
+            ) : null}
             {/* Chosen item + a way back to the picker */}
             <button
               onClick={() => setStep('item')}
@@ -403,6 +429,12 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
                 <span className="min-w-0">{tr(weightMissing ? 'carton.countOnSaveNeedWeight' : 'carton.countOnSaveNote')}</span>
               </p>
             )}
+            {expiryMissing && (
+              <p className="flex items-start gap-1.5 mb-[9px] text-[11.5px] font-bold leading-snug text-warn-weak-ink">
+                <MI name="event" size={16} className="shrink-0 mt-px" />
+                <span className="min-w-0">{tr('carton.shortCodeNeedExpiry')}</span>
+              </p>
+            )}
             {notCountedWarning && !countOnSave && (
               <p className="flex items-start gap-1.5 mb-[9px] text-[11.5px] font-bold leading-snug text-warn-weak-ink">
                 <MI name="warning" size={16} className="shrink-0 mt-px" />
@@ -411,7 +443,7 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
             )}
             <button
               onClick={handleSave}
-              disabled={saving || count < 1 || !!dateError || weightMissing}
+              disabled={saving || count < 1 || !!dateError || weightMissing || expiryMissing}
               className="w-full h-[50px] rounded-[12px] bg-brand text-white text-[14px] font-black flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <MI name="save" size={20} />

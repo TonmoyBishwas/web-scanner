@@ -1,3 +1,4 @@
+import { logServerEvent, errorData, postToBot } from '@/lib/server-events';
 import { NextRequest, NextResponse, after } from 'next/server';
 import { getRedisClient, sessionStorage } from '@/lib/redis';
 import { t } from '@/lib/i18n/server';
@@ -21,10 +22,12 @@ function sessionKey(token: string) {
  * Fires a webhook to the bot with the loose box data, then marks session completed.
  */
 export async function POST(request: NextRequest) {
+  let traceToken = '';
   try {
     // worker_chat_id: split jobs only — which worker scanned the loose-box
     // task. Ignored on single sessions (owner is always session.chat_id).
     const { token, scanned_boxes: rawScannedBoxes, worker_chat_id } = await request.json();
+    traceToken = typeof token === 'string' ? token : '';
     // Every expiry goes to the bot as ISO, including rows from an older
     // client or an old browser cache still carrying DD/MM/YYYY (lib/expiry.ts).
     const scanned_boxes: MultiPalletBoxScan[] = normalizeBoxExpiries(
@@ -166,11 +169,8 @@ export async function POST(request: NextRequest) {
       // When loose boxes are the last piece, this call closes the delivery
       // and starts the automatic Priority push.
       after(() =>
-        fetch(`${botUrl}/webhook/loose-boxes-complete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: botBody,
-        }).catch((err) => console.error('[multi-pallet-loose-complete] bot webhook error:', err)),
+        postToBot(token, `${botUrl}/webhook/loose-boxes-complete`, botBody, { route: 'multi-pallet-loose-complete' })
+          .catch((err) => console.error('[multi-pallet-loose-complete] bot webhook error:', err)),
       );
 
       okResult = { success: true };
@@ -183,6 +183,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(okResult);
   } catch (error) {
     console.error('[multi-pallet-loose-complete] error:', error);
+    await logServerEvent(traceToken, 'route_error', errorData(error, { route: 'multi-pallet-loose-complete' }));
     return NextResponse.json({ success: false, error: t(undefined, 'errors.serverError') }, { status: 500 });
   }
 }

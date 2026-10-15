@@ -691,8 +691,12 @@ export const en = {
   'terminal.barcodeAcceptedAsPrinted': 'Read the same three times — accepted as printed ({digits}).',
   'terminal.palletLabelRead': 'Shipping-pallet label {digits} noted as the pallet number — not counted as a carton.',
   'terminal.barcodeTooShort': 'Only part of the barcode was read ({digits}). Aim at the long barcode and scan again.',
+  'terminal.shortItemCode': 'Item {code} recognised – this carton has no unique barcode',
+  'terminal.shortItemCodeAction': 'New carton for this item',
+  'terminal.tooShortNewCarton': 'No long barcode? New carton',
   'terminal.stickerPhoto': 'Sticker photo',
   'terminal.noStickerPhoto': 'No photo for this carton',
+  'terminal.stickerPhotoUploading': 'Photo uploading…',
   // 31-digit carton barcodes carry the weight and expiry, so they are a free
   // second reading of the same sticker. Shown, never auto-applied.
   'terminal.barcodeSays': 'Barcode: {value}',
@@ -931,6 +935,8 @@ export const en = {
   'carton.savedNotCountedOne': 'Label saved — NOT counted yet. Print it from Labels, stick it on the carton, then scan it.',
   'carton.countOnSaveNote': 'Counted on this list now, at the weight above. Print the label later from Labels.',
   'carton.countOnSaveNeedWeight': 'Enter the weight — the carton is counted at it.',
+  'carton.shortCodeNotice': 'Item {code} recognised – this carton has no unique barcode. Check the count and weight, pick the expiry and save.',
+  'carton.shortCodeNeedExpiry': 'Pick the expiry — there is no sticker to read it from.',
   'carton.addedToList': '{count} cartons added to the list · label not printed yet',
   'carton.addedToListOne': 'Carton added to the list · label not printed yet',
   'palletVerify.unprintedSummary': '{count} carton(s) booked with the label not printed',
