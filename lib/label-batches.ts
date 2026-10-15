@@ -351,6 +351,19 @@ export function labelSheetUrl(opts: {
  * the signed pending-labels link (no session token). Ids, not batches: the
  * page prints a pallet's waiting labels, which may be part of a batch.
  */
+/**
+ * Most label ids one signed print-sheet URL carries. Each id is ~39 URL
+ * characters; a whole note (352 labels seen live) would pass Vercel's 14 KB
+ * URL limit and the sheet would get a 414. Bigger lists print in turns —
+ * the page re-reads after each sheet and offers the rest.
+ */
+export const SIGNED_SHEET_MAX_IDS = 150;
+
+/** The labels the next signed sheet prints: the first SIGNED_SHEET_MAX_IDS. */
+export function nextSignedSheetChunk<T>(list: T[]): T[] {
+  return list.slice(0, SIGNED_SHEET_MAX_IDS);
+}
+
 export function signedLabelSheetUrl(opts: {
   doc: string;
   sig: string;

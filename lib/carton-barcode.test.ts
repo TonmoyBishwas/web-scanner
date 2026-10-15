@@ -126,13 +126,19 @@ describe('matchInvoiceShortCode (IN26013461, 2026-10-15)', () => {
 
 describe('shortCodeDefaults', () => {
   it('weight per carton = kg / cartons; count = cartons still to count', () => {
-    expect(shortCodeDefaults({ quantity_kg: 100, box_count: 10 }, 0)).toEqual({ weight: 10, quantity: 10 });
-    expect(shortCodeDefaults({ quantity_kg: 100, box_count: 10 }, 4)).toEqual({ weight: 10, quantity: 6 });
+    expect(shortCodeDefaults({ quantity_kg: 100, box_count: 10 }, 0)).toEqual({ weight: 10, quantity: 10, lineTotal: 10 });
+    expect(shortCodeDefaults({ quantity_kg: 100, box_count: 10 }, 4)).toEqual({ weight: 10, quantity: 6, lineTotal: 10 });
   });
   it('unit weight wins; at least 1 carton; no weight when not derivable', () => {
     expect(shortCodeDefaults({ quantity_kg: 100, box_count: 10, unit_weight_kg: 8 }, 0).weight).toBe(8);
     expect(shortCodeDefaults({ quantity_kg: 100, box_count: 10 }, 12).quantity).toBe(1);
-    expect(shortCodeDefaults({ quantity_kg: 100 }, 0)).toEqual({ weight: null, quantity: 1 });
+    expect(shortCodeDefaults({ quantity_kg: 100 }, 0)).toEqual({ weight: null, quantity: 1, lineTotal: null });
     expect(shortCodeDefaults({ quantity_kg: 10, box_count: 3 }, 0).weight).toBe(3.333);
+  });
+  it('a line that may sit on other pallets / loose / earlier labels defaults to 1, total only as a hint', () => {
+    // 80 cartons over 2 pallets: pallet 2's empty list must not offer 80 again.
+    expect(shortCodeDefaults({ quantity_kg: 800, box_count: 80 }, 0, { lineMaySpread: true }))
+      .toEqual({ weight: 10, quantity: 1, lineTotal: 80 });
+    expect(shortCodeDefaults({ quantity_kg: 800, box_count: 80 }, 0, { lineMaySpread: false }).quantity).toBe(80);
   });
 });

@@ -173,17 +173,25 @@ export function matchInvoiceShortCode<T extends ShortCodeLine>(
  * rounded to 3 decimals) and the cartons of that line still to count
  * (`box_count − counted`, at least 1). Both are only defaults on the form —
  * the worker sees, changes and saves them himself.
+ *
+ * `lineMaySpread`: the line's cartons may sit elsewhere too — another pallet,
+ * the loose pile, or New-carton labels already minted for it this session
+ * (still waiting after a Delete all). `counted` only sees the open list, so
+ * "what's left of the line" would be a guess that books the line twice when
+ * accepted; the count then defaults to 1 and the line total is only a hint
+ * (`lineTotal`) for the worker to count against.
  */
 export function shortCodeDefaults(
   line: { quantity_kg?: number | null; box_count?: number | null; unit_weight_kg?: number | null },
   counted: number,
-): { weight: number | null; quantity: number } {
+  opts: { lineMaySpread?: boolean } = {},
+): { weight: number | null; quantity: number; lineTotal: number | null } {
   const boxes = Number(line.box_count) || 0;
   const kg = Number(line.quantity_kg) || 0;
   const unit = Number(line.unit_weight_kg) || 0;
   let weight: number | null = null;
   if (unit > 0) weight = unit;
   else if (boxes > 0 && kg > 0) weight = Math.round((kg / boxes) * 1000) / 1000;
-  const quantity = boxes > 0 ? Math.max(1, boxes - Math.max(0, counted)) : 1;
-  return { weight, quantity };
+  const quantity = boxes > 0 && !opts.lineMaySpread ? Math.max(1, boxes - Math.max(0, counted)) : 1;
+  return { weight, quantity, lineTotal: boxes > 0 ? boxes : null };
 }

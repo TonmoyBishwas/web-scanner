@@ -393,6 +393,9 @@ export default function PalletVerifyPage({
   const [confirmedBoxCount, setConfirmedBoxCount] = useState(0);
   // For callbacks that finish after an await (the identical form's save).
   const confirmedBoxCountRef = useRef(0);
+  /** The pallet total last offered from the list's own count (null once the
+   *  worker edits it or the total is confirmed). */
+  const listDerivedTotalRef = useRef<string | null>(null);
   useEffect(() => { confirmedBoxCountRef.current = confirmedBoxCount; }, [confirmedBoxCount]);
   const [scannedBoxes, setScannedBoxes] = useState<BoxScan[]>([]);
   const [detectedType, setDetectedType] = useState<DetectedType>('unknown');
@@ -1249,6 +1252,10 @@ export default function PalletVerifyPage({
    * saves. Returns false when the read matches no line.
    */
   const shortCodeOpenedRef = useRef<Set<string>>(new Set());
+  /** Item codes a New carton was saved for from a short-code preset this
+   *  session — their labels outlive Delete all, so a re-open must not prefill
+   *  the line's remaining count again. */
+  const shortCodeSavedItemsRef = useRef<Set<string>>(new Set());
   function handleShortItemCode(read: string, loose: boolean): boolean {
     const lines = sessionRef.current?.ocr_data ?? [];
     const line = matchInvoiceShortCode(read, lines);
@@ -1258,15 +1265,23 @@ export default function PalletVerifyPage({
     const counted = list.filter(
       (b) => matchInvoiceItem(b.item_name_hebrew, b.item_name, lines)?.item_code === line.item_code,
     ).length;
-    const { weight, quantity } = shortCodeDefaults(line, counted);
+    // The open list is all `counted` sees: when the line can also sit on
+    // another pallet, the loose pile, or New-carton labels already saved for
+    // it this session, don't prefill "the rest of the line" (accepting it
+    // would book the line twice) — default 1, line total as a hint.
+    const s = sessionRef.current;
+    const lineMaySpread = (s?.pallet_count || 1) > 1 || (s?.loose_box_count || 0) > 0
+      || shortCodeSavedItemsRef.current.has(String(line.item_code ?? ''));
+    const { weight, quantity, lineTotal } = shortCodeDefaults(line, counted, { lineMaySpread });
     const preset: CartonCreatorPreset = {
-      item: line, weight, quantity, notice: t(lang, 'carton.shortCodeNotice', { code: read }),
+      item: line, weight, quantity, lineTotal: lineMaySpread ? lineTotal : null,
+      notice: t(lang, 'carton.shortCodeNotice', { code: read }),
     };
     const key = `${loose ? 0 : currentPalletRef.current}:${read}`;
     const open = !shortCodeOpenedRef.current.has(key);
     trace('ui', 'scan_short_item_code', {
       barcode: read, item_code: line.item_code, pallet: loose ? 0 : currentPalletRef.current,
-      counted, weight, quantity, opened: open,
+      counted, weight, quantity, line_may_spread: lineMaySpread, opened: open,
     });
     showScanNotice({
       text: t(lang, 'terminal.shortItemCode', { code: read }),
@@ -2261,7 +2276,11 @@ export default function PalletVerifyPage({
         // The pallet total is usually just what is on the list now — offer it,
         // still editable, instead of making the worker retype the count.
         if (confirmedBoxCountRef.current === 0) {
-          setBoxCountInput((cur) => cur || String(listTotal(next)));
+          setBoxCountInput((cur) => {
+            if (cur) return cur;
+            listDerivedTotalRef.current = String(listTotal(next));
+            return listDerivedTotalRef.current;
+          });
         }
         return next;
       });
@@ -2712,6 +2731,7 @@ export default function PalletVerifyPage({
           onCreated={(count, batchId, labels) => {
             // Back to the scanner, no Labels screen (SCN-18).
             setShowCartonCreator(false);
+            if (cartonPreset) shortCodeSavedItemsRef.current.add(String(cartonPreset.item.item_code ?? ''));
             setCartonPreset(null);
             const batch = newCartonBatch(labels);
             if (batch) {
@@ -3794,6 +3814,20 @@ export default function PalletVerifyPage({
     }
   }, [countPrefillKey, countPrefillValue, countPrefillSource, boxCountInput, countPrefillShown, currentPallet]);
   // The source line shows only while the input still holds the prefill.
+  // The total offered from the list after a New-carton / identical save
+  // (above) is the list's own count, not the worker's. Keep it in step while
+  // he scans more — left alone, 10 stayed under the 11 on the list and the
+  // input opened below its own minimum. A number he typed is never touched.
+  const scannedListTotal = listTotal(scannedBoxes);
+  useEffect(() => {
+    const derived = listDerivedTotalRef.current;
+    if (derived === null) return;
+    if (boxCountInput !== derived || confirmedBoxCount > 0) { listDerivedTotalRef.current = null; return; }
+    if (scannedListTotal > Number(derived)) {
+      listDerivedTotalRef.current = String(scannedListTotal);
+      setBoxCountInput(listDerivedTotalRef.current);
+    }
+  }, [scannedListTotal, boxCountInput, confirmedBoxCount]);
   const countPrefillTag = countPrefillShown && boxCountInput === String(countPrefillShown.value)
     ? countPrefillShown.source
     : null;

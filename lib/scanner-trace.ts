@@ -35,7 +35,7 @@
 import { installDebugLogCapture, onDebugLogEntry } from '@/lib/debug-log';
 import { bodyForTrace, packEventData } from '@/lib/scanner-trace-sanitize';
 import {
-  batchCount, growBudget, shrinkBudget, utf8Bytes, TRACE_BATCH_MAX_BYTES,
+  batchCount, growBudget, shrinkBudget, storedQueuesToDrop, utf8Bytes, TRACE_BATCH_MAX_BYTES,
 } from '@/lib/scanner-trace-batch';
 
 export type TraceKind = 'lifecycle' | 'ui' | 'phase' | 'fetch' | 'console' | 'error';
@@ -57,7 +57,7 @@ const FLUSH_AT = 40;
 /** localStorage key prefix for a load's unsent events (one key per load). */
 const STORE_PREFIX = 'scanner-trace:q:';
 /** Never persist more than this (UTF-16 chars) — localStorage is ~5 MB, shared. */
-const STORE_MAX_CHARS = 400_000;
+const STORE_MAX_CHARS = 150_000;
 const STORE_DEBOUNCE_MS = 1000;
 /** A queue not closed by a pagehide and untouched this long is an orphan (crash). */
 const STALE_MS = 120_000;
@@ -260,10 +260,23 @@ async function resendStored(currentLoadId: string): Promise<void> {
   if (!ls) return;
   let keys: string[] = [];
   try {
+    const sizes: { key: string; saved: number | null; chars: number }[] = [];
     for (let i = 0; i < ls.length; i += 1) {
       const k = ls.key(i);
-      if (k && k.startsWith(STORE_PREFIX) && k !== STORE_PREFIX + currentLoadId) keys.push(k);
+      if (!k || !k.startsWith(STORE_PREFIX)) continue;
+      const raw = ls.getItem(k) || '';
+      let saved: number | null = null;
+      if (k === STORE_PREFIX + currentLoadId) saved = Date.now(); // ours: never pruned first
+      else {
+        try { const v = JSON.parse(raw)?.saved; saved = typeof v === 'number' ? v : null; } catch { saved = null; }
+      }
+      sizes.push({ key: k, saved, chars: raw.length });
     }
+    // Bound what earlier loads left behind (age + total size) so the scan
+    // list's own cache always has room.
+    const drop = new Set(storedQueuesToDrop(sizes, Date.now()).filter((k) => k !== STORE_PREFIX + currentLoadId));
+    for (const k of drop) { try { ls.removeItem(k); } catch { /* ignore */ } }
+    keys = sizes.map((e) => e.key).filter((k) => k !== STORE_PREFIX + currentLoadId && !drop.has(k));
   } catch {
     return;
   }

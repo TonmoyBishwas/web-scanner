@@ -54,3 +54,37 @@ export function shrinkBudget(budget: number): number {
 export function growBudget(budget: number): number {
   return Math.min(TRACE_BATCH_MAX_BYTES, budget * 2);
 }
+
+/** Older unsent trace queues than this are dropped, not resent. */
+export const STORED_QUEUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+/** All loads' unsent trace queues together stay under this (UTF-16 chars),
+ *  so they can never crowd the scan-list cache out of localStorage. */
+export const STORED_QUEUES_MAX_TOTAL_CHARS = 1_000_000;
+
+/**
+ * Which stored trace queues (`scanner-trace:q:<loadId>`) to delete: every one
+ * older than `maxAgeMs` (or with no readable save time), then the oldest
+ * until the rest fit in `maxTotalChars`. Each reload on a dead signal leaves
+ * one more queue behind; without this they filled the origin's quota and the
+ * scan list's own cache stopped saving without a word.
+ */
+export function storedQueuesToDrop(
+  entries: readonly { key: string; saved: number | null; chars: number }[],
+  now: number,
+  maxTotalChars = STORED_QUEUES_MAX_TOTAL_CHARS,
+  maxAgeMs = STORED_QUEUE_MAX_AGE_MS,
+): string[] {
+  const drop: string[] = [];
+  const keep: { key: string; saved: number; chars: number }[] = [];
+  for (const e of entries) {
+    if (e.saved == null || !Number.isFinite(e.saved) || now - e.saved > maxAgeMs) drop.push(e.key);
+    else keep.push({ key: e.key, saved: e.saved, chars: e.chars });
+  }
+  keep.sort((a, b) => b.saved - a.saved); // newest first
+  let total = 0;
+  for (const e of keep) {
+    total += e.chars;
+    if (total > maxTotalChars) drop.push(e.key);
+  }
+  return drop;
+}

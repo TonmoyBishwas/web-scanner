@@ -46,6 +46,9 @@ export interface CartonCreatorPreset {
   weight?: number | null;
   quantity?: number;
   notice?: string;
+  /** The invoice line's carton total, shown as a hint when the count is not
+   *  prefilled from it (the line may sit on other pallets too). */
+  lineTotal?: number | null;
 }
 
 interface CartonCreatorProps {
@@ -307,6 +310,11 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
               <p className="text-[10.5px] font-semibold text-ink-muted mt-[6px] mx-[2px] leading-[1.45]">
                 {tr('carton.quantityHint')}
               </p>
+              {preset?.lineTotal ? (
+                <p className="text-[10.5px] font-semibold text-ink-muted mt-[2px] mx-[2px] leading-[1.45]">
+                  {tr('carton.lineTotalHint', { total: preset.lineTotal })}
+                </p>
+              ) : null}
             </div>
 
             {/* Weight */}

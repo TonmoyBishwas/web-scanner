@@ -18,6 +18,8 @@ import {
   loadLabelSize,
   labelSheetUrl,
   signedLabelSheetUrl,
+  nextSignedSheetChunk,
+  SIGNED_SHEET_MAX_IDS,
   groupLabelsByPallet,
   type LiveRowPlace,
 } from './label-batches';
@@ -263,6 +265,16 @@ describe('signed print sheet + pending grouping (2026-10-15)', () => {
     const url = signedLabelSheetUrl({ doc: 'IN 1', sig: 'ab', ids: ['i1', 'i2'], size: 'a4', language: 'English' });
     expect(url).toBe('/labels/print?doc=IN%201&sig=ab&ids=i1%2Ci2&size=a4&lang=English');
     expect(url).not.toContain('token=');
+  });
+
+  it('a whole note prints in sheets small enough for the URL limit', () => {
+    const uuid = '0f8fad5b-d9cb-469f-a165-70867728950e';
+    const ids = Array.from({ length: 352 }, () => uuid);
+    const chunk = nextSignedSheetChunk(ids);
+    expect(chunk.length).toBe(SIGNED_SHEET_MAX_IDS);
+    const url = signedLabelSheetUrl({ doc: 'IN26000123', sig: 'f'.repeat(64), ids: chunk, size: '10x15', language: 'Hebrew' });
+    expect(url.length).toBeLessThan(8 * 1024);
+    expect(nextSignedSheetChunk(ids.slice(0, 9)).length).toBe(9);
   });
 
   it('groups by pallet ascending, loose pile after, unknown last, order kept', () => {

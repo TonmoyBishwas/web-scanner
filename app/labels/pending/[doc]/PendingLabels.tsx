@@ -7,6 +7,7 @@ import { LanguageContext, t, useLangDir } from '@/lib/i18n';
 import {
   groupLabelsByPallet,
   loadLabelSize,
+  nextSignedSheetChunk,
   saveLabelSize,
   signedLabelSheetUrl,
   type PalletLabelGroup,
@@ -117,8 +118,10 @@ export function PendingLabels({ doc }: { doc: string }) {
     if (!list.length) return;
     // Synchronously inside the tap: a window.open after an await is what
     // pop-up blockers kill.
+    // At most SIGNED_SHEET_MAX_IDS per sheet (URL length); the rest are
+    // offered again once this sheet marks its labels printed.
     const win = window.open(
-      signedLabelSheetUrl({ doc, sig, ids: list.map((l) => l.id), size, language }),
+      signedLabelSheetUrl({ doc, sig, ids: nextSignedSheetChunk(list).map((l) => l.id), size, language }),
       '_blank',
     );
     setBlocked(!win);
@@ -128,6 +131,12 @@ export function PendingLabels({ doc }: { doc: string }) {
     setSize(next);
     saveLabelSize(next);
   }
+
+  /** Button text: "Print N", or "Print next 150 (of N)" past one sheet. */
+  const printLabel = (key: 'pending.printGroup' | 'pending.printAll', count: number) => {
+    const chunk = nextSignedSheetChunk(Array.from({ length: count })).length;
+    return chunk < count ? tr('pending.printNext', { count: chunk, total: count }) : tr(key, { count });
+  };
 
   const groupTitle = (g: PalletLabelGroup<CartonLabel>) =>
     g.pallet_number === null ? tr('pending.unknown') : g.pallet_number === 0 ? tr('pending.loose') : tr('pending.pallet', { n: g.pallet_number });
@@ -168,7 +177,8 @@ export function PendingLabels({ doc }: { doc: string }) {
                     onClick={() => pickSize(s.id)}
                     className={`px-3 py-[7px] rounded-[9px] border text-[12px] font-extrabold ${size === s.id ? 'bg-brand-weak border-brand text-brand-weak-ink' : 'bg-tile border-line text-ink-inverse'}`}
                   >
-                    {s.name}
+                    {/* Isolated LTR: in RTL the bidi algorithm turned 10×15 into 15×10. */}
+                    <bdi dir="ltr">{s.name}</bdi>
                   </button>
                 ))}
                 <label className="ms-auto inline-flex items-center gap-[6px] text-[12px] font-bold text-ink-muted">
@@ -195,7 +205,7 @@ export function PendingLabels({ doc }: { doc: string }) {
                           className="inline-flex items-center gap-[5px] px-3 py-[8px] rounded-[10px] bg-brand text-white text-[12px] font-black"
                         >
                           <MI name="print" size={16} />
-                          {tr('pending.printGroup', { count: toPrint.length || g.labels.length })}
+                          {printLabel('pending.printGroup', toPrint.length || g.labels.length)}
                         </button>
                       </div>
                       <ul className="divide-y divide-line">
@@ -232,7 +242,7 @@ export function PendingLabels({ doc }: { doc: string }) {
               className="w-full max-w-[560px] mx-auto h-[50px] rounded-[12px] bg-brand text-white text-[14px] font-black flex items-center justify-center gap-2"
             >
               <MI name="print" size={20} />
-              {tr('pending.printAll', { count: waiting.length })}
+              {printLabel('pending.printAll', waiting.length)}
             </button>
           </footer>
         )}
