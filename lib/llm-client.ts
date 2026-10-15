@@ -38,6 +38,8 @@ export interface CompleteOptions {
   /** Extra request headers (OpenRouter attribution only). */
   referer?: string;
   title?: string;
+  /** Ask Gemini direct for a bare JSON object (`response_format`); other routes rely on the prompt. */
+  json?: boolean;
 }
 
 function env(name: string): string | undefined {
@@ -102,11 +104,12 @@ export async function complete(
   }
   const base: Record<string, unknown> = { model: r.model, messages };
   if (opts.temperature !== undefined) base.temperature = opts.temperature;
-  const noThink: Record<string, unknown> = thinkingOn()
+  const extras: Record<string, unknown> = thinkingOn()
     ? {}
     : r.provider === 'gemini'
       ? { reasoning_effort: 'none' }
       : { reasoning: { enabled: false } };
+  if (opts.json && r.provider === 'gemini') extras.response_format = { type: 'json_object' };
 
   const send = (body: Record<string, unknown>) =>
     fetch(url, {
@@ -116,9 +119,10 @@ export async function complete(
       signal: AbortSignal.timeout(opts.timeoutMs ?? 12_000),
     });
 
-  let resp = await send({ ...base, ...noThink });
-  if (resp.status === 400 && Object.keys(noThink).length) {
-    // Some models make reasoning mandatory: retry once without the flag.
+  let resp = await send({ ...base, ...extras });
+  if (resp.status === 400 && Object.keys(extras).length) {
+    // Some models make reasoning mandatory or refuse JSON mode: retry once
+    // with the plain request.
     resp = await send(base);
   }
   if (!resp.ok) throw new LLMHttpError(resp.status, `${r.provider}:${r.model} HTTP ${resp.status}`);

@@ -51,6 +51,7 @@ export async function validateMatchWithLLM(
       {
         temperature: 0.1, // Low temperature for consistent results
         timeoutMs: 20_000,
+        json: true,
         referer: process.env.NEXT_PUBLIC_APP_URL || 'https://scanner.vercel.app',
         title: 'Warehouse Scanner - Invoice Matching',
       },
