@@ -35,6 +35,8 @@ export interface ChatMessage {
 export interface CompleteOptions {
   timeoutMs?: number;
   temperature?: number;
+  /** OpenAI-compatible structured output, e.g. { type: 'json_schema', json_schema: { name, strict, schema } }. */
+  responseFormat?: Record<string, unknown>;
   /** Extra request headers (OpenRouter attribution only). */
   referer?: string;
   title?: string;
@@ -102,6 +104,7 @@ export async function complete(
   }
   const base: Record<string, unknown> = { model: r.model, messages };
   if (opts.temperature !== undefined) base.temperature = opts.temperature;
+  if (opts.responseFormat) base.response_format = opts.responseFormat;
   const noThink: Record<string, unknown> = thinkingOn()
     ? {}
     : r.provider === 'gemini'

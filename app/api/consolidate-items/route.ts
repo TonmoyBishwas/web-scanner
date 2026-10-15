@@ -132,6 +132,34 @@ export async function POST(request: NextRequest) {
         // appear; Layer A grouping still works.
         let content = await complete(model, [{ role: 'user', content: prompt }], {
           timeoutMs: 12_000,
+          responseFormat: {
+            type: 'json_schema',
+            json_schema: {
+              name: 'suggested_merges',
+              strict: true,
+              schema: {
+                type: 'object',
+                properties: {
+                  suggested_merges: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        from_keys: { type: 'array', items: { type: 'string' } },
+                        to_key: { type: 'string' },
+                        reason_he: { type: 'string' },
+                        reason_en: { type: 'string' },
+                      },
+                      required: ['from_keys', 'to_key', 'reason_he', 'reason_en'],
+                      additionalProperties: false,
+                    },
+                  },
+                },
+                required: ['suggested_merges'],
+                additionalProperties: false,
+              },
+            },
+          },
         });
         // Models occasionally wrap JSON in ```json fences despite the prompt.
         if (content.startsWith('```')) {
