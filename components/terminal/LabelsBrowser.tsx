@@ -214,7 +214,7 @@ export function LabelsBrowser({
     // Opened synchronously inside the click — a window.open after an awaited
     // fetch is what pop-up blockers kill. Nothing is marked here: the sheet
     // marks the labels it actually rendered, right before its print dialog.
-    const win = window.open(labelSheetUrl({ token, batchIds, size, language }), '_blank');
+    const win = window.open(labelSheetUrl({ token, batchIds, size, language, scope }), '_blank');
     if (!win) {
       showToast(tr('labels.printBlocked'), 'error', '#ef8a8a');
       return;
@@ -270,6 +270,13 @@ export function LabelsBrowser({
         // Already stock on an LPN: the stickers are on boxes in the
         // warehouse, so the ledger keeps them (reprint only).
         showToast(tr('labels.deleteBooked'), 'info', '#fbbf5c');
+        setConfirm(null);
+        return;
+      }
+      if (res.status === 403 && data?.error === 'labels_not_yours') {
+        // Another job's labels (the "all jobs" view): only the session that
+        // saved a batch may delete it.
+        showToast(tr('labels.deleteNotYours'), 'info', '#fbbf5c');
         setConfirm(null);
         return;
       }

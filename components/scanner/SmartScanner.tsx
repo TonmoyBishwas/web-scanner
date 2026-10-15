@@ -16,6 +16,11 @@ import {
 import { CartonCodeMemory } from '@/lib/frame-reads';
 import { useT } from '@/lib/i18n';
 import { useSettingsStore } from '@/stores/settings-store';
+import { trace } from '@/lib/scanner-trace';
+import { KeyThrottle, ScannerHealth } from '@/lib/scanner-health';
+
+/** Heartbeat cadence of the `scanner_health` trace event while the camera is open. */
+const HEALTH_MS = 15000;
 
 /**
  * Why the parent turned a read down — decides the colour and label of the hold.
@@ -92,6 +97,16 @@ interface SmartScannerProps {
    * non-meat), which keep every read.
    */
   preferCartonCodes?: boolean;
+  /**
+   * Would the page take this confirmed value at all? (2026-10-15, David's
+   * `501004`.) A value it answers `false` for — a fragment shorter than any
+   * carton code that is not a known item code — is still handed over (so the
+   * page can show its notice, at most once per value per 3 s), but it does
+   * NOT arm the 3 s cooldown, flash or capture a photo: the cooldown it used
+   * to start threw away the real carton code read a moment later. Omitted =
+   * every value is taken, as before.
+   */
+  acceptValue?: (value: string) => boolean;
 }
 
 /**
@@ -522,6 +537,7 @@ export function SmartScanner({
   paused = false,
   nudgeSuppressed = false,
   preferCartonCodes = false,
+  acceptValue,
 }: SmartScannerProps) {
   const tr = useT();
   // Tap anywhere on the camera = capture the label. Default ON — a torn or
@@ -606,6 +622,15 @@ export function SmartScanner({
   }, [preferCartonCodes]);
   // `detect` is a long-lived rAF closure, so the pause flag has to reach it
   // through a ref — reading the prop would pin the first render's value.
+  const acceptValueRef = useRef(acceptValue);
+  useEffect(() => {
+    acceptValueRef.current = acceptValue;
+  }, [acceptValue]);
+  // Trace throttles (lib/scanner-health.ts): one event per value per window.
+  const unconfirmedThrottleRef = useRef(new KeyThrottle(5000));
+  const cooldownThrottleRef = useRef(new KeyThrottle(5000));
+  const refusedThrottleRef = useRef(new KeyThrottle(3000));
+  const healthRef = useRef(new ScannerHealth());
   const pausedRef = useRef(paused);
   useEffect(() => {
     pausedRef.current = paused;
@@ -1157,11 +1182,20 @@ export function SmartScanner({
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
         setDiag({ state: 'ready' });
+        try {
+          const settings = stream.getVideoTracks()[0]?.getSettings?.();
+          trace('ui', 'cam_start', {
+            engine: engineRef.current,
+            camera: currentCamera.label || undefined,
+            width: settings?.width, height: settings?.height,
+          });
+        } catch { /* tracing never breaks the camera */ }
         scanContinuously();
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[SmartScanner] Camera error:', err);
+      trace('ui', 'cam_error', { name: err instanceof Error ? err.name : undefined, message: message.slice(0, 300) });
       setDiag({ state: 'error', message });
       onError?.(message);
     }
@@ -1223,6 +1257,13 @@ export function SmartScanner({
       const { confirmed, progress } = confirmerRef.current.add(frameReads, now);
       if (!confirmed) {
         setCaptureCount(progress);
+        // A value seen but not (yet) confirmed — the "camera sees it, nothing
+        // happens" case. One event per value per 5 s.
+        for (const r of frameReads) {
+          if (unconfirmedThrottleRef.current.allow(r.value, now)) {
+            trace('ui', 'read_unconfirmed', { value: r.value, via });
+          }
+        }
         return;
       }
       const barcode = confirmed;
@@ -1230,11 +1271,30 @@ export function SmartScanner({
       // SUCCESS: 2 identical reads confirmed
       console.log('[SmartScanner] Barcode confirmed:', barcode, `(${via})`);
       setCaptureCount(0);
+      healthRef.current.confirm(now);
+
+      // A value the page refuses outright (a short fragment that is not a
+      // known item code): tell the page, but never arm the cooldown for it —
+      // that cooldown discarded the carton's real code (2026-10-15).
+      const accept = acceptValueRef.current;
+      if (accept && !accept(barcode)) {
+        if (refusedThrottleRef.current.allow(barcode, now)) {
+          const parsedRefused = parseIsraeliBarcode(barcode) || {
+            type: 'unknown', sku: barcode, weight: 0, expiry: '', raw_barcode: barcode,
+            expiry_source: 'ocr_required' as const,
+          };
+          onBarcodeDetected(barcode, parsedRefused, undefined);
+        }
+        return;
+      }
 
       // Check cooldown
       const timeSinceLastScan = now - lastScanTimeRef.current;
       if (timeSinceLastScan < 3000) {
         console.log('[SmartScanner] Cooldown active, ignoring confirmed scan');
+        if (cooldownThrottleRef.current.allow(barcode, now)) {
+          trace('ui', 'cooldown_drop', { value: barcode, held_by: lastScannedRef.current, ms: timeSinceLastScan });
+        }
         return;
       }
 
@@ -1339,6 +1399,7 @@ export function SmartScanner({
               decoder = createNativeDecoder();
             } catch (err) {
               console.warn('[SmartScanner] BarcodeDetector constructor threw — using ZXing:', err);
+              trace('ui', 'engine_fallback', { from: 'native', to: 'zxing', reason: 'constructor threw' });
               engineRef.current = 'zxing';
               decoder = await createZxingDecoder();
               onScannerTypeDetected?.('fallback');
@@ -1362,6 +1423,7 @@ export function SmartScanner({
     const switchToZxing = async (reason: string) => {
       if (engineRef.current === 'zxing') return;
       console.warn(`[SmartScanner] Switching to ZXing decoder: ${reason}`);
+      trace('ui', 'engine_fallback', { from: engineRef.current, to: 'zxing', reason: reason.slice(0, 200) });
       engineRef.current = 'zxing';
       decoder = null;
       ensureDecoder();
@@ -1533,6 +1595,7 @@ export function SmartScanner({
         // Native only: the JS ZXing fallback read none of the thin stickers
         // thickened either (bench 2026-10-03), so it keeps its full raw cadence.
         pass = active.engine === 'native' ? nextPass(pass, reads.length > 0) : 'raw';
+        healthRef.current.frame(reads.length, reads.map((r) => r.value));
 
         if (reads.length > 0) await consume(reads, `${pass} pass`);
       } catch (err) {
@@ -1554,6 +1617,19 @@ export function SmartScanner({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSupported, currentCameraIndex, cameras.length]);
+
+  // `scanner_health` heartbeat (trace only): every 15 s while the camera is
+  // open — frames decoded, frames with a read, values seen, time since the
+  // last confirmed read. Silent while paused or before the stream exists.
+  useEffect(() => {
+    if (isSupported !== true) return;
+    const id = setInterval(() => {
+      if (!streamRef.current || pausedRef.current) return;
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      trace('ui', 'scanner_health', healthRef.current.snapshot(Date.now(), { engine: engineRef.current }));
+    }, HEALTH_MS);
+    return () => clearInterval(id);
+  }, [isSupported]);
 
   // Resume the camera after the page comes back from background. Mobile
   // browsers freeze MediaStream tracks while the tab is hidden; on return

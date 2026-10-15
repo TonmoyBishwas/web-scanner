@@ -1,3 +1,4 @@
+import { logServerEvent, errorData, postToBot } from '@/lib/server-events';
 import { NextRequest, NextResponse, after } from 'next/server';
 import { getRedisClient, sessionStorage } from '@/lib/redis';
 import { t } from '@/lib/i18n/server';
@@ -9,7 +10,8 @@ import { markDone, isComplete } from '@/lib/pallet-slots';
 import { isSplitSession, splitStateOf, applySplitState } from '@/lib/session-mode';
 import { normalizeBoxExpiries } from '@/lib/expiry';
 import { findUnprintedForSession } from '@/lib/carton-labels';
-import { blockingLabels, barcodesBeingBooked, labelGateError, unprintedOnList } from '@/lib/label-gate';
+import { printGate, barcodesBeingBooked, labelGateError, unprintedOnList } from '@/lib/label-gate';
+import { pendingLabelsUrl } from '@/lib/label-link';
 import { sessionBookedBarcodes } from '@/lib/label-batches';
 import { isEmptySummaryLine } from '@/lib/pallet-lines';
 
@@ -134,8 +136,10 @@ type UniformGroupOverride = {
 };
 
 export async function POST(request: NextRequest) {
+  let traceToken = '';
   try {
     const body = await request.json();
+    traceToken = typeof body?.token === 'string' ? body.token : '';
     const { token, scanned_boxes: rawScannedBoxes, box_count, uniform_groups, merge_map, nonmeat_items,
       manual_declared, manual_items, worker_chat_id, supplier_pallet_ref } = body as {
       token: string;
@@ -218,7 +222,9 @@ export async function POST(request: NextRequest) {
     // amber "Print N labels first" for this code, never the raw string.
     const unprintedLabels = await findUnprintedForSession(token);
     const beingBooked = barcodesBeingBooked({ scanned_boxes, nonmeat_items, manual_items });
-    const labelGate = blockingLabels(unprintedLabels, beingBooked, sessionBookedBarcodes(session));
+    // LABEL_PRINT_GATE off (the default since 2026-10-15) → never blocks:
+    // the unprinted cartons are booked label_printed:false just below.
+    const labelGate = printGate(unprintedLabels, beingBooked, sessionBookedBarcodes(session));
     if (labelGate.count > 0) {
       errorResult = { status: 409, body: labelGateError(labelGate) };
       return;
@@ -229,6 +235,13 @@ export async function POST(request: NextRequest) {
     const unprintedBooked = unprintedOnList(unprintedLabels, beingBooked);
     const labelPrintedFlag = (barcode: string): { label_printed?: false } =>
       unprintedBooked.has((barcode || '').trim()) ? { label_printed: false } : {};
+    // The signed "print later" page for this note (lib/label-link.ts) — in
+    // every answer, and to the bot with the unprinted count so its message
+    // can carry the same link. Null when LPN_SECRET is not set.
+    const labelsUrl = pendingLabelsUrl(
+      process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin,
+      session.document_number,
+    );
 
     // ── Weight-based non-meat (Type A): invoice-authoritative math ──────────
     // The worker scanned one box per item on this pallet; the total for each
@@ -353,11 +366,8 @@ export async function POST(request: NextRequest) {
         // moved — and the worker's retry booked the same boxes again.
         const botBody = JSON.stringify(nmPayload); // serialized now, sent after the response
         after(() =>
-          fetch(`${botUrl}/webhook/pallet-complete`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: botBody,
-          }).catch((err) => console.error('[multi-pallet-complete] Bot webhook (non_meat) failed:', err)),
+          postToBot(token, `${botUrl}/webhook/pallet-complete`, botBody, { route: 'multi-pallet-complete', branch: 'non_meat', pallet: palletNumber })
+            .catch((err) => console.error('[multi-pallet-complete] Bot webhook (non_meat) failed:', err)),
         );
       }
 
@@ -366,6 +376,7 @@ export async function POST(request: NextRequest) {
         success: true,
         lpn: nmLpn,
         lpn_url: `${nmAppUrl}/pallet/${nmLpn}`,
+        labels_url: labelsUrl,
         pallet_number: palletNumber,
         next_pallet: nmAllDone ? null : nmNextPallet,
         all_done: nmAllDone,
@@ -514,11 +525,8 @@ export async function POST(request: NextRequest) {
         // it is registered only once the session write above succeeded.
         const botBody = JSON.stringify(mPayload); // serialized now, sent after the response
         after(() =>
-          fetch(`${botUrl}/webhook/pallet-complete`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: botBody,
-          }).catch((err) => console.error('[multi-pallet-complete] Bot webhook (manual) failed:', err)),
+          postToBot(token, `${botUrl}/webhook/pallet-complete`, botBody, { route: 'multi-pallet-complete', branch: 'manual', pallet: palletNumber })
+            .catch((err) => console.error('[multi-pallet-complete] Bot webhook (manual) failed:', err)),
         );
       }
 
@@ -531,6 +539,7 @@ export async function POST(request: NextRequest) {
         success: true,
         lpn: mLpn,
         lpn_url: `${mAppUrl}/pallet/${mLpn}`,
+        labels_url: labelsUrl,
         pallet_number: palletNumber,
         next_pallet: split ? null : (mAllPalletsDone ? null : mNextPallet),
         all_done: split ? mIsFinal : mAllPalletsDone,
@@ -660,6 +669,7 @@ export async function POST(request: NextRequest) {
           ...labelPrintedFlag(b.barcode),
         })),
         unprinted_labels: unprintedBooked.size,
+        labels_url: unprintedBooked.size > 0 ? labelsUrl : undefined,
       };
     } else {
       // Single-item pallet — exactly one name-group.
@@ -716,6 +726,7 @@ export async function POST(request: NextRequest) {
           ...labelPrintedFlag(b.barcode),
         })),
         unprinted_labels: unprintedBooked.size,
+        labels_url: unprintedBooked.size > 0 ? labelsUrl : undefined,
       };
     }
 
@@ -794,11 +805,8 @@ export async function POST(request: NextRequest) {
       // whose session did not move is booked twice by the worker's retry.
       const botBody = JSON.stringify(webhookPayload); // serialized now, sent after the response
       after(() =>
-        fetch(`${botUrl}/webhook/pallet-complete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: botBody,
-        }).catch((err) => console.error('[multi-pallet-complete] Bot webhook failed:', err)),
+        postToBot(token, `${botUrl}/webhook/pallet-complete`, botBody, { route: 'multi-pallet-complete', pallet: palletNumber })
+          .catch((err) => console.error('[multi-pallet-complete] Bot webhook failed:', err)),
       );
     }
 
@@ -812,6 +820,7 @@ export async function POST(request: NextRequest) {
       success: true,
       lpn,
       lpn_url: `${appUrl}/pallet/${lpn}`,
+      labels_url: labelsUrl,
       pallet_number: palletNumber,
       next_pallet: split ? null : (allPalletsDone ? null : newCurrentPallet),
       all_done: split ? isFinal : allPalletsDone,
@@ -825,6 +834,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(okResult);
   } catch (error) {
     console.error('[multi-pallet-complete] POST error:', error);
+    await logServerEvent(traceToken, 'route_error', errorData(error, { route: 'multi-pallet-complete' }));
     return NextResponse.json({ success: false, error: t(undefined, 'errors.serverError') }, { status: 500 });
   }
 }

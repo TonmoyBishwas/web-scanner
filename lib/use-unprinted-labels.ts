@@ -19,9 +19,12 @@ import { toUnprintedLabels, type UnprintedLabel } from './label-batches';
  */
 export function useUnprintedLabels(token: string): {
   labels: UnprintedLabel[];
+  /** The signed "print later" page for this delivery (lib/label-link.ts), or null. */
+  labelsUrl: string | null;
   refresh: () => void;
 } {
   const [labels, setLabels] = useState<UnprintedLabel[]>([]);
+  const [labelsUrl, setLabelsUrl] = useState<string | null>(null);
   // Only the newest request may write: a slow answer from before a save must
   // not overwrite the answer from after it.
   const seqRef = useRef(0);
@@ -34,6 +37,7 @@ export function useUnprintedLabels(token: string): {
       .then((data) => {
         if (seq !== seqRef.current || !data?.success) return;
         setLabels(toUnprintedLabels(data.labels));
+        if (typeof data.labels_url === 'string') setLabelsUrl(data.labels_url);
       })
       .catch(() => { /* keep the last good list */ });
   }, [token]);
@@ -51,5 +55,5 @@ export function useUnprintedLabels(token: string): {
     };
   }, [refresh]);
 
-  return { labels, refresh };
+  return { labels, labelsUrl, refresh };
 }

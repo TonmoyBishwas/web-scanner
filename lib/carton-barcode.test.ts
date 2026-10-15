@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyRead, digitsOf, gtinCheckDigitValid, isInHouseCode, isIsraeliGtinPrefixed, noteRepeatedRead } from './carton-barcode';
+import { classifyRead, digitsOf, gtinCheckDigitValid, isInHouseCode, isIsraeliGtinPrefixed, matchInvoiceShortCode, noteRepeatedRead, shortCodeDefaults } from './carton-barcode';
 
 describe('carton-barcode', () => {
   it('digitsOf strips everything but digits', () => {
@@ -73,5 +73,72 @@ describe('carton-barcode', () => {
     // 10… and minted 28… codes keep the old rule (accepted at 15+ digits).
     expect(classifyRead('10147211001010123456789')).toEqual({ ok: true });
     expect(classifyRead('2826091622630531')).toEqual({ ok: true });
+  });
+});
+
+describe('matchInvoiceShortCode (IN26013461, 2026-10-15)', () => {
+  const lines = [
+    { item_code: '300', item_name_hebrew: 'פלאפל', quantity_kg: 620, box_count: 62 },
+    { item_code: '501004', item_name_hebrew: 'שניצל תירס', quantity_kg: 100, box_count: 10 },
+  ];
+
+  it('matches the exact item code', () => {
+    expect(matchInvoiceShortCode('501004', lines)?.item_name_hebrew).toBe('שניצל תירס');
+  });
+
+  it('matches with leading zeros on either side', () => {
+    expect(matchInvoiceShortCode('0501004', lines)?.item_code).toBe('501004');
+    expect(matchInvoiceShortCode('501004', [{ item_code: '00501004' }])?.item_code).toBe('00501004');
+  });
+
+  it('refuses fragments that are not an item code', () => {
+    expect(matchInvoiceShortCode('15928481', lines)).toBeNull();
+    expect(matchInvoiceShortCode('50100', lines)).toBeNull();
+  });
+
+  it('needs at least 4 digits, also after stripping zeros', () => {
+    expect(matchInvoiceShortCode('300', lines)).toBeNull();
+    expect(matchInvoiceShortCode('0300', lines)).toBeNull();
+  });
+
+  it('refuses non-digits and empty input', () => {
+    expect(matchInvoiceShortCode('5010a4', lines)).toBeNull();
+    expect(matchInvoiceShortCode('', lines)).toBeNull();
+    expect(matchInvoiceShortCode('501004', null)).toBeNull();
+  });
+
+  it('matches a supplier code field when present', () => {
+    expect(matchInvoiceShortCode('7788', [{ item_code: 'G17015', supplier_code: '7788' }])?.item_code).toBe('G17015');
+  });
+
+  it('two different items with the same code are ambiguous', () => {
+    expect(matchInvoiceShortCode('5010', [{ item_code: '5010' }, { item_code: '005010', supplier_code: 'x' }])).not.toBeNull();
+    expect(matchInvoiceShortCode('7788', [
+      { item_code: 'A1', supplier_code: '7788' },
+      { item_code: 'B2', supplier_code: '7788' },
+    ])).toBeNull();
+  });
+
+  it('the same item on two lines (multi-invoice) still matches', () => {
+    expect(matchInvoiceShortCode('501004', [{ item_code: '501004' }, { item_code: '501004' }])?.item_code).toBe('501004');
+  });
+});
+
+describe('shortCodeDefaults', () => {
+  it('weight per carton = kg / cartons; count = cartons still to count', () => {
+    expect(shortCodeDefaults({ quantity_kg: 100, box_count: 10 }, 0)).toEqual({ weight: 10, quantity: 10, lineTotal: 10 });
+    expect(shortCodeDefaults({ quantity_kg: 100, box_count: 10 }, 4)).toEqual({ weight: 10, quantity: 6, lineTotal: 10 });
+  });
+  it('unit weight wins; at least 1 carton; no weight when not derivable', () => {
+    expect(shortCodeDefaults({ quantity_kg: 100, box_count: 10, unit_weight_kg: 8 }, 0).weight).toBe(8);
+    expect(shortCodeDefaults({ quantity_kg: 100, box_count: 10 }, 12).quantity).toBe(1);
+    expect(shortCodeDefaults({ quantity_kg: 100 }, 0)).toEqual({ weight: null, quantity: 1, lineTotal: null });
+    expect(shortCodeDefaults({ quantity_kg: 10, box_count: 3 }, 0).weight).toBe(3.333);
+  });
+  it('a line that may sit on other pallets / loose / earlier labels defaults to 1, total only as a hint', () => {
+    // 80 cartons over 2 pallets: pallet 2's empty list must not offer 80 again.
+    expect(shortCodeDefaults({ quantity_kg: 800, box_count: 80 }, 0, { lineMaySpread: true }))
+      .toEqual({ weight: 10, quantity: 1, lineTotal: 80 });
+    expect(shortCodeDefaults({ quantity_kg: 800, box_count: 80 }, 0, { lineMaySpread: false }).quantity).toBe(80);
   });
 });

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { packEventData } from '@/lib/scanner-trace-sanitize';
+import { traceAllActive } from '@/lib/trace-policy';
 
 /**
  * Scanner trace endpoint — see lib/scanner-trace.ts.
@@ -11,7 +12,10 @@ import { packEventData } from '@/lib/scanner-trace-sanitize';
  * The user is ALWAYS resolved server-side from the session token (the
  * session's chat_id, or `w` — the split-job worker id the bot stamps on a
  * worker's own link). Tracing is on when `users.trace_enabled` is true or
- * `users.trace_until` is still in the future. A POST for an untraced user
+ * `users.trace_until` is still in the future — or, for EVERY session, while
+ * the env var `TRACE_ALL_UNTIL` (an ISO date/time) is in the future (owner
+ * evaluation week, 2026-10-15: a new worker leaves a trail too). Unset or in
+ * the past = per-user flags only, as before. A POST for an untraced user
  * stores nothing (the client only asks once, but nothing relies on that).
  */
 
@@ -37,9 +41,10 @@ async function resolveUser(token: string, w: string | null): Promise<TraceUser> 
     .maybeSingle();
   if (error || !sess) return none;
 
+  const all = traceAllActive();
   const sessionChat = (sess.data as { chat_id?: unknown } | null)?.chat_id;
   const chatStr = String(w && /^\d{5,20}$/.test(w) ? w : sessionChat ?? '').trim();
-  if (!/^\d{5,20}$/.test(chatStr)) return none;
+  if (!/^\d{5,20}$/.test(chatStr)) return { ...none, enabled: all };
   const chatId = Number(chatStr);
 
   const { data: user } = await supabase
@@ -47,10 +52,10 @@ async function resolveUser(token: string, w: string | null): Promise<TraceUser> 
     .select('nickname, trace_enabled, trace_until')
     .eq('chat_id', chatId)
     .maybeSingle();
-  if (!user) return { ...none, chat_id: chatId };
+  if (!user) return { ...none, enabled: all, chat_id: chatId };
 
   const until = user.trace_until ? Date.parse(user.trace_until as string) : NaN;
-  const enabled = Boolean(user.trace_enabled) || (Number.isFinite(until) && until > Date.now());
+  const enabled = all || Boolean(user.trace_enabled) || (Number.isFinite(until) && until > Date.now());
   return { enabled, chat_id: chatId, nickname: (user.nickname as string) ?? null };
 }
 

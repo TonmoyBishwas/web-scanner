@@ -34,6 +34,16 @@ export function LabelSheet() {
   const params = useSearchParams();
   const token = params.get('token') ?? '';
   const batches = params.get('batches') ?? '';
+  // The Labels screen's "all jobs" reprint: the GET is otherwise limited to
+  // this session's own labels.
+  const scopeAll = params.get('scope') === 'all';
+  // The signed pending-labels page (lib/label-link.ts) opens the sheet with
+  // `doc&sig&ids` instead of a session token — the session may be long gone.
+  const doc = params.get('doc') ?? '';
+  const sig = params.get('sig') ?? '';
+  const ids = params.get('ids') ?? '';
+  const signed = !!(doc && sig && ids);
+  const hasRequest = signed || !!(token && batches);
   const sizeParam = params.get('size');
   const size: LabelSize = isLabelSize(sizeParam) ? sizeParam : '10x15';
   const language: Language = params.get('lang') === 'English' ? 'English' : 'Hebrew';
@@ -41,7 +51,7 @@ export function LabelSheet() {
 
   // Starts as [] (not null) when the URL carries nothing to print, so the
   // empty state renders without an effect having to set it.
-  const [labels, setLabels] = useState<CartonLabel[] | null>(() => (token && batches ? null : []));
+  const [labels, setLabels] = useState<CartonLabel[] | null>(() => (hasRequest ? null : []));
   const [failed, setFailed] = useState(false);
   /**
    * Printed page height in mm for the one-per-page sizes, measured from the
@@ -66,8 +76,11 @@ export function LabelSheet() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!token || !batches) return;
-    fetch(`/api/carton-labels/print?token=${encodeURIComponent(token)}&batches=${encodeURIComponent(batches)}`)
+    if (!hasRequest) return;
+    const query = signed
+      ? `doc=${encodeURIComponent(doc)}&sig=${encodeURIComponent(sig)}&ids=${encodeURIComponent(ids)}`
+      : `token=${encodeURIComponent(token)}&batches=${encodeURIComponent(batches)}${scopeAll ? '&scope=all' : ''}`;
+    fetch(`/api/carton-labels/print?${query}`)
       .then(r => r.json())
       .then(data => {
         if (cancelled) return;
@@ -76,7 +89,7 @@ export function LabelSheet() {
       })
       .catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; };
-  }, [token, batches]);
+  }, [hasRequest, signed, doc, sig, ids, token, batches, scopeAll]);
 
   const sheet = SHEETS[size];
   const autoHeight = sheet.cols === 1;
@@ -119,18 +132,19 @@ export function LabelSheet() {
    * below tries again; "Mark as printed" in Labels is the last resort.
    */
   const markPrinted = useCallback((): Promise<void> => {
-    if (markedRef.current || !token || !labels?.length) return Promise.resolve();
+    if (markedRef.current || (!token && !signed) || !labels?.length) return Promise.resolve();
     markedRef.current = true;
-    trace('ui', 'labels_sheet_print', { count: labels.length, size });
+    trace('ui', 'labels_sheet_print', { count: labels.length, size, signed: signed || undefined });
+    const who = signed ? { doc, sig } : { token };
     return fetch('/api/carton-labels/print', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, ids: labels.map(l => l.id), label_size: size, via: 'sheet' }),
+      body: JSON.stringify({ ...who, ids: labels.map(l => l.id), label_size: size, via: 'sheet' }),
       keepalive: true,
     })
       .then(r => { if (!r.ok) markedRef.current = false; })
       .catch(() => { markedRef.current = false; });
-  }, [token, labels, size]);
+  }, [token, signed, doc, sig, labels, size]);
 
   // The mark is given a moment to land BEFORE the dialog: desktop Chrome
   // blocks this tab while the dialog is open, and the scanner tab re-reads

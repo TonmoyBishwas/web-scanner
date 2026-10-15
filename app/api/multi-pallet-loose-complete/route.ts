@@ -1,3 +1,4 @@
+import { logServerEvent, errorData, postToBot } from '@/lib/server-events';
 import { NextRequest, NextResponse, after } from 'next/server';
 import { getRedisClient, sessionStorage } from '@/lib/redis';
 import { t } from '@/lib/i18n/server';
@@ -6,7 +7,8 @@ import { isComplete } from '@/lib/pallet-slots';
 import { isSplitSession, splitStateOf, applySplitState } from '@/lib/session-mode';
 import { normalizeBoxExpiries } from '@/lib/expiry';
 import { findUnprintedForSession } from '@/lib/carton-labels';
-import { blockingLabels, barcodesBeingBooked, labelGateError, unprintedOnList } from '@/lib/label-gate';
+import { printGate, barcodesBeingBooked, labelGateError, unprintedOnList } from '@/lib/label-gate';
+import { pendingLabelsUrl } from '@/lib/label-link';
 import { sessionBookedBarcodes } from '@/lib/label-batches';
 
 const SESSION_TTL = 7200;
@@ -21,10 +23,12 @@ function sessionKey(token: string) {
  * Fires a webhook to the bot with the loose box data, then marks session completed.
  */
 export async function POST(request: NextRequest) {
+  let traceToken = '';
   try {
     // worker_chat_id: split jobs only — which worker scanned the loose-box
     // task. Ignored on single sessions (owner is always session.chat_id).
     const { token, scanned_boxes: rawScannedBoxes, worker_chat_id } = await request.json();
+    traceToken = typeof token === 'string' ? token : '';
     // Every expiry goes to the bot as ISO, including rows from an older
     // client or an old browser cache still carrying DD/MM/YYYY (lib/expiry.ts).
     const scanned_boxes: MultiPalletBoxScan[] = normalizeBoxExpiries(
@@ -109,7 +113,8 @@ export async function POST(request: NextRequest) {
       // nothing to the bot: no close, no Priority push.
       const unprintedLabels = await findUnprintedForSession(token);
       const beingBooked = barcodesBeingBooked({ scanned_boxes });
-      const labelGate = blockingLabels(unprintedLabels, beingBooked, sessionBookedBarcodes(session));
+      // LABEL_PRINT_GATE off (the default since 2026-10-15) → never blocks.
+      const labelGate = printGate(unprintedLabels, beingBooked, sessionBookedBarcodes(session));
       if (labelGate.count > 0) {
         errorResult = { status: 409, body: labelGateError(labelGate) };
         return;
@@ -117,6 +122,11 @@ export async function POST(request: NextRequest) {
       // Q5: New carton rows booked before their label was printed — see the
       // pallet route: `label_printed: false` on each such box, and a count.
       const unprintedBooked = unprintedOnList(unprintedLabels, beingBooked);
+      // The signed "print later" page (lib/label-link.ts), as the pallet route.
+      const labelsUrl = pendingLabelsUrl(
+        process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin,
+        session.document_number,
+      );
 
       // To the bot once the response is out — see the after() below.
       const boxes: MultiPalletBoxScan[] = scanned_boxes || [];
@@ -132,6 +142,7 @@ export async function POST(request: NextRequest) {
           unprintedBooked.has((b.barcode || '').trim()) ? { ...b, label_printed: false } : b,
         ),
         unprinted_labels: unprintedBooked.size,
+        labels_url: unprintedBooked.size > 0 ? labelsUrl : undefined,
         worker_chat_id: workerChatId,
         owner_chat_id: session.owner_chat_id ?? session.chat_id,
         is_final: isFinal,
@@ -166,14 +177,11 @@ export async function POST(request: NextRequest) {
       // When loose boxes are the last piece, this call closes the delivery
       // and starts the automatic Priority push.
       after(() =>
-        fetch(`${botUrl}/webhook/loose-boxes-complete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: botBody,
-        }).catch((err) => console.error('[multi-pallet-loose-complete] bot webhook error:', err)),
+        postToBot(token, `${botUrl}/webhook/loose-boxes-complete`, botBody, { route: 'multi-pallet-loose-complete' })
+          .catch((err) => console.error('[multi-pallet-loose-complete] bot webhook error:', err)),
       );
 
-      okResult = { success: true };
+      okResult = { success: true, labels_url: labelsUrl };
     });
 
     if (errorResult) {
@@ -183,6 +191,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(okResult);
   } catch (error) {
     console.error('[multi-pallet-loose-complete] error:', error);
+    await logServerEvent(traceToken, 'route_error', errorData(error, { route: 'multi-pallet-loose-complete' }));
     return NextResponse.json({ success: false, error: t(undefined, 'errors.serverError') }, { status: 500 });
   }
 }

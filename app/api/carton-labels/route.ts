@@ -1,7 +1,10 @@
+import { logServerEvent, errorData } from '@/lib/server-events';
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionContext } from '@/lib/session-guard';
 import {
   batchHasBookedBoxes,
+  batchSessionTokens,
+  clearSessionLabels,
   createCartonBatch,
   deleteCartonBatch,
   deleteUnprintedLabelByBarcode,
@@ -10,6 +13,8 @@ import {
   type LabelSize,
 } from '@/lib/carton-labels';
 import { parseBatchId, parseLabelOrigin } from '@/lib/label-batches';
+import { parseClearMode } from '@/lib/pallet-clear';
+import { pendingLabelsUrl } from '@/lib/label-link';
 import type { CartonLabelOrigin } from '@/types';
 
 const unauthorized = () =>
@@ -46,9 +51,18 @@ export async function GET(request: NextRequest) {
       labels,
       document_number: context.documentNumber,
       scope,
+      // The signed "print later" page for this delivery (lib/label-link.ts):
+      // the scanner shows it on the done screens, where the session may
+      // already be close to expiring. Null when it cannot be signed.
+      labels_url: pendingLabelsUrl(
+        process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin,
+        context.documentNumber,
+      ),
     });
   } catch (error) {
     console.error('[api/carton-labels] GET error:', error);
+    await logServerEvent(request.nextUrl.searchParams.get('token'), 'route_error',
+      errorData(error, { route: 'carton-labels', method: 'GET' }));
     return NextResponse.json({ success: false, error: 'Failed to load labels' }, { status: 500 });
   }
 }
@@ -65,9 +79,11 @@ export async function GET(request: NextRequest) {
  * retry after a lost response return the same batch instead of a second one.
  */
 export async function POST(request: NextRequest) {
+  let traceToken = '';
   try {
     const body = await request.json();
     const token: string | undefined = body.token;
+    traceToken = typeof token === 'string' ? token : '';
     const context = await getSessionContext(token ?? null);
     if (!context || !token) return unauthorized();
 
@@ -136,6 +152,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, labels, batch_id: labels[0]?.batch_id ?? null });
   } catch (error) {
     console.error('[api/carton-labels] POST error:', error);
+    await logServerEvent(traceToken, 'route_error', errorData(error, { route: 'carton-labels', method: 'POST' }));
     return NextResponse.json({ success: false, error: 'Failed to create labels' }, { status: 500 });
   }
 }
@@ -143,16 +160,28 @@ export async function POST(request: NextRequest) {
 /**
  * DELETE /api/carton-labels?token&batch
  *
- * Removes a whole batch — the undo for a mis-typed submission. Refused with
- * 409 `labels_booked` when any of its cartons is already stock (booked on an
- * LPN): those labels are on boxes in the warehouse and can only be reprinted.
- * The response names the deleted barcodes so the page can drop their rows.
+ * Removes a whole batch — the undo for a mis-typed submission. Only a batch
+ * this session saved (403 `labels_not_yours` otherwise — any live token used
+ * to be able to delete any unbooked batch). Refused with 409 `labels_booked`
+ * when any of its cartons is already stock (booked on an LPN): those labels
+ * are on boxes in the warehouse and can only be reprinted. The response
+ * names the deleted barcodes so the page can drop their rows.
  *
- * DELETE /api/carton-labels?token&barcode
+ * DELETE /api/carton-labels?token&barcode[&include_new=1]
  *
  * The scan row of an identical / receiving label was deleted from the list:
  * remove that ONE label, but only while it is unprinted and belongs to this
- * session (see deleteUnprintedLabelByBarcode). Anything else is a no-op.
+ * session (see deleteUnprintedLabelByBarcode). `include_new=1` ("change
+ * count" shrinking a New carton group) lets a New carton label go too.
+ * Anything else is a no-op.
+ *
+ * DELETE /api/carton-labels?token&scope=session&pallet=N&labels=rows|unprinted|void_printed
+ *
+ * The scanner's Delete sheet (client request (c), 2026-10-15): clear this
+ * session's labels on ONE pallet (0 = loose pile) — see lib/pallet-clear.ts.
+ * Never a booked carton's label. `void_printed` voids printed-but-unbooked
+ * labels (the worker is told to peel the stickers off). Answers the barcodes
+ * acted on (the page drops their rows) and their before-values.
  */
 export async function DELETE(request: NextRequest) {
   try {
@@ -161,9 +190,22 @@ export async function DELETE(request: NextRequest) {
     const context = await getSessionContext(token);
     if (!context || !token) return unauthorized();
 
+    if (searchParams.get('scope') === 'session') {
+      const mode = parseClearMode(searchParams.get('labels'));
+      // Number(null) is 0 — the loose pile — so a missing pallet must be refused, not defaulted.
+      const rawPallet = searchParams.get('pallet');
+      const pallet = rawPallet && /^\d+$/.test(rawPallet) ? Number(rawPallet) : NaN;
+      if (!mode || !Number.isInteger(pallet) || pallet < 0) {
+        return NextResponse.json({ success: false, error: 'labels and pallet are required' }, { status: 400 });
+      }
+      const result = await clearSessionLabels(token, pallet, mode);
+      console.log(`[api/carton-labels] session clear pallet=${pallet} mode=${mode} ${result.action}=${result.count}`);
+      return NextResponse.json({ success: true, ...result });
+    }
+
     const barcode = (searchParams.get('barcode') ?? '').replace(/\D/g, '');
     if (barcode) {
-      const deleted = await deleteUnprintedLabelByBarcode(token, barcode);
+      const deleted = await deleteUnprintedLabelByBarcode(token, barcode, searchParams.get('include_new') === '1');
       return NextResponse.json({ success: true, deleted });
     }
 
@@ -172,11 +214,16 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'batch or barcode is required' }, { status: 400 });
     }
 
+    const owners = await batchSessionTokens(batchId);
+    if (owners.length && owners.some((t) => t !== token)) {
+      return NextResponse.json({ success: false, error: 'labels_not_yours' }, { status: 403 });
+    }
+
     if (await batchHasBookedBoxes(batchId)) {
       return NextResponse.json({ success: false, error: 'labels_booked' }, { status: 409 });
     }
 
-    const result = await deleteCartonBatch(batchId);
+    const result = await deleteCartonBatch(batchId, token);
     return NextResponse.json({
       success: true,
       deleted: result.deleted,
@@ -185,6 +232,8 @@ export async function DELETE(request: NextRequest) {
     });
   } catch (error) {
     console.error('[api/carton-labels] DELETE error:', error);
+    await logServerEvent(request.nextUrl.searchParams.get('token'), 'route_error',
+      errorData(error, { route: 'carton-labels', method: 'DELETE' }));
     return NextResponse.json({ success: false, error: 'Failed to delete labels' }, { status: 500 });
   }
 }

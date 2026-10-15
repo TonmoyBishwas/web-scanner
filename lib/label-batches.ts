@@ -326,16 +326,80 @@ export function saveLabelSize(size: LabelSize): void {
   } catch { /* private window / blocked storage: the default is fine */ }
 }
 
-/** URL of the print sheet for these batches (it opens the dialog by itself). */
+/**
+ * URL of the print sheet for these batches (it opens the dialog by itself).
+ * `scope: 'all'` — the Labels screen's "all jobs" reprint; the sheet's GET is
+ * otherwise limited to the session's own labels (2026-10-15).
+ */
 export function labelSheetUrl(opts: {
   token: string;
   batchIds: string[];
   size: LabelSize;
   language: Language;
+  scope?: 'session' | 'all';
 }): string {
   return (
     `/labels/print?token=${encodeURIComponent(opts.token)}` +
     `&batches=${encodeURIComponent(opts.batchIds.join(','))}` +
+    `&size=${opts.size}&lang=${encodeURIComponent(opts.language)}` +
+    (opts.scope === 'all' ? '&scope=all' : '')
+  );
+}
+
+/**
+ * The print sheet for exact label ids of one delivery note, reached through
+ * the signed pending-labels link (no session token). Ids, not batches: the
+ * page prints a pallet's waiting labels, which may be part of a batch.
+ */
+/**
+ * Most label ids one signed print-sheet URL carries. Each id is ~39 URL
+ * characters; a whole note (352 labels seen live) would pass Vercel's 14 KB
+ * URL limit and the sheet would get a 414. Bigger lists print in turns —
+ * the page re-reads after each sheet and offers the rest.
+ */
+export const SIGNED_SHEET_MAX_IDS = 150;
+
+/** The labels the next signed sheet prints: the first SIGNED_SHEET_MAX_IDS. */
+export function nextSignedSheetChunk<T>(list: T[]): T[] {
+  return list.slice(0, SIGNED_SHEET_MAX_IDS);
+}
+
+export function signedLabelSheetUrl(opts: {
+  doc: string;
+  sig: string;
+  ids: string[];
+  size: LabelSize;
+  language: Language;
+}): string {
+  return (
+    `/labels/print?doc=${encodeURIComponent(opts.doc)}&sig=${encodeURIComponent(opts.sig)}` +
+    `&ids=${encodeURIComponent(opts.ids.join(','))}` +
     `&size=${opts.size}&lang=${encodeURIComponent(opts.language)}`
   );
+}
+
+/** One pallet's labels on the pending-labels page. */
+export interface PalletLabelGroup<T> {
+  /** 0 = the loose pile; null = saved before pallets were recorded. */
+  pallet_number: number | null;
+  labels: T[];
+}
+
+/**
+ * Labels grouped by the pallet they were saved on: pallets in ascending
+ * order, the loose pile (0) after them, unknown (null) last. Order within a
+ * group is kept.
+ */
+export function groupLabelsByPallet<T extends { pallet_number: number | null }>(labels: readonly T[]): PalletLabelGroup<T>[] {
+  const groups = new Map<number | null, T[]>();
+  for (const l of labels) {
+    const key = typeof l.pallet_number === 'number' ? l.pallet_number : null;
+    const list = groups.get(key);
+    if (list) list.push(l);
+    else groups.set(key, [l]);
+  }
+  const rank = (k: number | null) => (k === null ? Number.MAX_SAFE_INTEGER : k === 0 ? Number.MAX_SAFE_INTEGER - 1 : k);
+  return [...groups.entries()]
+    .sort(([a], [b]) => rank(a) - rank(b))
+    .map(([pallet_number, list]) => ({ pallet_number, labels: list }));
 }

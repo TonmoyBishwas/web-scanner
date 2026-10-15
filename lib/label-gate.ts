@@ -83,6 +83,38 @@ export function blockingLabels(
 }
 
 /**
+ * LABEL_PRINT_GATE (2026-10-15, client request (d)): the gate is OFF unless
+ * the env says `on` (also `true` / `1`). Off, nothing ever blocks an LPN or a
+ * loose finish — page or server — and every unprinted label on the list
+ * being booked simply goes to the bot as `label_printed: false`, exactly like
+ * a Q5 New carton (`unprintedOnList` already covers every origin). The labels
+ * stay printable later from Labels or the signed pending-labels page
+ * (lib/label-link.ts). next.config.ts inlines the variable at build time, so
+ * the page and the routes always read the same value; changing it needs a
+ * redeploy (as every Vercel env change does).
+ */
+export function labelPrintGateEnabled(raw: string | undefined = process.env.LABEL_PRINT_GATE): boolean {
+  const v = (raw ?? '').trim().toLowerCase();
+  return v === 'on' || v === 'true' || v === '1';
+}
+
+/** No label blocks: what the gate answers while LABEL_PRINT_GATE is off. */
+export const NO_GATE: LabelGate = Object.freeze({ count: 0, batchIds: [] }) as LabelGate;
+
+/**
+ * The gate both the page and the completion routes consult: `blockingLabels`
+ * when LABEL_PRINT_GATE is on, NO_GATE when it is off.
+ */
+export function printGate(
+  unprinted: readonly GateLabel[],
+  listBarcodes: Iterable<string>,
+  bookedBarcodes?: Iterable<string>,
+  enabled: boolean = labelPrintGateEnabled(),
+): LabelGate {
+  return enabled ? blockingLabels(unprinted, listBarcodes, bookedBarcodes) : NO_GATE;
+}
+
+/**
  * Q5: the barcodes on the list being booked whose saved label is still
  * unprinted — what the completion routes flag to the bot (`label_printed:
  * false` per box, `unprinted_labels` = the size of this set). Only New

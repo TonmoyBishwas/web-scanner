@@ -80,10 +80,15 @@ interface ScanActionsProps {
   onEdit?: () => void;
   /** "All boxes identical" — only when canDeclareIdentical(box). */
   onIdentical?: () => void;
+  /** A minted row of an identical-label group: change how many cartons the
+   *  group has ("{count} cartons · change"), before the pallet is confirmed. */
+  onChangeCount?: () => void;
+  /** The group's current size, shown on that button. */
+  groupCount?: number;
   onDelete?: () => void;
 }
 
-export function ScanActions({ onViewImage, onRetry, onEdit, onIdentical, onDelete }: ScanActionsProps) {
+export function ScanActions({ onViewImage, onRetry, onEdit, onIdentical, onChangeCount, groupCount, onDelete }: ScanActionsProps) {
   const tr = useT();
 
   // Two-tap Delete: armed by the first tap, disarmed by itself.
@@ -110,6 +115,11 @@ export function ScanActions({ onViewImage, onRetry, onEdit, onIdentical, onDelet
   const main: Action[] = [];
   if (onEdit) main.push({ key: 'edit', icon: 'edit', label: tr('terminal.edit'), tone: onRetry ? 'neutral' : 'primary', onPress: onEdit });
   if (onIdentical) main.push({ key: 'identical', icon: 'content_copy', label: tr('identical.action'), tone: 'neutral', onPress: onIdentical });
+  if (onChangeCount) {
+    main.push({
+      key: 'count', icon: 'edit_note', label: tr('terminal.groupCount', { count: groupCount ?? 0 }), tone: 'neutral', onPress: onChangeCount,
+    });
+  }
   if (onDelete) {
     main.push({
       key: 'delete',
@@ -125,7 +135,7 @@ export function ScanActions({ onViewImage, onRetry, onEdit, onIdentical, onDelet
   const render = (list: Action[]) => list.map(({ key, ...a }) => <ActionButton key={key} {...a} />);
 
   // Nothing to edit (a failed history row) → one line: View · Retry · Delete.
-  if (!onEdit && !onIdentical) {
+  if (!onEdit && !onIdentical && !onChangeCount) {
     return <div className={LINE}>{render([...recovery, ...main])}</div>;
   }
 

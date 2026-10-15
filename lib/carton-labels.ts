@@ -21,6 +21,7 @@ import {
   toUnprintedLabels,
   type UnprintedLabel,
 } from './label-batches';
+import { planLabelClear, type ClearableLabel, type LabelClearMode } from './pallet-clear';
 import type { CartonLabel, CartonLabelOrigin, LabelSize } from '@/types';
 
 export type { CartonLabel, LabelSize };
@@ -199,34 +200,56 @@ export async function listCartonLabels(opts: ListCartonLabelsOptions = {}): Prom
   if (opts.sessionToken) query = query.eq('session_token', opts.sessionToken);
   if (opts.documentNumber) query = query.eq('document_number', opts.documentNumber);
   if (opts.status && opts.status !== 'all') query = query.eq('status', opts.status);
+  // A voided label (printed, never booked, peeled off — see voidLabels) is
+  // history, not something to print or count: never in the Labels lists.
+  else query = query.neq('status', 'void');
 
   const { data, error } = await query;
   if (error) throw new Error(`carton_labels read failed: ${error.message}`);
   return (data ?? []) as unknown as CartonLabel[];
 }
 
-export async function getCartonLabelsByIds(ids: string[]): Promise<CartonLabel[]> {
+/**
+ * Who may read / mark a set of labels: the scanner session that saved them,
+ * or (the signed pending-labels page) the delivery note they belong to.
+ * Omitted = unscoped (only the Labels screen's explicit "all jobs" reprint).
+ */
+export interface LabelScope {
+  sessionToken?: string | null;
+  documentNumber?: string | null;
+}
+
+/** Add the scope's filters to a PostgREST query (each `.eq` returns the same builder). */
+function applyScope<Q>(query: Q, scope?: LabelScope): Q {
+  type Eq = { eq: (col: string, v: string) => Eq };
+  let q = query as unknown as Eq;
+  if (scope?.sessionToken) q = q.eq('session_token', scope.sessionToken);
+  if (scope?.documentNumber) q = q.eq('document_number', scope.documentNumber);
+  return q as unknown as Q;
+}
+
+export async function getCartonLabelsByIds(ids: string[], scope?: LabelScope): Promise<CartonLabel[]> {
   const unique = [...new Set(ids.filter(Boolean))].slice(0, 1000);
   if (!unique.length) return [];
   const out: CartonLabel[] = [];
   // In slices: one `.in()` with every id overflows the response headers.
   for (const part of chunked(unique, IN_CHUNK)) {
-    const { data, error } = await supabase
-      .from('carton_labels')
-      .select(COLUMNS)
-      .in('id', part);
+    const { data, error } = await applyScope(
+      supabase.from('carton_labels').select(COLUMNS).in('id', part),
+      scope,
+    );
     if (error) throw new Error(`carton_labels read failed: ${error.message}`);
     out.push(...((data ?? []) as unknown as CartonLabel[]));
   }
   return out.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
 }
 
-export async function getCartonLabelsByBatches(batchIds: string[]): Promise<CartonLabel[]> {
+export async function getCartonLabelsByBatches(batchIds: string[], scope?: LabelScope): Promise<CartonLabel[]> {
   if (!batchIds.length) return [];
-  const { data, error } = await supabase
-    .from('carton_labels')
-    .select(COLUMNS)
-    .in('batch_id', batchIds.slice(0, 200))
+  const { data, error } = await applyScope(
+    supabase.from('carton_labels').select(COLUMNS).in('batch_id', batchIds.slice(0, 200)),
+    scope,
+  )
     .order('created_at', { ascending: true })
     .order('serial', { ascending: true });
   if (error) throw new Error(`carton_labels read failed: ${error.message}`);
@@ -269,8 +292,8 @@ export async function findUnprintedForSession(sessionToken: string): Promise<Unp
  * keys, and per slice one read of the print counts plus one UPDATE per
  * distinct count (normally one: every label of a fresh batch is at 0).
  */
-export async function markCartonLabelsPrinted(ids: string[], labelSize?: LabelSize): Promise<number> {
-  return markPrintedWhere('id', ids.slice(0, 1000), IN_CHUNK, labelSize);
+export async function markCartonLabelsPrinted(ids: string[], labelSize?: LabelSize, scope?: LabelScope): Promise<number> {
+  return markPrintedWhere('id', ids.slice(0, 1000), IN_CHUNK, labelSize, scope);
 }
 
 /**
@@ -286,6 +309,7 @@ async function markPrintedWhere(
   keys: string[],
   sliceSize: number,
   labelSize?: LabelSize,
+  scope?: LabelScope,
 ): Promise<number> {
   const unique = [...new Set(keys.filter(Boolean))];
   if (!unique.length) return 0;
@@ -293,28 +317,33 @@ async function markPrintedWhere(
   const printedAt = new Date().toISOString();
   let updated = 0;
   for (const part of chunked(unique, sliceSize)) {
-    const { data, error } = await supabase
-      .from('carton_labels')
-      .select('print_count')
-      .in(column, part);
+    // A voided label is never "printed" again by a stale sheet.
+    const { data, error } = await applyScope(
+      supabase.from('carton_labels').select('print_count').in(column, part).neq('status', 'void'),
+      scope,
+    );
     if (error) throw new Error(`carton_labels read failed: ${error.message}`);
     const counts = ((data ?? []) as { print_count: number }[]).map(r => r.print_count);
     // `where print_count = c` makes each step exact, and a concurrent reprint
     // that already moved a row is simply skipped (it is printed either way).
     for (const c of printCountSteps(counts)) {
-      const { count, error: updateError } = await supabase
-        .from('carton_labels')
-        .update(
-          {
-            status: 'printed',
-            printed_at: printedAt,
-            print_count: c + 1,
-            ...(labelSize ? { label_size: labelSize } : null),
-          },
-          { count: 'exact' },
-        )
-        .in(column, part)
-        .eq('print_count', c);
+      const { count, error: updateError } = await applyScope(
+        supabase
+          .from('carton_labels')
+          .update(
+            {
+              status: 'printed',
+              printed_at: printedAt,
+              print_count: c + 1,
+              ...(labelSize ? { label_size: labelSize } : null),
+            },
+            { count: 'exact' },
+          )
+          .in(column, part)
+          .neq('status', 'void')
+          .eq('print_count', c),
+        scope,
+      );
       if (updateError) throw new Error(`carton_labels update failed: ${updateError.message}`);
       updated += count ?? 0;
     }
@@ -330,12 +359,18 @@ export interface DeletedBatch {
   sourceBarcode: string | null;
 }
 
-/** Delete a whole batch — the undo for a mis-typed submission. */
-export async function deleteCartonBatch(batchId: string): Promise<DeletedBatch> {
+/**
+ * Delete a whole batch — the undo for a mis-typed submission. Only the
+ * caller's own session's labels (2026-10-15): any live token used to be able
+ * to delete any unbooked batch.
+ */
+export async function deleteCartonBatch(batchId: string, sessionToken: string): Promise<DeletedBatch> {
+  if (!sessionToken) return { deleted: 0, barcodes: [], sourceBarcode: null };
   const { data, error } = await supabase
     .from('carton_labels')
     .delete()
     .eq('batch_id', batchId)
+    .eq('session_token', sessionToken)
     .select('id, barcode, source_barcode');
   if (error) throw new Error(`carton_labels delete failed: ${error.message}`);
   const rows = (data ?? []) as { id: string; barcode: string; source_barcode: string | null }[];
@@ -397,15 +432,145 @@ export async function batchHasBookedBoxes(batchId: string): Promise<boolean> {
  * a New carton label: that one exists for itself, and removing its scan row
  * just un-scans the carton.
  */
-export async function deleteUnprintedLabelByBarcode(sessionToken: string, barcode: string): Promise<number> {
-  const { data, error } = await supabase
+export async function deleteUnprintedLabelByBarcode(
+  sessionToken: string,
+  barcode: string,
+  /** "Change count" shrinking a New carton group: its labels go too. */
+  includeNewCarton = false,
+): Promise<number> {
+  let query = supabase
     .from('carton_labels')
     .delete()
     .eq('barcode', barcode)
     .eq('session_token', sessionToken)
-    .eq('status', 'created')
-    .neq('origin', 'new_carton')
-    .select('id');
+    .eq('status', 'created');
+  if (!includeNewCarton) query = query.neq('origin', 'new_carton');
+  const { data, error } = await query.select('id');
   if (error) throw new Error(`carton_labels delete failed: ${error.message}`);
   return (data ?? []).length;
+}
+
+/** Who owns a batch: the session token(s) on its rows (normally exactly one). */
+export async function batchSessionTokens(batchId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('carton_labels')
+    .select('session_token')
+    .eq('batch_id', batchId)
+    .limit(1000);
+  if (error) throw new Error(`carton_labels read failed: ${error.message}`);
+  return [...new Set(((data ?? []) as { session_token: string | null }[]).map((r) => r.session_token ?? ''))];
+}
+
+/**
+ * Every barcode this session booked, as the session row records it
+ * (`completed_pallets[].barcodes`, `loose_barcodes`), plus those of `barcodes`
+ * that box_inventory already holds — the two places "booked" lives (see
+ * batchHasBookedBoxes). The Delete sheet never touches any of them.
+ */
+export async function bookedBarcodesFor(sessionToken: string, barcodes: string[]): Promise<Set<string>> {
+  const booked = new Set<string>();
+  const { data: row, error: sessionError } = await supabase
+    .from('scan_sessions')
+    .select('data')
+    .eq('token', sessionToken)
+    .maybeSingle();
+  if (sessionError) throw new Error(`scan_sessions read failed: ${sessionError.message}`);
+  for (const code of sessionBookedBarcodes((row as { data: unknown } | null)?.data)) booked.add(code);
+
+  const unique = [...new Set(barcodes.filter(Boolean))];
+  for (const part of chunked(unique, IN_CHUNK)) {
+    const { data, error } = await supabase.from('box_inventory').select('barcode').in('barcode', part);
+    if (error) throw new Error(`box_inventory read failed: ${error.message}`);
+    for (const r of (data ?? []) as { barcode: string | null }[]) if (r.barcode) booked.add(r.barcode);
+  }
+  return booked;
+}
+
+export interface SessionClearResult {
+  /** 'deleted' — unprinted labels removed; 'voided' — printed labels set to 'void'. */
+  action: 'deleted' | 'voided';
+  count: number;
+  /** The barcodes acted on — the page drops their rows from the open list. */
+  barcodes: string[];
+  /** Before-values for the trace: each label's status / origin / batch. */
+  before: { barcode: string; status: string; origin: string; batch_id: string }[];
+}
+
+/**
+ * The Delete sheet's label half (client request (c), 2026-10-15): clear the
+ * labels of ONE pallet of THIS session — see lib/pallet-clear.ts for which.
+ * Booked cartons are never touched. Unprinted labels are deleted; printed
+ * ones are voided (status 'void', kept as history: a sticker exists on
+ * paper). Until the 'void' status migration is applied the CHECK constraint
+ * refuses it, and a voided label is deleted instead — still never booked.
+ */
+export async function clearSessionLabels(
+  sessionToken: string,
+  palletNumber: number,
+  mode: LabelClearMode,
+): Promise<SessionClearResult> {
+  const { data, error } = await supabase
+    .from('carton_labels')
+    .select('id, barcode, status, origin, pallet_number, batch_id')
+    .eq('session_token', sessionToken)
+    .eq('pallet_number', palletNumber)
+    .limit(1000);
+  if (error) throw new Error(`carton_labels read failed: ${error.message}`);
+  const rows = (data ?? []) as (ClearableLabel & { batch_id: string })[];
+  const booked = await bookedBarcodesFor(sessionToken, rows.map((r) => r.barcode));
+  const plan = planLabelClear(rows, { mode, pallet: palletNumber, booked });
+  const before = plan.map((r) => ({ barcode: r.barcode, status: r.status, origin: r.origin, batch_id: r.batch_id }));
+  if (!plan.length) return { action: mode === 'void_printed' ? 'voided' : 'deleted', count: 0, barcodes: [], before };
+
+  const done: string[] = [];
+  let action: SessionClearResult['action'] = mode === 'void_printed' ? 'voided' : 'deleted';
+  for (const part of chunked(plan.map((r) => r.id), IN_CHUNK)) {
+    if (mode === 'void_printed') {
+      const { data: voided, error: voidError } = await supabase
+        .from('carton_labels')
+        .update({ status: 'void' })
+        .in('id', part)
+        .eq('session_token', sessionToken)
+        .eq('status', 'printed')
+        .select('barcode');
+      if (!voidError) {
+        done.push(...((voided ?? []) as { barcode: string }[]).map((r) => r.barcode));
+        continue;
+      }
+      // 23514 = check_violation: the 'void' status is not in the table yet.
+      if (voidError.code !== '23514') throw new Error(`carton_labels void failed: ${voidError.message}`);
+      action = 'deleted';
+    }
+    const { data: deleted, error: deleteError } = await supabase
+      .from('carton_labels')
+      .delete()
+      .in('id', part)
+      .eq('session_token', sessionToken)
+      .eq('status', mode === 'void_printed' ? 'printed' : 'created')
+      .select('barcode');
+    if (deleteError) throw new Error(`carton_labels delete failed: ${deleteError.message}`);
+    done.push(...((deleted ?? []) as { barcode: string }[]).map((r) => r.barcode));
+  }
+  return { action, count: done.length, barcodes: done, before };
+}
+
+/**
+ * The signed pending-labels page (lib/label-link.ts): every label of one
+ * delivery note still waiting for the printer, oldest first. Across sessions
+ * on purpose — a re-scan of the same note makes a new session, and the link
+ * outlives both.
+ */
+export async function listPendingForDocument(documentNumber: string, includePrinted = false): Promise<CartonLabel[]> {
+  let query = supabase
+    .from('carton_labels')
+    .select(COLUMNS)
+    .eq('document_number', documentNumber)
+    .order('pallet_number', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: true })
+    .order('serial', { ascending: true })
+    .limit(1000);
+  query = includePrinted ? query.in('status', ['created', 'printed']) : query.eq('status', 'created');
+  const { data, error } = await query;
+  if (error) throw new Error(`carton_labels read failed: ${error.message}`);
+  return (data ?? []) as unknown as CartonLabel[];
 }
