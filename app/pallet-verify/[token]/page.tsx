@@ -2440,6 +2440,16 @@ export default function PalletVerifyPage({
       unprinted_labels: unprinted.labels.filter((l) => l.pallet_number === pallet).length,
     };
     if (action === 'rows') {
+      // The list starts again: a re-scanned sample must upload its sticker
+      // photo again (per-row guard, lib/photo-rows.ts), and a short item code
+      // read again opens New carton again.
+      for (const b of rows) {
+        uploadedStickersRef.current.delete(photoUploadKey(loose ? 'loose' : 'pallet', pallet, b.barcode));
+      }
+      const shortPrefix = `${pallet}:`;
+      for (const k of Array.from(shortCodeOpenedRef.current)) {
+        if (k.startsWith(shortPrefix)) shortCodeOpenedRef.current.delete(k);
+      }
       if (loose) {
         setLooseBoxes([]);
         looseProcessedRef.current.clear();
