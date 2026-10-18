@@ -98,6 +98,7 @@ import {
   clearAllScans,
 } from '@/lib/pallet-scan-cache';
 import { browserStore, claimSession, lostSession, newTabId, ownerKey } from '@/lib/session-owner';
+import { mergeServer, ScanLedger, type LedgerStatus, type ServerCarton } from '@/lib/scan-ledger';
 
 // One id per page load: the tab that opened the scan last owns it
 // (lib/session-owner.ts — two tabs must not overwrite each other's cartons).
@@ -998,6 +999,123 @@ export default function PalletVerifyPage({
     return true;
   }
 
+  // ── Server copy of every carton (lib/scan-ledger.ts) ──
+  //
+  // Client 18/10: every scan saved on the server as it happens, restored from
+  // the server after a reload, two open instances merged. The persist effect
+  // below hands every new state of the list to the ledger, which queues what
+  // changed (localStorage first, then the server, retried until taken). Each
+  // time the worker is on a list, and every few seconds after, the server's
+  // copy is merged in: per carton the newest change wins, so cartons scanned
+  // on another tab or phone appear here and nothing is overwritten.
+  const ledgerRef = useRef<ScanLedger | null>(null);
+  const [ledgerStatus, setLedgerStatus] = useState<LedgerStatus>({ pending: 0, failing: false, everSynced: false });
+  function ledger(): ScanLedger | null {
+    if (typeof window === 'undefined') return null;
+    if (!ledgerRef.current) {
+      let store: Storage | null = null;
+      try { store = window.localStorage; } catch { store = null; }
+      let wasFailing = false;
+      ledgerRef.current = new ScanLedger(token, TAB_ID, store, undefined, (st) => {
+        setLedgerStatus(st);
+        if (st.failing !== wasFailing) {
+          wasFailing = st.failing;
+          trace('lifecycle', st.failing ? 'ledger_send_failing' : 'ledger_send_ok', { pending: st.pending });
+        }
+      });
+    }
+    return ledgerRef.current;
+  }
+  const listPallet = phase === 'loose_scanning' ? 0 : currentPallet;
+  const listPhaseRef = useRef<{ phase: Phase; pallet: number }>({ phase, pallet: listPallet });
+  listPhaseRef.current = { phase, pallet: listPallet };
+
+  /** Merge a server pull into a list. `settle`: restored rows whose OCR was
+   *  running on a page that is gone become 'failed' (edit / retype). */
+  function applyServerCartons(pallet: number, rows: ServerCarton[], settle: boolean): void {
+    const L = ledger();
+    if (!L) return;
+    const loose = pallet === 0;
+    const setRows = loose ? setLooseBoxes : setScannedBoxes;
+    setRows((prev) => {
+      const removals = L.pendingRemovals(pallet);
+      const base = removals.size ? prev.filter((r) => !removals.has(r.barcode)) : prev;
+      const m = mergeServer(base, L.versionsOf(pallet), rows);
+      const list = settle ? settleRestored(m.list) : m.list;
+      L.adopt(pallet, list, m.vers, m.push, m.taken);
+      if (!m.changed && base === prev) return prev;
+      const added = list.length - prev.length;
+      trace('lifecycle', 'ledger_merge', { pallet, server: rows.filter((r) => !r.deleted).length, before: prev.length, after: list.length, added, push: m.push.length });
+      const dedup = loose ? looseProcessedRef.current : processedRef.current;
+      for (const code of dedupCodes(list)) dedup.add(code);
+      return list;
+    });
+  }
+
+  async function syncList(pallet: number, settle: boolean): Promise<void> {
+    const L = ledger();
+    if (!L || passive) return;
+    L.poke();
+    let rows: ServerCarton[];
+    try {
+      rows = await L.pull(pallet);
+    } catch {
+      return; // offline / not deployed yet: the local list stays, sends retry
+    }
+    const now = listPhaseRef.current;
+    if (now.pallet !== pallet || (now.phase !== 'scanning' && now.phase !== 'loose_scanning')) return;
+    if (lostSession(browserStore(), token, TAB_ID, sessionClaimedRef.current)) return;
+    applyServerCartons(pallet, rows, settle);
+  }
+
+  useEffect(() => {
+    if (phase !== 'scanning' && phase !== 'loose_scanning') return;
+    if (passive) return;
+    const pallet = listPallet;
+    ledger()?.reopen(pallet);
+    void syncList(pallet, true);
+    const tick = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void syncList(pallet, false);
+    }, 5000);
+    const onOnline = () => { trace('lifecycle', 'online', {}); void syncList(pallet, false); };
+    const onVisible = () => { if (document.visibilityState === 'visible') void syncList(pallet, false); };
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(tick);
+      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+    // syncList reads everything else through refs / the ledger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, listPallet, passive, token]);
+
+  /**
+   * Before a list is booked: send what is queued, then take in anything the
+   * server has that this screen does not (another tab / phone). True when the
+   * list changed — the worker then sees the added cartons and confirms again.
+   */
+  async function reconcileBeforeConfirm(pallet: number): Promise<boolean> {
+    const L = ledger();
+    if (!L) return false;
+    await Promise.race([L.flush(), new Promise((r) => setTimeout(r, 6000))]);
+    let rows: ServerCarton[];
+    try {
+      rows = await L.pull(pallet);
+    } catch {
+      return false; // server copy unavailable: book what is on the screen
+    }
+    const loose = pallet === 0;
+    const cur = loose ? looseBoxesRef.current : scannedBoxesRef.current;
+    const removals = L.pendingRemovals(pallet);
+    const m = mergeServer(cur.filter((r) => !removals.has(r.barcode)), L.versionsOf(pallet), rows);
+    const grew = m.list.length !== cur.length || m.list.some((r, i) => r.barcode !== cur[i]?.barcode);
+    if (!grew) return false;
+    trace('lifecycle', 'ledger_confirm_merge', { pallet, before: cur.length, after: m.list.length });
+    applyServerCartons(pallet, rows, false);
+    return true;
+  }
+
   // Persist in-progress scans to localStorage so a reload never loses them.
   // The phase guard makes this naturally safe vs the restore-on-mount below:
   // while phase is 'loading' nothing is written, so the loader restores first
@@ -1023,9 +1141,11 @@ export default function PalletVerifyPage({
         supplierPalletRef: supplierPalletRef || undefined,
       };
       savePalletScans(token, currentPallet, snap);
+      ledger()?.observe(currentPallet, scannedBoxes);
     } else if (phase === 'loose_scanning') {
       const snap: LooseScanSnapshot = { v: 1, looseBoxes: looseBoxes.map(stripImage) };
       saveLooseScans(token, snap);
+      ledger()?.observe(0, looseBoxes);
     }
   }, [
     token, currentPallet, phase, scannedBoxes, looseBoxes, uniformGroups, supplierPalletRef,
@@ -3355,6 +3475,11 @@ export default function PalletVerifyPage({
     }
     setPhase('loose_confirming');
     setError(null);
+    if (await reconcileBeforeConfirm(0)) {
+      setPhase('loose_scanning');
+      showToast(tr('palletVerify.listUpdatedFromServer'), 'cloud_sync', '#13a4ec');
+      return;
+    }
     try {
       const res = await fetch('/api/multi-pallet-loose-complete', {
         method: 'POST',
@@ -3393,6 +3518,9 @@ export default function PalletVerifyPage({
         setPhase('loose_scanning');
         return;
       }
+      // Booked: the list is closed on the server copy (clearing it next is
+      // not a removal of its cartons).
+      ledger()?.close(0);
       if (session && isSplitSession(session)) {
         // Split jobs: the loose task may not be the final piece of the
         // delivery — another worker could still be mid-pallet. Return to the
@@ -3572,6 +3700,9 @@ export default function PalletVerifyPage({
     bookedBarcodes?: string[],
   ) {
     trace('ui', 'pallet_completed', { pallet: currentPallet, lpn: data.lpn, type: palletTypeLabel, boxCount, next_pallet: data.next_pallet, all_done: data.all_done });
+    // Booked: the list is closed on the server copy (clearing it for the next
+    // pallet is not a removal of its cartons).
+    ledger()?.close(currentPallet);
     setLpn(data.lpn || '');
     setLpnUrl(data.lpn_url || '');
 
@@ -3719,6 +3850,13 @@ export default function PalletVerifyPage({
     }
     setPhase('confirming');
     setError(null);
+    // Cartons another tab / phone saved on the server that this screen does
+    // not show yet: show them first, the worker confirms again.
+    if (await reconcileBeforeConfirm(currentPallet)) {
+      setPhase('scanning');
+      showToast(tr('palletVerify.listUpdatedFromServer'), 'cloud_sync', '#13a4ec');
+      return;
+    }
 
     const declaredCount = override?.boxCount ?? confirmedBoxCount;
     const lockedGroups = override?.groups ?? uniformGroups;
@@ -3954,6 +4092,33 @@ export default function PalletVerifyPage({
    * `total <= 0` means "not declared yet", so the denominator is held back
    * rather than shown as a misleading /0.
    */
+  // The server copy's state (lib/scan-ledger.ts): green "Saved" when every
+  // carton on the screen is on the server, amber while changes are being
+  // sent, red while offline (they wait on the phone and are sent when the
+  // network is back).
+  function SyncBadge() {
+    const st = ledgerStatus;
+    if (!st.everSynced && st.pending === 0 && !st.failing) return null;
+    const color = st.failing ? '#f8a3a3' : st.pending > 0 ? '#fbbf5c' : '#4ade80';
+    const icon = st.failing ? 'cloud_off' : st.pending > 0 ? 'cloud_upload' : 'cloud_done';
+    const label = st.failing
+      ? tr('palletVerify.syncOffline', { n: st.pending })
+      : st.pending > 0
+        ? tr('palletVerify.syncPending', { n: st.pending })
+        : tr('palletVerify.syncSaved');
+    return (
+      <span
+        data-testid="sync-badge"
+        aria-live="polite"
+        className="inline-flex items-center gap-[3px] text-[9px] font-bold whitespace-nowrap"
+        style={{ color }}
+      >
+        <MI name={icon} size={12} />
+        {label}
+      </span>
+    );
+  }
+
   function HeaderCount({
     caption, current, total, align, tone = 'brand', editable = false,
   }: {
@@ -4288,7 +4453,8 @@ export default function PalletVerifyPage({
             </span>
           }
           right={
-            <span className="pe-2">
+            <span className="pe-2 flex items-center gap-2">
+              <SyncBadge />
               <HeaderCount
                 caption={tr('terminal.statCartons')}
                 current={scanned}
@@ -4778,7 +4944,8 @@ export default function PalletVerifyPage({
           </span>
         }
         right={
-          <span className="pe-2">
+          <span className="pe-2 flex items-center gap-2">
+            <SyncBadge />
             {canEditTotal ? (
               // Tapping the counter is the other way to change the total.
               <button
