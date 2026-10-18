@@ -984,6 +984,19 @@ export default function PalletVerifyPage({
     sessionClaimedRef.current = false;
   }
 
+  // Every action that books, deletes or adds cartons asks first: a stale tab
+  // that slept through the storage / visibility / focus events must not
+  // confirm a pallet from its old list (browser test 18/10: it booked 3 of 5
+  // and its cleanup deleted the owner's list), nor start OCR for a carton the
+  // owner will never see. Uses only refs, the token and a state setter, so a
+  // stale closure is fine.
+  function refuseIfSessionLost(where: string): boolean {
+    if (!lostSession(browserStore(), token, TAB_ID, sessionClaimedRef.current)) return false;
+    trace('lifecycle', 'session_lost_refused', { where });
+    setPassive(true);
+    return true;
+  }
+
   // Persist in-progress scans to localStorage so a reload never loses them.
   // The phase guard makes this naturally safe vs the restore-on-mount below:
   // while phase is 'loading' nothing is written, so the loader restores first
@@ -1184,6 +1197,7 @@ export default function PalletVerifyPage({
   const handleBarcodeDetected = useCallback(
     (_barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
       const read = _barcode.trim();
+      if (refuseIfSessionLost('scan')) return;
       // Every camera read moves the twin hold on (a different code releases it).
       const twinHeld = noteTwinHoldRead(twinHoldRef, read, Date.now());
       // A read that cannot be a carton barcode (a fragment, a failed check
@@ -1380,6 +1394,7 @@ export default function PalletVerifyPage({
   // resolve its real identity (the printed digit string) + dedupe afterwards.
 
   const handleManualCapture = useCallback((imageData: string) => {
+    if (refuseIfSessionLost('manual_capture')) return;
     const provisional = `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     trace('ui', 'manual_capture', { provisional, pallet: currentPalletRef.current, image_chars: imageData.length });
     const box: BoxScan = {
@@ -1860,6 +1875,7 @@ export default function PalletVerifyPage({
   const handleLooseBarcodeDetected = useCallback(
     (_barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
       const read = _barcode.trim();
+      if (refuseIfSessionLost('scan')) return;
       // Every camera read moves the twin hold on (a different code releases it).
       const twinHeld = noteTwinHoldRead(twinHoldRef, read, Date.now());
       const verdict = classifyRead(read);
@@ -1913,6 +1929,7 @@ export default function PalletVerifyPage({
 
   // Manual capture for the loose phase — same fallback as the pallet phase.
   const handleLooseManualCapture = useCallback((imageData: string) => {
+    if (refuseIfSessionLost('loose_manual_capture')) return;
     const provisional = `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     trace('ui', 'loose_manual_capture', { provisional, image_chars: imageData.length });
     const box: BoxScan = {
@@ -2519,6 +2536,7 @@ export default function PalletVerifyPage({
   // Labels → Delete. Booked cartons are never touched (server-side). Every
   // run is traced as delete_all with the before-values.
   async function handleDeleteAll(action: DeleteAllAction) {
+    if (refuseIfSessionLost('delete_all')) return;
     const loose = phase === 'loose_scanning';
     const pallet = loose ? 0 : currentPallet;
     const rows = loose ? looseBoxesRef.current : scannedBoxesRef.current;
@@ -3328,6 +3346,7 @@ export default function PalletVerifyPage({
   // ── Confirm loose boxes ──
 
   async function handleConfirmLooseBoxes() {
+    if (refuseIfSessionLost('confirm_loose')) return;
     trace('ui', 'confirm_loose', { boxes: looseBoxes.length, declared: session?.loose_box_count });
     if (labelGate.count > 0) {
       refuseForLabels(labelGate.count, labelGate.batchIds, 'page');
@@ -3688,6 +3707,7 @@ export default function PalletVerifyPage({
     boxCount: number;
     groups: Map<string, UniformGroup>;
   }) {
+    if (refuseIfSessionLost('confirm_pallet')) return;
     trace('ui', 'confirm_pallet', { pallet: currentPallet, scanned: scannedBoxes.length, confirmedBoxCount, override: override ? { boxCount: override.boxCount, groups: override.groups } : undefined, forcedMix, detectedType });
     if (scannedBoxes.length < 2) return;
     // Every way into the LPN passes here — the slide, the shortfall modal,
