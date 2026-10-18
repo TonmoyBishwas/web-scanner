@@ -161,6 +161,7 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.syncSaved': 'נשמר',
   'palletVerify.syncPending': 'שומר {n}',
   'palletVerify.syncOffline': 'אין רשת · {n} ממתינים',
+  'palletVerify.palletAlreadyBooked': 'משטח {n} כבר אושר במסך אחר — טוען מחדש',
   'palletVerify.networkError': 'שגיאת רשת. נסה שוב.',
   'palletVerify.failedComplete': 'השלמת המשטח נכשלה.',
   'palletVerify.failedLooseComplete': 'השלמת הקופסאות הבודדות נכשלה.',

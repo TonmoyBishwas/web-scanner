@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  diffList, mergeServer, outboxKey, ScanLedger,
+  diffList, LedgerUnavailableError, mergeServer, outboxKey, ScanLedger,
   type LedgerOp, type LedgerStore, type LedgerTransport, type ServerCarton,
 } from './scan-ledger';
 
@@ -16,10 +16,12 @@ function fakeServer() {
       return ops.map((op) => {
         const k = `${op.pallet}|${op.key}`;
         const cur = rows.get(k);
-        if (!cur || op.ver > cur.ver) {
+        const applied = !cur || op.ver > cur.ver;
+        if (applied) {
           rows.set(k, { pallet: op.pallet, key: op.key, row: op.deleted ? null : op.row, deleted: op.deleted, ver: op.ver });
         }
-        return { pallet: op.pallet, key: op.key, ver: rows.get(k)!.ver };
+        const now = rows.get(k)!;
+        return { pallet: op.pallet, key: op.key, ver: now.ver, applied, deleted: now.deleted };
       });
     },
     async pull(_token, pallet) {
@@ -48,11 +50,13 @@ function memStore(): LedgerStore & { map: Map<string, string> } {
 
 let clock = 1_800_000_000_000;
 const now = () => (clock += 7);
+let skew = 0; // ms the next page's clock is off by
 
 /** One page load: the ledger plus the list the page holds, wired the way
  *  page.tsx wires them (observe on every change, merge on every pull). */
 function page(token: string, tab: string, store: LedgerStore | null, t: LedgerTransport, restored: Row[] = []) {
-  const L = new ScanLedger(token, tab, store, t, () => {}, now);
+  const off = skew;
+  const L = new ScanLedger(token, tab, store, t, () => {}, () => now() + off);
   let list: Row[] = [...restored];
   L.observe(1, list); // first state = baseline (the page's restore)
   const set = (next: Row[]) => { list = next; L.observe(1, list); };
@@ -250,5 +254,99 @@ describe('ScanLedger', () => {
     const server: ServerCarton[] = [{ pallet: 1, key: 'I', deleted: false, ver: 5, row: { barcode: 'I', weight: 2, scanned_at: 'a', ocr_status: 'done' } }];
     const m = mergeServer(local, new Map(), server);
     expect(m.list[0]).toMatchObject({ weight: 2, image_data: 'data:img', ocr_status: 'done' });
+  });
+
+  it('a phone whose clock is behind still re-adds a carton removed on a phone whose clock is ahead', async () => {
+    const s = fakeServer();
+    skew = 120_000;
+    const ahead = page('tok', 'A', memStore(), s.t);
+    skew = 0;
+    ahead.scan('X');
+    await ahead.sync();
+    ahead.remove('X');
+    await ahead.sync();
+    // the other phone saw the removal, then the worker scans X there
+    skew = -120_000;
+    const behind = page('tok', 'B', memStore(), s.t);
+    skew = 0;
+    await behind.sync();
+    behind.scan('X');
+    await behind.sync();
+    expect(s.live(1)).toEqual(['X']);
+    expect(behind.keys()).toEqual(['X']);
+  });
+
+  it('a scan that raced with a later-stamped removal wins (offline phone)', async () => {
+    const s = fakeServer();
+    const c0 = page('tok', 'C', memStore(), s.t);
+    c0.scan('Z');
+    await c0.sync();
+    const b = page('tok', 'B', memStore(), s.t);
+    await b.sync();
+    s.setOnline(false);
+    b.remove('Z');
+    b.scan('Z');              // B (offline) re-scans the carton in hand
+    s.setOnline(true);
+    skew = 300_000;
+    const c = page('tok', 'C2', memStore(), s.t, c0.list); // a clock 5 min ahead
+    skew = 0;
+    await c.sync();
+    c.remove('Z');
+    await c.sync();           // tombstone stamped +5 min
+    await b.sync();           // B's scan is refused as older, re-sent above the tombstone
+    expect(s.live(1)).toEqual(['Z']);
+    expect(b.keys()).toEqual(['Z']);
+  });
+
+  it('a change the server refuses is not resent forever', async () => {
+    let calls = 0;
+    const t: LedgerTransport = {
+      async push(_token, ops) { calls += 1; return ops.map((o) => ({ pallet: o.pallet, key: o.key, ver: 0, rejected: 'bad_op' })); },
+      async pull() { return []; },
+    };
+    const events: string[] = [];
+    const L = new ScanLedger('tok', 'A', memStore(), t, () => {}, now, (e) => events.push(e.kind));
+    L.observe(1, []);
+    L.observe(1, [{ barcode: 'BAD' }]);
+    expect(await L.flush()).toBe(true);
+    expect(L.pendingCount()).toBe(0);
+    expect(calls).toBe(1);
+    expect(events).toEqual(['dropped']);
+  });
+
+  it('server copy not deployed: changes wait on the phone, status says unavailable, nothing fails loudly', async () => {
+    const t: LedgerTransport = {
+      async push() { throw new LedgerUnavailableError(); },
+      async pull() { throw new LedgerUnavailableError(); },
+    };
+    const seen: Array<{ unavailable?: boolean; failing: boolean }> = [];
+    const store = memStore();
+    const L = new ScanLedger('tok', 'A', store, t, (st) => seen.push(st), now);
+    L.observe(1, []);
+    L.observe(1, [{ barcode: 'W1' }]);
+    expect(await L.flush()).toBe(false);
+    expect(seen.at(-1)).toMatchObject({ unavailable: true, failing: false });
+    expect(store.map.get(outboxKey('tok', 'A'))).toContain('W1');
+    await expect(L.pull(1)).rejects.toBeInstanceOf(LedgerUnavailableError);
+  });
+
+  it('a late re-send never beats a newer removal made elsewhere', async () => {
+    const s = fakeServer();
+    const store = memStore();
+    const a = page('tok', 'A', store, s.t);
+    a.scan('R');
+    await a.sync();
+    const b = page('tok', 'B', memStore(), s.t, a.list);
+    await b.sync();
+    // B pulls, then (before B merges) A removes R
+    const stale = await b.L.pull(1);
+    a.remove('R');
+    await a.sync();
+    const m = mergeServer(b.list, b.L.versionsOf(1), stale);
+    b.L.adopt(1, m.list, m.vers, m.push, m.taken);
+    await b.L.flush();
+    await b.sync();
+    expect(s.live(1)).toEqual([]);
+    expect(b.keys()).toEqual([]);
   });
 });

@@ -24,7 +24,7 @@ create table if not exists public.scan_cartons (
   token       text    not null,             -- scan_sessions token
   pallet      integer not null,             -- pallet number; 0 = the loose-box list
   carton_key  text    not null,             -- the carton's barcode on the list
-  row         jsonb,                        -- the scanner's row (no photo bytes); null when removed
+  row_data    jsonb,                        -- the scanner's row (no photo bytes); null when removed
   deleted     boolean not null default false,
   ver         bigint  not null,             -- writer's version; highest wins
   tab         text,                         -- page load that wrote it
@@ -44,7 +44,7 @@ create table if not exists public.scan_carton_log (
   deleted     boolean not null,
   ver         bigint  not null,
   tab         text,
-  row         jsonb,
+  row_data    jsonb,
   at          timestamptz not null default now()
 );
 create index if not exists scan_carton_log_token_idx on public.scan_carton_log (token, pallet, at);
@@ -53,10 +53,11 @@ comment on table public.scan_carton_log is
   'Web scanner (ours): every accepted change to scan_cartons (audit trail).';
 
 -- Apply a batch of carton changes; per carton the highest version wins.
--- Returns, per change, the version the server now holds and whether this
--- change was the one applied (false = the server already had a newer one).
+-- Returns, per change, the version the server now holds, whether this change
+-- was the one applied (false = the server already had a newer one) and
+-- whether the server's copy is a removal.
 create or replace function public.scan_carton_push(p_token text, p_ops jsonb)
-returns table (pallet integer, carton_key text, ver bigint, applied boolean)
+returns table (pallet integer, carton_key text, ver bigint, applied boolean, deleted boolean)
 language plpgsql set search_path = public as $$
 #variable_conflict use_column
 declare
@@ -68,6 +69,7 @@ declare
   v_row jsonb;
   v_tab text;
   v_cur bigint;
+  v_cur_del boolean;
 begin
   for op in select * from jsonb_array_elements(coalesce(p_ops, '[]'::jsonb)) loop
     v_pallet := (op->>'pallet')::integer;
@@ -80,22 +82,22 @@ begin
       continue;
     end if;
 
-    insert into public.scan_cartons as c (token, pallet, carton_key, row, deleted, ver, tab)
+    insert into public.scan_cartons as c (token, pallet, carton_key, row_data, deleted, ver, tab)
     values (p_token, v_pallet, v_key, v_row, v_del, v_ver, v_tab)
     on conflict (token, pallet, carton_key) do update
-       set row = excluded.row, deleted = excluded.deleted, ver = excluded.ver,
+       set row_data = excluded.row_data, deleted = excluded.deleted, ver = excluded.ver,
            tab = excluded.tab, updated_at = now()
      where excluded.ver > c.ver
-    returning c.ver into v_cur;
+    returning c.ver, c.deleted into v_cur, v_cur_del;
 
     if found then
-      insert into public.scan_carton_log (token, pallet, carton_key, deleted, ver, tab, row)
+      insert into public.scan_carton_log (token, pallet, carton_key, deleted, ver, tab, row_data)
       values (p_token, v_pallet, v_key, v_del, v_ver, v_tab, v_row);
-      pallet := v_pallet; carton_key := v_key; ver := v_cur; applied := true;
+      pallet := v_pallet; carton_key := v_key; ver := v_cur; applied := true; deleted := v_cur_del;
     else
-      select c.ver into v_cur from public.scan_cartons c
+      select c.ver, c.deleted into v_cur, v_cur_del from public.scan_cartons c
        where c.token = p_token and c.pallet = v_pallet and c.carton_key = v_key;
-      pallet := v_pallet; carton_key := v_key; ver := v_cur; applied := false;
+      pallet := v_pallet; carton_key := v_key; ver := v_cur; applied := false; deleted := v_cur_del;
     end if;
     return next;
   end loop;

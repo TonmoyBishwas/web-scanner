@@ -326,7 +326,10 @@ function urlOf(input: RequestInfo | URL): string {
 }
 
 function shouldTraceUrl(url: string): boolean {
-  return url.startsWith('/api/') && !url.startsWith('/api/trace');
+  // /api/scan-ledger: a poll every few seconds whose body is the whole list —
+  // it would crowd real scan events out of the trace queue. The ledger
+  // traces its own outcomes (ledger_merge / ledger_send_failing / ...).
+  return url.startsWith('/api/') && !url.startsWith('/api/trace') && !url.startsWith('/api/scan-ledger');
 }
 
 function wrapFetch(): void {

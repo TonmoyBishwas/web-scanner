@@ -46,6 +46,10 @@ export interface LedgerOp {
   deleted: boolean;
   ver: number;
   tab: string;
+  /** 'user' = the worker scanned / edited / removed it on this page; 'sync' =
+   *  re-sent because a merge found the server lacking it. Only a 'user'
+   *  scan wins over a removal it raced with (a carton is never lost). */
+  origin?: 'user' | 'sync';
 }
 
 /** Fields that never go to the server: the photo bytes (megabytes; the
@@ -176,33 +180,78 @@ export interface LedgerStatus {
   pending: number;
   /** The last send failed (offline / server error); it is being retried. */
   failing: boolean;
-  /** The server has never answered on this page load (table missing?). */
+  /** The server has answered at least once on this page load. */
   everSynced: boolean;
+  /** The server copy is not deployed (no table yet): the page works as before
+   *  and the changes wait on the phone. */
+  unavailable?: boolean;
+}
+
+/** What the server says about one change it was sent. */
+export interface LedgerAck {
+  pallet: number;
+  key: string;
+  /** The version the server now holds for this carton. */
+  ver: number;
+  /** This change was the one stored (false: the server holds a newer one). */
+  applied?: boolean;
+  /** The server's copy of the carton is a removal. */
+  deleted?: boolean;
+  /** The server refused the change itself (malformed); never resent. */
+  rejected?: string;
 }
 
 export interface LedgerTransport {
-  push(token: string, ops: LedgerOp[]): Promise<Array<{ pallet: number; key: string; ver: number }>>;
+  push(token: string, ops: LedgerOp[]): Promise<LedgerAck[]>;
   pull(token: string, pallet: number): Promise<ServerCarton[]>;
+}
+
+/** The server copy is not deployed (503 ledger_unavailable). */
+export class LedgerUnavailableError extends Error {
+  constructor() { super('ledger_unavailable'); }
+}
+
+const FETCH_TIMEOUT_MS = 8000;
+
+async function timedFetch(url: string, init: RequestInit): Promise<Response> {
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS) : null;
+  try {
+    return await fetch(url, ctl ? { ...init, signal: ctl.signal } : init);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function failure(res: Response, what: string): Promise<Error> {
+  if (res.status === 503) {
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body.error === 'ledger_unavailable') return new LedgerUnavailableError();
+    } catch { /* fall through */ }
+  }
+  return new Error(`${what} ${res.status}`);
 }
 
 /** Same-origin JSON transport to /api/scan-ledger. */
 export const httpTransport: LedgerTransport = {
   async push(token, ops) {
-    const res = await fetch('/api/scan-ledger', {
+    const body = JSON.stringify({ token, ops });
+    const res = await timedFetch('/api/scan-ledger', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, ops }),
-      keepalive: JSON.stringify(ops).length < 60000,
+      body,
+      keepalive: body.length < 60000,
     });
-    if (!res.ok) throw new Error(`push ${res.status}`);
-    const data = (await res.json()) as { acks?: Array<{ pallet: number; key: string; ver: number }> };
+    if (!res.ok) throw await failure(res, 'push');
+    const data = (await res.json()) as { acks?: LedgerAck[] };
     return Array.isArray(data.acks) ? data.acks : [];
   },
   async pull(token, pallet) {
-    const res = await fetch(`/api/scan-ledger?token=${encodeURIComponent(token)}&pallet=${pallet}`, {
+    const res = await timedFetch(`/api/scan-ledger?token=${encodeURIComponent(token)}&pallet=${pallet}`, {
       cache: 'no-store',
     });
-    if (!res.ok) throw new Error(`pull ${res.status}`);
+    if (!res.ok) throw await failure(res, 'pull');
     const data = (await res.json()) as { cartons?: ServerCarton[] };
     return Array.isArray(data.cartons) ? data.cartons : [];
   },
@@ -210,10 +259,20 @@ export const httpTransport: LedgerTransport = {
 
 const MAX_BATCH = 200;
 const BACKOFF_MS = [1000, 2000, 4000, 8000, 15000];
+const UNAVAILABLE_RETRY_MS = 60000;
+
+export type LedgerEvent =
+  | { kind: 'dropped'; pallet: number; key: string; reason: string }
+  | { kind: 'requeued'; pallet: number; key: string; serverVer: number };
 
 /**
  * The per-page sync engine. One instance per page load (tab). Lists are
  * addressed by pallet number (0 = loose).
+ *
+ * Versions: the device clock, but never below what this page has seen from
+ * the server (`floor`) — a phone whose clock is behind still makes each new
+ * change newer than the copy it saw, so its re-scan of a removed carton is
+ * not thrown away as "older".
  */
 export class ScanLedger {
   private known = new Map<number, Map<string, string>>();
@@ -223,8 +282,9 @@ export class ScanLedger {
   private inflight = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private attempt = 0;
+  private floor = 0;
   private status: LedgerStatus = { pending: 0, failing: false, everSynced: false };
-  private readonly nextVer: () => number;
+  private readonly clockVer: () => number;
 
   constructor(
     private readonly token: string,
@@ -233,8 +293,9 @@ export class ScanLedger {
     private readonly transport: LedgerTransport = httpTransport,
     private readonly onStatus: (s: LedgerStatus) => void = () => {},
     now: () => number = Date.now,
+    private readonly onEvent: (e: LedgerEvent) => void = () => {},
   ) {
-    this.nextVer = makeVersioner(now);
+    this.clockVer = makeVersioner(now);
     this.adoptStoredOutboxes();
   }
 
@@ -282,11 +343,11 @@ export class ScanLedger {
     if (!upserts.length && !removed.length) return;
     for (const row of upserts) {
       known.set(row.barcode, rowSig(row));
-      this.enqueue({ pallet, key: row.barcode, row, deleted: false, ver: this.nextVer(), tab: this.tab });
+      this.enqueue({ pallet, key: row.barcode, row, deleted: false, ver: this.newVer(pallet, row.barcode), tab: this.tab, origin: 'user' });
     }
     for (const key of removed) {
       known.delete(key);
-      this.enqueue({ pallet, key, row: null, deleted: true, ver: this.nextVer(), tab: this.tab });
+      this.enqueue({ pallet, key, row: null, deleted: true, ver: this.newVer(pallet, key), tab: this.tab, origin: 'user' });
     }
     this.persist();
     this.schedule(0);
@@ -296,9 +357,11 @@ export class ScanLedger {
    * After a server pull was merged into the list: the cartons the merge took
    * from the server (`taken`) are recorded as known in their merged state, so
    * they are not sent back; the cartons the merge said the server lacks or
-   * holds older (`push`) are queued. Every other carton keeps its known state,
-   * so a change the page made in the same moment is still seen by the next
-   * `observe()` and sent.
+   * holds older (`push`) are queued — with the version their local state
+   * already has, so a late re-send can never beat a newer change made
+   * elsewhere (only cartons with no known version get a new one). Every
+   * other carton keeps its known state, so a change the page made in the
+   * same moment is still seen by the next `observe()` and sent.
    */
   adopt(
     pallet: number,
@@ -316,15 +379,20 @@ export class ScanLedger {
       else known.delete(key);
     }
     const v = new Map(this.vers.get(pallet) ?? []);
-    for (const [k, n] of vers) if (n > (v.get(k) ?? 0)) v.set(k, n);
+    for (const [k, n] of vers) {
+      if (n > (v.get(k) ?? 0)) v.set(k, n);
+      if (n > this.floor) this.floor = n;
+    }
     this.vers.set(pallet, v);
     let queued = false;
     for (const key of push) {
       if (this.outbox.has(opKey(pallet, key))) continue; // already queued with its own (newer) version
       const row = byKey.get(key);
       if (!row) continue;
+      if (known.get(key) !== undefined && known.get(key) !== rowSig(row)) continue; // unobserved change: observe() sends it
       known.set(key, rowSig(row));
-      this.enqueue({ pallet, key, row: ledgerRow(row), deleted: false, ver: this.nextVer(), tab: this.tab });
+      const have = v.get(key) ?? 0;
+      this.enqueue({ pallet, key, row: ledgerRow(row), deleted: false, ver: have > 0 ? have : this.newVer(pallet, key), tab: this.tab, origin: 'sync' });
       queued = true;
     }
     if (queued) { this.persist(); this.schedule(0); }
@@ -342,11 +410,19 @@ export class ScanLedger {
     if (!this.closed.has(pallet)) return;
     this.closed.delete(pallet);
     this.known.delete(pallet);
+    this.vers.delete(pallet);
   }
 
   async pull(pallet: number): Promise<ServerCarton[]> {
-    const rows = await this.transport.pull(this.token, pallet);
-    this.status.everSynced = true;
+    let rows: ServerCarton[];
+    try {
+      rows = await this.transport.pull(this.token, pallet);
+    } catch (e) {
+      if (e instanceof LedgerUnavailableError) this.markUnavailable();
+      throw e;
+    }
+    for (const r of rows) if (r.ver > this.floor) this.floor = r.ver;
+    this.status = { ...this.status, everSynced: true, unavailable: false };
     this.emit();
     return rows;
   }
@@ -354,25 +430,31 @@ export class ScanLedger {
   /** Send everything queued now; resolves true when the outbox is empty. */
   async flush(): Promise<boolean> {
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
-    if (this.inflight) {
-      // Wait for the running send, then go again.
-      await new Promise((r) => setTimeout(r, 50));
-      return this.flush();
+    for (let i = 0; this.inflight && i < 400; i += 1) {
+      await new Promise((r) => setTimeout(r, 50)); // the running send (≤ 8 s)
     }
+    if (this.inflight) return false;
     while (this.outbox.size > 0) {
+      const before = this.outbox.size;
       const ok = await this.sendBatch();
-      if (!ok) return false;
+      if (!ok || this.outbox.size >= before) return this.outbox.size === 0;
     }
     return true;
   }
 
-  /** Kick a send (after `online`, on focus). */
+  /** Kick a send now (after `online`, on focus), cutting any backoff wait. */
   poke(): void {
     this.attempt = 0;
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
     this.schedule(0);
   }
 
   pendingCount(): number { return this.outbox.size; }
+
+  private newVer(pallet: number, key: string): number {
+    const local = this.vers.get(pallet)?.get(key) ?? 0;
+    return Math.max(this.clockVer(), this.floor + 1, local + 1);
+  }
 
   private enqueue(op: LedgerOp): void {
     const k = opKey(op.pallet, op.key);
@@ -380,7 +462,7 @@ export class ScanLedger {
     if (cur && cur.ver >= op.ver) return;
     this.outbox.set(k, op);
     const v = this.vers.get(op.pallet) ?? new Map<string, number>();
-    v.set(op.key, op.ver);
+    if (op.ver > (v.get(op.key) ?? 0)) v.set(op.key, op.ver);
     this.vers.set(op.pallet, v);
     this.status.pending = this.outbox.size;
     this.emit();
@@ -396,6 +478,11 @@ export class ScanLedger {
     }, ms);
   }
 
+  private markUnavailable(): void {
+    this.status = { ...this.status, pending: this.outbox.size, failing: false, unavailable: true };
+    this.emit();
+  }
+
   private async sendBatch(): Promise<boolean> {
     if (this.inflight) return false;
     if (this.outbox.size === 0) return true;
@@ -403,24 +490,53 @@ export class ScanLedger {
     const batch = [...this.outbox.values()].slice(0, MAX_BATCH);
     try {
       const acks = await this.transport.push(this.token, batch);
-      const acked = new Map(acks.map((a) => [opKey(a.pallet, a.key), a.ver]));
+      const acked = new Map(acks.map((a) => [opKey(a.pallet, a.key), a]));
+      let progressed = false;
       for (const op of batch) {
         const k = opKey(op.pallet, op.key);
-        const serverVer = acked.get(k);
-        // Taken (or the server already holds something newer — then the
-        // next pull brings that in): drop it, unless it changed meanwhile.
-        if (serverVer !== undefined && serverVer >= op.ver && this.outbox.get(k)?.ver === op.ver) {
+        if (this.outbox.get(k)?.ver !== op.ver) continue; // changed meanwhile: the newer one goes next
+        const ack = acked.get(k);
+        if (!ack || ack.rejected) {
+          // Never resent: a change the server cannot take would loop forever.
+          // The carton stays on the screen and is booked from there.
           this.outbox.delete(k);
+          progressed = true;
+          this.onEvent({ kind: 'dropped', pallet: op.pallet, key: op.key, reason: ack?.rejected ?? 'no_ack' });
+          continue;
+        }
+        if (ack.ver > this.floor) this.floor = ack.ver;
+        if (ack.applied === false && ack.ver >= op.ver && !op.deleted && ack.deleted && op.origin === 'user') {
+          // The worker scanned this carton, and a removal stamped later (a
+          // clock ahead, another phone) is on the server: the scan wins — a
+          // carton in hand is never dropped silently.
+          this.outbox.set(k, { ...op, ver: ack.ver + 1 });
+          const v = this.vers.get(op.pallet);
+          if (v) v.set(op.key, ack.ver + 1);
+          this.onEvent({ kind: 'requeued', pallet: op.pallet, key: op.key, serverVer: ack.ver });
+          progressed = true;
+          continue;
+        }
+        if (ack.ver >= op.ver) {
+          // Taken, or the server already holds something newer (the next
+          // pull brings that in).
+          this.outbox.delete(k);
+          progressed = true;
         }
       }
       this.attempt = 0;
-      this.status = { pending: this.outbox.size, failing: false, everSynced: true };
+      this.status = { pending: this.outbox.size, failing: false, everSynced: true, unavailable: false };
       this.persist();
       this.emit();
       this.inflight = false;
+      if (!progressed) { this.schedule(BACKOFF_MS[BACKOFF_MS.length - 1]); return false; }
       return true;
-    } catch {
+    } catch (e) {
       this.inflight = false;
+      if (e instanceof LedgerUnavailableError) {
+        this.markUnavailable();
+        this.schedule(UNAVAILABLE_RETRY_MS);
+        return false;
+      }
       this.status = { ...this.status, pending: this.outbox.size, failing: true };
       this.emit();
       const wait = BACKOFF_MS[Math.min(this.attempt, BACKOFF_MS.length - 1)];
@@ -467,6 +583,7 @@ export class ScanLedger {
           const ok = opKey(op.pallet, op.key);
           const cur = this.outbox.get(ok);
           if (!cur || cur.ver < op.ver) { this.outbox.set(ok, op); any = true; }
+          if (op.ver > this.floor) this.floor = op.ver;
         }
         if (k !== outboxKey(this.token, this.tab)) this.store.removeItem(k);
       } catch {

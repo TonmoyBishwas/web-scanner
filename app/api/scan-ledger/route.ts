@@ -19,6 +19,18 @@ import { touchSession } from '@/lib/redis';
  */
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{4,128}$/;
+
+/** The table / function is not deployed yet (migration not applied): the
+ *  page treats this as "server copy off" and keeps working from the phone. */
+function isMissingLedger(err: { code?: string; message?: string } | null): boolean {
+  if (!err) return false;
+  return ['42P01', '42883', 'PGRST202', 'PGRST205'].includes(String(err.code ?? ''))
+    || /does not exist|could not find the (function|table)/i.test(err.message ?? '');
+}
+
+function unavailable() {
+  return NextResponse.json({ error: 'ledger_unavailable' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
+}
 const MAX_OPS = 200;
 const MAX_ROW_BYTES = 16000;
 
@@ -79,18 +91,33 @@ export async function POST(request: NextRequest) {
     if (!(await sessionExists(token))) {
       return NextResponse.json({ error: 'session_not_found' }, { status: 404 });
     }
-    const ops = body.ops.map(cleanOp).filter((o): o is CleanOp => o !== null);
+    const ops: CleanOp[] = [];
+    // A change the server cannot take is answered as refused (never silently
+    // dropped — the phone would resend it forever).
+    const refused: Array<{ pallet: number; key: string; ver: number; rejected: string }> = [];
+    for (const raw of body.ops) {
+      const op = cleanOp(raw);
+      if (op) { ops.push(op); continue; }
+      const o = (raw ?? {}) as Record<string, unknown>;
+      if (typeof o.key === 'string') {
+        refused.push({ pallet: Number(o.pallet), key: o.key, ver: Number(o.ver) || 0, rejected: 'bad_op' });
+      }
+    }
     touchSession(token).catch((err) => console.warn('[scan-ledger] touch failed:', err));
-    if (ops.length === 0) return NextResponse.json({ acks: [] });
+    if (ops.length === 0) return NextResponse.json({ acks: refused });
 
     const { data, error } = await supabase.rpc('scan_carton_push', { p_token: token, p_ops: ops });
     if (error) {
+      if (isMissingLedger(error)) return unavailable();
       console.error('[scan-ledger] push failed', error.message);
       return NextResponse.json({ error: 'push_failed' }, { status: 500 });
     }
-    const acks = ((data as Array<{ pallet: number; carton_key: string; ver: number | string }>) ?? [])
-      .map((a) => ({ pallet: Number(a.pallet), key: a.carton_key, ver: Number(a.ver) }));
-    return NextResponse.json({ acks }, { headers: { 'Cache-Control': 'no-store' } });
+    const rows = (data as Array<{ pallet: number; carton_key: string; ver: number | string; applied: boolean; deleted: boolean }>) ?? [];
+    const acks = rows.map((a) => ({
+      pallet: Number(a.pallet), key: a.carton_key, ver: Number(a.ver), applied: Boolean(a.applied), deleted: Boolean(a.deleted),
+    }));
+    if (refused.length) console.warn('[scan-ledger] refused ops', refused.length);
+    return NextResponse.json({ acks: [...acks, ...refused] }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (e) {
     console.error('[scan-ledger] POST failed', e);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
@@ -100,17 +127,19 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
   try {
     const token = request.nextUrl.searchParams.get('token') ?? '';
-    const pallet = Number(request.nextUrl.searchParams.get('pallet'));
+    const palletParam = request.nextUrl.searchParams.get('pallet');
+    const pallet = palletParam === null || palletParam === '' ? NaN : Number(palletParam);
     if (!TOKEN_RE.test(token) || !Number.isInteger(pallet) || pallet < 0 || pallet > 9999) {
       return NextResponse.json({ error: 'bad_request' }, { status: 400 });
     }
     const { data, error } = await supabase
       .from('scan_cartons')
-      .select('pallet, carton_key, row, deleted, ver')
+      .select('pallet, carton_key, row_data, deleted, ver')
       .eq('token', token)
       .eq('pallet', pallet)
       .limit(5000);
     if (error) {
+      if (isMissingLedger(error)) return unavailable();
       console.error('[scan-ledger] pull failed', error.message);
       return NextResponse.json({ error: 'pull_failed' }, { status: 500 });
     }
@@ -118,7 +147,7 @@ export async function GET(request: NextRequest) {
     const cartons = (data ?? []).map((c) => ({
       pallet: Number(c.pallet),
       key: c.carton_key as string,
-      row: (c.row as Record<string, unknown> | null) ?? null,
+      row: (c.row_data as Record<string, unknown> | null) ?? null,
       deleted: Boolean(c.deleted),
       ver: Number(c.ver),
     }));
