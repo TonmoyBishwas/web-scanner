@@ -339,6 +339,13 @@ const stripImage = (b: BoxScan): BoxScan => {
   return rest;
 };
 
+// A restored carton whose OCR was still running when the list was stored can
+// never finish: its photo is not stored and its request belonged to the old
+// page. Left 'processing' it blocks the pallet total and the single-item
+// prompt for good; 'failed' opens the edit / retype path instead.
+const settleRestored = (rows: BoxScan[]): BoxScan[] =>
+  rows.map((b) => (b.ocr_status === 'processing' ? { ...b, ocr_status: 'failed' as OcrStatus } : b));
+
 // Only ever the single-vs-mix choice now (shown after >=4 OCR'd boxes of one
 // product at the same weight). The per-item mandatory_count mode was removed:
 // any mix pallet = scan every box.
@@ -1028,6 +1035,13 @@ export default function PalletVerifyPage({
           return;
         }
         setSession(data);
+        // Take the session BEFORE reading the stored list: an older tab that
+        // still writes after this point is already refused (lib/session-owner.ts),
+        // so the list read below is the last one it could write.
+        if (!sessionClaimedRef.current) {
+          sessionClaimedRef.current = claimSession(browserStore(), token, TAB_ID);
+          trace('lifecycle', 'session_claim', { ok: sessionClaimedRef.current, at: 'load' });
+        }
 
         // Split jobs: no cursor. Resume whatever this worker already holds
         // (a claimed pallet or the claimed loose task), or send them to the
@@ -1046,7 +1060,7 @@ export default function PalletVerifyPage({
             const cached = loadPalletScans<PalletScanSnapshot>(token, mine.n);
             if (cached?.scannedBoxes?.length) {
               trace('ui', 'restored_from_cache', { pallet: mine.n, boxes: cached.scannedBoxes.length, confirmedBoxCount: cached.confirmedBoxCount, forcedMix: !!cached.forcedMix });
-              setScannedBoxes(cached.scannedBoxes);
+              setScannedBoxes(settleRestored(cached.scannedBoxes));
               setUniformGroups(new Map(cached.uniformGroups || []));
               setAcceptedMerges(new Map(cached.acceptedMerges || []));
               if (cached.confirmedBoxCount > 0) setConfirmedBoxCount(cached.confirmedBoxCount);
@@ -1064,7 +1078,7 @@ export default function PalletVerifyPage({
             const cachedLoose = loadLooseScans<LooseScanSnapshot>(token);
             if (cachedLoose?.looseBoxes?.length) {
       trace('ui', 'restored_loose_from_cache', { boxes: cachedLoose.looseBoxes.length });
-              setLooseBoxes(cachedLoose.looseBoxes);
+              setLooseBoxes(settleRestored(cachedLoose.looseBoxes));
               for (const code of dedupCodes(cachedLoose.looseBoxes)) looseProcessedRef.current.add(code);
             }
             setPhase('loose_scanning');
@@ -1080,7 +1094,7 @@ export default function PalletVerifyPage({
           const cachedLoose = loadLooseScans<LooseScanSnapshot>(token);
           if (cachedLoose?.looseBoxes?.length) {
       trace('ui', 'restored_loose_from_cache', { boxes: cachedLoose.looseBoxes.length });
-            setLooseBoxes(cachedLoose.looseBoxes);
+            setLooseBoxes(settleRestored(cachedLoose.looseBoxes));
             for (const code of dedupCodes(cachedLoose.looseBoxes)) looseProcessedRef.current.add(code);
           }
           setPhase('loose_scanning');
@@ -1094,7 +1108,7 @@ export default function PalletVerifyPage({
         const cached = loadPalletScans<PalletScanSnapshot>(token, data.current_pallet);
         if (cached?.scannedBoxes?.length) {
           trace('ui', 'restored_from_cache', { pallet: data.current_pallet, boxes: cached.scannedBoxes.length, confirmedBoxCount: cached.confirmedBoxCount, forcedMix: !!cached.forcedMix });
-          setScannedBoxes(cached.scannedBoxes);
+          setScannedBoxes(settleRestored(cached.scannedBoxes));
           setUniformGroups(new Map(cached.uniformGroups || []));
           setAcceptedMerges(new Map(cached.acceptedMerges || []));
           if (cached.confirmedBoxCount > 0) setConfirmedBoxCount(cached.confirmedBoxCount);
@@ -1157,7 +1171,7 @@ export default function PalletVerifyPage({
       const cachedLoose = loadLooseScans<LooseScanSnapshot>(token);
       if (cachedLoose?.looseBoxes?.length) {
       trace('ui', 'restored_loose_from_cache', { boxes: cachedLoose.looseBoxes.length });
-        setLooseBoxes(cachedLoose.looseBoxes);
+        setLooseBoxes(settleRestored(cachedLoose.looseBoxes));
         for (const code of dedupCodes(cachedLoose.looseBoxes)) looseProcessedRef.current.add(code);
       }
       setPhase('loose_scanning');
