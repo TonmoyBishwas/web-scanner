@@ -21,6 +21,7 @@ import { ToolDock, type ToolChip } from '@/components/terminal/ToolDock';
 import { ActiveScanCard } from '@/components/terminal/ActiveScanCard';
 import { ScanActions } from '@/components/terminal/ScanActions';
 import { HistoryRow } from '@/components/terminal/HistoryRow';
+import { ByItemBar, useItemFilter } from '@/components/terminal/ByItemFilter';
 import { EditPanel } from '@/components/terminal/EditPanel';
 import { findBarcodeConflict, type BarcodeConflict } from '@/lib/barcode-parser';
 import { DoneOverlay } from '@/components/terminal/DoneOverlay';
@@ -3933,6 +3934,12 @@ export default function PalletVerifyPage({
   const groupedItems: Record<string, BoxScan[]> = {};
   for (const [k, v] of groupedByName.entries()) groupedItems[k] = v;
 
+  // "By item" — a VIEW filter over each scan list (lib/by-item-filter.ts).
+  // It only decides which rows render; booking, counting, Delete all and
+  // confirm keep acting on the whole list.
+  const palletItemFilter = useItemFilter(scannedBoxes, language, acceptedMerges);
+  const looseItemFilter = useItemFilter(looseBoxes, language);
+
   // ── Type badge ──
 
   /**
@@ -4343,7 +4350,15 @@ export default function PalletVerifyPage({
           >
             {(
               <>
-                {looseActive && (
+                {scanned > 0 && (
+                  <ByItemBar
+                    filter={looseItemFilter}
+                    received={scanned}
+                    expected={declared}
+                    tone={declared > 0 && scanned >= declared ? 'done' : 'warn'}
+                  />
+                )}
+                {looseActive && looseItemFilter.matches(looseActive) && (
                   <ActiveScanCard
                     tone="warn"
                     index={looseBoxes.length}
@@ -4371,7 +4386,7 @@ export default function PalletVerifyPage({
                     highlight={looseActive.barcode === flashBarcode}
                   />
                 )}
-                {looseRest.map((box, i) => (
+                {looseRest.map((box, i) => looseItemFilter.matches(box) && (
                   <HistoryRow
                     key={box.barcode + i}
                     index={looseBoxes.length - 1 - i}
@@ -4853,6 +4868,15 @@ export default function PalletVerifyPage({
         >
           {(
             <>
+              {scannedBoxes.length > 0 && (
+                <ByItemBar
+                  filter={palletItemFilter}
+                  received={committed}
+                  expected={confirmedBoxCount}
+                  tone={canConfirm ? 'done' : 'brand'}
+                />
+              )}
+
               {/* AI consolidation banner — Gemini thinks two groups are the
                   same product (OCR drift). Worker confirms or dismisses. */}
               {pendingMerge && (
@@ -4909,7 +4933,7 @@ export default function PalletVerifyPage({
                 </div>
               )}
 
-              {activeBox && (
+              {activeBox && palletItemFilter.matches(activeBox) && (
                 <ActiveScanCard
                   index={scannedBoxes.length}
                   name={activeBox.item_name_hebrew || activeBox.item_name || '—'}
@@ -4937,7 +4961,7 @@ export default function PalletVerifyPage({
                 />
               )}
 
-              {restBoxes.map((box, i) => (
+              {restBoxes.map((box, i) => palletItemFilter.matches(box) && (
                 <HistoryRow
                   key={box.barcode + i}
                   index={scannedBoxes.length - 1 - i}
