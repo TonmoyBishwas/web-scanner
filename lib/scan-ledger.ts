@@ -457,7 +457,8 @@ export class ScanLedger {
   stop(): void {
     this.stopped = true;
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
-    this.persist();
+    // Not persisted again: the owner may already have adopted (and removed)
+    // this outbox; writing it back would hand it stale changes.
   }
 
   /** Kick a send now (after `online`, on focus), cutting any backoff wait —
@@ -606,7 +607,11 @@ export class ScanLedger {
           if (!op || typeof op.key !== 'string' || typeof op.ver !== 'number' || typeof op.pallet !== 'number') continue;
           const ok = opKey(op.pallet, op.key);
           const cur = this.outbox.get(ok);
-          if (!cur || cur.ver < op.ver) { this.outbox.set(ok, op); any = true; }
+          // Another page load's changes are sent as they are, but never win
+          // over a removal made since (that page may be long gone or stale).
+          const mine = k === outboxKey(this.token, this.tab);
+          const adopted: LedgerOp = mine ? op : { ...op, origin: 'sync' };
+          if (!cur || cur.ver < op.ver) { this.outbox.set(ok, adopted); any = true; }
           if (op.ver > this.floor) this.floor = op.ver;
         }
         if (k !== outboxKey(this.token, this.tab)) this.store.removeItem(k);

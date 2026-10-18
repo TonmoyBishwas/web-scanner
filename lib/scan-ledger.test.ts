@@ -381,4 +381,26 @@ describe('ScanLedger', () => {
     await b.sync();
     expect(s.live(1)).toEqual(['P']);
   });
+
+  it('a stale tab that wakes after losing the session cannot revive a carton deleted by the owner', async () => {
+    const s = fakeServer();
+    const store = memStore();
+    const a = page('tok', 'A', store, s.t);
+    a.scan('S1');
+    await a.sync();
+    s.setOnline(false);
+    a.scan('S5');            // waits in A's outbox
+    await a.L.flush();
+    s.setOnline(true);
+    const b = page('tok', 'B', store, s.t, a.list); // takes over, adopts A's outbox
+    await b.sync();
+    expect(s.live(1)).toEqual(['S1', 'S5']);
+    b.remove('S5');
+    await b.sync();
+    a.L.stop();              // A wakes, sees it lost the session
+    const b2 = page('tok', 'B2', store, s.t, b.list); // B reloads
+    await b2.sync();
+    expect(s.live(1)).toEqual(['S1']);
+    expect(b2.keys()).toEqual(['S1']);
+  });
 });
