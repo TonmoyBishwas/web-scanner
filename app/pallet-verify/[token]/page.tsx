@@ -21,6 +21,7 @@ import { ToolDock, type ToolChip } from '@/components/terminal/ToolDock';
 import { ActiveScanCard } from '@/components/terminal/ActiveScanCard';
 import { ScanActions } from '@/components/terminal/ScanActions';
 import { HistoryRow } from '@/components/terminal/HistoryRow';
+import { ByItemBar, useItemFilter } from '@/components/terminal/ByItemFilter';
 import { EditPanel } from '@/components/terminal/EditPanel';
 import { findBarcodeConflict, type BarcodeConflict } from '@/lib/barcode-parser';
 import { DoneOverlay } from '@/components/terminal/DoneOverlay';
@@ -96,6 +97,11 @@ import {
   clearLooseScans,
   clearAllScans,
 } from '@/lib/pallet-scan-cache';
+import { browserStore, claimSession, lostSession, newTabId, ownerKey } from '@/lib/session-owner';
+
+// One id per page load: the tab that opened the scan last owns it
+// (lib/session-owner.ts — two tabs must not overwrite each other's cartons).
+const TAB_ID = newTabId();
 
 // Set up the in-page console-log capture once at module load. Idempotent —
 // safe even with React Strict Mode mounting twice.
@@ -333,6 +339,13 @@ const stripImage = (b: BoxScan): BoxScan => {
   const { image_data: _img, photo_pending: _pending, ...rest } = b;
   return rest;
 };
+
+// A restored carton whose OCR was still running when the list was stored can
+// never finish: its photo is not stored and its request belonged to the old
+// page. Left 'processing' it blocks the pallet total and the single-item
+// prompt for good; 'failed' opens the edit / retype path instead.
+const settleRestored = (rows: BoxScan[]): BoxScan[] =>
+  rows.map((b) => (b.ocr_status === 'processing' ? { ...b, ocr_status: 'failed' as OcrStatus } : b));
 
 // Only ever the single-vs-mix choice now (shown after >=4 OCR'd boxes of one
 // product at the same weight). The per-item mandatory_count mode was removed:
@@ -926,11 +939,77 @@ export default function PalletVerifyPage({
 
   // ── Load session ──
 
+  // lib/session-owner.ts: this tab owns the scan session once it reaches a
+  // scanning phase (after the loader restored the stored list). Another tab
+  // opened later takes it; this one then writes nothing (`passive`) and
+  // reloads when the worker comes back to it. Declared before the persist
+  // effect so the claim lands before the first write.
+  const sessionClaimedRef = useRef(false);
+  const [passive, setPassive] = useState(false);
+  useEffect(() => {
+    if (sessionClaimedRef.current) return;
+    if (phase !== 'scanning' && phase !== 'loose_scanning') return;
+    sessionClaimedRef.current = claimSession(browserStore(), token, TAB_ID);
+    trace('lifecycle', 'session_claim', { ok: sessionClaimedRef.current });
+  }, [phase, token]);
+
+  useEffect(() => {
+    if (phase !== 'scanning' && phase !== 'loose_scanning') return;
+    const lost = () => lostSession(browserStore(), token, TAB_ID, sessionClaimedRef.current);
+    const onStorage = (e: StorageEvent) => {
+      if ((e.key === ownerKey(token) || e.key === null) && lost()) {
+        trace('lifecycle', 'session_taken', { by: e.newValue ? 'tab' : 'cleared' });
+        setPassive(true);
+      }
+    };
+    const onFront = () => {
+      if (document.visibilityState !== 'visible' || !lost()) return;
+      trace('lifecycle', 'session_reload', { phase });
+      window.location.reload();
+    };
+    window.addEventListener('storage', onStorage);
+    document.addEventListener('visibilitychange', onFront);
+    window.addEventListener('pageshow', onFront);
+    window.addEventListener('focus', onFront);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      document.removeEventListener('visibilitychange', onFront);
+      window.removeEventListener('pageshow', onFront);
+      window.removeEventListener('focus', onFront);
+    };
+  }, [phase, token]);
+
+  // This tab cleared the whole session itself (all done): the owner key went
+  // with it, which is not another tab taking over.
+  function releaseSession() {
+    sessionClaimedRef.current = false;
+  }
+
+  // Every action that books, deletes or adds cartons asks first: a stale tab
+  // that slept through the storage / visibility / focus events must not
+  // confirm a pallet from its old list (browser test 18/10: it booked 3 of 5
+  // and its cleanup deleted the owner's list), nor start OCR for a carton the
+  // owner will never see. Uses only refs, the token and a state setter, so a
+  // stale closure is fine.
+  function refuseIfSessionLost(where: string): boolean {
+    if (!lostSession(browserStore(), token, TAB_ID, sessionClaimedRef.current)) return false;
+    trace('lifecycle', 'session_lost_refused', { where });
+    setPassive(true);
+    return true;
+  }
+
   // Persist in-progress scans to localStorage so a reload never loses them.
   // The phase guard makes this naturally safe vs the restore-on-mount below:
   // while phase is 'loading' nothing is written, so the loader restores first
   // and only then (phase → 'scanning') do we start mirroring to storage.
+  // A tab that lost the session to a newer tab writes nothing: its list is
+  // stale, and writing it is exactly what wiped 31 cartons on 18/10.
   useEffect(() => {
+    if ((phase === 'scanning' || phase === 'loose_scanning')
+      && lostSession(browserStore(), token, TAB_ID, sessionClaimedRef.current)) {
+      setPassive(true);
+      return;
+    }
     if (phase === 'scanning') {
       const snap: PalletScanSnapshot = {
         v: 1,
@@ -964,12 +1043,19 @@ export default function PalletVerifyPage({
         }
         const data: MultiPalletSession = await res.json();
         if (data.status === 'completed') {
-          clearAllScans(token);
+          clearAllScans(token); releaseSession();
           setSession(data);
           setPhase('all_done');
           return;
         }
         setSession(data);
+        // Take the session BEFORE reading the stored list: an older tab that
+        // still writes after this point is already refused (lib/session-owner.ts),
+        // so the list read below is the last one it could write.
+        if (!sessionClaimedRef.current) {
+          sessionClaimedRef.current = claimSession(browserStore(), token, TAB_ID);
+          trace('lifecycle', 'session_claim', { ok: sessionClaimedRef.current, at: 'load' });
+        }
 
         // Split jobs: no cursor. Resume whatever this worker already holds
         // (a claimed pallet or the claimed loose task), or send them to the
@@ -988,7 +1074,7 @@ export default function PalletVerifyPage({
             const cached = loadPalletScans<PalletScanSnapshot>(token, mine.n);
             if (cached?.scannedBoxes?.length) {
               trace('ui', 'restored_from_cache', { pallet: mine.n, boxes: cached.scannedBoxes.length, confirmedBoxCount: cached.confirmedBoxCount, forcedMix: !!cached.forcedMix });
-              setScannedBoxes(cached.scannedBoxes);
+              setScannedBoxes(settleRestored(cached.scannedBoxes));
               setUniformGroups(new Map(cached.uniformGroups || []));
               setAcceptedMerges(new Map(cached.acceptedMerges || []));
               if (cached.confirmedBoxCount > 0) setConfirmedBoxCount(cached.confirmedBoxCount);
@@ -1006,7 +1092,7 @@ export default function PalletVerifyPage({
             const cachedLoose = loadLooseScans<LooseScanSnapshot>(token);
             if (cachedLoose?.looseBoxes?.length) {
       trace('ui', 'restored_loose_from_cache', { boxes: cachedLoose.looseBoxes.length });
-              setLooseBoxes(cachedLoose.looseBoxes);
+              setLooseBoxes(settleRestored(cachedLoose.looseBoxes));
               for (const code of dedupCodes(cachedLoose.looseBoxes)) looseProcessedRef.current.add(code);
             }
             setPhase('loose_scanning');
@@ -1022,7 +1108,7 @@ export default function PalletVerifyPage({
           const cachedLoose = loadLooseScans<LooseScanSnapshot>(token);
           if (cachedLoose?.looseBoxes?.length) {
       trace('ui', 'restored_loose_from_cache', { boxes: cachedLoose.looseBoxes.length });
-            setLooseBoxes(cachedLoose.looseBoxes);
+            setLooseBoxes(settleRestored(cachedLoose.looseBoxes));
             for (const code of dedupCodes(cachedLoose.looseBoxes)) looseProcessedRef.current.add(code);
           }
           setPhase('loose_scanning');
@@ -1036,7 +1122,7 @@ export default function PalletVerifyPage({
         const cached = loadPalletScans<PalletScanSnapshot>(token, data.current_pallet);
         if (cached?.scannedBoxes?.length) {
           trace('ui', 'restored_from_cache', { pallet: data.current_pallet, boxes: cached.scannedBoxes.length, confirmedBoxCount: cached.confirmedBoxCount, forcedMix: !!cached.forcedMix });
-          setScannedBoxes(cached.scannedBoxes);
+          setScannedBoxes(settleRestored(cached.scannedBoxes));
           setUniformGroups(new Map(cached.uniformGroups || []));
           setAcceptedMerges(new Map(cached.acceptedMerges || []));
           if (cached.confirmedBoxCount > 0) setConfirmedBoxCount(cached.confirmedBoxCount);
@@ -1099,7 +1185,7 @@ export default function PalletVerifyPage({
       const cachedLoose = loadLooseScans<LooseScanSnapshot>(token);
       if (cachedLoose?.looseBoxes?.length) {
       trace('ui', 'restored_loose_from_cache', { boxes: cachedLoose.looseBoxes.length });
-        setLooseBoxes(cachedLoose.looseBoxes);
+        setLooseBoxes(settleRestored(cachedLoose.looseBoxes));
         for (const code of dedupCodes(cachedLoose.looseBoxes)) looseProcessedRef.current.add(code);
       }
       setPhase('loose_scanning');
@@ -1112,6 +1198,7 @@ export default function PalletVerifyPage({
   const handleBarcodeDetected = useCallback(
     (_barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
       const read = _barcode.trim();
+      if (refuseIfSessionLost('scan')) return;
       // Every camera read moves the twin hold on (a different code releases it).
       const twinHeld = noteTwinHoldRead(twinHoldRef, read, Date.now());
       // A read that cannot be a carton barcode (a fragment, a failed check
@@ -1308,6 +1395,7 @@ export default function PalletVerifyPage({
   // resolve its real identity (the printed digit string) + dedupe afterwards.
 
   const handleManualCapture = useCallback((imageData: string) => {
+    if (refuseIfSessionLost('manual_capture')) return;
     const provisional = `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     trace('ui', 'manual_capture', { provisional, pallet: currentPalletRef.current, image_chars: imageData.length });
     const box: BoxScan = {
@@ -1788,6 +1876,7 @@ export default function PalletVerifyPage({
   const handleLooseBarcodeDetected = useCallback(
     (_barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
       const read = _barcode.trim();
+      if (refuseIfSessionLost('scan')) return;
       // Every camera read moves the twin hold on (a different code releases it).
       const twinHeld = noteTwinHoldRead(twinHoldRef, read, Date.now());
       const verdict = classifyRead(read);
@@ -1841,6 +1930,7 @@ export default function PalletVerifyPage({
 
   // Manual capture for the loose phase — same fallback as the pallet phase.
   const handleLooseManualCapture = useCallback((imageData: string) => {
+    if (refuseIfSessionLost('loose_manual_capture')) return;
     const provisional = `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     trace('ui', 'loose_manual_capture', { provisional, image_chars: imageData.length });
     const box: BoxScan = {
@@ -2447,6 +2537,7 @@ export default function PalletVerifyPage({
   // Labels → Delete. Booked cartons are never touched (server-side). Every
   // run is traced as delete_all with the before-values.
   async function handleDeleteAll(action: DeleteAllAction) {
+    if (refuseIfSessionLost('delete_all')) return;
     const loose = phase === 'loose_scanning';
     const pallet = loose ? 0 : currentPallet;
     const rows = loose ? looseBoxesRef.current : scannedBoxesRef.current;
@@ -3256,6 +3347,7 @@ export default function PalletVerifyPage({
   // ── Confirm loose boxes ──
 
   async function handleConfirmLooseBoxes() {
+    if (refuseIfSessionLost('confirm_loose')) return;
     trace('ui', 'confirm_loose', { boxes: looseBoxes.length, declared: session?.loose_box_count });
     if (labelGate.count > 0) {
       refuseForLabels(labelGate.count, labelGate.batchIds, 'page');
@@ -3327,7 +3419,7 @@ export default function PalletVerifyPage({
         setPhase('job');
         return;
       }
-      clearAllScans(token);
+      clearAllScans(token); releaseSession();
       setPhase('all_done');
     } catch {
       setError(tr('palletVerify.networkError'));
@@ -3521,7 +3613,7 @@ export default function PalletVerifyPage({
     );
 
     if (data.all_done) {
-      clearAllScans(token);
+      clearAllScans(token); releaseSession();
       if (session && session.loose_box_count > 0) {
         setPhase('loose_scanning');
       } else {
@@ -3616,6 +3708,7 @@ export default function PalletVerifyPage({
     boxCount: number;
     groups: Map<string, UniformGroup>;
   }) {
+    if (refuseIfSessionLost('confirm_pallet')) return;
     trace('ui', 'confirm_pallet', { pallet: currentPallet, scanned: scannedBoxes.length, confirmedBoxCount, override: override ? { boxCount: override.boxCount, groups: override.groups } : undefined, forcedMix, detectedType });
     if (scannedBoxes.length < 2) return;
     // Every way into the LPN passes here — the slide, the shortfall modal,
@@ -3841,6 +3934,12 @@ export default function PalletVerifyPage({
   const groupedItems: Record<string, BoxScan[]> = {};
   for (const [k, v] of groupedByName.entries()) groupedItems[k] = v;
 
+  // "By item" — a VIEW filter over each scan list (lib/by-item-filter.ts).
+  // It only decides which rows render; booking, counting, Delete all and
+  // confirm keep acting on the whole list.
+  const palletItemFilter = useItemFilter(scannedBoxes, language, acceptedMerges);
+  const looseItemFilter = useItemFilter(looseBoxes, language);
+
   // ── Type badge ──
 
   /**
@@ -3878,6 +3977,26 @@ export default function PalletVerifyPage({
           {total > 0 && <span className="text-ink-muted">/{total}</span>}
         </span>
       </span>
+    );
+  }
+
+  // lib/session-owner.ts: another tab took this scan. Nothing here is saved
+  // any more; continuing reloads, which restores the latest list and takes
+  // the scan back. Rendering only this also stops this tab's camera.
+  if (passive) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-5 p-6 bg-canvas text-center">
+        <AlertTriangle className="text-warn w-12 h-12" />
+        <p className="text-lg font-semibold text-ink">{tr('palletVerify.otherTab')}</p>
+        <p className="text-ink-body">{tr('palletVerify.otherTabHint')}</p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="rounded-xl bg-brand px-6 py-3 text-base font-semibold text-white"
+        >
+          {tr('palletVerify.otherTabContinue')}
+        </button>
+      </div>
     );
   }
 
@@ -4231,7 +4350,15 @@ export default function PalletVerifyPage({
           >
             {(
               <>
-                {looseActive && (
+                {scanned > 0 && (
+                  <ByItemBar
+                    filter={looseItemFilter}
+                    received={scanned}
+                    expected={declared}
+                    tone={declared > 0 && scanned >= declared ? 'done' : 'warn'}
+                  />
+                )}
+                {looseActive && looseItemFilter.matches(looseActive) && (
                   <ActiveScanCard
                     tone="warn"
                     index={looseBoxes.length}
@@ -4259,7 +4386,7 @@ export default function PalletVerifyPage({
                     highlight={looseActive.barcode === flashBarcode}
                   />
                 )}
-                {looseRest.map((box, i) => (
+                {looseRest.map((box, i) => looseItemFilter.matches(box) && (
                   <HistoryRow
                     key={box.barcode + i}
                     index={looseBoxes.length - 1 - i}
@@ -4741,6 +4868,15 @@ export default function PalletVerifyPage({
         >
           {(
             <>
+              {scannedBoxes.length > 0 && (
+                <ByItemBar
+                  filter={palletItemFilter}
+                  received={committed}
+                  expected={confirmedBoxCount}
+                  tone={canConfirm ? 'done' : 'brand'}
+                />
+              )}
+
               {/* AI consolidation banner — Gemini thinks two groups are the
                   same product (OCR drift). Worker confirms or dismisses. */}
               {pendingMerge && (
@@ -4797,7 +4933,7 @@ export default function PalletVerifyPage({
                 </div>
               )}
 
-              {activeBox && (
+              {activeBox && palletItemFilter.matches(activeBox) && (
                 <ActiveScanCard
                   index={scannedBoxes.length}
                   name={activeBox.item_name_hebrew || activeBox.item_name || '—'}
@@ -4825,7 +4961,7 @@ export default function PalletVerifyPage({
                 />
               )}
 
-              {restBoxes.map((box, i) => (
+              {restBoxes.map((box, i) => palletItemFilter.matches(box) && (
                 <HistoryRow
                   key={box.barcode + i}
                   index={scannedBoxes.length - 1 - i}
