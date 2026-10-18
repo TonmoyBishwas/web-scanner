@@ -141,8 +141,11 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     traceToken = typeof body?.token === 'string' ? body.token : '';
     const { token, scanned_boxes: rawScannedBoxes, box_count, uniform_groups, merge_map, nonmeat_items,
-      manual_declared, manual_items, worker_chat_id, supplier_pallet_ref } = body as {
+      manual_declared, manual_items, worker_chat_id, supplier_pallet_ref, pallet_number: clientPallet } = body as {
       token: string;
+      /** The pallet the page is booking (single jobs): refused when it is no
+       *  longer the session's current pallet — another tab / phone booked it. */
+      pallet_number?: number;
       /** The supplier's shipping-pallet label the worker scanned (MEV-10). */
       supplier_pallet_ref?: string;
       scanned_boxes: MultiPalletBoxScan[];
@@ -192,7 +195,7 @@ export async function POST(request: NextRequest) {
     }
     const lang = session.language as Language | undefined;
     if (session.status === 'completed') {
-      errorResult = { status: 400, body: { success: false, error: t(lang, 'errors.sessionAlreadyCompleted') } };
+      errorResult = { status: 400, body: { success: false, code: 'session_completed', error: t(lang, 'errors.sessionAlreadyCompleted') } };
       return;
     }
 
@@ -211,6 +214,14 @@ export async function POST(request: NextRequest) {
       return;
     }
     const palletNumber = split ? claimedSlot!.n : session.current_pallet;
+    if (!split && clientPallet !== undefined && clientPallet !== null
+      && Number(clientPallet) !== session.current_pallet) {
+      errorResult = {
+        status: 409,
+        body: { success: false, error: 'pallet_already_completed', current_pallet: session.current_pallet },
+      };
+      return;
+    }
 
     // ── Print gate: no LPN while saved labels are unprinted ──────────────────
     // An unprinted label blocks when its carton is on THIS pallet's list, or

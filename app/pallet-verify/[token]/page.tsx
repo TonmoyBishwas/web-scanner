@@ -98,6 +98,7 @@ import {
   clearAllScans,
 } from '@/lib/pallet-scan-cache';
 import { browserStore, claimSession, lostSession, newTabId, ownerKey } from '@/lib/session-owner';
+import { mergeServer, ScanLedger, type LedgerStatus, type ServerCarton } from '@/lib/scan-ledger';
 
 // One id per page load: the tab that opened the scan last owns it
 // (lib/session-owner.ts — two tabs must not overwrite each other's cartons).
@@ -991,10 +992,207 @@ export default function PalletVerifyPage({
   // and its cleanup deleted the owner's list), nor start OCR for a carton the
   // owner will never see. Uses only refs, the token and a state setter, so a
   // stale closure is fine.
+  // A tab that lost the session sends nothing more to the server copy (the
+  // owning tab adopts its stored outbox).
+  useEffect(() => {
+    if (passive) ledgerRef.current?.stop();
+  }, [passive]);
+
   function refuseIfSessionLost(where: string): boolean {
     if (!lostSession(browserStore(), token, TAB_ID, sessionClaimedRef.current)) return false;
     trace('lifecycle', 'session_lost_refused', { where });
     setPassive(true);
+    return true;
+  }
+
+  // ── Server copy of every carton (lib/scan-ledger.ts) ──
+  //
+  // Client 18/10: every scan saved on the server as it happens, restored from
+  // the server after a reload, two open instances merged. The persist effect
+  // below hands every new state of the list to the ledger, which queues what
+  // changed (localStorage first, then the server, retried until taken). Each
+  // time the worker is on a list, and every few seconds after, the server's
+  // copy is merged in: per carton the newest change wins, so cartons scanned
+  // on another tab or phone appear here and nothing is overwritten.
+  const ledgerRef = useRef<ScanLedger | null>(null);
+  const [ledgerStatus, setLedgerStatus] = useState<LedgerStatus>({ pending: 0, failing: false, everSynced: false });
+  function ledger(): ScanLedger | null {
+    if (typeof window === 'undefined') return null;
+    if (!ledgerRef.current) {
+      let store: Storage | null = null;
+      try { store = window.localStorage; } catch { store = null; }
+      let wasFailing = false;
+      let wasUnavailable = false;
+      ledgerRef.current = new ScanLedger(token, TAB_ID, store, undefined, (st) => {
+        setLedgerStatus(st);
+        if (st.failing !== wasFailing) {
+          wasFailing = st.failing;
+          trace('lifecycle', st.failing ? 'ledger_send_failing' : 'ledger_send_ok', { pending: st.pending });
+          // The network is back (also when the browser never said "offline"):
+          // read the labels of cartons scanned without it.
+          if (!st.failing) window.setTimeout(() => rereadFailedLabels('send_ok'), 300);
+        }
+        if (!!st.unavailable !== wasUnavailable) {
+          wasUnavailable = !!st.unavailable;
+          trace('lifecycle', 'ledger_unavailable', { on: wasUnavailable, pending: st.pending });
+        }
+      }, undefined, (e) => {
+        trace('lifecycle', e.kind === 'dropped' ? 'ledger_op_dropped' : 'ledger_op_requeued', e);
+      });
+      ledgerRef.current.setCanSend(() => !lostSession(browserStore(), token, TAB_ID, sessionClaimedRef.current));
+    }
+    return ledgerRef.current;
+  }
+  const listPallet = phase === 'loose_scanning' ? 0 : currentPallet;
+  const listPhaseRef = useRef<{ phase: Phase; pallet: number }>({ phase, pallet: listPallet });
+  listPhaseRef.current = { phase, pallet: listPallet };
+  // Lists whose restored rows were settled on this page load (once: a row
+  // whose OCR is running HERE must never be marked failed by a later merge).
+  const settledListsRef = useRef<Set<number>>(new Set());
+
+  /** Merge a server pull into a list. On the first merge of a list after the
+   *  page loaded, rows whose OCR was running on a page that is gone become
+   *  'failed' (retry / edit) — and that corrected state is sent. */
+  function applyServerCartons(pallet: number, rows: ServerCarton[]): void {
+    const L = ledger();
+    if (!L) return;
+    const loose = pallet === 0;
+    const settle = !settledListsRef.current.has(pallet);
+    settledListsRef.current.add(pallet);
+    const setRows = loose ? setLooseBoxes : setScannedBoxes;
+    let grewFromServer = false;
+    setRows((prev) => {
+      const removals = L.pendingRemovals(pallet);
+      const base = removals.size ? prev.filter((r) => !removals.has(r.barcode)) : prev;
+      const m = mergeServer(base, L.versionsOf(pallet), rows);
+      // Only rows taken from the server copy are settled: a row scanned on
+      // this page may be mid-OCR right now.
+      const takenSet = new Set(m.taken);
+      const list = settle
+        ? m.list.map((r) => (takenSet.has(r.barcode) && r.ocr_status === 'processing' ? { ...r, ocr_status: 'failed' as OcrStatus } : r))
+        : m.list;
+      // A row settle just changed is not the server's state: leave it out of
+      // `taken`, so observe() sends the corrected status.
+      const settledKeys = new Set<string>();
+      if (settle) list.forEach((r, i) => { if (r !== m.list[i]) settledKeys.add(r.barcode); });
+      L.adopt(pallet, list, m.vers, m.push, m.taken.filter((k) => !settledKeys.has(k)));
+      if (!m.changed && base === prev && settledKeys.size === 0) return prev;
+      trace('lifecycle', 'ledger_merge', { pallet, server: rows.filter((r) => !r.deleted).length, before: prev.length, after: list.length, push: m.push.length });
+      // The dedup set follows the list: a carton the merge removed (deleted
+      // on another screen) must be scannable again here.
+      const dedup = loose ? looseProcessedRef.current : processedRef.current;
+      const kept = new Set(dedupCodes(list));
+      for (const code of dedupCodes(prev)) if (!kept.has(code)) dedup.delete(code);
+      for (const code of kept) dedup.add(code);
+      grewFromServer = list.length > prev.length;
+      return list;
+    });
+    // Pallet-level state derived from the cartons (single item / mix, the
+    // single-item question) follows a list that grew from the server copy —
+    // e.g. a fresh phone that restored everything from the server.
+    if (!loose) {
+      window.setTimeout(() => {
+        if (!grewFromServer) return;
+        setDetectedType(detectType(scannedBoxesRef.current, acceptedMerges));
+        maybeTriggerUniformPrompt(scannedBoxesRef.current, '');
+      }, 60);
+    }
+  }
+
+  async function syncList(pallet: number): Promise<void> {
+    const L = ledger();
+    if (!L || passive) return;
+    L.poke();
+    let rows: ServerCarton[];
+    try {
+      rows = await L.pull(pallet);
+    } catch {
+      return; // offline / not deployed yet: the local list stays, sends retry
+    }
+    const now = listPhaseRef.current;
+    if (now.pallet !== pallet || (now.phase !== 'scanning' && now.phase !== 'loose_scanning')) return;
+    if (lostSession(browserStore(), token, TAB_ID, sessionClaimedRef.current)) return;
+    applyServerCartons(pallet, rows);
+  }
+
+  useEffect(() => {
+    if (phase !== 'scanning' && phase !== 'loose_scanning') return;
+    if (passive) return;
+    const pallet = listPallet;
+    ledger()?.reopen(pallet);
+    void syncList(pallet);
+    const tick = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void syncList(pallet);
+    }, 5000);
+    const onOnline = () => {
+      trace('lifecycle', 'online', {});
+      void syncList(pallet);
+      rereadFailedLabels('online');
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') void syncList(pallet); };
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(tick);
+      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+    // syncList reads everything else through refs / the ledger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, listPallet, passive, token]);
+
+  // Cartons scanned without network got no label reading: read them when it
+  // is back (their photo is still on this page). Each is checked again at
+  // the moment it is retried, and a carton is retried once per outage.
+  const rereadDoneRef = useRef<Set<string>>(new Set());
+  function rereadFailedLabels(why: string): void {
+    const { phase: ph, pallet } = listPhaseRef.current;
+    if (ph !== 'scanning' && ph !== 'loose_scanning') return;
+    const loose = pallet === 0;
+    const rows = loose ? looseBoxesRef.current : scannedBoxesRef.current;
+    const retry = rows
+      .filter((b) => b.ocr_status === 'failed' && b.image_data && !rereadDoneRef.current.has(b.barcode))
+      .slice(0, 20);
+    if (!retry.length) return;
+    trace('ui', 'auto_retry_ocr', { n: retry.length, why });
+    retry.forEach((b, i) => {
+      rereadDoneRef.current.add(b.barcode);
+      window.setTimeout(() => {
+        const now = (loose ? looseBoxesRef.current : scannedBoxesRef.current).find((r) => r.barcode === b.barcode);
+        if (!now || now.ocr_status !== 'failed' || !now.image_data) return;
+        if (loose) retryLooseOcr(b.barcode); else retryPalletOcr(b.barcode);
+      }, 400 * i);
+    });
+  }
+
+  /**
+   * Before a list is booked: send what is queued, then take in anything the
+   * server has that this screen does not (another tab / phone). True when the
+   * list changed — the worker then sees the added cartons and confirms again.
+   * Bounded: at most ~6 s + 4 s, then the list on the screen is booked.
+   */
+  async function reconcileBeforeConfirm(pallet: number): Promise<boolean> {
+    const L = ledger();
+    if (!L) return false;
+    await Promise.race([L.flush(), new Promise((r) => setTimeout(r, 6000))]);
+    let rows: ServerCarton[];
+    try {
+      rows = await Promise.race([
+        L.pull(pallet),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('pull_timeout')), 4000)),
+      ]);
+    } catch (e) {
+      trace('lifecycle', 'ledger_confirm_skip', { pallet, why: e instanceof Error ? e.message : String(e) });
+      return false; // server copy unavailable: book what is on the screen
+    }
+    const loose = pallet === 0;
+    const cur = loose ? looseBoxesRef.current : scannedBoxesRef.current;
+    const removals = L.pendingRemovals(pallet);
+    const m = mergeServer(cur.filter((r) => !removals.has(r.barcode)), L.versionsOf(pallet), rows);
+    const grew = m.list.length !== cur.length || m.list.some((r, i) => r.barcode !== cur[i]?.barcode);
+    if (!grew) return false;
+    trace('lifecycle', 'ledger_confirm_merge', { pallet, before: cur.length, after: m.list.length });
+    applyServerCartons(pallet, rows);
     return true;
   }
 
@@ -1023,9 +1221,11 @@ export default function PalletVerifyPage({
         supplierPalletRef: supplierPalletRef || undefined,
       };
       savePalletScans(token, currentPallet, snap);
+      ledger()?.observe(currentPallet, scannedBoxes);
     } else if (phase === 'loose_scanning') {
       const snap: LooseScanSnapshot = { v: 1, looseBoxes: looseBoxes.map(stripImage) };
       saveLooseScans(token, snap);
+      ledger()?.observe(0, looseBoxes);
     }
   }, [
     token, currentPallet, phase, scannedBoxes, looseBoxes, uniformGroups, supplierPalletRef,
@@ -1199,6 +1399,13 @@ export default function PalletVerifyPage({
     (_barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
       const read = _barcode.trim();
       if (refuseIfSessionLost('scan')) return;
+      // The pallet is being booked: a carton read now would be on no list —
+      // say so (the camera already flashed) and keep the carton for later.
+      if (phaseRef.current === 'confirming' || phaseRef.current === 'loose_confirming') {
+        trace('ui', 'scan_refused_while_booking', { barcode: read });
+        showToast(tr('palletVerify.scanWhileSaving'), 'hourglass_top', '#fbbf5c');
+        return;
+      }
       // Every camera read moves the twin hold on (a different code releases it).
       const twinHeld = noteTwinHoldRead(twinHoldRef, read, Date.now());
       // A read that cannot be a carton barcode (a fragment, a failed check
@@ -1396,6 +1603,11 @@ export default function PalletVerifyPage({
 
   const handleManualCapture = useCallback((imageData: string) => {
     if (refuseIfSessionLost('manual_capture')) return;
+    if (phaseRef.current === 'confirming' || phaseRef.current === 'loose_confirming') {
+      trace('ui', 'scan_refused_while_booking', { manual: true });
+      showToast(tr('palletVerify.scanWhileSaving'), 'hourglass_top', '#fbbf5c');
+      return;
+    }
     const provisional = `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     trace('ui', 'manual_capture', { provisional, pallet: currentPalletRef.current, image_chars: imageData.length });
     const box: BoxScan = {
@@ -1877,6 +2089,13 @@ export default function PalletVerifyPage({
     (_barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
       const read = _barcode.trim();
       if (refuseIfSessionLost('scan')) return;
+      // The pallet is being booked: a carton read now would be on no list —
+      // say so (the camera already flashed) and keep the carton for later.
+      if (phaseRef.current === 'confirming' || phaseRef.current === 'loose_confirming') {
+        trace('ui', 'scan_refused_while_booking', { barcode: read });
+        showToast(tr('palletVerify.scanWhileSaving'), 'hourglass_top', '#fbbf5c');
+        return;
+      }
       // Every camera read moves the twin hold on (a different code releases it).
       const twinHeld = noteTwinHoldRead(twinHoldRef, read, Date.now());
       const verdict = classifyRead(read);
@@ -1931,6 +2150,11 @@ export default function PalletVerifyPage({
   // Manual capture for the loose phase — same fallback as the pallet phase.
   const handleLooseManualCapture = useCallback((imageData: string) => {
     if (refuseIfSessionLost('loose_manual_capture')) return;
+    if (phaseRef.current === 'confirming' || phaseRef.current === 'loose_confirming') {
+      trace('ui', 'scan_refused_while_booking', { manual: true });
+      showToast(tr('palletVerify.scanWhileSaving'), 'hourglass_top', '#fbbf5c');
+      return;
+    }
     const provisional = `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     trace('ui', 'loose_manual_capture', { provisional, image_chars: imageData.length });
     const box: BoxScan = {
@@ -3355,6 +3579,12 @@ export default function PalletVerifyPage({
     }
     setPhase('loose_confirming');
     setError(null);
+    if (await reconcileBeforeConfirm(0)) {
+      setPhase('loose_scanning');
+      showToast(tr('palletVerify.listUpdatedFromServer'), 'cloud_sync', '#13a4ec');
+      return;
+    }
+    const looseToBook = looseBoxesRef.current;
     try {
       const res = await fetch('/api/multi-pallet-loose-complete', {
         method: 'POST',
@@ -3365,7 +3595,7 @@ export default function PalletVerifyPage({
           // it was shipping the full frame of every loose box to the server
           // and on to the bot, which never had a use for it. image_url does.
           scanned_boxes: stripProvisionalIds(
-            looseBoxes.map(({ ocr_status: _, image_data: _img, ...box }) => box),
+            looseToBook.map(({ ocr_status: _, image_data: _img, ...box }) => box),
             session?.document_number || '',
             0,
           ),
@@ -3393,6 +3623,9 @@ export default function PalletVerifyPage({
         setPhase('loose_scanning');
         return;
       }
+      // Booked: the list is closed on the server copy (clearing it next is
+      // not a removal of its cartons).
+      ledger()?.close(0);
       if (session && isSplitSession(session)) {
         // Split jobs: the loose task may not be the final piece of the
         // delivery — another worker could still be mid-pallet. Return to the
@@ -3572,6 +3805,9 @@ export default function PalletVerifyPage({
     bookedBarcodes?: string[],
   ) {
     trace('ui', 'pallet_completed', { pallet: currentPallet, lpn: data.lpn, type: palletTypeLabel, boxCount, next_pallet: data.next_pallet, all_done: data.all_done });
+    // Booked: the list is closed on the server copy (clearing it for the next
+    // pallet is not a removal of its cartons).
+    ledger()?.close(currentPallet);
     setLpn(data.lpn || '');
     setLpnUrl(data.lpn_url || '');
 
@@ -3693,6 +3929,9 @@ export default function PalletVerifyPage({
   // toast (already rendered alongside it) is what the worker actually sees.
   function handlePalletReleased() {
     trace('ui', 'pallet_released', { pallet: currentPallet });
+    // Not a removal of its cartons: whoever takes the pallet next gets them
+    // from the server copy.
+    ledger()?.close(currentPallet);
     clearPalletScans(token, currentPallet);
     resetPalletUiState();
     showToast(tr('split.palletReleased'), 'report_problem', '#f8a3a3');
@@ -3719,6 +3958,15 @@ export default function PalletVerifyPage({
     }
     setPhase('confirming');
     setError(null);
+    // Cartons another tab / phone saved on the server that this screen does
+    // not show yet: show them first, the worker confirms again.
+    if (await reconcileBeforeConfirm(currentPallet)) {
+      setPhase('scanning');
+      showToast(tr('palletVerify.listUpdatedFromServer'), 'cloud_sync', '#13a4ec');
+      return;
+    }
+    // The list as it is now (the reconcile above awaited): book exactly this.
+    const rowsToBook = scannedBoxesRef.current;
 
     const declaredCount = override?.boxCount ?? confirmedBoxCount;
     const lockedGroups = override?.groups ?? uniformGroups;
@@ -3744,10 +3992,13 @@ export default function PalletVerifyPage({
         body: JSON.stringify({
           token,
           scanned_boxes: stripProvisionalIds(
-            scannedBoxes.map(({ ocr_status: _, image_data: _img, ...box }) => box),
+            rowsToBook.map(({ ocr_status: _, image_data: _img, ...box }) => box),
             session?.document_number || '',
             currentPallet,
           ),
+          // Single jobs: the server refuses a pallet that is no longer the
+          // current one (another tab / phone already booked it).
+          pallet_number: currentPallet,
           box_count: declaredCount,
           uniform_groups: uniformGroupsPayload,
           merge_map: mergeMapPayload,
@@ -3764,6 +4015,22 @@ export default function PalletVerifyPage({
 
       if (res.status === 409 && data.error === 'no_claimed_pallet') {
         handlePalletReleased();
+        return;
+      }
+
+      if ((res.status === 409 && data.error === 'pallet_already_completed')
+        || (res.status === 400 && data.code === 'session_completed')) {
+        // Booked from another tab / phone: nothing was written now. Reload
+        // onto the session's current pallet (or the done screen). The list
+        // stays in the server copy; the trace names every carton on this
+        // screen so a late one can be found and added by hand.
+        trace('ui', 'pallet_already_completed', {
+          pallet: currentPallet, current: data.current_pallet, code: data.code || data.error,
+          barcodes: rowsToBook.map((b) => b.barcode),
+        });
+        ledger()?.close(currentPallet);
+        showToast(tr('palletVerify.palletAlreadyBooked', { n: currentPallet }), 'info', '#13a4ec');
+        window.setTimeout(() => window.location.reload(), 1500);
         return;
       }
 
@@ -3791,7 +4058,7 @@ export default function PalletVerifyPage({
       // same-weight counts as single. Advance via the shared helper.
       const palletTypeLabel: 'single' | 'mix' =
         detectedType === 'single-uniform' ? 'single' : 'mix';
-      applyCompletion(data, palletTypeLabel, declaredCount, scannedBoxes.map((b) => b.barcode));
+      applyCompletion(data, palletTypeLabel, declaredCount, rowsToBook.map((b) => b.barcode));
     } catch {
       setError(tr('palletVerify.networkError'));
       setPhase('scanning');
@@ -3954,6 +4221,34 @@ export default function PalletVerifyPage({
    * `total <= 0` means "not declared yet", so the denominator is held back
    * rather than shown as a misleading /0.
    */
+  // The server copy's state (lib/scan-ledger.ts): green "Saved" when every
+  // carton on the screen is on the server, amber while changes are being
+  // sent, red while offline (they wait on the phone and are sent when the
+  // network is back).
+  function SyncBadge() {
+    const st = ledgerStatus;
+    if (st.unavailable) return null; // server copy not deployed: page works as before
+    if (!st.everSynced && st.pending === 0 && !st.failing) return null;
+    const color = st.failing ? '#f8a3a3' : st.pending > 0 ? '#fbbf5c' : '#4ade80';
+    const icon = st.failing ? 'cloud_off' : st.pending > 0 ? 'cloud_upload' : 'cloud_done';
+    const label = st.failing
+      ? tr('palletVerify.syncOffline', { n: st.pending })
+      : st.pending > 0
+        ? tr('palletVerify.syncPending', { n: st.pending })
+        : tr('palletVerify.syncSaved');
+    return (
+      <span
+        data-testid="sync-badge"
+        aria-live="polite"
+        className="inline-flex items-center gap-[3px] text-[9px] font-bold whitespace-nowrap"
+        style={{ color }}
+      >
+        <MI name={icon} size={12} />
+        {label}
+      </span>
+    );
+  }
+
   function HeaderCount({
     caption, current, total, align, tone = 'brand', editable = false,
   }: {
@@ -4288,7 +4583,8 @@ export default function PalletVerifyPage({
             </span>
           }
           right={
-            <span className="pe-2">
+            <span className="pe-2 flex items-center gap-2">
+              <SyncBadge />
               <HeaderCount
                 caption={tr('terminal.statCartons')}
                 current={scanned}
@@ -4313,7 +4609,7 @@ export default function PalletVerifyPage({
                 instead of the stale pallet-phase handler. */}
             <SmartScanner
               key="loose-scanner"
-              paused={!!editForm || overlayOpen}
+              paused={!!editForm || overlayOpen || phase === 'loose_confirming'}
               preferCartonCodes
               acceptValue={acceptScannerValue}
               frame="corner"
@@ -4778,7 +5074,8 @@ export default function PalletVerifyPage({
           </span>
         }
         right={
-          <span className="pe-2">
+          <span className="pe-2 flex items-center gap-2">
+            <SyncBadge />
             {canEditTotal ? (
               // Tapping the counter is the other way to change the total.
               <button
@@ -4819,7 +5116,7 @@ export default function PalletVerifyPage({
             key={`pallet-scanner-${currentPallet}`}
             frame="corner"
             className="h-full"
-            paused={!!editForm || overlayOpen}
+            paused={!!editForm || overlayOpen || phase === 'confirming'}
             // An EAN-13 product code beside the carton's own long code in one
             // frame never wins (lib/frame-reads.ts).
             preferCartonCodes
