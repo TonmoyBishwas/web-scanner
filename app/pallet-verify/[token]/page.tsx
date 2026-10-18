@@ -96,6 +96,11 @@ import {
   clearLooseScans,
   clearAllScans,
 } from '@/lib/pallet-scan-cache';
+import { browserStore, claimSession, lostSession, newTabId, ownerKey } from '@/lib/session-owner';
+
+// One id per page load: the tab that opened the scan last owns it
+// (lib/session-owner.ts — two tabs must not overwrite each other's cartons).
+const TAB_ID = newTabId();
 
 // Set up the in-page console-log capture once at module load. Idempotent —
 // safe even with React Strict Mode mounting twice.
@@ -926,11 +931,64 @@ export default function PalletVerifyPage({
 
   // ── Load session ──
 
+  // lib/session-owner.ts: this tab owns the scan session once it reaches a
+  // scanning phase (after the loader restored the stored list). Another tab
+  // opened later takes it; this one then writes nothing (`passive`) and
+  // reloads when the worker comes back to it. Declared before the persist
+  // effect so the claim lands before the first write.
+  const sessionClaimedRef = useRef(false);
+  const [passive, setPassive] = useState(false);
+  useEffect(() => {
+    if (sessionClaimedRef.current) return;
+    if (phase !== 'scanning' && phase !== 'loose_scanning') return;
+    sessionClaimedRef.current = claimSession(browserStore(), token, TAB_ID);
+    trace('lifecycle', 'session_claim', { ok: sessionClaimedRef.current });
+  }, [phase, token]);
+
+  useEffect(() => {
+    if (phase !== 'scanning' && phase !== 'loose_scanning') return;
+    const lost = () => lostSession(browserStore(), token, TAB_ID, sessionClaimedRef.current);
+    const onStorage = (e: StorageEvent) => {
+      if ((e.key === ownerKey(token) || e.key === null) && lost()) {
+        trace('lifecycle', 'session_taken', { by: e.newValue ? 'tab' : 'cleared' });
+        setPassive(true);
+      }
+    };
+    const onFront = () => {
+      if (document.visibilityState !== 'visible' || !lost()) return;
+      trace('lifecycle', 'session_reload', { phase });
+      window.location.reload();
+    };
+    window.addEventListener('storage', onStorage);
+    document.addEventListener('visibilitychange', onFront);
+    window.addEventListener('pageshow', onFront);
+    window.addEventListener('focus', onFront);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      document.removeEventListener('visibilitychange', onFront);
+      window.removeEventListener('pageshow', onFront);
+      window.removeEventListener('focus', onFront);
+    };
+  }, [phase, token]);
+
+  // This tab cleared the whole session itself (all done): the owner key went
+  // with it, which is not another tab taking over.
+  function releaseSession() {
+    sessionClaimedRef.current = false;
+  }
+
   // Persist in-progress scans to localStorage so a reload never loses them.
   // The phase guard makes this naturally safe vs the restore-on-mount below:
   // while phase is 'loading' nothing is written, so the loader restores first
   // and only then (phase → 'scanning') do we start mirroring to storage.
+  // A tab that lost the session to a newer tab writes nothing: its list is
+  // stale, and writing it is exactly what wiped 31 cartons on 18/10.
   useEffect(() => {
+    if ((phase === 'scanning' || phase === 'loose_scanning')
+      && lostSession(browserStore(), token, TAB_ID, sessionClaimedRef.current)) {
+      setPassive(true);
+      return;
+    }
     if (phase === 'scanning') {
       const snap: PalletScanSnapshot = {
         v: 1,
@@ -964,7 +1022,7 @@ export default function PalletVerifyPage({
         }
         const data: MultiPalletSession = await res.json();
         if (data.status === 'completed') {
-          clearAllScans(token);
+          clearAllScans(token); releaseSession();
           setSession(data);
           setPhase('all_done');
           return;
@@ -3327,7 +3385,7 @@ export default function PalletVerifyPage({
         setPhase('job');
         return;
       }
-      clearAllScans(token);
+      clearAllScans(token); releaseSession();
       setPhase('all_done');
     } catch {
       setError(tr('palletVerify.networkError'));
@@ -3521,7 +3579,7 @@ export default function PalletVerifyPage({
     );
 
     if (data.all_done) {
-      clearAllScans(token);
+      clearAllScans(token); releaseSession();
       if (session && session.loose_box_count > 0) {
         setPhase('loose_scanning');
       } else {
@@ -3878,6 +3936,26 @@ export default function PalletVerifyPage({
           {total > 0 && <span className="text-ink-muted">/{total}</span>}
         </span>
       </span>
+    );
+  }
+
+  // lib/session-owner.ts: another tab took this scan. Nothing here is saved
+  // any more; continuing reloads, which restores the latest list and takes
+  // the scan back. Rendering only this also stops this tab's camera.
+  if (passive) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-5 p-6 bg-canvas text-center">
+        <AlertTriangle className="text-warn w-12 h-12" />
+        <p className="text-lg font-semibold text-ink">{tr('palletVerify.otherTab')}</p>
+        <p className="text-ink-body">{tr('palletVerify.otherTabHint')}</p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="rounded-xl bg-brand px-6 py-3 text-base font-semibold text-white"
+        >
+          {tr('palletVerify.otherTabContinue')}
+        </button>
+      </div>
     );
   }
 
