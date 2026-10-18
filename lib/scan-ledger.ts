@@ -47,9 +47,12 @@ export interface LedgerOp {
   ver: number;
   tab: string;
   /** 'user' = the worker scanned / edited / removed it on this page; 'sync' =
-   *  re-sent because a merge found the server lacking it. Only a 'user'
-   *  scan wins over a removal it raced with (a carton is never lost). */
-  origin?: 'user' | 'sync';
+   *  re-sent because a merge found the server lacking it; 'edit' = a field
+   *  update of a carton already on the list (OCR result, photo URL, a typed
+   *  weight). Only a 'user' scan of a NEW carton wins over a removal it raced
+   *  with (a carton in hand is never lost); an edit never revives a carton
+   *  removed elsewhere. */
+  origin?: 'user' | 'edit' | 'sync';
 }
 
 /** Fields that never go to the server: the photo bytes (megabytes; the
@@ -283,6 +286,10 @@ export class ScanLedger {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private attempt = 0;
   private floor = 0;
+  private stopped = false;
+  /** Asked before every send: false when this page lost the session to
+   *  another tab (it may have been frozen and only just woke up). */
+  private canSend: () => boolean = () => true;
   private status: LedgerStatus = { pending: 0, failing: false, everSynced: false };
   private readonly clockVer: () => number;
 
@@ -342,8 +349,9 @@ export class ScanLedger {
     const { upserts, removed } = diffList(known, list);
     if (!upserts.length && !removed.length) return;
     for (const row of upserts) {
+      const isNew = !known.has(row.barcode);
       known.set(row.barcode, rowSig(row));
-      this.enqueue({ pallet, key: row.barcode, row, deleted: false, ver: this.newVer(pallet, row.barcode), tab: this.tab, origin: 'user' });
+      this.enqueue({ pallet, key: row.barcode, row, deleted: false, ver: this.newVer(pallet, row.barcode), tab: this.tab, origin: isNew ? 'user' : 'edit' });
     }
     for (const key of removed) {
       known.delete(key);
@@ -442,8 +450,21 @@ export class ScanLedger {
     return true;
   }
 
-  /** Kick a send now (after `online`, on focus), cutting any backoff wait. */
+  setCanSend(fn: () => boolean): void { this.canSend = fn; }
+
+  /** This page lost the session to another tab: it sends nothing more (its
+   *  outbox stays in storage; the owning tab adopts and sends it). */
+  stop(): void {
+    this.stopped = true;
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    this.persist();
+  }
+
+  /** Kick a send now (after `online`, on focus), cutting any backoff wait —
+   *  not while the server copy is known to be missing (its own slow retry
+   *  runs). */
   poke(): void {
+    if (this.stopped || this.status.unavailable) return;
     this.attempt = 0;
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
     this.schedule(0);
@@ -469,7 +490,7 @@ export class ScanLedger {
   }
 
   private schedule(ms: number): void {
-    if (this.timer || this.inflight) return;
+    if (this.stopped || this.timer || this.inflight) return;
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.sendBatch().then((ok) => {
@@ -484,8 +505,11 @@ export class ScanLedger {
   }
 
   private async sendBatch(): Promise<boolean> {
-    if (this.inflight) return false;
+    if (this.stopped || this.inflight) return false;
     if (this.outbox.size === 0) return true;
+    let allowed = true;
+    try { allowed = this.canSend(); } catch { allowed = true; }
+    if (!allowed) { this.stop(); return false; }
     this.inflight = true;
     const batch = [...this.outbox.values()].slice(0, MAX_BATCH);
     try {
@@ -494,7 +518,7 @@ export class ScanLedger {
       let progressed = false;
       for (const op of batch) {
         const k = opKey(op.pallet, op.key);
-        if (this.outbox.get(k)?.ver !== op.ver) continue; // changed meanwhile: the newer one goes next
+        if (this.outbox.get(k)?.ver !== op.ver) { progressed = true; continue; } // changed meanwhile: the newer one goes next
         const ack = acked.get(k);
         if (!ack || ack.rejected) {
           // Never resent: a change the server cannot take would loop forever.

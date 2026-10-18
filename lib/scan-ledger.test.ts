@@ -349,4 +349,36 @@ describe('ScanLedger', () => {
     expect(s.live(1)).toEqual([]);
     expect(b.keys()).toEqual([]);
   });
+
+  it('an OCR / photo update of a carton removed on another screen does not bring it back', async () => {
+    const s = fakeServer();
+    const a = page('tok', 'A', memStore(), s.t);
+    a.scan('E', 10);
+    await a.sync();
+    const b = page('tok', 'B', memStore(), s.t, a.list);
+    await b.sync();
+    s.setOnline(false);
+    a.edit('E', 10.4);       // OCR result lands on A while A is offline
+    s.setOnline(true);
+    b.remove('E');
+    await b.sync();          // removal reaches the server first
+    await a.sync();          // A's edit is older than the removal: dropped, not re-sent above it
+    expect(s.live(1)).toEqual([]);
+    expect(a.keys()).toEqual([]);
+  });
+
+  it('a page that lost the session sends nothing (its outbox waits for the owner)', async () => {
+    const s = fakeServer();
+    const store = memStore();
+    const a = page('tok', 'A', store, s.t);
+    let owner = true;
+    a.L.setCanSend(() => owner);
+    owner = false;
+    a.scan('P');
+    expect(await a.L.flush()).toBe(false);
+    expect(s.live(1)).toEqual([]);
+    const b = page('tok', 'B', store, s.t);
+    await b.sync();
+    expect(s.live(1)).toEqual(['P']);
+  });
 });

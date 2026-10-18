@@ -157,6 +157,7 @@ export const en = {
   'palletVerify.syncSaved': 'Saved',
   'palletVerify.syncPending': 'Saving {n}',
   'palletVerify.syncOffline': 'Offline · {n} waiting',
+  'palletVerify.scanWhileSaving': 'Saving the pallet — scan this carton again in a moment',
   'palletVerify.palletAlreadyBooked': 'Pallet {n} was already confirmed on another screen — reloading',
   'palletVerify.networkError': 'Network error. Please try again.',
   'palletVerify.failedComplete': 'Failed to complete pallet.',

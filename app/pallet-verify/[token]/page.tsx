@@ -992,6 +992,12 @@ export default function PalletVerifyPage({
   // and its cleanup deleted the owner's list), nor start OCR for a carton the
   // owner will never see. Uses only refs, the token and a state setter, so a
   // stale closure is fine.
+  // A tab that lost the session sends nothing more to the server copy (the
+  // owning tab adopts its stored outbox).
+  useEffect(() => {
+    if (passive) ledgerRef.current?.stop();
+  }, [passive]);
+
   function refuseIfSessionLost(where: string): boolean {
     if (!lostSession(browserStore(), token, TAB_ID, sessionClaimedRef.current)) return false;
     trace('lifecycle', 'session_lost_refused', { where });
@@ -1022,6 +1028,9 @@ export default function PalletVerifyPage({
         if (st.failing !== wasFailing) {
           wasFailing = st.failing;
           trace('lifecycle', st.failing ? 'ledger_send_failing' : 'ledger_send_ok', { pending: st.pending });
+          // The network is back (also when the browser never said "offline"):
+          // read the labels of cartons scanned without it.
+          if (!st.failing) window.setTimeout(() => rereadFailedLabels('send_ok'), 300);
         }
         if (!!st.unavailable !== wasUnavailable) {
           wasUnavailable = !!st.unavailable;
@@ -1030,6 +1039,7 @@ export default function PalletVerifyPage({
       }, undefined, (e) => {
         trace('lifecycle', e.kind === 'dropped' ? 'ledger_op_dropped' : 'ledger_op_requeued', e);
       });
+      ledgerRef.current.setCanSend(() => !lostSession(browserStore(), token, TAB_ID, sessionClaimedRef.current));
     }
     return ledgerRef.current;
   }
@@ -1050,7 +1060,7 @@ export default function PalletVerifyPage({
     const settle = !settledListsRef.current.has(pallet);
     settledListsRef.current.add(pallet);
     const setRows = loose ? setLooseBoxes : setScannedBoxes;
-    let changedList: BoxScan[] | null = null;
+    let grewFromServer = false;
     setRows((prev) => {
       const removals = L.pendingRemovals(pallet);
       const base = removals.size ? prev.filter((r) => !removals.has(r.barcode)) : prev;
@@ -1074,7 +1084,7 @@ export default function PalletVerifyPage({
       const kept = new Set(dedupCodes(list));
       for (const code of dedupCodes(prev)) if (!kept.has(code)) dedup.delete(code);
       for (const code of kept) dedup.add(code);
-      changedList = list;
+      grewFromServer = list.length > prev.length;
       return list;
     });
     // Pallet-level state derived from the cartons (single item / mix, the
@@ -1082,7 +1092,7 @@ export default function PalletVerifyPage({
     // e.g. a fresh phone that restored everything from the server.
     if (!loose) {
       window.setTimeout(() => {
-        if (!changedList) return;
+        if (!grewFromServer) return;
         setDetectedType(detectType(scannedBoxesRef.current, acceptedMerges));
         maybeTriggerUniformPrompt(scannedBoxesRef.current, '');
       }, 60);
@@ -1117,14 +1127,7 @@ export default function PalletVerifyPage({
     const onOnline = () => {
       trace('lifecycle', 'online', {});
       void syncList(pallet);
-      // Cartons scanned without network got no label reading: read them now
-      // (their photo is still on this page).
-      const rows = pallet === 0 ? looseBoxesRef.current : scannedBoxesRef.current;
-      const retry = rows.filter((b) => b.ocr_status === 'failed' && b.image_data).slice(0, 20);
-      if (retry.length) trace('ui', 'auto_retry_ocr_online', { n: retry.length });
-      retry.forEach((b, i) => {
-        window.setTimeout(() => (pallet === 0 ? retryLooseOcr(b.barcode) : retryPalletOcr(b.barcode)), 400 * i);
-      });
+      rereadFailedLabels('online');
     };
     const onVisible = () => { if (document.visibilityState === 'visible') void syncList(pallet); };
     window.addEventListener('online', onOnline);
@@ -1137,6 +1140,30 @@ export default function PalletVerifyPage({
     // syncList reads everything else through refs / the ledger.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, listPallet, passive, token]);
+
+  // Cartons scanned without network got no label reading: read them when it
+  // is back (their photo is still on this page). Each is checked again at
+  // the moment it is retried, and a carton is retried once per outage.
+  const rereadDoneRef = useRef<Set<string>>(new Set());
+  function rereadFailedLabels(why: string): void {
+    const { phase: ph, pallet } = listPhaseRef.current;
+    if (ph !== 'scanning' && ph !== 'loose_scanning') return;
+    const loose = pallet === 0;
+    const rows = loose ? looseBoxesRef.current : scannedBoxesRef.current;
+    const retry = rows
+      .filter((b) => b.ocr_status === 'failed' && b.image_data && !rereadDoneRef.current.has(b.barcode))
+      .slice(0, 20);
+    if (!retry.length) return;
+    trace('ui', 'auto_retry_ocr', { n: retry.length, why });
+    retry.forEach((b, i) => {
+      rereadDoneRef.current.add(b.barcode);
+      window.setTimeout(() => {
+        const now = (loose ? looseBoxesRef.current : scannedBoxesRef.current).find((r) => r.barcode === b.barcode);
+        if (!now || now.ocr_status !== 'failed' || !now.image_data) return;
+        if (loose) retryLooseOcr(b.barcode); else retryPalletOcr(b.barcode);
+      }, 400 * i);
+    });
+  }
 
   /**
    * Before a list is booked: send what is queued, then take in anything the
@@ -1372,8 +1399,13 @@ export default function PalletVerifyPage({
     (_barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
       const read = _barcode.trim();
       if (refuseIfSessionLost('scan')) return;
-      // The pallet is being booked: a carton read now would be on no list.
-      if (phaseRef.current === 'confirming' || phaseRef.current === 'loose_confirming') return;
+      // The pallet is being booked: a carton read now would be on no list —
+      // say so (the camera already flashed) and keep the carton for later.
+      if (phaseRef.current === 'confirming' || phaseRef.current === 'loose_confirming') {
+        trace('ui', 'scan_refused_while_booking', { barcode: read });
+        showToast(tr('palletVerify.scanWhileSaving'), 'hourglass_top', '#fbbf5c');
+        return;
+      }
       // Every camera read moves the twin hold on (a different code releases it).
       const twinHeld = noteTwinHoldRead(twinHoldRef, read, Date.now());
       // A read that cannot be a carton barcode (a fragment, a failed check
@@ -1571,7 +1603,11 @@ export default function PalletVerifyPage({
 
   const handleManualCapture = useCallback((imageData: string) => {
     if (refuseIfSessionLost('manual_capture')) return;
-    if (phaseRef.current === 'confirming' || phaseRef.current === 'loose_confirming') return;
+    if (phaseRef.current === 'confirming' || phaseRef.current === 'loose_confirming') {
+      trace('ui', 'scan_refused_while_booking', { manual: true });
+      showToast(tr('palletVerify.scanWhileSaving'), 'hourglass_top', '#fbbf5c');
+      return;
+    }
     const provisional = `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     trace('ui', 'manual_capture', { provisional, pallet: currentPalletRef.current, image_chars: imageData.length });
     const box: BoxScan = {
@@ -2053,8 +2089,13 @@ export default function PalletVerifyPage({
     (_barcode: string, _parsed: ParsedBarcode, imageData?: string) => {
       const read = _barcode.trim();
       if (refuseIfSessionLost('scan')) return;
-      // The pallet is being booked: a carton read now would be on no list.
-      if (phaseRef.current === 'confirming' || phaseRef.current === 'loose_confirming') return;
+      // The pallet is being booked: a carton read now would be on no list —
+      // say so (the camera already flashed) and keep the carton for later.
+      if (phaseRef.current === 'confirming' || phaseRef.current === 'loose_confirming') {
+        trace('ui', 'scan_refused_while_booking', { barcode: read });
+        showToast(tr('palletVerify.scanWhileSaving'), 'hourglass_top', '#fbbf5c');
+        return;
+      }
       // Every camera read moves the twin hold on (a different code releases it).
       const twinHeld = noteTwinHoldRead(twinHoldRef, read, Date.now());
       const verdict = classifyRead(read);
@@ -2109,7 +2150,11 @@ export default function PalletVerifyPage({
   // Manual capture for the loose phase — same fallback as the pallet phase.
   const handleLooseManualCapture = useCallback((imageData: string) => {
     if (refuseIfSessionLost('loose_manual_capture')) return;
-    if (phaseRef.current === 'confirming' || phaseRef.current === 'loose_confirming') return;
+    if (phaseRef.current === 'confirming' || phaseRef.current === 'loose_confirming') {
+      trace('ui', 'scan_refused_while_booking', { manual: true });
+      showToast(tr('palletVerify.scanWhileSaving'), 'hourglass_top', '#fbbf5c');
+      return;
+    }
     const provisional = `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     trace('ui', 'loose_manual_capture', { provisional, image_chars: imageData.length });
     const box: BoxScan = {
@@ -3973,10 +4018,16 @@ export default function PalletVerifyPage({
         return;
       }
 
-      if (res.status === 409 && data.error === 'pallet_already_completed') {
+      if ((res.status === 409 && data.error === 'pallet_already_completed')
+        || (res.status === 400 && data.code === 'session_completed')) {
         // Booked from another tab / phone: nothing was written now. Reload
-        // onto the session's current pallet.
-        trace('ui', 'pallet_already_completed', { pallet: currentPallet, current: data.current_pallet });
+        // onto the session's current pallet (or the done screen). The list
+        // stays in the server copy; the trace names every carton on this
+        // screen so a late one can be found and added by hand.
+        trace('ui', 'pallet_already_completed', {
+          pallet: currentPallet, current: data.current_pallet, code: data.code || data.error,
+          barcodes: rowsToBook.map((b) => b.barcode),
+        });
         ledger()?.close(currentPallet);
         showToast(tr('palletVerify.palletAlreadyBooked', { n: currentPallet }), 'info', '#13a4ec');
         window.setTimeout(() => window.location.reload(), 1500);
@@ -5065,7 +5116,7 @@ export default function PalletVerifyPage({
             key={`pallet-scanner-${currentPallet}`}
             frame="corner"
             className="h-full"
-            paused={!!editForm || overlayOpen}
+            paused={!!editForm || overlayOpen || phase === 'confirming'}
             // An EAN-13 product code beside the carton's own long code in one
             // frame never wins (lib/frame-reads.ts).
             preferCartonCodes

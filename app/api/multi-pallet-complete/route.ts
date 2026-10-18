@@ -195,7 +195,7 @@ export async function POST(request: NextRequest) {
     }
     const lang = session.language as Language | undefined;
     if (session.status === 'completed') {
-      errorResult = { status: 400, body: { success: false, error: t(lang, 'errors.sessionAlreadyCompleted') } };
+      errorResult = { status: 400, body: { success: false, code: 'session_completed', error: t(lang, 'errors.sessionAlreadyCompleted') } };
       return;
     }
 
