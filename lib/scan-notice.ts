@@ -34,9 +34,43 @@ export const SCAN_NOTICE_MS = 4000;
  */
 export const SCAN_NOTICE_ACTION_MS = 8000;
 
-/** How long this notice stays up. */
-export function scanNoticeMs(notice: { different?: unknown; newCarton?: unknown }): number {
-  return notice.different || notice.newCarton ? SCAN_NOTICE_ACTION_MS : SCAN_NOTICE_MS;
+/**
+ * How long this notice stays up; null = until it is answered (19/10).
+ *
+ * A notice that ASKS something stays: "already on the list — same carton, or
+ * another carton with an identical label?" and "only a short barcode — is
+ * there a long one?". Both used to vanish after 4–8 s, and the first one told
+ * a worker holding a real twin to "scan the next carton". The next good scan,
+ * another notice, a phase change or either answer takes it down — the camera
+ * never waits on it.
+ */
+export function scanNoticeMs(notice: { different?: unknown; newCarton?: unknown; short?: unknown }): number | null {
+  if (notice.different || notice.short) return null;
+  return notice.newCarton ? SCAN_NOTICE_ACTION_MS : SCAN_NOTICE_MS;
+}
+
+/**
+ * A short read (lib/carton-barcode.ts too_short, e.g. `406243` on document
+ * 48429) is explained once per code per minute. It used to come back amber,
+ * with a buzz, every ~3 s for as long as the camera saw the code.
+ */
+export const SHORT_NOTICE_QUIET_MS = 60000;
+
+/**
+ * Explain this short code now? Yes the first time and once `windowMs` has
+ * passed since it was last explained (a fixed window, not sliding: a camera
+ * parked on it hears again after a minute). Records `now` when it says yes.
+ */
+export function shouldExplainShortRead(
+  last: Map<string, number>,
+  code: string,
+  now: number,
+  windowMs: number = SHORT_NOTICE_QUIET_MS,
+): boolean {
+  const prev = last.get(code);
+  if (prev !== undefined && now - prev < windowMs) return false;
+  last.set(code, now);
+  return true;
 }
 
 /** How long the carton a notice names stays highlighted in the list. */
@@ -149,6 +183,18 @@ export function twinCount(rows: ReadonlyArray<CountedRow>, code: string): number
 }
 
 /**
+ * How many cartons on the list carry this exact label: the row with the code
+ * itself plus every twin saved for it ("Another carton, same label" /
+ * "Different carton?"). What the twin form counts as "already on the list"
+ * when it asks for the total with this label.
+ */
+export function sameLabelOnList(rows: ReadonlyArray<CountedRow>, code: string): number {
+  const c = digitsOf(code);
+  if (!c) return 0;
+  return rows.filter((r) => digitsOf(r.barcode) === c || (r.twin && digitsOf(r.source_barcode) === c)).length;
+}
+
+/**
  * The carton a manual capture's printed digits refer to: the FULL printed
  * number against every other row's barcode digits — never the 13-digit SKU,
  * which repeats on every carton of one product. `exceptBarcode` is the
@@ -226,6 +272,36 @@ export function differentCartonOffer(
   if (!canOfferDifferentCarton(code, row)) return null;
   const weight = parseCartonBarcode(code)?.weight ?? null;
   return weight !== null ? { quick: true, weight } : { quick: false };
+}
+
+/**
+ * Which words an already-on-the-list notice uses (19/10). It ASKS — "same
+ * carton, or another carton with an identical label?" — whenever it can
+ * offer "Another carton — add it"; otherwise it only says where the carton
+ * is: our own printed label (`28…`, one per carton by construction), or a
+ * carton whose sticker is still being read ("scan it again in a moment").
+ * Never "already counted — scan the next carton", which told a worker
+ * holding a real twin to skip it.
+ */
+export type ListedNoticeKey =
+  | 'terminal.alreadyCounted'
+  | 'terminal.photoAlreadyCounted'
+  | 'terminal.alreadyCountedPlusTwins'
+  | 'terminal.ownLabelListed'
+  | 'terminal.alreadyListedReading'
+  | 'terminal.alreadyListed';
+
+export function listedNoticeKey(
+  code: string,
+  row: ({ ocr_status?: string } & Partial<CountedRow>) | null,
+  opts: { photo: boolean; twins: number },
+): ListedNoticeKey {
+  if (!row || !differentCartonOffer(code, row)) {
+    if (isMintedLabelBarcode(code)) return 'terminal.ownLabelListed';
+    return row?.ocr_status === 'processing' ? 'terminal.alreadyListedReading' : 'terminal.alreadyListed';
+  }
+  if (opts.twins > 0) return 'terminal.alreadyCountedPlusTwins';
+  return opts.photo ? 'terminal.photoAlreadyCounted' : 'terminal.alreadyCounted';
 }
 
 /**

@@ -98,6 +98,12 @@ interface EditPanelProps {
    * where a worker never saw "5 digits — need at least 13".
    */
   saveError?: string | null;
+  /**
+   * Ways forward for `saveError`, drawn as buttons under it — e.g. typed
+   * digits already on the list: "Same carton — remove this row" and
+   * "Another carton, identical label — add it". `primary` = the brand one.
+   */
+  saveErrorActions?: Array<{ label: string; onPress: () => void; primary?: boolean }>;
   /** Invoice item chips for name snapping (design's iField) */
   itemChips?: EditItemChip[];
   imageData?: string;
@@ -180,7 +186,7 @@ export function EditPanel({
   barcodeWeight, barcodeExpiry, onUseBarcodeWeight, onUseBarcodeExpiry,
   barcodeEditable, barcodeInput = '', onBarcodeChange,
   onCreateBarcode, minting, onNoBarcode, showNoBarcode, onAddBarcode,
-  needsReview, weightWarning, saveError,
+  needsReview, weightWarning, saveError, saveErrorActions,
   onNameChange, onWeightChange, onExpiryChange, onProductionDateChange, onBatchChange, onSave, onCancel,
 }: EditPanelProps) {
   const tr = useT();
@@ -432,6 +438,22 @@ export function EditPanel({
         >
           <MI name="error" size={17} className="flex-none" />
           <span className="min-w-0">{saveError}</span>
+        </div>
+      )}
+      {saveError && saveErrorActions && saveErrorActions.length > 0 && (
+        <div className="flex-none flex gap-2 px-[13px] py-[8px] bg-danger-weak border-b border-danger/40">
+          {saveErrorActions.map((a) => (
+            <button
+              key={a.label}
+              type="button"
+              onClick={a.onPress}
+              className={`flex-1 min-w-0 min-h-[44px] px-2 py-1 rounded-[11px] text-[12px] font-black leading-tight text-center ${
+                a.primary ? 'bg-brand text-white' : 'bg-tile border border-line-strong text-ink-inverse'
+              }`}
+            >
+              {a.label}
+            </button>
+          ))}
         </div>
       )}
 

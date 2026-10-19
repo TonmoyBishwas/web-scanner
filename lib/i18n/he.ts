@@ -102,7 +102,7 @@ export const he: Record<TranslationKey, string> = {
   'scanner.scanRejected': 'נדחה',
   'scanner.badRead': 'קריאה שגויה — סרוק שוב',
   'scanner.alreadyScanned': 'כבר נסרק',
-  'scanner.alreadyCounted': 'כבר נספר',
+  'scanner.alreadyCounted': 'כבר ברשימה',
   'scanner.duplicateBadge': 'כפילות',
   'scanner.captureAnyway': 'צלם בכל זאת',
   'scanner.hardwareTriggerOn': 'שלט פעיל',
@@ -182,6 +182,7 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.looseHeader': 'קופסאות בודדות · {scanned} / {declared} נסרקו',
   'palletVerify.barcodeConflictWeight': '{item}: ברקוד {bc} ק"ג, תווית {ocr}',
   'palletVerify.barcodeConflictExpiry': '{item}: ברקוד {bc}, תווית {ocr}',
+  'palletVerify.nameCodeConflict': 'הברקוד שייך ל"{code}", אבל על המדבקה נקרא "{ocr}". נרשם לפי הברקוד — אם זה לא נכון, תקן בעריכה.',
   'palletVerify.weightSuspectName': '{w} ק"ג הוא גם המספר שבשם "{name}". בדוק במדבקה: אם כתוב {w} ק"ג — המשקל נכון; אם לא, תקן אותו.',
   'palletVerify.weightSuspectRatio': '{item}: {w} ק"ג רחוק מהמשקל הרגיל של הפריט ({typical} ק"ג). בדוק במדבקה: אם כתוב {w} ק"ג — המשקל נכון; אם לא, תקן אותו.',
   'palletVerify.weightDoubtShortName': 'בדוק משקל: {w} מופיע גם בשם הפריט',
@@ -254,10 +255,11 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.totalWeightLine': '{weight} kg סה״כ',
   'palletVerify.itemTypesDetected': 'זוהו {count} סוגי פריטים',
   'palletVerify.confirmOrKeep': 'אשר עכשיו או המשך לסרוק קופסאות נוספות',
-  'palletVerify.uniformChoose': 'אותו מוצר, אותו משקל. האם זה המוצר היחיד על המשטח?',
-  'palletVerify.uniformCompleteBtn': 'כן — רק המוצר הזה',
+  'palletVerify.uniformChoose': 'שני קרטונים זהים — אותו מוצר ואותו משקל ({weight} ק״ג). כל המשטח כזה?',
+  'palletVerify.uniformCompleteBtn': 'כל המשטח כזה — הזן כמה קרטונים',
 
-  'palletVerify.uniformContinueMix': 'לא — יש גם מוצרים אחרים',
+  'palletVerify.uniformContinueMix': 'יש גם מוצרים אחרים — המשך לסרוק',
+  'palletVerify.uniformLabels': 'או הדפס מדבקה לכל קרטון',
 
   'palletVerify.doneScanning': 'סיימת לסרוק? הזן את סך הקופסאות',
   'palletVerify.uniformPlaceholder': 'הזן כמות',
@@ -288,7 +290,7 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.cancelSingle': 'בטל — המשך לסרוק',
   'palletVerify.deferredCountTitle': 'כמה קופסאות יש על המשטח?',
   'palletVerify.deferredCountHint': 'הזן את הסך הכל — כולל {scanned} שכבר נסרקו.',
-  'palletVerify.singleMultiplyNote': 'כל קופסה במשקל {weight} ק״ג — נכפיל בסך שתזין. אין צורך לסרוק את השאר.',
+  'palletVerify.singleMultiplyNote': 'כל קרטון {weight} ק״ג. הזן כמה קרטונים יש על המשטח, כולל {scanned} שנסרקו — אין צורך לסרוק את השאר.',
   'palletVerify.prefillFromNote': 'לפי התעודה',
   'palletVerify.prefillFromScans': 'נסרקו',
   // ברשימה יותר קרטונים מהסך שהוזן (תעודה 48429, 19/10): לא נחסם — מסביר ומציע הסרה / השארה / תיקון.
@@ -725,28 +727,40 @@ export const he: Record<TranslationKey, string> = {
   'terminal.barcodeNoneBtn': 'אין ברקוד קריא על הקרטון',
   'terminal.barcodeNoneSet': 'נקלט ללא ברקוד',
   'terminal.barcodeAddBtn': 'הוסף ברקוד',
-  'terminal.barcodeDuplicate': 'לקרטון אחר על המשטח כבר יש ברקוד זה',
+  'terminal.barcodeDuplicate': 'הספרות האלה כבר ברשימה (קרטון {n}). זה אותו קרטון, או קרטון אחר עם מדבקה זהה?',
+  'terminal.barcodeDuplicateSame': 'הספרות האלה כבר ברשימה (קרטון {n}) — זה אותו קרטון.',
+  'terminal.barcodeDuplicateRemove': 'אותו קרטון — הסר את השורה הזו',
+  'terminal.barcodeDuplicateAdd': 'קרטון אחר, מדבקה זהה — הוסף',
+  'terminal.duplicateRowRemoved': 'השורה הוסרה — הקרטון כבר ברשימה (קרטון {n}).',
   'terminal.barcodeMisread': 'הברקוד נקרא לא נכון ({digits}) — ספרת הביקורת שגויה. סרוק שוב.',
-  'terminal.alreadyCounted': 'קרטון מס׳ {n} כבר נספר — סרוק את הקרטון הבא.',
-  'terminal.photoAlreadyCounted': 'המדבקה הזו היא קרטון מס׳ {n} — הוא כבר נספר.',
-  // English: "Carton #{n} and {more} more with this label are already counted."
-  'terminal.alreadyCountedPlusTwins': 'קרטון מס׳ {n} ועוד {more} עם אותה מדבקה כבר נספרו.',
-  'terminal.differentCarton': 'קרטון אחר?',
-  // English: "➕ Another carton, same label · {kg} kg"
-  'terminal.anotherCartonSameLabel': '➕ קרטון נוסף, אותה מדבקה · {kg} ק״ג',
+  // כבר ברשימה (19/10): שואלים "אותו קרטון או קרטון אחר עם מדבקה זהה?" עם שני כפתורים, במקום "סרוק את הקרטון הבא".
+  'terminal.alreadyCounted': 'הברקוד הזה כבר ברשימה (קרטון {n}). זה אותו קרטון, או קרטון אחר עם מדבקה זהה?',
+  'terminal.photoAlreadyCounted': 'המדבקה בתמונה כבר ברשימה (קרטון {n}). זה אותו קרטון, או קרטון אחר עם מדבקה זהה?',
+  // English: "This barcode is already on the list (carton {n} and {more} more with the same label). Is it one of them, or one more carton with an identical label?"
+  'terminal.alreadyCountedPlusTwins': 'הברקוד הזה כבר ברשימה (קרטון {n} ועוד {more} עם אותה מדבקה). זה אחד מהם, או עוד קרטון עם מדבקה זהה?',
+  'terminal.differentCarton': 'קרטון אחר — הוסף',
+  'terminal.sameCarton': 'אותו קרטון',
+  'terminal.twinHowMany': 'יש כמה כאלה? הזן כמה',
+  'terminal.twinExplain': 'קרטון שמוסיפים כך מקבל מדבקה משלו — הדפס אותה ממסך "מדבקות".',
+  'terminal.ownLabelListed': 'זו מדבקה שהודפסה כאן — קרטון {n}, כבר ברשימה.',
+  'terminal.alreadyListedReading': 'הברקוד הזה כבר ברשימה (קרטון {n}) והמדבקה שלו עוד נקראת. אם זה קרטון אחר, סרוק אותו שוב בעוד רגע.',
+  'terminal.alreadyListed': 'הברקוד הזה כבר ברשימה (קרטון {n}).',
+  // English: "➕ Another carton — add it · {kg} kg"
+  'terminal.anotherCartonSameLabel': '➕ קרטון אחר — הוסף · {kg} ק״ג',
   // English: "Carton added ({kg} kg) · print its label from Labels at the end"
   'terminal.anotherCartonAdded': 'הקרטון נוסף ({kg} ק״ג) · הדפס את המדבקה שלו ממסך "מדבקות" בסוף',
   // English: "The list closed before the carton was added — it is NOT counted.
   // Its unused label is in Labels: delete it there."
   'terminal.anotherCartonStale': 'הרשימה נסגרה לפני שהקרטון נוסף — הוא לא נספר. המדבקה שלו שלא נוצלה נמצאת במסך "מדבקות": מחק אותה שם.',
-  'terminal.coveredByLabels': 'כבר נספר — {count} המדבקות הזהות שנשמרו למוצר הזה כוללות אותו. אין מה לסרוק.',
-  'terminal.coveredByLabelOne': 'כבר נספר — המדבקה הזהה שנשמרה למוצר הזה כוללת אותו. אין מה לסרוק.',
+  'terminal.coveredByLabels': 'כבר ברשימה — {count} המדבקות שנשמרו למוצר הזה כוללות את הקרטון הזה. אין צורך לסרוק אותו.',
+  'terminal.coveredByLabelOne': 'כבר ברשימה — המדבקה שנשמרה למוצר הזה כוללת את הקרטון הזה. אין צורך לסרוק אותו.',
   'terminal.barcodeAcceptedAsPrinted': 'נקרא זהה שלוש פעמים — התקבל כפי שמודפס ({digits}).',
   'terminal.palletLabelRead': 'תווית משטח השילוח {digits} נרשמה כמספר המשטח — לא נספרת כקרטון.',
-  'terminal.barcodeTooShort': 'נקרא רק חלק מהברקוד ({digits}). כוון לברקוד הארוך וסרוק שוב.',
-  'terminal.shortItemCode': 'פריט {code} זוהה – לקרטון אין ברקוד ייחודי',
-  'terminal.shortItemCodeAction': 'קרטון חדש לפריט הזה',
-  'terminal.tooShortNewCarton': 'אין ברקוד ארוך? קרטון חדש',
+  'terminal.barcodeTooShort': 'נקרא רק ברקוד קצר ({digits}), והוא לא מזהה קרטון. יש על המדבקה ברקוד ארוך? כוון אליו. אין? הקש על המצלמה כדי לצלם את המדבקה, או הוסף את הקרטונים ידנית.',
+  'terminal.shortItemCode': 'הברקוד הקצר {code} הוא קוד הפריט, והוא לא מזהה קרטון בודד. יש ברקוד ארוך? כוון אליו. אין? הוסף את הקרטונים של הפריט הזה.',
+  'terminal.shortItemCodeAction': 'אין — הוסף קרטונים של הפריט',
+  'terminal.tooShortNewCarton': 'אין — הוסף קרטונים',
+  'terminal.shortHasLong': 'יש ברקוד ארוך',
   'terminal.stickerPhoto': 'תמונת המדבקה',
   'terminal.noStickerPhoto': 'אין תמונה לקרטון זה',
   'terminal.stickerPhotoUploading': 'התמונה בהעלאה…',
@@ -889,7 +903,7 @@ export const he: Record<TranslationKey, string> = {
   'split.error.generic': 'משהו השתבש. נסה שוב.',
 
   // ── Split-delivery cross-worker duplicate guard (Task 16) ───────────
-  'split.duplicateBox': 'הקופסה כבר נסרקה — היא נמצאת על משטח {pallet} של {who}.',
+  'split.duplicateBox': 'הקרטון הזה כבר רשום על משטח {pallet} של {who}. אם הוא על המשטח שלך, בקש מ{who} למחוק אותו אצלו ואז סרוק שוב.',
   'split.anotherWorker': 'עובד אחר',
 
   // ── Split-delivery manager planner + board (Task 15) ────────────────
@@ -1020,9 +1034,16 @@ export const he: Record<TranslationKey, string> = {
   'identical.savedOne': 'המדבקה נשמרה · הדפס אותה ממסך "מדבקות" לפני סגירת המשטח',
   'identical.error': 'שמירת המדבקות נכשלה. נסה שוב.',
   'identical.anotherTitle': 'קרטון אחר, אותה מדבקה',
-  'identical.anotherIntro': 'המדבקה שלו זהה בדיוק לזו של קרטון מס׳ {n}. הוא יקבל מדבקה משלו וייספר כקרטון נוסף.',
+  'identical.anotherIntro': 'המדבקה של הקרטון שבידך זהה לגמרי לזו של קרטון {n} שכבר ברשימה. כל קרטון שתוסיף מקבל מדבקה משלו להדפסה ונספר בנפרד.',
   'identical.weightDoubtSave': 'השמירה מאשרת את המשקל הזה לכל הקרטונים.',
-  'identical.anotherQuantity': 'כמה קרטונים נוספים עם המדבקה הזו',
+  'identical.anotherQuantity': 'כמה קרטונים עם המדבקה הזו יש בסך הכל?',
+  'identical.totalHint': 'הזן את הסך הכל — כולל {listed} שכבר ברשימה.',
+  'identical.willAdd': 'יתווספו {add} · {listed} כבר ברשימה',
+  'identical.willSave': 'יישמרו {add} מדבקות (גם לקרטון הזה) · עוד {listed} כבר ברשימה',
+  'identical.allListed': 'כבר יש {listed} ברשימה — אין מה להוסיף. הגדל את המספר או חזור.',
+  'identical.invoiceCount': 'בחשבונית: {count}',
+  'identical.skuMismatch': 'שים לב: הברקוד של הקרטון הזה ({own}) שונה מזה של שאר הקרטונים בשם הזה ({other}). ודא שזה אותו מוצר — אם לא, חזור ותקן את השם בעריכה.',
+  'identical.whichProduct': 'הברקוד שייך ל"{code}", אבל על המדבקה נקרא "{ocr}". איזה מוצר זה?',
 
   // ── מדבקות — תור ההדפסה של המדבקות השמורות ──
   'labels.title': 'מדבקות',

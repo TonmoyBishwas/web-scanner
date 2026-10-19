@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   dedupCodes, expandIdenticalBoxes, identicalLabelPayload, postIdenticalLabels, releasedSources, sourceSku, sourceStillListed,
-  newCartonBatch, asNewCartonRows,
+  newCartonBatch, asNewCartonRows, labelsToSave, groupSkuMismatch,
 } from './identical-boxes';
 
 const sample = {
@@ -258,5 +258,47 @@ describe('expandIdenticalBoxes and the weight check', () => {
       item_name_hebrew: 'קבב', item_name_english: '',
     }]);
     expect(batch!.form.weight_confirmed).toBe(true);
+  });
+});
+
+describe('labelsToSave (the form asks for the total, 19/10)', () => {
+  it('total minus what is already on the list', () => {
+    // IN264191356: 20 kebab cartons, 1 counted → 19 labels, not 20.
+    expect(labelsToSave(20, 1)).toBe(19);
+    expect(labelsToSave(2, 1)).toBe(1);
+  });
+
+  it('nothing on the list → the total', () => {
+    expect(labelsToSave(22, 0)).toBe(22);
+  });
+
+  it('never below 0', () => {
+    expect(labelsToSave(1, 3)).toBe(0);
+    expect(labelsToSave(NaN, 0)).toBe(0);
+  });
+});
+
+describe('groupSkuMismatch (soft "is this the same product?")', () => {
+  const keyOf = (r: { item_name_hebrew?: string }) => r.item_name_hebrew || '';
+  const kebab = { barcode: '7290004456856', item_name_hebrew: 'קבב' };
+  const kebabTwin = { barcode: '2826101900000011', minted: true, source_barcode: '7290004456856', item_name_hebrew: 'קבב' };
+  const meatball = { barcode: '2000097200258', item_name_hebrew: 'קבב' };
+
+  it('a carton whose own code differs from the others with its name → their code', () => {
+    expect(groupSkuMismatch(meatball, [kebab, kebabTwin, meatball], keyOf)).toBe('7290004456856');
+  });
+
+  it('same code → null', () => {
+    expect(groupSkuMismatch(kebab, [kebab, kebabTwin], keyOf)).toBeNull();
+  });
+
+  it('no other carton with the name, or several codes among them → null', () => {
+    expect(groupSkuMismatch(meatball, [meatball], keyOf)).toBeNull();
+    const other = { barcode: '7290006289360', item_name_hebrew: 'קבב' };
+    expect(groupSkuMismatch(meatball, [kebab, other, meatball], keyOf)).toBeNull();
+  });
+
+  it('a carton with no supplier code (photo, provisional) → null', () => {
+    expect(groupSkuMismatch({ barcode: 'NOBC-1-P1-1', item_name_hebrew: 'קבב' }, [kebab], keyOf)).toBeNull();
   });
 });
