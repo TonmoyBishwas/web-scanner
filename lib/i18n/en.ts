@@ -288,9 +288,23 @@ export const en = {
   'palletVerify.deferredCountTitle': 'How many boxes on this pallet?',
   'palletVerify.deferredCountHint': 'Enter the total — including the {scanned} you already scanned.',
   'palletVerify.singleMultiplyNote': 'Every box weighs {weight} kg — we multiply by the total you enter. No need to scan the rest.',
-  'palletVerify.deferredCountTooLow': 'Total must be at least {min} (boxes already scanned).',
   'palletVerify.prefillFromNote': 'according to the note',
   'palletVerify.prefillFromScans': 'scanned',
+  // The list holds more cartons than the total entered (document 48429, 19/10):
+  // never refused — says what it sees and offers remove / keep / fix.
+  'palletVerify.overTotalTitle': 'More cartons on the list than your total',
+  'palletVerify.overTotalBody': 'There are {onList} cartons on the list, and you entered {declared} on the pallet.',
+  'palletVerify.overTotalHint': 'If a carton was counted twice (for example photographed and also given a label), remove the {extra} extra.',
+  'palletVerify.overTotalHintOne': 'If a carton was counted twice (for example photographed and also given a label), remove the extra one.',
+  'palletVerify.overTotalSuggested': 'The {count} cartons without a barcode (from a photo) will be ticked for you — check before deleting.',
+  'palletVerify.overTotalRemove': 'Pick cartons to remove',
+  'palletVerify.overTotalKeep': 'Keep {onList} — that is the right number',
+  'palletVerify.overTotalFix': 'Fix the number I entered',
+  'palletVerify.overTotalKept': 'Total set to {count}',
+  'palletVerify.closeShortLooseBtn': 'Fewer loose cartons arrived? Finish with {count}',
+  'palletVerify.closeShortLooseTitle': 'Finish the loose cartons with fewer than declared?',
+  'palletVerify.closeShortLooseBody': '{declared} loose cartons were declared. {count} are scanned. Only the scanned cartons are booked.',
+  'palletVerify.closeShortLooseConfirm': 'Slide to finish with {count} cartons',
   'palletVerify.deleteScan': 'Delete this scan',
 
   'palletVerify.editScan': 'Edit',
@@ -956,6 +970,14 @@ export const en = {
   'carton.quantity': 'How many cartons',
   'carton.quantityHint': 'Each carton gets its own label and its own barcode.',
   'carton.lineTotalHint': 'The invoice line has {total} cartons in total – count only the ones in front of you.',
+  // New carton for an item already on the open list (document 48429): show what is
+  // there and ask only for the rest, so a carton is not counted twice.
+  'carton.quantityMore': 'How many MORE cartons',
+  'carton.onListHint': 'Already on the list: {count} cartons of this item. Count only the ones not on the list yet.',
+  'carton.onListHintOne': 'Already on the list: 1 carton of this item. Count only the ones not on the list yet.',
+  'carton.onListNoBarcode': '{count} of them without a barcode (from a photo).',
+  'carton.onListLeft': 'The invoice line has {total} — {left} not on the list yet.',
+  'carton.onListOver': 'With these the list will have {sum} cartons of this item; the invoice line has {total}.',
   'carton.weight': 'Weight per carton (kg)',
   'carton.optional': 'optional',
   'carton.production': 'Production date',
@@ -1179,6 +1201,8 @@ export const en = {
   'terminal.voidPrintedYes': 'Yes, cancel labels',
   // Selection mode — the Delete chip (client 19/10, his design).
   'terminal.selectHint': 'Tick the cartons to delete',
+  'terminal.selectHintExtra': 'Tick the {count} extra cartons, then Delete selected',
+  'terminal.selectHintExtraOne': 'Tick the extra carton, then Delete selected',
   'terminal.deleteSelected': 'Delete selected ({count})',
   'terminal.selectCancel': 'Cancel',
   'terminal.selectBulk': 'Delete all / labels',

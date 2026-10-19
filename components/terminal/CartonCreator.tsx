@@ -40,6 +40,20 @@ export interface CartonItemOption {
   item_name_hebrew?: string;
 }
 
+/** What the open list already holds of one item — see `CartonCreatorProps.onList`. */
+export interface CartonOnList {
+  /** Cartons of this item on the open list. */
+  total: number;
+  /** Of those, booked without a barcode (photo capture). */
+  noBarcode: number;
+  /** What "how many" opens on for it (lib/count-check.ts newCartonQuantity). */
+  quantity: number;
+  /** The line's cartons not on the list yet; null when not knowable. */
+  left: number | null;
+  /** The line's carton total when it is this pallet's alone; else null. */
+  lineTotal: number | null;
+}
+
 /** New carton opened for one invoice line — see `CartonCreatorProps.preset`. */
 export interface CartonCreatorPreset {
   item: CartonItemOption;
@@ -83,6 +97,15 @@ interface CartonCreatorProps {
    * the calm line shown above the form.
    */
   preset?: CartonCreatorPreset;
+  /**
+   * The cartons of an item already on the open list (pallet-verify,
+   * document 48429). David photo-captured 3 cartons that had no long
+   * barcode, then saved 22 labels here — one for every carton on the
+   * pallet, those 3 included — and the list held 25 for a pallet of 22. With
+   * this the form shows "already on the list: 3 cartons of this item", asks
+   * "how many MORE", and opens on what the line still lacks.
+   */
+  onList?: (item: CartonItemOption) => CartonOnList | null;
   onBack: () => void;
   /** Fired after the batch is saved — the page closes this screen. `labels`
    *  = the saved rows as the server returned them (may be empty). */
@@ -97,7 +120,7 @@ function displayDate(iso: string): string {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
 }
 
-export function CartonCreator({ token, items, palletNumber, notCountedWarning = false, countOnSave = false, preset, onBack, onCreated }: CartonCreatorProps) {
+export function CartonCreator({ token, items, palletNumber, notCountedWarning = false, countOnSave = false, preset, onList, onBack, onCreated }: CartonCreatorProps) {
   const tr = useT();
   const { toast, showToast } = useToast();
 
@@ -130,6 +153,20 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
   }, [items, query]);
 
   const count = Math.min(Math.max(parseInt(quantity, 10) || 0, 0), 500);
+  // The picked item's cartons already on the open list (read live: the
+  // camera is paused under this screen, so it holds still while he types).
+  const listed = selected ? onList?.(selected) ?? null : null;
+  const onListNow = listed && listed.total > 0 ? listed : null;
+
+  /** Pick an item off the invoice. With some of it already on the list, the
+   *  count opens on the rest of the line ("3 on the list — how many MORE?"),
+   *  never on a figure that counts those 3 again. */
+  function pickItem(item: CartonItemOption) {
+    setSelected(item);
+    const ctx = onList?.(item);
+    if (ctx && ctx.total > 0) setQuantity(String(ctx.quantity));
+    setStep('form');
+  }
   // Counted at this weight (countOnSave): a carton with none can't be booked
   // (the bot skips a box with no weight), so Save waits for one.
   const weightMissing = countOnSave && !(Number(weight) > 0);
@@ -238,7 +275,7 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
               filtered.map((item, i) => (
                 <button
                   key={`${item.item_code ?? ''}-${i}`}
-                  onClick={() => { setSelected(item); setStep('form'); }}
+                  onClick={() => pickItem(item)}
                   className={`${tile} w-full px-3 py-[13px] text-start flex items-center gap-3`}
                 >
                   <span className="flex-1 min-w-0">
@@ -284,7 +321,23 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
 
             {/* Cartons */}
             <div>
-              <div className={fieldLabel}>{tr('carton.quantity')}</div>
+              <div className={fieldLabel}>{tr(onListNow ? 'carton.quantityMore' : 'carton.quantity')}</div>
+              {onListNow && (
+                // Above the count, where he looks before typing: what is on
+                // the list already, so the same cartons are not counted twice.
+                <p role="status" className="flex items-start gap-[6px] mb-[8px] rounded-[12px] border border-brand/50 bg-brand-weak px-3 py-[9px] text-[12px] font-bold leading-[1.45] text-brand-weak-ink">
+                  <MI name="checklist" size={16} className="flex-none mt-[1px]" />
+                  <span className="min-w-0">
+                    {onListNow.total === 1
+                      ? tr('carton.onListHintOne')
+                      : tr('carton.onListHint', { count: onListNow.total })}
+                    {onListNow.noBarcode > 0 && <> {tr('carton.onListNoBarcode', { count: onListNow.noBarcode })}</>}
+                    {onListNow.lineTotal !== null && onListNow.left !== null && (
+                      <> {tr('carton.onListLeft', { total: onListNow.lineTotal, left: onListNow.left })}</>
+                    )}
+                  </span>
+                </p>
+              )}
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setQuantity(String(Math.max(1, count - 1)))}
@@ -315,6 +368,15 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
                   {tr('carton.lineTotalHint', { total: preset.lineTotal })}
                 </p>
               ) : null}
+              {onListNow && onListNow.lineTotal !== null && count + onListNow.total > onListNow.lineTotal && (
+                // Says it, never stops him: the note can be wrong too.
+                <p className="flex items-start gap-[5px] text-[11px] font-bold text-warn-weak-ink mt-[6px] mx-[2px] leading-[1.45]">
+                  <MI name="report_problem" size={15} className="flex-none mt-[1px]" />
+                  <span className="min-w-0">
+                    {tr('carton.onListOver', { sum: count + onListNow.total, total: onListNow.lineTotal })}
+                  </span>
+                </p>
+              )}
             </div>
 
             {/* Weight */}

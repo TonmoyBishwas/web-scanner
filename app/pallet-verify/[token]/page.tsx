@@ -29,11 +29,11 @@ import { Toast, useLockToast } from '@/components/terminal/Toast';
 import { PriorityPushStatus } from '@/components/terminal/PriorityPushStatus';
 import { useDrawerHost } from '@/components/terminal/DrawerHost';
 import { PalletsBrowser } from '@/components/terminal/PalletsBrowser';
-import { CartonCreator, type CartonCreatorPreset } from '@/components/terminal/CartonCreator';
+import { CartonCreator, type CartonCreatorPreset, type CartonItemOption, type CartonOnList } from '@/components/terminal/CartonCreator';
 import { LabelsBrowser } from '@/components/terminal/LabelsBrowser';
 import { IdenticalBoxesForm } from '@/components/terminal/IdenticalBoxesForm';
 import { DeleteAllSheet, type DeleteAllAction } from '@/components/terminal/DeleteAllSheet';
-import { selectedForDelete, sheetSnapAfterSelect, toggleSelected } from '@/lib/carton-select';
+import { canSelect, selectedForDelete, sheetSnapAfterSelect, toggleSelected } from '@/lib/carton-select';
 import { GroupCountSheet } from '@/components/terminal/GroupCountSheet';
 import { PendingLabelsLink } from '@/components/terminal/PendingLabelsLink';
 import { countGroupOf, groupRows, growGroupRows, rowsToShrink } from '@/lib/pallet-clear';
@@ -66,6 +66,7 @@ import { isSplitSession } from '@/lib/session-mode';
 import { findDuplicateOwner } from '@/lib/duplicate-guard';
 import { classifyRead, matchInvoiceShortCode, noteRepeatedRead, shortCodeDefaults } from '@/lib/carton-barcode';
 import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
+import { cartonsOnListFor, listAboveTotal, newCartonQuantity, type ListAboveTotal } from '@/lib/count-check';
 import { freeNoBarcodeId, isNoBarcodeId, unreadDigitsOutcome } from '@/lib/no-barcode';
 import { useBackClose } from '@/lib/use-back-close';
 import { findWeightSuspects } from '@/lib/weight-sanity';
@@ -441,9 +442,6 @@ export default function PalletVerifyPage({
   const [confirmedBoxCount, setConfirmedBoxCount] = useState(0);
   // For callbacks that finish after an await (the identical form's save).
   const confirmedBoxCountRef = useRef(0);
-  /** The pallet total last offered from the list's own count (null once the
-   *  worker edits it or the total is confirmed). */
-  const listDerivedTotalRef = useRef<string | null>(null);
   useEffect(() => { confirmedBoxCountRef.current = confirmedBoxCount; }, [confirmedBoxCount]);
   const [scannedBoxes, setScannedBoxes] = useState<BoxScan[]>([]);
   const [detectedType, setDetectedType] = useState<DetectedType>('unknown');
@@ -662,12 +660,29 @@ export default function PalletVerifyPage({
   // Uniform-pair state (per pallet — reset between pallets).
   const [uniformGroups, setUniformGroups] = useState<Map<string, UniformGroup>>(new Map());
   const [pendingUniformPrompt, setPendingUniformPrompt] = useState<UniformPrompt | null>(null);
-  // The worker confirmed the pallet is mix ("other products too"), or used the
-  // "fewer than 4 boxes" escape. Suppresses the single-vs-mix prompt and lets
-  // the pallet-total input appear so they scan-all + enter the total. Per pallet.
+  // The worker confirmed the pallet is mix ("other products too"), or tapped
+  // "Done scanning?". Suppresses the single-vs-mix prompt. Per pallet. It no
+  // longer opens the pallet-total input by itself — see countAsked.
   const [forcedMix, setForcedMix] = useState(false);
   const forcedMixRef = useRef(false);
   useEffect(() => { forcedMixRef.current = forcedMix; }, [forcedMix]);
+  // The pallet-total input is open because the worker asked for it ("Done
+  // scanning?"). Until then scanning is quiet: the input used to open by
+  // itself after the 4th read carton or the first label, and came back with
+  // autofocus after every scan's OCR (it hid while a sticker was read), so
+  // the keyboard rose over the camera carton after carton (19/10). Per pallet.
+  const [countAsked, setCountAsked] = useState(false);
+  // Focus the input only on the worker's own tap (Done scanning?, Yes — only
+  // this product, the pencil, Fix the number) — never on a remount.
+  const [countFocusTick, setCountFocusTick] = useState(0);
+  const countInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (countFocusTick > 0) countInputRef.current?.focus(); }, [countFocusTick]);
+  // The list holds more cartons than the total he entered or confirmed
+  // (document 48429): the question that says so and offers remove / keep /
+  // fix. `via` = where it was asked: the Set button or the confirm slide.
+  const [overTotal, setOverTotal] = useState<(ListAboveTotal & { via: 'submit' | 'confirm' }) | null>(null);
+  // Loose pile: finishing with fewer cartons than declared asks first.
+  const [looseShortAsk, setLooseShortAsk] = useState(false);
   // Refs mirror the above state for read-during-callback access without stale
   // closure issues (used inside runOcr's success path).
   const uniformGroupsRef = useRef<Map<string, UniformGroup>>(new Map());
@@ -831,6 +846,10 @@ export default function PalletVerifyPage({
   // (lib/carton-select.ts), so a scan landing meanwhile never moves a pick.
   const [selectMode, setSelectMode] = useState(false);
   const [selectPicked, setSelectPicked] = useState<ReadonlySet<string>>(() => new Set());
+  // Selection mode opened from the more-than-your-total question: how many
+  // are extra, for the hint over the list. Cleared whenever the mode ends.
+  const [selectExtra, setSelectExtra] = useState<number | null>(null);
+  useEffect(() => { if (!selectMode) setSelectExtra(null); }, [selectMode]);
   // Where the list sheet was when selection mode raised it (restored on exit).
   const selectSheetBeforeRef = useRef<number | null>(null);
   const [countGroupFor, setCountGroupFor] = useState<{ group: string; loose: boolean } | null>(null);
@@ -2284,10 +2303,11 @@ export default function PalletVerifyPage({
     setPendingUniformPrompt(null);
     setBoxCountInput('');
     setPalletCountError(null);
+    setCountFocusTick((n) => n + 1);
   }
 
-  // Worker backed out of "Single-item" choice → drop the captured group
-  // and let the regular footer count input show (mix path).
+  // Worker backed out of "Single-item" choice → drop the captured group and
+  // go back to scanning (mix path); "Done scanning?" opens the total.
   function handleCancelSingleConfirm() {
     trace('ui', 'cancel_single_confirm', { pallet: currentPallet });
     setPendingSingleGroup(null);
@@ -2297,7 +2317,7 @@ export default function PalletVerifyPage({
 
   function handleContinueAsMix() {
     trace('ui', 'continue_as_mix', { pallet: currentPallet, scanned: scannedBoxes.length });
-    setForcedMix(true);            // pallet is mix → show pallet-total input, scan all
+    setForcedMix(true);            // pallet is mix → scan all; "Done scanning?" opens the total
     setPendingUniformPrompt(null);
   }
 
@@ -2662,15 +2682,10 @@ export default function PalletVerifyPage({
         setDetectedType(detectType(next, acceptedMerges));
         // A single-vs-mix question raised by the sample is moot now (retracts).
         maybeTriggerUniformPrompt(next, '');
-        // The pallet total is usually just what is on the list now — offer it,
-        // still editable, instead of making the worker retype the count.
-        if (confirmedBoxCountRef.current === 0) {
-          setBoxCountInput((cur) => {
-            if (cur) return cur;
-            listDerivedTotalRef.current = String(listTotal(next));
-            return listDerivedTotalRef.current;
-          });
-        }
+        // No pallet total is filled in or opened here any more (19/10): the
+        // input opens on "Done scanning?" and offers the note's figure or the
+        // list's own count then (lib/count-prefill.ts). The list's count
+        // filled in at save time was 25 on document 48429, over the note's 22.
         return next;
       });
     }
@@ -2925,14 +2940,20 @@ export default function PalletVerifyPage({
   // each one reaches the server as a tombstone. Booked cartons are never
   // picked (lib/carton-select.ts). Every step is traced: select_mode_open,
   // delete_selected (with the before-values), select_mode_cancel.
-  function openSelectMode() {
+  function openSelectMode(opts?: { preselect?: string[]; extra?: number }) {
     if (refuseIfSessionLost('select_mode')) return;
     const loose = phase === 'loose_scanning';
     const rows = loose ? looseBoxesRef.current : scannedBoxesRef.current;
-    trace('ui', 'select_mode_open', { pallet: loose ? 0 : currentPallet, rows: rows.length });
+    // Ticks offered by the more-than-your-total question (the no-barcode
+    // photo captures, lib/count-check.ts) — only rows still on the list and
+    // pickable. A tick deletes nothing; "Delete selected" does.
+    const listed = new Set(rows.map((r) => r.barcode));
+    const pre = (opts?.preselect ?? []).filter((b) => listed.has(b) && canSelect(b, bookedInSession));
+    trace('ui', 'select_mode_open', { pallet: loose ? 0 : currentPallet, rows: rows.length, extra: opts?.extra, preselected: pre.length || undefined });
     setSelectedBarcode(null);
-    setSelectPicked(new Set());
+    setSelectPicked(new Set(pre));
     setSelectMode(true);
+    setSelectExtra(opts?.extra ?? null);
     // Room for the checkboxes and the bar (the camera is paused meanwhile).
     const sheet = (loose ? looseSheetRef : sheetRef).current;
     selectSheetBeforeRef.current = sheet ? sheet.snapIndex() : null;
@@ -3228,7 +3249,11 @@ export default function PalletVerifyPage({
   const selectHint = selectMode ? (
     <p className="flex items-center justify-center gap-[5px] text-[11.5px] font-bold text-brand-weak-ink text-center">
       <MI name="checklist" size={16} className="flex-none" />
-      {tr('terminal.selectHint')}
+      {selectExtra === null
+        ? tr('terminal.selectHint')
+        : selectExtra === 1
+        ? tr('terminal.selectHintExtraOne')
+        : tr('terminal.selectHintExtra', { count: selectExtra })}
     </p>
   ) : null;
 
@@ -3254,7 +3279,34 @@ export default function PalletVerifyPage({
   // identical / Different carton?, Labels): the scanner reads nothing under
   // it. A carton the camera happened to face would otherwise be added — with
   // a success beep the worker cannot see — while they fill the form.
-  const overlayOpen = showCartonCreator || showLabels || !!identicalFor || showDeleteAll || !!countGroupFor;
+  const overlayOpen = showCartonCreator || showLabels || !!identicalFor || showDeleteAll || !!countGroupFor
+    // The more-than-your-total and loose close-short questions: a carton
+    // read under them would change the very numbers they show.
+    || !!overTotal || looseShortAsk;
+
+  /**
+   * New carton: the picked item's cartons already on the open list, and what
+   * its count opens on (document 48429: 3 photo captures on the list, then 22
+   * labels for the same pallet of 22). Same "line may spread" rule as the
+   * short-code preset (handleShortItemCode): with another pallet or a loose
+   * pile the line's total can't be this list's, so no remainder is offered.
+   */
+  function cartonOnList(item: CartonItemOption): CartonOnList | null {
+    const lines = session?.ocr_data ?? [];
+    const list = looseCartonPhase ? looseBoxes : scannedBoxes;
+    const code = String(item.item_code ?? '');
+    const on = cartonsOnListFor(code, list, lines);
+    const line = lines.find((l) => String(l.item_code ?? '') === code);
+    const lineMaySpread = (session?.pallet_count || 1) > 1 || (session?.loose_box_count || 0) > 0
+      || shortCodeSavedItemsRef.current.has(code);
+    const q = newCartonQuantity({ onList: on.total, lineBoxes: line?.box_count, lineMaySpread });
+    return {
+      ...on,
+      quantity: q.quantity,
+      left: q.left,
+      lineTotal: !lineMaySpread && Number(line?.box_count) > 0 ? Number(line?.box_count) : null,
+    };
+  }
 
   const cartonOverlays = (
     <>
@@ -3302,6 +3354,127 @@ export default function PalletVerifyPage({
           </div>
         </div>
       )}
+      {overTotal && phase === 'scanning' && (() => {
+        // More cartons on the list than the total (document 48429). Never a
+        // refusal: what it sees, in his numbers, and three ways forward. No
+        // carton is removed and no total changes until he picks one.
+        const o = overTotal;
+        const keepList = () => {
+          trace('ui', 'count_below_list_keep', { pallet: currentPallet, declared: o.declared, on_list: o.onList, via: o.via });
+          setOverTotal(null);
+          setBoxCountInput(String(o.onList));
+          if (o.via === 'submit') { handlePalletCountSubmit(o.onList); return; }
+          // Asked at the slide: the confirmed total follows the list, and he
+          // slides again — the slide is still the one booking step.
+          setConfirmedBoxCount(o.onList);
+          fetch('/api/multi-pallet-session', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token, current_box_count: o.onList }),
+          }).catch(() => {});
+          trace('ui', 'count_changed', { pallet: currentPallet, from: o.declared, to: o.onList, scope: 'pallet_total', via: 'keep_list' });
+          showToast(tr('palletVerify.overTotalKept', { count: o.onList }), 'check_circle');
+        };
+        const fixNumber = () => {
+          trace('ui', 'count_below_list_fix', { pallet: currentPallet, declared: o.declared, on_list: o.onList, via: o.via });
+          setOverTotal(null);
+          if (o.via === 'confirm') startTotalEdit();
+          else setCountFocusTick((n) => n + 1);
+        };
+        const pickToRemove = () => {
+          trace('ui', 'count_below_list_remove', { pallet: currentPallet, declared: o.declared, on_list: o.onList, via: o.via, suggested: o.suggested.length || undefined });
+          setOverTotal(null);
+          openSelectMode({ preselect: o.suggested, extra: o.extra });
+        };
+        return (
+          <div className="fixed inset-0 z-[72] bg-[rgba(5,8,10,0.74)] backdrop-blur-[3px] flex items-center justify-center p-[22px]">
+            <div role="alertdialog" aria-modal="true" className="w-full max-w-[330px] bg-amber-card border border-[rgba(245,158,11,0.5)] rounded-[20px] px-5 py-[22px] shadow-[0_26px_64px_rgba(0,0,0,0.72)] animate-doneRise">
+              <div className="flex justify-center mb-[13px]">
+                <div className="w-16 h-16 rounded-full bg-[rgba(245,158,11,0.16)] flex items-center justify-center">
+                  <MI name="inventory_2" size={34} style={{ color: '#fbbf5c' }} />
+                </div>
+              </div>
+              <h2 className="text-center text-[19px] font-black text-ink-inverse">{tr('palletVerify.overTotalTitle')}</h2>
+              <p className="text-center text-xs font-semibold text-[#d8c9a0] mt-1 leading-snug">
+                {tr('palletVerify.overTotalBody', { onList: o.onList, declared: o.declared })}
+              </p>
+              <p className="text-center text-xs font-semibold text-[#d8c9a0] mt-2 leading-snug">
+                {o.extra === 1 ? tr('palletVerify.overTotalHintOne') : tr('palletVerify.overTotalHint', { extra: o.extra })}
+              </p>
+              {o.suggested.length > 0 && (
+                <p className="text-center text-xs font-bold text-[#fbbf5c] mt-2 leading-snug">
+                  {tr('palletVerify.overTotalSuggested', { count: o.suggested.length })}
+                </p>
+              )}
+              <div className="flex flex-col gap-2 mt-4">
+                <button
+                  onClick={pickToRemove}
+                  className="w-full py-3 rounded-[13px] font-black text-[14px] bg-warn text-canvas"
+                >
+                  {tr('palletVerify.overTotalRemove')}
+                </button>
+                <button
+                  onClick={keepList}
+                  className="w-full py-3 rounded-[13px] font-extrabold text-[14px] bg-tile border border-line-strong text-ink-inverse"
+                >
+                  {tr('palletVerify.overTotalKeep', { onList: o.onList })}
+                </button>
+                <button
+                  onClick={fixNumber}
+                  className="w-full py-2 text-ink-muted text-xs font-extrabold"
+                >
+                  {tr('palletVerify.overTotalFix')}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+      {looseShortAsk && phase === 'loose_scanning' && (() => {
+        // Finishing the loose pile with fewer cartons than were declared — it
+        // had no way through before (only "scan N more"). Same shape as the
+        // pallet's close-short: what is booked, one slide, or keep scanning.
+        const declared = session?.loose_box_count || 0;
+        const count = looseBoxes.length;
+        const doubts = weightDoubts(looseBoxes).length;
+        return (
+          <div className="fixed inset-0 z-[72] bg-[rgba(5,8,10,0.74)] backdrop-blur-[3px] flex items-center justify-center p-[22px]">
+            <div role="alertdialog" aria-modal="true" className="w-full max-w-[330px] bg-amber-card border border-[rgba(245,158,11,0.5)] rounded-[20px] px-5 py-[22px] shadow-[0_26px_64px_rgba(0,0,0,0.72)] animate-doneRise">
+              <div className="flex justify-center mb-[13px]">
+                <div className="w-16 h-16 rounded-full bg-[rgba(245,158,11,0.16)] flex items-center justify-center">
+                  <MI name="inventory_2" size={34} style={{ color: '#fbbf5c' }} />
+                </div>
+              </div>
+              <h2 className="text-center text-[19px] font-black text-ink-inverse">{tr('palletVerify.closeShortLooseTitle')}</h2>
+              <p className="text-center text-xs font-semibold text-[#d8c9a0] mt-1 leading-snug">
+                {tr('palletVerify.closeShortLooseBody', { declared, count })}
+              </p>
+              {doubts > 0 && (
+                <p className="text-center text-xs font-bold text-[#fbbf5c] mt-2 leading-snug">
+                  {doubts === 1 ? tr('palletVerify.weightAskBodyOne') : tr('palletVerify.weightAskBody', { count: doubts })}
+                </p>
+              )}
+              <div className="mt-4">
+                <SwipeConfirm
+                  variant="warn"
+                  label={tr('palletVerify.closeShortLooseConfirm', { count })}
+                  onConfirm={() => {
+                    trace('ui', 'loose_close_short', { declared, count });
+                    setLooseShortAsk(false);
+                    handleConfirmLooseBoxes();
+                  }}
+                />
+              </div>
+              <button
+                onClick={() => { trace('ui', 'loose_close_short_cancel', { declared, count }); setLooseShortAsk(false); }}
+                className="w-full mt-2 py-2 text-ink-muted text-xs font-extrabold transition"
+              >
+                {tr('palletVerify.keepScanning')}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
       {showCartonCreator && (
         <CartonCreator
           key={cartonPreset ? `preset:${cartonPreset.item.item_code}` : 'blank'}
@@ -3311,6 +3484,7 @@ export default function PalletVerifyPage({
           palletNumber={looseCartonPhase ? 0 : currentPallet}
           // Q5 (client 2026-10-13): counted now, at the typed weight.
           countOnSave
+          onList={cartonOnList}
           onBack={() => { setShowCartonCreator(false); setCartonPreset(null); }}
           onCreated={(count, batchId, labels) => {
             // Back to the scanner, no Labels screen (SCN-18).
@@ -4022,19 +4196,32 @@ export default function PalletVerifyPage({
   //   2. pendingSingleGroup null → mix/non-uniform path; just persist
   //      the count to Redis and let the worker keep scanning.
 
-  function handlePalletCountSubmit() {
-    const count = parseInt(boxCountInput, 10);
-    trace('ui', 'count_submit', { pallet: currentPallet, input: boxCountInput, scanned: scannedBoxes.length, prefill: countPrefillShown });
+  /** `explicit` = a total chosen in the more-than-your-total question ("Keep
+   *  25"), handed over directly — the input's state is a render behind. */
+  function handlePalletCountSubmit(explicit?: number) {
+    const count = explicit ?? parseInt(boxCountInput, 10);
+    trace('ui', 'count_submit', { pallet: currentPallet, input: explicit ?? boxCountInput, scanned: scannedBoxes.length, prefill: countPrefillShown, kept: explicit !== undefined || undefined });
     // Typing the total answers whatever the footer was saying.
     clearScanNotice();
     if (isNaN(count) || count < 1) {
       setPalletCountError(tr('palletVerify.invalidBoxNumber'));
       return;
     }
-    // The total can't be smaller than what's already on the pallet.
-    const minRequired = Math.max(2, scannedBoxes.length);
-    if (count < minRequired) {
-      setPalletCountError(tr('palletVerify.deferredCountTooLow', { min: minRequired }));
+    // More cartons on the list than the total entered. It used to be refused
+    // ("the total must be at least 25"), and on document 48429 David typed
+    // the 25 the scanner demanded for a 22-carton pallet: 3 photo-captured
+    // cartons had been counted again by 22 labels. Now the question says what
+    // it sees and offers remove / keep / fix (the overTotal dialog). A
+    // single-item group's 2 samples are rows like any other here, so this
+    // also covers a changed single-item total under its samples.
+    const above = listAboveTotal(count, scannedBoxes);
+    if (above) {
+      trace('ui', 'count_below_list', {
+        pallet: currentPallet, declared: count, on_list: above.onList, extra: above.extra,
+        suggested: above.suggested.length || undefined, edit: totalEdit !== null || undefined,
+      });
+      setPalletCountError(null);
+      setOverTotal({ ...above, via: 'submit' });
       return;
     }
     // A single-item pallet whose total was just changed (canEditTotal): the
@@ -4045,11 +4232,8 @@ export default function PalletVerifyPage({
         ? Array.from(uniformGroups.values())[0]
         : null;
     const othersBeside = editedSingle ? committedCount() - editedSingle.total_count : 0;
-    if (editedSingle && count - othersBeside < 2) {
-      setPalletCountError(tr('palletVerify.deferredCountTooLow', { min: othersBeside + 2 }));
-      return;
-    }
     setPalletCountError(null);
+    setCountAsked(false);
     setConfirmedBoxCount(count);
     if (totalEdit !== null) {
       // A changed total is the one figure a worker could lower to dodge the
@@ -4116,7 +4300,7 @@ export default function PalletVerifyPage({
   // The total is a number the worker typed (often the invoice line, which can
   // be wrong for this pallet — IN264172698 counted a tilapia carton against
   // the chicken line's 15), and it used to be fixed once set. This reopens the
-  // same input, prefilled; the minimum is unchanged (max(2, scanned)). Not on
+  // same input, prefilled; a total under the list is asked about, never refused. Not on
   // a single-item pallet: there the total IS the locked group's count.
   // Since 2026-10-15 (client request (c)) a single-item pallet's total can be
   // changed too, any time before the LPN: one locked group whose count is
@@ -4133,6 +4317,7 @@ export default function PalletVerifyPage({
     setBoxCountInput(String(confirmedBoxCount));
     setPalletCountError(null);
     setConfirmedBoxCount(0);
+    setCountFocusTick((n) => n + 1);
   }
 
   /** Back out of a change: the old total stands. */
@@ -4241,6 +4426,8 @@ export default function PalletVerifyPage({
     setUniformGroups(new Map());
     setPendingUniformPrompt(null);
     setForcedMix(false);
+    setCountAsked(false);
+    setOverTotal(null);
     setSelectedBarcode(null);
     setEditForm(null);
     setEditError(null);
@@ -4303,7 +4490,10 @@ export default function PalletVerifyPage({
   }) {
     if (refuseIfSessionLost('confirm_pallet')) return;
     trace('ui', 'confirm_pallet', { pallet: currentPallet, scanned: scannedBoxes.length, confirmedBoxCount, override: override ? { boxCount: override.boxCount, groups: override.groups } : undefined, forcedMix, detectedType });
-    if (scannedBoxes.length < 2) return;
+    // One carton is a pallet too (the old 2-carton minimum left a lone
+    // carton with no way to close). The single-item shortcut still needs its
+    // 2 samples — it is offered only on 2 (maybeTriggerUniformPrompt).
+    if (scannedBoxes.length < 1) return;
     // Every way into the LPN passes here — the slide, the shortfall modal,
     // the gap chip and the single-item auto-confirm — so the gate sits here.
     if (labelGate.count > 0) {
@@ -4425,18 +4615,12 @@ export default function PalletVerifyPage({
   // Confirm is only enabled when:
   //  - no uniform prompt is awaiting an answer, and
   //  - the committed count (non-uniform individuals + locked group totals)
-  //    matches the declared box count for this pallet (with a 2-box minimum),
-  //    AND
+  //    reaches the declared box count for this pallet, AND
   //  - every scanned box has resolved data (no `needs_review` flag).
   //    Worker must tap each warning, see the captured sticker, and fix
   //    the name/weight before the pallet can advance.
+  // A list ABOVE the declared total asks before it books (confirmPalletChecked).
   const committed = committedCount();
-  // OCR-complete box count + whether any scan is still being read. Used to gate
-  // classification and the pallet-total input to ">=4 boxes, OCR done".
-  const doneCount = scannedBoxes.filter(
-    (b) => b.ocr_status === 'done' && b.weight > 0 && (b.item_name || b.item_name_hebrew),
-  ).length;
-  const anyProcessing = scannedBoxes.some((b) => b.ocr_status === 'processing');
   const unresolvedWarnings = scannedBoxes.filter((b) => b.needs_review).length;
   const hasUnresolvedWarnings = unresolvedWarnings > 0;
   // Meat short-shipment feature: unreadable boxes NO LONGER hard-block. They
@@ -4454,23 +4638,27 @@ export default function PalletVerifyPage({
   // Force-create: the worker committed FEWER than declared (a miscount) OR
   // there are unreadable boxes we're allowed to wave through (feature on).
   // Creates the LPN with the committed count behind a warning modal; unreadable
-  // boxes are recorded unverified. A 2-box minimum still applies.
+  // boxes are recorded unverified. One counted carton is enough (it was 2: a
+  // pallet that really held 1 carton could not be closed at all).
   const canForceConfirm =
     !pendingUniformPrompt &&
     !pendingSingleGroup &&
     confirmedBoxCount > 0 &&
-    committed >= 2 &&
+    committed >= 1 &&
     !warningsBlock &&
     (committed < confirmedBoxCount || (hasUnresolvedWarnings && softWarnings));
   // Cartons still to scan against the worker's total (0 when none is set).
   const shortCount = Math.max(0, confirmedBoxCount - committed);
 
-  // The deferred pallet-total input: after enough OCR'd boxes (or the worker
-  // said mix / single-item, or a minted batch put the count on the list), or
-  // reopened by the pencil to change the total.
+  // The pallet-total input: only when the worker asks for it — "Done
+  // scanning?" (countAsked), "Yes — only this product" (pendingSingleGroup) or
+  // the pencil (totalEdit). It used to open by itself (4 read cartons, the
+  // first label, "No — other products too") and to hide while any sticker
+  // was being read, coming back with autofocus after every scan — the
+  // keyboard over the camera, carton after carton (19/10). While scanning,
+  // the status line just says how many are on the list.
   const showCountInput = confirmedBoxCount === 0 && (
-    totalEdit !== null
-    || (!anyProcessing && (doneCount >= 4 || forcedMix || !!pendingSingleGroup || scannedBoxes.some((b) => b.minted)))
+    totalEdit !== null || countAsked || !!pendingSingleGroup
   );
 
   // SCN-14: what the input offers before the worker types — the note's
@@ -4493,7 +4681,6 @@ export default function PalletVerifyPage({
       meatCommitted: session.meat_committed,
       singleItemLine: pendingSingleGroup ? (lines.find((l) => l === matched) ?? null) : undefined,
       scannedTotal: listTotal(scannedBoxes),
-      minRequired: Math.max(2, scannedBoxes.length),
     });
   }
   const countPrefillValue = countPrefillNow?.value ?? null;
@@ -4528,20 +4715,6 @@ export default function PalletVerifyPage({
     }
   }, [countPrefillKey, countPrefillValue, countPrefillSource, boxCountInput, countPrefillShown, currentPallet]);
   // The source line shows only while the input still holds the prefill.
-  // The total offered from the list after a New-carton / identical save
-  // (above) is the list's own count, not the worker's. Keep it in step while
-  // he scans more — left alone, 10 stayed under the 11 on the list and the
-  // input opened below its own minimum. A number he typed is never touched.
-  const scannedListTotal = listTotal(scannedBoxes);
-  useEffect(() => {
-    const derived = listDerivedTotalRef.current;
-    if (derived === null) return;
-    if (boxCountInput !== derived || confirmedBoxCount > 0) { listDerivedTotalRef.current = null; return; }
-    if (scannedListTotal > Number(derived)) {
-      listDerivedTotalRef.current = String(scannedListTotal);
-      setBoxCountInput(listDerivedTotalRef.current);
-    }
-  }, [scannedListTotal, boxCountInput, confirmedBoxCount]);
   const countPrefillTag = countPrefillShown && boxCountInput === String(countPrefillShown.value)
     ? countPrefillShown.source
     : null;
@@ -4839,6 +5012,10 @@ export default function PalletVerifyPage({
       scanned >= Math.min(2, declared) &&
       (declared === 0 || scanned >= declared) &&
       !hasUnresolvedLooseWarnings;
+    // Fewer loose cartons than declared: a way through, behind one question
+    // (looseShortAsk). There was none — the pile could only "scan N more".
+    const canCloseLooseShort =
+      declared > 0 && scanned >= 1 && scanned < declared && !hasUnresolvedLooseWarnings;
 
     // Terminal layout: newest scan becomes the active card, the rest are
     // history rows (flat, newest first — the design's list shape).
@@ -4904,6 +5081,19 @@ export default function PalletVerifyPage({
               ? tr('palletVerify.warningsBlockConfirmOne')
               : tr('palletVerify.warningsBlockConfirm', { count: unresolvedLooseWarnings })}
           </button>
+          ) : canCloseLooseShort && labelGate.count > 0 ? (
+            labelGateFooter(true)
+          ) : canCloseLooseShort ? (
+            // Secondary, outlined amber, like the pallet's "Fewer cartons
+            // arrived?": the exception, not the next step.
+            <button
+              onClick={() => { trace('ui', 'loose_close_short_open', { declared, scanned }); setLooseShortAsk(true); }}
+              disabled={phase === 'loose_confirming'}
+              className="flex items-center justify-center gap-[6px] w-full py-3 px-3 rounded-[13px] font-extrabold text-[13px] leading-tight text-center bg-tile border-2 border-warn/60 text-warn-weak-ink disabled:opacity-50"
+            >
+              <MI name="inventory_2" size={18} className="shrink-0" />
+              <span className="min-w-0">{tr('palletVerify.closeShortLooseBtn', { count: scanned })}</span>
+            </button>
           ) : (
           <button
             disabled
@@ -5195,13 +5385,44 @@ export default function PalletVerifyPage({
     : pendingUniformPrompt
     ? tr('palletVerify.waitingInput')
     : confirmedBoxCount === 0
-    ? (committed < 2 ? tr('palletVerify.scanToStart') : tr('palletVerify.setTotalBelow'))
+    // Quiet while scanning: how many are on the list, not "enter the total
+    // below" after every carton. The total is asked on "Done scanning?".
+    ? (committed < 1 ? tr('palletVerify.scanToStart') : tr('palletVerify.scannedSoFar', { count: committed }))
     : tr('palletVerify.leftToScan', { left: shortCount, total: confirmedBoxCount });
 
-  // "Done scanning? Enter the pallet total" — the way off a pallet the
-  // scanner can't classify on its own (1–3 read boxes, no total yet).
+  // "Done scanning? Enter the box total" — the one way to the total, there
+  // from the first counted carton until a total is set. It used to show only
+  // for 1–3 read cartons and hide while a sticker was read; past that the
+  // input opened by itself (showCountInput).
   const showDoneScanning =
-    confirmedBoxCount === 0 && !forcedMix && !pendingSingleGroup && doneCount < 4 && doneCount >= 1 && !anyProcessing;
+    confirmedBoxCount === 0 && !showCountInput && !pendingUniformPrompt && committed >= 1;
+
+  /** "Done scanning?": open the total, focused — the worker asked for it. */
+  function openCountInput() {
+    trace('ui', 'count_open', { pallet: currentPallet, scanned: scannedBoxes.length });
+    setForcedMix(true);
+    setCountAsked(true);
+    setPalletCountError(null);
+    setCountFocusTick((n) => n + 1);
+  }
+
+  /** The confirm slide: a list above the confirmed total asks first (the
+   *  total was set, then more cartons were added). */
+  function confirmPalletChecked() {
+    // Mixed pallets only: a locked single-item group books its own total,
+    // whatever its samples on the list (the Set check covers its total).
+    const above = uniformGroups.size === 0 ? listAboveTotal(confirmedBoxCount, scannedBoxes) : null;
+    if (above) {
+      trace('ui', 'count_below_list', {
+        pallet: currentPallet, declared: confirmedBoxCount, on_list: above.onList, extra: above.extra,
+        suggested: above.suggested.length || undefined, via: 'confirm',
+      });
+      setSwipeKey((k) => k + 1);
+      setOverTotal({ ...above, via: 'confirm' });
+      return;
+    }
+    confirmPastWeightDoubts(false);
+  }
 
   // Footer — priority-ordered modes:
   // (1) single_or_mix uniform prompt (Complete / Continue),
@@ -5285,9 +5506,12 @@ export default function PalletVerifyPage({
           </p>
           <div className="flex gap-2">
             <input
+              ref={countInputRef}
               type="number"
               inputMode="numeric"
-              min={Math.max(2, scannedBoxes.length)}
+              // No floor: a total under the list is asked about, not refused
+              // (handlePalletCountSubmit → the overTotal question).
+              min={1}
               value={boxCountInput}
               onChange={(e) => {
                 setBoxCountInput(e.target.value);
@@ -5299,10 +5523,11 @@ export default function PalletVerifyPage({
               onFocus={(e) => e.currentTarget.select()}
               placeholder={tr('palletVerify.boxCountPlaceholder')}
               className="flex-1 min-w-0 text-center text-xl font-black font-mono text-ink bg-sunken border-2 border-line-strong rounded-[12px] py-2 px-3 transition outline-none focus:border-brand focus:ring-4 focus:ring-brand/20 placeholder:text-ink-muted placeholder:font-medium placeholder:text-base placeholder:font-sans"
-              autoFocus
+              // Focused by countFocusTick on the worker's own tap only — no
+              // autoFocus, which fired on every remount of this footer.
             />
             <button
-              onClick={handlePalletCountSubmit}
+              onClick={() => handlePalletCountSubmit()}
               className="shrink-0 px-5 py-2 rounded-[12px] bg-brand text-ink-inverse font-black text-sm"
             >
               {tr('palletVerify.uniformSet')}
@@ -5345,7 +5570,7 @@ export default function PalletVerifyPage({
           ) : canConfirm && phase !== 'confirming' ? (
             <SwipeConfirm
               key={swipeKey}
-              onConfirm={() => confirmPastWeightDoubts(false)}
+              onConfirm={confirmPalletChecked}
               label={tr('palletVerify.swipeConfirmPallet', { current: currentPallet })}
             />
           ) : (
@@ -5380,10 +5605,8 @@ export default function PalletVerifyPage({
             >
               {canConfirm
                 ? tr('palletVerify.confirmPalletBtn', { current: currentPallet })
-                : committed < 2
-                ? (committed === 1
-                  ? tr('palletVerify.scanMoreToContinueOne')
-                  : tr('palletVerify.scanMoreToContinue', { count: 2 - committed }))
+                : committed < 1
+                ? tr('palletVerify.scanMoreToContinueOne')
                 : confirmedBoxCount === 0
                 ? // No total declared yet, so nothing is outstanding — the old
                   // fallback rendered a flat "0 more boxes needed" here.
@@ -5400,7 +5623,7 @@ export default function PalletVerifyPage({
             // be a thin grey underline that workers missed, so it now carries
             // the same weight as the other footer actions.
             <button
-              onClick={() => setForcedMix(true)}
+              onClick={openCountInput}
               className={`flex items-center justify-center gap-[6px] w-full ${hasUnresolvedWarnings ? 'mt-2' : ''} py-3 rounded-[13px] font-extrabold text-[14px] bg-tile border-2 border-brand text-brand-weak-ink`}
             >
               <MI name="done_all" size={18} /> {tr('palletVerify.doneScanning')}
