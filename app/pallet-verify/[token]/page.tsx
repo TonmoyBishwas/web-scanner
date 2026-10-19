@@ -2338,6 +2338,11 @@ export default function PalletVerifyPage({
       if (!candidate) {
         trace('ui', 'uniform_prompt_retracted', { pallet: currentPalletRef.current });
         setPendingUniformPrompt(null);
+      } else if (candidate.sample_barcodes.length !== pendingUniformPromptRef.current.sample_barcodes.length) {
+        // He kept scanning the same carton type past the question: the
+        // question and the count form say how many are scanned, so keep the
+        // sample list in step ("2 identical cartons" with 4 on the list).
+        setPendingUniformPrompt({ mode: 'single_or_mix', ...candidate });
       }
       return;
     }
