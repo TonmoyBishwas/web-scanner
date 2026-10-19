@@ -15,9 +15,12 @@
  *      pallet was never booked: they are voided, never deleted, and the
  *      worker is told to peel the stickers off (amber warning).
  *
- * Every action is two taps on the same button (the first arms it, as the
- * row's Delete does) — an in-page confirm, never window.confirm. Booked
- * cartons are never touched: the server refuses them (lib/pallet-clear.ts).
+ * Every action first asks an explicit question with the count — "Delete all
+ * 126 cartons on the pallet?" — with a red confirm and Cancel (client 19/10;
+ * it used to arm the row and say "tap again", which let a whole pallet go
+ * with two quick taps and no question). An in-page confirm, never
+ * window.confirm. Booked cartons are never touched: the server refuses them
+ * (lib/pallet-clear.ts).
  * The printed count is read when the sheet opens; the unprinted count comes
  * from the page's own unprinted-labels list.
  */
@@ -25,9 +28,10 @@
 import { useEffect, useState } from 'react';
 import { MI } from './MI';
 import { useT } from '@/lib/i18n';
-import type { LabelClearMode } from '@/lib/pallet-clear';
+import { trace } from '@/lib/scanner-trace';
+import { deleteAllQuestion, type DeleteAllAction } from '@/lib/delete-all-confirm';
 
-export type DeleteAllAction = 'rows' | Exclude<LabelClearMode, 'rows'>;
+export type { DeleteAllAction };
 
 interface DeleteAllSheetProps {
   token: string;
@@ -44,13 +48,12 @@ interface DeleteAllSheetProps {
   onClose: () => void;
 }
 
-const ARM_MS = 3000;
-
 export function DeleteAllSheet({
   token, pallet, rowCount, unprintedCount, booked, onAction, onClose,
 }: DeleteAllSheetProps) {
   const tr = useT();
-  const [armed, setArmed] = useState<DeleteAllAction | null>(null);
+  // The action whose question is on screen (null = the list of actions).
+  const [asking, setAsking] = useState<DeleteAllAction | null>(null);
   const [busy, setBusy] = useState(false);
   // Printed labels of this pallet whose carton was never booked.
   const [printedCount, setPrintedCount] = useState(0);
@@ -71,61 +74,108 @@ export function DeleteAllSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, pallet]);
 
-  useEffect(() => {
-    if (!armed) return;
-    const timer = setTimeout(() => setArmed(null), ARM_MS);
-    return () => clearTimeout(timer);
-  }, [armed]);
-
-  async function press(action: DeleteAllAction) {
+  async function confirm(action: DeleteAllAction) {
     if (busy) return;
-    if (armed !== action) {
-      setArmed(action);
-      return;
-    }
-    setArmed(null);
     setBusy(true);
     try {
       await onAction(action);
     } finally {
       setBusy(false);
+      setAsking(null);
     }
   }
 
   const loose = pallet === 0;
   const nothing = rowCount === 0 && unprintedCount === 0 && printedCount === 0;
 
+  const counts: Record<DeleteAllAction, number> = {
+    rows: rowCount,
+    unprinted: unprintedCount,
+    void_printed: printedCount,
+  };
+  const hints: Record<DeleteAllAction, string> = {
+    rows: tr('terminal.deleteAllRowsHint'),
+    unprinted: tr('terminal.deleteAllLabelsHint'),
+    void_printed: tr('terminal.voidPrintedWarn'),
+  };
+
   const option = (opts: {
     action: DeleteAllAction;
     icon: string;
     title: string;
-    hint: string;
     tone: 'danger' | 'warn';
     disabled?: boolean;
   }) => {
-    const isArmed = armed === opts.action;
     const base = 'w-full min-h-[58px] flex items-center gap-[11px] rounded-[13px] border px-[13px] py-[10px] text-start disabled:opacity-40';
-    const tone = isArmed
-      ? opts.tone === 'danger' ? 'bg-danger border-danger text-white' : 'bg-warn border-warn text-canvas'
-      : opts.tone === 'danger' ? 'bg-danger-weak border-danger/45 text-danger-weak-ink' : 'bg-warn-weak border-warn/45 text-warn-weak-ink';
+    const tone = opts.tone === 'danger'
+      ? 'bg-danger-weak border-danger/45 text-danger-weak-ink'
+      : 'bg-warn-weak border-warn/45 text-warn-weak-ink';
     return (
       <button
         key={opts.action}
         type="button"
         disabled={busy || opts.disabled}
-        onClick={() => void press(opts.action)}
+        onClick={() => {
+          trace('ui', 'delete_all_ask', { pallet, action: opts.action, count: counts[opts.action] });
+          setAsking(opts.action);
+        }}
         className={`${base} ${tone}`}
       >
-        <MI name={isArmed ? 'delete_forever' : opts.icon} size={22} className="flex-none" />
+        <MI name={opts.icon} size={22} className="flex-none" />
         <span className="flex-1 min-w-0">
-          <span className="block text-[13px] font-black leading-tight wrap-anywhere">
-            {isArmed ? tr('terminal.deleteAllConfirm') : opts.title}
-          </span>
-          <span className={`block text-[11px] font-semibold leading-snug mt-[2px] ${isArmed ? 'opacity-90' : 'opacity-80'}`}>
-            {opts.hint}
-          </span>
+          <span className="block text-[13px] font-black leading-tight wrap-anywhere">{opts.title}</span>
+          <span className="block text-[11px] font-semibold leading-snug mt-[2px] opacity-80">{hints[opts.action]}</span>
         </span>
       </button>
+    );
+  };
+
+  // The question: what goes, how many, and two plain answers. Red confirm
+  // (amber for voiding printed labels, which deletes nothing) · Cancel back
+  // to the list of actions.
+  const question = (action: DeleteAllAction) => {
+    const q = deleteAllQuestion(action, loose, counts[action]);
+    const danger = q.tone === 'danger';
+    return (
+      <div className="flex flex-col">
+        <div className="flex flex-col items-center text-center gap-[6px] pt-1 pb-3">
+          <span
+            className={`w-14 h-14 rounded-full flex items-center justify-center ${danger ? 'bg-danger-weak' : 'bg-warn-weak'}`}
+          >
+            <MI
+              name={danger ? 'delete_forever' : 'block'}
+              size={30}
+              style={{ color: danger ? '#ef8a8a' : '#fbbf5c' }}
+            />
+          </span>
+          <h3 className="text-[17px] font-black leading-snug text-ink-inverse wrap-anywhere">{tr(q.key, q.vars)}</h3>
+          <p className={`text-[11.5px] font-semibold leading-snug ${danger ? 'text-ink-muted' : 'text-warn-weak-ink'}`}>
+            {hints[action]}
+          </p>
+        </div>
+        <div className="flex gap-[9px]">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void confirm(action)}
+            className={`flex-1 min-w-0 min-h-[50px] flex items-center justify-center gap-[6px] rounded-[13px] px-3 text-[14px] font-black disabled:opacity-60 ${danger ? 'bg-danger text-white' : 'bg-warn text-canvas'}`}
+          >
+            <MI name={busy ? 'hourglass_empty' : danger ? 'delete_forever' : 'block'} size={19} className="flex-none" />
+            <span className="min-w-0 wrap-anywhere">{tr(q.confirmKey)}</span>
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              trace('ui', 'delete_all_cancel', { pallet, action, count: counts[action] });
+              setAsking(null);
+            }}
+            className="flex-1 min-w-0 min-h-[50px] rounded-[13px] border border-white/18 bg-white/6 px-3 text-[14px] font-extrabold text-ink-inverse disabled:opacity-60"
+          >
+            {tr('common.cancel')}
+          </button>
+        </div>
+      </div>
     );
   };
 
@@ -157,6 +207,8 @@ export function DeleteAllSheet({
 
         {nothing ? (
           <p className="text-center text-[12px] font-semibold text-ink-muted py-4">{tr('terminal.deleteAllNothing')}</p>
+        ) : asking ? (
+          question(asking)
         ) : (
           <div className="flex flex-col gap-[9px]">
             {option({
@@ -165,7 +217,6 @@ export function DeleteAllSheet({
               title: loose
                 ? tr('terminal.deleteAllRowsLoose', { count: rowCount })
                 : tr('terminal.deleteAllRows', { count: rowCount }),
-              hint: tr('terminal.deleteAllRowsHint'),
               tone: 'danger',
               disabled: rowCount === 0,
             })}
@@ -173,7 +224,6 @@ export function DeleteAllSheet({
               action: 'unprinted',
               icon: 'label_off',
               title: tr('terminal.deleteAllLabels', { count: unprintedCount }),
-              hint: tr('terminal.deleteAllLabelsHint'),
               tone: 'danger',
               disabled: unprintedCount === 0,
             })}
@@ -182,7 +232,6 @@ export function DeleteAllSheet({
                 action: 'void_printed',
                 icon: 'block',
                 title: tr('terminal.voidPrinted', { count: printedCount }),
-                hint: tr('terminal.voidPrintedWarn'),
                 tone: 'warn',
               })}
           </div>
