@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type ReactNode } from 'react';
 import { MI } from './MI';
+import { SelectBox } from './SelectBox';
 import { nearestScrollTop } from '@/lib/scan-notice';
 
 interface HistoryRowProps {
@@ -28,6 +29,10 @@ interface HistoryRowProps {
   /** A re-read just named this carton ("already counted"): blue ring + pulse
    *  and a double tick for a moment, and the list scrolls it into view. */
   highlight?: boolean;
+  /** Selection mode (the Delete chip): a checkbox before the index badge, the
+   *  row's tap ticks it (the page passes that as onClick), no actions and no
+   *  chevron. */
+  select?: { checked: boolean; locked?: boolean };
 }
 
 /** The nearest ancestor that scrolls vertically — the sheet's list. */
@@ -44,11 +49,12 @@ function scrollParent(el: HTMLElement): HTMLElement | null {
 export function HistoryRow({
   index, name, barcode, weight, unitLabel = 'ק"ג',
   status = 'done', onClick, actions, dimmed = false, unprinted = false, unprintedLabel,
-  highlight = false,
+  highlight = false, select,
 }: HistoryRowProps) {
   const statusIcon = highlight ? 'done_all' : status === 'failed' ? 'error' : status === 'pending' ? 'hourglass_empty' : 'check_circle';
   const statusColor = highlight ? '#13a4ec' : status === 'failed' ? '#ef4444' : status === 'pending' ? '#fbbf5c' : '#22c55e';
-  const open = Boolean(actions);
+  const open = Boolean(actions) && !select;
+  const picked = !!select?.checked;
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Bring the named carton into view — but only scroll the sheet's own list,
@@ -69,10 +75,14 @@ export function HistoryRow({
     <div
       ref={rootRef}
       onClick={onClick}
-      className={`bg-[rgba(10,15,20,.5)] border rounded-[13px] px-[13px] py-[11px] transition-opacity ${highlight ? 'border-brand animate-markerPulse' : open ? 'border-line-strong' : 'border-line'} ${onClick ? 'cursor-pointer' : ''} ${dimmed ? 'opacity-50' : ''}`}
+      role={select ? 'checkbox' : undefined}
+      aria-checked={select ? picked : undefined}
+      aria-disabled={select?.locked || undefined}
+      className={`bg-[rgba(10,15,20,.5)] border rounded-[13px] px-[13px] py-[11px] transition-opacity ${highlight ? 'border-brand animate-markerPulse' : picked ? 'border-brand' : open ? 'border-line-strong' : 'border-line'} ${onClick ? 'cursor-pointer' : ''} ${dimmed ? 'opacity-50' : ''}`}
     >
       <div className="flex justify-between items-center gap-[10px]">
         <div className="flex items-center gap-[11px] min-w-0">
+          {select && <SelectBox checked={picked} locked={select.locked} />}
           <div className="flex-none w-10 h-10 rounded-[10px] bg-tile border border-line flex items-center justify-center font-mono font-black text-[16px] text-[#e8eef2]">
             {index}
           </div>
@@ -114,13 +124,13 @@ export function HistoryRow({
               {weight} <span className="font-sans font-normal text-[10px]">{unitLabel}</span>
             </span>
           )}
-          {onClick && (
+          {onClick && !select && (
             <MI name={open ? 'expand_less' : 'expand_more'} size={18} className="text-[#e8eef2]" />
           )}
         </div>
       </div>
 
-      {actions && <div className="mt-[10px] pt-[10px] border-t border-line">{actions}</div>}
+      {open && <div className="mt-[10px] pt-[10px] border-t border-line">{actions}</div>}
     </div>
   );
 }

@@ -33,6 +33,7 @@ import { CartonCreator, type CartonCreatorPreset } from '@/components/terminal/C
 import { LabelsBrowser } from '@/components/terminal/LabelsBrowser';
 import { IdenticalBoxesForm } from '@/components/terminal/IdenticalBoxesForm';
 import { DeleteAllSheet, type DeleteAllAction } from '@/components/terminal/DeleteAllSheet';
+import { selectedForDelete, toggleSelected } from '@/lib/carton-select';
 import { GroupCountSheet } from '@/components/terminal/GroupCountSheet';
 import { PendingLabelsLink } from '@/components/terminal/PendingLabelsLink';
 import { countGroupOf, groupRows, growGroupRows, rowsToShrink } from '@/lib/pallet-clear';
@@ -784,6 +785,12 @@ export default function PalletVerifyPage({
   // The Delete chip's sheet (DeleteAllSheet) and "change count" on an
   // identical-label group (GroupCountSheet) — client request (c), 2026-10-15.
   const [showDeleteAll, setShowDeleteAll] = useState(false);
+  // Selection mode — the Delete chip (client 19/10, his design "WMS Receiving
+  // Terminal"): a checkbox on every carton card of the open list, "Delete
+  // selected (N)" / "Cancel" in the sheet's footer. Picks are barcodes
+  // (lib/carton-select.ts), so a scan landing meanwhile never moves a pick.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectPicked, setSelectPicked] = useState<ReadonlySet<string>>(() => new Set());
   const [countGroupFor, setCountGroupFor] = useState<{ group: string; loose: boolean } | null>(null);
   // Labels SAVED this session but not printed yet (identical / New carton /
   // edit-panel barcode). Server truth, refreshed after every save, print or
@@ -804,6 +811,8 @@ export default function PalletVerifyPage({
     // the job" — its unprinted label must not hold the next list.
     sessionBookedBarcodes(session),
   );
+  // Barcodes already booked in this session: never picked in selection mode.
+  const bookedInSession = sessionBookedBarcodes(session);
   const [activeExpanded, setActiveExpanded] = useState(false);
   const [pendingNextPallet, setPendingNextPallet] = useState<number | null>(null);
   // "Scan pallet N" on the pallet_done card is a plain tap (moving on books
@@ -1140,6 +1149,13 @@ export default function PalletVerifyPage({
     // syncList reads everything else through refs / the ledger.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, listPallet, passive, token]);
+
+  // Selection mode belongs to one open list: leaving it (booking, the next
+  // pallet, the loose pile) ends it and deletes nothing.
+  useEffect(() => {
+    setSelectMode(false);
+    setSelectPicked((p) => (p.size ? new Set() : p));
+  }, [phase, listPallet]);
 
   // Cartons scanned without network got no label reading: read them when it
   // is back (their photo is still on this page). Each is checked again at
@@ -2184,17 +2200,25 @@ export default function PalletVerifyPage({
   }
 
   function rescanLooseBox(barcode: string) {
-    // Same release rule as dropPalletRows: the last row of an identical batch
-    // frees its supplier code.
-    const released = releasedSources(looseBoxesRef.current, new Set([barcode]));
+    const released = dropLooseRows(new Set([barcode]));
     trace('ui', 'loose_delete_box', { barcode, released: released.length ? released : undefined });
-    setLooseBoxes((prev) => prev.filter((b) => b.barcode !== barcode));
-    looseProcessedRef.current.delete(barcode);
-    uploadedStickersRef.current.delete(photoUploadKey('loose', 0, barcode));
+    discardSavedLabel(barcode);
+  }
+
+  // Take rows off the loose list (the row's Delete, Delete selected). Same
+  // release rule as dropPalletRows: the last row of an identical batch frees
+  // its supplier code. Returns the supplier codes it released.
+  function dropLooseRows(gone: ReadonlySet<string>): string[] {
+    const released = releasedSources(looseBoxesRef.current, gone);
+    setLooseBoxes((prev) => prev.filter((b) => !gone.has(b.barcode)));
+    for (const code of gone) {
+      looseProcessedRef.current.delete(code);
+      uploadedStickersRef.current.delete(photoUploadKey('loose', 0, code));
+    }
     for (const code of released) looseProcessedRef.current.delete(code);
     clearDuplicateSounds(dupSoundsRef.current);
     clearScanNotice();
-    discardSavedLabel(barcode);
+    return released;
   }
 
   // ── Uniform-prompt action handlers ──
@@ -2842,6 +2866,82 @@ export default function PalletVerifyPage({
     }
   }
 
+  // ── Delete chip → selection mode (client 19/10, his design) ──
+  //
+  // Delete selected takes the picked rows off the open list through the
+  // row's own path (dropPalletRows / dropLooseRows + its unprinted label),
+  // so the persist effect hands the shorter list to ledger().observe() and
+  // each one reaches the server as a tombstone. Booked cartons are never
+  // picked (lib/carton-select.ts). Every step is traced: select_mode_open,
+  // delete_selected (with the before-values), select_mode_cancel.
+  function openSelectMode() {
+    if (refuseIfSessionLost('select_mode')) return;
+    const loose = phase === 'loose_scanning';
+    const rows = loose ? looseBoxesRef.current : scannedBoxesRef.current;
+    trace('ui', 'select_mode_open', { pallet: loose ? 0 : currentPallet, rows: rows.length });
+    setSelectedBarcode(null);
+    setSelectPicked(new Set());
+    setSelectMode(true);
+    // Room for the checkboxes and the bar (the camera is paused meanwhile).
+    (loose ? looseSheetRef : sheetRef).current?.snapTo(2);
+  }
+
+  function cancelSelectMode(why: 'cancel' | 'chip' | 'bulk') {
+    const loose = phase === 'loose_scanning';
+    trace('ui', 'select_mode_cancel', { pallet: loose ? 0 : currentPallet, picked: selectPicked.size, why });
+    setSelectMode(false);
+    setSelectPicked(new Set());
+  }
+
+  function toggleSelectCarton(barcode: string) {
+    if (bookedInSession.has(barcode)) {
+      showToast(tr('terminal.deleteAllBookedNote'), 'lock', '#fbbf5c');
+      return;
+    }
+    setSelectPicked((p) => toggleSelected(p, barcode, bookedInSession));
+  }
+
+  function deleteSelectedCartons() {
+    if (refuseIfSessionLost('delete_selected')) return;
+    const loose = phase === 'loose_scanning';
+    const pallet = loose ? 0 : currentPallet;
+    const rows = loose ? looseBoxesRef.current : scannedBoxesRef.current;
+    const filter = loose ? looseItemFilter : palletItemFilter;
+    const gone = selectedForDelete(rows, selectPicked, bookedInSession, filter.matches);
+    if (!gone.length) return;
+    const goneSet = new Set(gone);
+    const released = loose ? dropLooseRows(goneSet) : dropPalletRows(goneSet);
+    trace('ui', 'delete_selected', {
+      pallet,
+      count: gone.length,
+      barcodes: gone.slice(0, 120),
+      released: released.length ? released : undefined,
+      before: { rows: rows.length, picked: selectPicked.size },
+    });
+    discardSavedLabels(gone);
+    setSelectMode(false);
+    setSelectPicked(new Set());
+    showToast(
+      gone.length === 1 ? tr('terminal.deleteSelectedDoneOne') : tr('terminal.deleteAllRowsDone', { count: gone.length }),
+      'delete',
+    );
+  }
+
+  // discardSavedLabel for many rows: one request at a time (a pallet of
+  // identical labels is dozens), the Labels count refreshed once at the end.
+  function discardSavedLabels(barcodes: readonly string[]) {
+    const minted = barcodes.filter((b) => isMintedLabelBarcode(b));
+    if (!minted.length) return;
+    void (async () => {
+      for (const code of minted) {
+        try {
+          await fetch(`/api/carton-labels?token=${encodeURIComponent(token)}&barcode=${encodeURIComponent(code)}`, { method: 'DELETE' });
+        } catch { /* the label stays; Labels can still delete it */ }
+      }
+      unprinted.refresh();
+    })();
+  }
+
   // ── "N cartons · change" on an identical-label group ──
   //
   // Fewer: the last rows of the group leave the list (unprinted labels
@@ -2991,12 +3091,22 @@ export default function PalletVerifyPage({
       { id: 'pallets', icon: <PalletIcon />, label: tr('terminal.toolPallets'), tint: 'neutral', onPress: () => setShowPallets(true) },
       {
         id: 'delete', icon: 'delete_sweep', label: tr('terminal.toolDelete'), tint: 'red',
-        // The bulk sheet only while a list is open for scanning; the rows of
-        // a booked list are on an LPN and cannot be deleted from here.
-        onPress: () =>
-          phase === 'scanning' || phase === 'loose_scanning'
-            ? (trace('ui', 'delete_all_open', { pallet: phase === 'loose_scanning' ? 0 : currentPallet }), setShowDeleteAll(true))
-            : showToast(tr('terminal.deleteHint'), 'delete_sweep', '#ef8a8a'),
+        // Only while a list is open for scanning; the rows of a booked list
+        // are on an LPN and cannot be deleted from here. Cartons on the list
+        // → selection mode (tap again leaves it); an empty list → the bulk
+        // sheet, for the labels it may still hold.
+        onPress: () => {
+          if (phase !== 'scanning' && phase !== 'loose_scanning') {
+            showToast(tr('terminal.deleteHint'), 'delete_sweep', '#ef8a8a');
+          } else if (selectMode) {
+            cancelSelectMode('chip');
+          } else if ((phase === 'loose_scanning' ? looseBoxesRef.current : scannedBoxesRef.current).length > 0) {
+            openSelectMode();
+          } else {
+            trace('ui', 'delete_all_open', { pallet: phase === 'loose_scanning' ? 0 : currentPallet });
+            setShowDeleteAll(true);
+          }
+        },
       },
       { id: 'share', icon: 'ios_share', label: tr('terminal.toolShare'), tint: 'blue', onPress: handleShareSummary },
       { id: 'assign', icon: 'send', flip: true, label: tr('terminal.toolAssign'), tint: 'green', locked: true },
@@ -3006,6 +3116,55 @@ export default function PalletVerifyPage({
       },
     ];
   }
+
+  // Selection mode's bar (the design's sticky bottom bar), in the sheet's
+  // footer in place of the confirm: "Delete selected (N)" red, "Cancel".
+  // Its start holds the way to the bulk sheet (delete all / labels), which
+  // the Delete chip opened before selection mode existed.
+  function selectionFooter(loose: boolean) {
+    const rows = loose ? looseBoxes : scannedBoxes;
+    const filter = loose ? looseItemFilter : palletItemFilter;
+    const n = selectedForDelete(rows, selectPicked, bookedInSession, filter.matches).length;
+    return (
+      <div className="flex items-center gap-[10px] bg-[#0d171d] border border-brand rounded-[13px] px-3 py-[10px] shadow-[0_-8px_20px_rgba(9,13,16,.9)]">
+        <button
+          type="button"
+          onClick={() => {
+            cancelSelectMode('bulk');
+            trace('ui', 'delete_all_open', { pallet: loose ? 0 : currentPallet });
+            setShowDeleteAll(true);
+          }}
+          className="min-w-0 flex items-center gap-[4px] text-[11px] font-extrabold text-[#ef8a8a] text-start leading-tight"
+        >
+          <MI name="delete_sweep" size={16} className="flex-none" />
+          <span className="min-w-0 wrap-anywhere">{tr('terminal.selectBulk')}</span>
+        </button>
+        <button
+          type="button"
+          disabled={n === 0}
+          onClick={deleteSelectedCartons}
+          className="ms-auto flex-none flex items-center gap-[6px] rounded-full bg-danger text-white text-[12px] font-black px-4 py-[9px] disabled:opacity-45"
+        >
+          <MI name="delete" size={16} />
+          {tr('terminal.deleteSelected', { count: n })}
+        </button>
+        <button
+          type="button"
+          onClick={() => cancelSelectMode('cancel')}
+          className="flex-none px-2 py-[6px] text-[12px] font-extrabold text-[#e8eef2]"
+        >
+          {tr('terminal.selectCancel')}
+        </button>
+      </div>
+    );
+  }
+
+  const selectHint = selectMode ? (
+    <p className="flex items-center justify-center gap-[5px] text-[11.5px] font-bold text-brand-weak-ink text-center">
+      <MI name="checklist" size={16} className="flex-none" />
+      {tr('terminal.selectHint')}
+    </p>
+  ) : null;
 
   // Always-visible bug-report widget. Tap the floating 🐛 button to see
   // captured console logs and copy them out — no Chrome DevTools needed.
@@ -4609,7 +4768,7 @@ export default function PalletVerifyPage({
                 instead of the stale pallet-phase handler. */}
             <SmartScanner
               key="loose-scanner"
-              paused={!!editForm || overlayOpen || phase === 'loose_confirming'}
+              paused={!!editForm || overlayOpen || selectMode || phase === 'loose_confirming'}
               preferCartonCodes
               acceptValue={acceptScannerValue}
               frame="corner"
@@ -4642,7 +4801,7 @@ export default function PalletVerifyPage({
                 onLockedPress={showLockToast}
               />
             }
-            footer={looseFooter}
+            footer={selectMode ? selectionFooter(true) : looseFooter}
           >
             {(
               <>
@@ -4654,6 +4813,7 @@ export default function PalletVerifyPage({
                     tone={declared > 0 && scanned >= declared ? 'done' : 'warn'}
                   />
                 )}
+                {selectHint}
                 {looseActive && looseItemFilter.matches(looseActive) && (
                   <ActiveScanCard
                     tone="warn"
@@ -4680,6 +4840,11 @@ export default function PalletVerifyPage({
                     onViewImage={looseActive.image_data ? () => setViewingImage(looseActive.image_data!) : undefined}
                     unprinted={unprintedBarcodes.has(looseActive.barcode)}
                     highlight={looseActive.barcode === flashBarcode}
+                    select={selectMode ? {
+                      checked: selectPicked.has(looseActive.barcode),
+                      locked: bookedInSession.has(looseActive.barcode),
+                      onToggle: () => toggleSelectCarton(looseActive.barcode),
+                    } : undefined}
                   />
                 )}
                 {looseRest.map((box, i) => looseItemFilter.matches(box) && (
@@ -4697,8 +4862,11 @@ export default function PalletVerifyPage({
                         ? box.ocr_status === 'failed' ? 'failed' : 'pending'
                         : 'done'
                     }
-                    onClick={() => setSelectedBarcode(selectedBarcode === box.barcode ? null : box.barcode)}
-                    actions={looseRowActions(box)}
+                    onClick={selectMode
+                      ? () => toggleSelectCarton(box.barcode)
+                      : () => setSelectedBarcode(selectedBarcode === box.barcode ? null : box.barcode)}
+                    actions={selectMode ? undefined : looseRowActions(box)}
+                    select={selectMode ? { checked: selectPicked.has(box.barcode), locked: bookedInSession.has(box.barcode) } : undefined}
                     unprinted={unprintedBarcodes.has(box.barcode)}
                     unprintedLabel={tr('terminal.labelNotPrinted')}
                     highlight={box.barcode === flashBarcode}
@@ -5116,7 +5284,7 @@ export default function PalletVerifyPage({
             key={`pallet-scanner-${currentPallet}`}
             frame="corner"
             className="h-full"
-            paused={!!editForm || overlayOpen || phase === 'confirming'}
+            paused={!!editForm || overlayOpen || selectMode || phase === 'confirming'}
             // An EAN-13 product code beside the carton's own long code in one
             // frame never wins (lib/frame-reads.ts).
             preferCartonCodes
@@ -5161,7 +5329,7 @@ export default function PalletVerifyPage({
               onLockedPress={showLockToast}
             />
           }
-          footer={mainFooter}
+          footer={selectMode ? selectionFooter(false) : mainFooter}
         >
           {(
             <>
@@ -5230,6 +5398,7 @@ export default function PalletVerifyPage({
                 </div>
               )}
 
+              {selectHint}
               {activeBox && palletItemFilter.matches(activeBox) && (
                 <ActiveScanCard
                   index={scannedBoxes.length}
@@ -5255,6 +5424,11 @@ export default function PalletVerifyPage({
                   onViewImage={activeBox.image_data ? () => setViewingImage(activeBox.image_data!) : undefined}
                   unprinted={unprintedBarcodes.has(activeBox.barcode)}
                   highlight={activeBox.barcode === flashBarcode}
+                  select={selectMode ? {
+                    checked: selectPicked.has(activeBox.barcode),
+                    locked: bookedInSession.has(activeBox.barcode),
+                    onToggle: () => toggleSelectCarton(activeBox.barcode),
+                  } : undefined}
                 />
               )}
 
@@ -5275,8 +5449,11 @@ export default function PalletVerifyPage({
                       ? 'pending'
                       : 'done'
                   }
-                  onClick={() => setSelectedBarcode(selectedBarcode === box.barcode ? null : box.barcode)}
-                  actions={palletRowActions(box)}
+                  onClick={selectMode
+                    ? () => toggleSelectCarton(box.barcode)
+                    : () => setSelectedBarcode(selectedBarcode === box.barcode ? null : box.barcode)}
+                  actions={selectMode ? undefined : palletRowActions(box)}
+                  select={selectMode ? { checked: selectPicked.has(box.barcode), locked: bookedInSession.has(box.barcode) } : undefined}
                   unprinted={unprintedBarcodes.has(box.barcode)}
                   unprintedLabel={tr('terminal.labelNotPrinted')}
                   highlight={box.barcode === flashBarcode}

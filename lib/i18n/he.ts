@@ -1152,6 +1152,12 @@ export const he: Record<TranslationKey, string> = {
   'terminal.voidPrintedAskOne': 'לבטל את המדבקה שהודפסה?',
   'terminal.deleteAllYes': 'כן, מחק',
   'terminal.voidPrintedYes': 'כן, בטל מדבקות',
+  // Selection mode — the Delete chip (client 19/10, his design).
+  'terminal.selectHint': 'סמן את הקרטונים למחיקה',
+  'terminal.deleteSelected': 'מחק נבחרים ({count})',
+  'terminal.selectCancel': 'בטל',
+  'terminal.selectBulk': 'מחק הכל / מדבקות',
+  'terminal.deleteSelectedDoneOne': 'קרטון אחד נמחק מהרשימה',
   'terminal.deleteAllNothing': 'אין כאן מה למחוק',
   'terminal.deleteAllBookedNote': 'קרטונים שכבר נקלטו לא נמחקים.',
   'terminal.deleteAllRowsDone': '{count} קרטונים נמחקו מהרשימה',

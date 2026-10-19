@@ -1151,6 +1151,12 @@ export const en = {
   'terminal.voidPrintedAskOne': 'Cancel the 1 printed label?',
   'terminal.deleteAllYes': 'Yes, delete',
   'terminal.voidPrintedYes': 'Yes, cancel labels',
+  // Selection mode — the Delete chip (client 19/10, his design).
+  'terminal.selectHint': 'Tick the cartons to delete',
+  'terminal.deleteSelected': 'Delete selected ({count})',
+  'terminal.selectCancel': 'Cancel',
+  'terminal.selectBulk': 'Delete all / labels',
+  'terminal.deleteSelectedDoneOne': '1 carton deleted from the list',
   'terminal.deleteAllNothing': 'Nothing to delete here',
   'terminal.deleteAllBookedNote': 'Cartons already booked are never deleted.',
   'terminal.deleteAllRowsDone': '{count} cartons deleted from the list',

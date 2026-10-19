@@ -2,6 +2,7 @@
 
 import { MI } from './MI';
 import { ScanActions } from './ScanActions';
+import { SelectBox } from './SelectBox';
 import { useT } from '@/lib/i18n';
 
 interface ActiveScanCardProps {
@@ -34,6 +35,10 @@ interface ActiveScanCardProps {
   /** A re-read just named this carton ("already counted"): blue ring + pulse
    *  for a moment, so the worker sees WHICH carton the camera saw again. */
   highlight?: boolean;
+  /** Selection mode (the Delete chip, client's design): a checkbox on this
+   *  card too, the summary line ticks it instead of expanding, and the
+   *  action bar steps aside (the design hides Edit while selecting). */
+  select?: { checked: boolean; locked?: boolean; onToggle: () => void };
 }
 
 // Design "active scan" summary card: #0a0f14 on 2px brand border, mono index
@@ -49,12 +54,13 @@ export function ActiveScanCard({
   index, name, value, unit, barcode, expiry,
   status = 'done', expanded, onToggleExpand,
   onEdit, onDelete, onRetry, onViewImage, onIdentical, onChangeCount, groupCount, tone = 'brand', unprinted = false,
-  highlight = false,
+  highlight = false, select,
 }: ActiveScanCardProps) {
   const tr = useT();
   // Blue = information / focus: while a re-read names this carton it wears
   // the brand ring whatever its own tone.
-  const borderColor = highlight ? '#13a4ec' : status === 'failed' ? '#ef4444' : tone === 'warn' ? '#f59e0b' : '#13a4ec';
+  const picked = !!select?.checked;
+  const borderColor = highlight || picked ? '#13a4ec' : status === 'failed' ? '#ef4444' : tone === 'warn' ? '#f59e0b' : '#13a4ec';
   const badgeBg = tone === 'warn' ? 'rgba(245,158,11,.16)' : 'rgba(19,164,236,.16)';
   const accentInk = tone === 'warn' ? '#fbbf5c' : '#7cc9f2';
   const failed = status === 'failed';
@@ -68,11 +74,15 @@ export function ActiveScanCard({
           row) — the separate "Details" toggle took room the actions needed. */}
       <button
         type="button"
-        onClick={onToggleExpand}
-        aria-expanded={expanded}
+        onClick={select ? select.onToggle : onToggleExpand}
+        aria-expanded={select ? undefined : expanded}
+        role={select ? 'checkbox' : undefined}
+        aria-checked={select ? picked : undefined}
+        aria-disabled={select?.locked || undefined}
         className="w-full flex justify-between items-center gap-2 text-start"
       >
         <span className="flex items-center gap-[9px] min-w-0">
+          {select && <SelectBox checked={picked} locked={select.locked} />}
           <span
             className="flex-none w-[33px] h-[33px] rounded-[9px] flex items-center justify-center font-mono font-black text-[15px] text-ink-inverse"
             style={{ background: badgeBg, border: `1px solid ${borderColor}` }}
@@ -116,11 +126,11 @@ export function ActiveScanCard({
             <span className="font-mono font-black text-[23px] leading-none text-ink-inverse">{value}</span>
             <span className="text-[12px] font-extrabold" style={{ color: accentInk }}>{unit}</span>
           </span>
-          <MI name={expanded ? 'expand_less' : 'expand_more'} size={18} className="text-[#e8eef2]" />
+          {!select && <MI name={expanded ? 'expand_less' : 'expand_more'} size={18} className="text-[#e8eef2]" />}
         </span>
       </button>
 
-      <div className="mt-2 border-t border-white/8 pt-[7px]">
+      {!select && <div className="mt-2 border-t border-white/8 pt-[7px]">
         <ScanActions
           // A new scan becomes this card: an armed Delete must not carry over to it.
           key={`${index}:${barcode ?? ''}`}
@@ -132,9 +142,9 @@ export function ActiveScanCard({
           groupCount={groupCount}
           onDelete={onDelete}
         />
-      </div>
+      </div>}
 
-      {expanded && (
+      {expanded && !select && (
         <div className="mt-2 pt-2 border-t border-white/8 flex flex-col gap-[6px]">
           {barcode && (
             <div className="flex justify-between items-center gap-2">
