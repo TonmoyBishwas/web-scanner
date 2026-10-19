@@ -36,6 +36,9 @@ interface HistoryRowProps {
   /** Why the row is amber, in a few words ("Check weight: 8 is also in the
    *  item name"). Wraps — it is the one thing the worker has to read. */
   note?: string;
+  /** The weight is the carton's own barcode reading (lib/barcode-reconcile.ts):
+   *  a small neutral marker beside it, with this text for screen readers. */
+  weightFromBarcode?: string;
 }
 
 /** The nearest ancestor that scrolls vertically — the sheet's list. */
@@ -52,7 +55,7 @@ function scrollParent(el: HTMLElement): HTMLElement | null {
 export function HistoryRow({
   index, name, barcode, weight, unitLabel = 'ק"ג',
   status = 'done', onClick, actions, dimmed = false, unprinted = false, unprintedLabel,
-  highlight = false, select, note,
+  highlight = false, select, note, weightFromBarcode,
 }: HistoryRowProps) {
   const statusIcon = highlight ? 'done_all' : status === 'failed' ? 'error' : status === 'pending' ? 'hourglass_empty' : 'check_circle';
   const statusColor = highlight ? '#13a4ec' : status === 'failed' ? '#ef4444' : status === 'pending' ? '#fbbf5c' : '#22c55e';
@@ -127,6 +130,11 @@ export function HistoryRow({
           </div>
         </div>
         <div className="flex items-center gap-[9px] flex-none">
+          {weight !== undefined && weightFromBarcode && (
+            <span title={weightFromBarcode} aria-label={weightFromBarcode} className="-me-[6px] text-ink-muted">
+              <MI name="qr_code_scanner" size={12} />
+            </span>
+          )}
           {weight !== undefined && (
             <span className="font-mono font-black text-[17px] text-ink-inverse">
               {weight} <span className="font-sans font-normal text-[10px]">{unitLabel}</span>

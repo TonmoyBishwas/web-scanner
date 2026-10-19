@@ -709,31 +709,37 @@ Make webhook URL and `priority_push_config` is set `url = …, enabled = true`.
 Until then the row says "Automatic sending to Priority is off" (or "Test user —
 not sent to Priority").
 
-## Barcode cross-check (`lib/barcode-parser.ts`)
+## Barcode wins (`lib/barcode-parser.ts`, `lib/barcode-reconcile.ts`)
 
 `parseIsraeliBarcode` still treats every barcode as an **ID only** — that rule
-holds for the 25-digit format, which is 62 % of cartons and encodes nothing.
+holds for the 25-digit format and the others, which encode nothing.
 
-But a **31-digit** carton barcode does carry data (measured across all 264 live
-`box_inventory` rows): weight at 1-based chars **14–19** ÷ 1000, and the expiry
-as a trailing **`DDMMYYYY`**. Agreement with the OCR is 65/67 on weight and
-64/67 on expiry — and in all three expiry disagreements the **barcode was right
-and the OCR had misread a digit**.
+But a **31-digit** carton barcode does carry data: weight at 1-based chars
+**14–19** ÷ 1000 (kept only inside 0.5–100 kg), and the expiry as a trailing
+**`DDMMYYYY`** (year 2020–2099). `parseCartonBarcode` reads it.
 
-`findBarcodeConflict(barcode, ocrWeight, ocrExpiry)` returns the disagreement, or
-null. On a conflict `runOcr` (pallet **and** loose phases) stores
-`BoxScan.barcode_conflict`, fires an amber toast naming both readings, and
-`EditPanel` offers the barcode's value as a one-tap **Use**. `handleSaveEdit`
-clears the flag — the worker has looked at both and chosen.
+*Changed 2026-10-19 (client rule, Mevaser):* the barcode **wins**. On
+IN264189933 a carton booked 4.38 kg / no expiry while its barcode said
+12.460 kg / 14-07-2027, and the old amber "barcode says…" toast changed
+nothing. Now `reconcileWithBarcode` decides the booked value:
 
-Three constraints, all deliberate:
+- the OCR read nothing, or something else (even 10 g label rounding) → the
+  barcode's value is booked and `BoxScan.barcode_filled` records the OCR's;
+- **guards** — an expiry outside received −30 days … +3 years, or a weight
+  more than 25 % off the product's median on the list (`typicalWeightFor`,
+  ≥ 2 other cartons with the same EAN13) while the OCR is within it → the OCR
+  stays (IN264184055 `…23082007`; IN264184063 9.771 kg vs ≈14.5);
+- a photo capture's code is the OCR's reading of the printed digits, so there
+  it only fills a blank.
 
-- **Never `needs_review`.** That flag blocks the pallet from closing. A parser
-  validated on 67 cartons from two suppliers must not be able to stop a delivery.
-- **Never override, never fill a blank.** A missing value is `needs_review`'s
-  job; filling it from the barcode is the authoritative behaviour being avoided.
-- **50 g threshold** (`BARCODE_WEIGHT_TOLERANCE_KG`) — above label rounding,
-  below both measured outliers. Expiry flags on any difference.
+It runs in `runOcr` / `runLooseOcr` and again as the last pass over the
+confirm payload (`applyBarcodeReadings`, pallet and loose), which skips a
+value the worker saved himself (`weight_checked` / `expiry_checked`). No
+toast, no question, no hold: the field carries a neutral "from barcode"
+marker (`terminal.fromBarcode`, "מהברקוד") on the card, the list row and the
+edit panel tile, and fills / disagreements / refusals are traced as
+`barcode_reading` in `scanner_events`. A barcode weight is never flagged by
+the weight check (lib/weight-sanity.ts).
 
 Server side, `box_inventory.barcode_expiry` / `.barcode_weight_kg` are
 **`GENERATED ALWAYS … STORED`** over the same parse (`wb_barcode_expiry` /

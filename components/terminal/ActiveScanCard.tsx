@@ -42,6 +42,9 @@ interface ActiveScanCardProps {
   /** Why this carton needs a look, in a few words — an amber line under the
    *  name (a doubted weight, a missing value). Wraps, never truncated. */
   note?: string;
+  /** The weight / expiry is the carton's own barcode reading (client rule
+   *  19/10, lib/barcode-reconcile.ts): a small neutral marker, nothing to do. */
+  fromBarcode?: { weight?: boolean; expiry?: boolean };
 }
 
 // Design "active scan" summary card: #0a0f14 on 2px brand border, mono index
@@ -57,7 +60,7 @@ export function ActiveScanCard({
   index, name, value, unit, barcode, expiry,
   status = 'done', expanded, onToggleExpand,
   onEdit, onDelete, onRetry, onViewImage, onIdentical, onChangeCount, groupCount, tone = 'brand', unprinted = false,
-  highlight = false, select, note,
+  highlight = false, select, note, fromBarcode,
 }: ActiveScanCardProps) {
   const tr = useT();
   // Blue = information / focus: while a re-read names this carton it wears
@@ -132,6 +135,11 @@ export function ActiveScanCard({
         </span>
         <span className="flex items-center gap-[6px] flex-none">
           <span className="flex items-baseline gap-[2px]" dir="ltr">
+            {fromBarcode?.weight && (
+              <span title={tr('terminal.fromBarcode')} aria-label={tr('terminal.fromBarcode')} className="self-center text-ink-muted">
+                <MI name="qr_code_scanner" size={13} />
+              </span>
+            )}
             <span className="font-mono font-black text-[23px] leading-none text-ink-inverse">{value}</span>
             <span className="text-[12px] font-extrabold" style={{ color: accentInk }}>{unit}</span>
           </span>
@@ -169,7 +177,15 @@ export function ActiveScanCard({
           {expiry && (
             <div className="flex justify-between items-center gap-2">
               <span className="text-[10px] font-bold text-ink-inverse">{tr('terminal.expiry')}</span>
-              <span className="font-mono text-[11px] font-semibold text-ink-inverse" dir="ltr">{expiry}</span>
+              <span className="flex items-center gap-[5px] min-w-0">
+                {fromBarcode?.expiry && (
+                  <span className="flex items-center gap-[2px] text-[9.5px] font-bold text-ink-muted">
+                    <MI name="qr_code_scanner" size={11} className="flex-none" />
+                    {tr('terminal.fromBarcode')}
+                  </span>
+                )}
+                <span className="font-mono text-[11px] font-semibold text-ink-inverse" dir="ltr">{expiry}</span>
+              </span>
             </div>
           )}
         </div>

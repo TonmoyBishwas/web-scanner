@@ -176,9 +176,6 @@ export const en = {
 
   'palletVerify.expiryNote': 'This page stays available for ~2 hours. Individual sticker pages stay available indefinitely.',
   'palletVerify.looseHeader': 'Loose Boxes · {scanned} / {declared} scanned',
-  // Barcode-vs-OCR disagreement. A warning, never a block — see lib/barcode-parser.
-  'palletVerify.barcodeConflictWeight': '{item}: barcode says {bc} kg, label read {ocr}',
-  'palletVerify.barcodeConflictExpiry': '{item}: barcode says {bc}, label read {ocr}',
   'palletVerify.nameCodeConflict': 'The barcode belongs to "{code}", but the sticker reads "{ocr}". Booked by the barcode — if that is wrong, fix it in Edit.',
   // A doubted weight (lib/weight-sanity.ts) is a question, never a block —
   // it says which number looked odd and how the worker can tell it is right.
@@ -766,10 +763,11 @@ export const en = {
   'terminal.stickerPhoto': 'Sticker photo',
   'terminal.noStickerPhoto': 'No photo for this carton',
   'terminal.stickerPhotoUploading': 'Photo uploading…',
-  // 31-digit carton barcodes carry the weight and expiry, so they are a free
-  // second reading of the same sticker. Shown, never auto-applied.
-  'terminal.barcodeSays': 'Barcode: {value}',
-  'terminal.useBarcodeValue': 'Use',
+  // 31-digit carton barcodes carry the weight and expiry, and the barcode wins
+  // (client rule 19/10, lib/barcode-reconcile.ts). A neutral marker on the
+  // value — nothing for the worker to answer.
+  'terminal.fromBarcode': 'from barcode',
+  'terminal.weightFromBarcode': "Read from the carton's barcode",
   'terminal.viewSticker': 'Enlarge the sticker photo',
   'terminal.today': 'Today',
   'terminal.ok': 'OK',

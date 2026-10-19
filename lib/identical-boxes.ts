@@ -62,7 +62,7 @@ export function sourceSku(barcode: string): string {
 type SampleRow = MultiPalletBoxScan & {
   image_data?: string;
   needs_review?: boolean;
-  barcode_conflict?: unknown;
+  barcode_filled?: unknown;
   minted?: boolean;
   label_batch_id?: string;
   source_barcode?: string;
@@ -100,7 +100,8 @@ export function expandIdenticalBoxes<T extends SampleRow>(
     scanned_at: now,
     image_data: i === 0 ? sample.image_data : undefined,
     needs_review: undefined,
-    barcode_conflict: undefined,
+    // The form's weight and dates are the worker's, never a barcode reading.
+    barcode_filled: undefined,
     // The weight check (lib/weight-sanity.ts) judges each new row afresh,
     // unless the worker settled the weight: in the form that showed it
     // (2026-10-19: 20 kebab labels saved at 8 kg each came out flagged, and

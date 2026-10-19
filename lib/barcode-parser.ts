@@ -153,10 +153,10 @@ export function needsOcrForWeight(parsedBarcode: ParsedBarcode | null): boolean 
   return true;  // All data must come from OCR or manual entry
 }
 
-// ─── 31-digit carton barcodes: a deterministic cross-check, never a source ───
+// ─── 31-digit carton barcodes: the weight and expiry they carry ───
 //
 // The rule above ("barcodes are IDs only") is correct for the 25-digit format,
-// which is 62 % of cartons and carries nothing at all. It is NOT correct for
+// which is most cartons and carries nothing at all. It is NOT correct for
 // the 31-digit format. Measured against all 264 live box_inventory rows on
 // 2026-09-04, and reproduced independently by the Priority side:
 //
@@ -166,12 +166,14 @@ export function needsOcrForWeight(parsedBarcode: ParsedBarcode | null): boolean 
 //   24-31  expiry DDMMYYYY    → 67/67 valid, 64 agree with the OCR
 //
 // In all three expiry disagreements the barcode was right and the OCR had
-// misread a digit. That still does not make it authoritative: a parser that
-// speaks for a quarter of cartons and is silent for the rest is one supplier
-// label change away from booking a wrong weight. So this is only ever used to
-// FLAG a disagreement for the worker while they are still holding the carton.
-// Mirrored server-side by wb_barcode_expiry / wb_barcode_weight_kg, which feed
-// the generated columns box_inventory.barcode_expiry / .barcode_weight_kg.
+// misread a digit; by 19/10 (424 cartons, 16 products) that held, bar two odd
+// ones the guards cover. The
+// client's rule since 19/10: the barcode WINS — when the OCR read nothing or
+// something else, the booked value is the barcode's (lib/barcode-reconcile.ts,
+// with its plausibility guards). Same offsets as wb_barcode_expiry /
+// wb_barcode_weight_kg, which feed the generated columns
+// box_inventory.barcode_expiry / .barcode_weight_kg; this side also refuses a
+// year outside 2020-2099 (IN264184055's `…23082007`), the database does not.
 
 export interface CartonBarcodeData {
   /** kg, or null when this barcode format carries no weight. */
@@ -204,38 +206,4 @@ export function parseCartonBarcode(barcodeString: string): CartonBarcodeData | n
   }
 
   return weight === null && expiry === null ? null : { weight, expiry };
-}
-
-/** Weight gap that counts as a real disagreement rather than label rounding. */
-export const BARCODE_WEIGHT_TOLERANCE_KG = 0.05;
-
-export interface BarcodeConflict {
-  weight?: { barcode: number; ocr: number };
-  expiry?: { barcode: string; ocr: string };
-}
-
-/**
- * Compare a 31-digit barcode against what the OCR read off the same sticker.
- * Returns null when they agree, when the format carries nothing, or when the
- * OCR gave us nothing to compare against (a blank is a separate problem —
- * `needs_review` already covers it, and filling it from the barcode is exactly
- * the authoritative behaviour we are avoiding).
- */
-export function findBarcodeConflict(
-  barcodeString: string,
-  ocrWeightKg: number | null | undefined,
-  ocrExpiryIso: string | null | undefined,
-): BarcodeConflict | null {
-  const parsed = parseCartonBarcode(barcodeString);
-  if (!parsed) return null;
-
-  const out: BarcodeConflict = {};
-  if (parsed.weight !== null && typeof ocrWeightKg === 'number' && ocrWeightKg > 0
-      && Math.abs(parsed.weight - ocrWeightKg) >= BARCODE_WEIGHT_TOLERANCE_KG) {
-    out.weight = { barcode: parsed.weight, ocr: ocrWeightKg };
-  }
-  if (parsed.expiry && ocrExpiryIso && parsed.expiry !== ocrExpiryIso) {
-    out.expiry = { barcode: parsed.expiry, ocr: ocrExpiryIso };
-  }
-  return out.weight || out.expiry ? out : null;
 }

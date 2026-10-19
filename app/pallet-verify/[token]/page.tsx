@@ -23,7 +23,10 @@ import { ScanActions } from '@/components/terminal/ScanActions';
 import { HistoryRow } from '@/components/terminal/HistoryRow';
 import { ByItemBar, useItemFilter } from '@/components/terminal/ByItemFilter';
 import { EditPanel } from '@/components/terminal/EditPanel';
-import { findBarcodeConflict, type BarcodeConflict } from '@/lib/barcode-parser';
+import {
+  applyBarcodeReadings, keepBarcodeFilled, reconcileWithBarcode, typicalWeightFor,
+  type BarcodeEvent, type BarcodeFilled,
+} from '@/lib/barcode-reconcile';
 import { DoneOverlay } from '@/components/terminal/DoneOverlay';
 import { Toast, useLockToast } from '@/components/terminal/Toast';
 import { PriorityPushStatus } from '@/components/terminal/PriorityPushStatus';
@@ -155,13 +158,16 @@ interface BoxScan extends MultiPalletBoxScan {
   // Set on a manual box when OCR couldn't read the printed digits either — no
   // dedupe ID is possible, so it's counted but flagged ⚠️ for the worker.
   needs_review?: boolean;
-  // A 31-digit carton barcode encodes the weight and expiry, so it is a free
-  // second reading of the same sticker. When the two disagree one of them is
-  // wrong and the worker is still holding the box. Deliberately NOT folded
-  // into `needs_review`: that flag BLOCKS the pallet from closing, and a
-  // parser validated on 67 cartons from two suppliers must not be able to
-  // stop a delivery. This only warns and offers the value.
-  barcode_conflict?: BarcodeConflict;
+  // A 31-digit carton barcode encodes the weight and expiry, and the barcode
+  // wins (client rule, 19/10 — lib/barcode-reconcile.ts): the keys present
+  // here are the fields now holding the barcode's value, each with what the
+  // OCR had read (null = nothing). Shown as a neutral "from barcode" marker;
+  // never a warning, never a question, never a hold.
+  barcode_filled?: BarcodeFilled;
+  // The worker saved this carton's dates in the edit panel: the last pass
+  // before booking leaves his expiry alone (weight_checked does the same for
+  // the weight).
+  expiry_checked?: boolean;
   // Minted by "all boxes identical" (lib/identical-boxes.ts): the worker
   // declared every carton of this product the same, and this row's barcode
   // is a warehouse-printed label, not a supplier sticker. Such rows are
@@ -215,7 +221,12 @@ function flagSuspectWeights(
   list: BoxScan[],
   extraNames: Record<string, Array<string | null | undefined>> = {},
 ): BoxScan[] {
-  const suspects = findWeightSuspects(list, extraNames);
+  // A weight read from the carton's barcode is not a guess from the sticker:
+  // it still counts towards the item's median, it is never itself doubted.
+  const suspects = findWeightSuspects(
+    list.map((b) => (b.barcode_filled && 'weight' in b.barcode_filled ? { ...b, weight_checked: true } : b)),
+    extraNames,
+  );
   if (!suspects.length) return list;
   const by = new Map(suspects.map((x) => [x.barcode, x]));
   return list.map((b) => {
@@ -240,6 +251,12 @@ function weightWarningText(
   return b.weight_suspect?.typical
     ? tr('palletVerify.weightSuspectRatio', { item, w: b.weight, typical: b.weight_suspect.typical.toFixed(2) })
     : tr('palletVerify.weightSuspectName', { name: b.weight_suspect?.name || item, w: b.weight });
+}
+
+/** Which of a carton's fields hold its barcode's reading (lib/barcode-reconcile.ts). */
+function barcodeMarks(b: Pick<BoxScan, 'barcode_filled'>): { weight?: boolean; expiry?: boolean } | undefined {
+  const f = b.barcode_filled;
+  return f ? { weight: 'weight' in f, expiry: 'expiry' in f } : undefined;
 }
 
 /**
@@ -302,12 +319,6 @@ function stripProvisionalIds<T extends { barcode: string; sku?: string }>(
     taken.push(id);
     return { ...b, barcode: id, sku: b.sku && !isProvisional(b.sku) ? b.sku : '' };
   });
-}
-
-/** `2027-06-16` → `16/06/27`, for a toast that has to stay one short line. */
-function isoToDdmmyyyyShort(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
-  return m ? `${m[3]}/${m[2]}/${m[1].slice(2)}` : iso;
 }
 
 // ── Uniform-pair detection state ──
@@ -780,8 +791,6 @@ export default function PalletVerifyPage({
       /** Supplier batch/lot. Free text — OCR leaves it blank far more often
           than it fills it, so this is usually the only way it gets entered. */
       batch: string;
-      /** The carton barcode's own reading, when it contradicts the OCR. */
-      conflict?: BarcodeConflict;
       /**
        * This carton still has no identity (a manual capture whose printed
        * digits the OCR could not read). While true the panel asks for the
@@ -1959,6 +1968,40 @@ export default function PalletVerifyPage({
 
   // ── OCR helper ──
 
+  /**
+   * The weight and expiry to book for a carton the OCR just read: its own
+   * reading, unless the carton's 31-digit barcode says otherwise
+   * (lib/barcode-reconcile.ts). Fills, real disagreements and the barcode
+   * values a guard refused go to scanner_events; the worker is told nothing.
+   */
+  function barcodeReading(
+    ocr: { weight_kg?: number | null; expiry_date?: string | null; barcode_digits?: string | null },
+    manual: boolean,
+    lookupKey: string,
+    list: BoxScan[],
+    where: 'pallet' | 'loose',
+  ) {
+    const code = manual ? digitsOnly(ocr.barcode_digits) : lookupKey;
+    const r = reconcileWithBarcode(
+      code,
+      { weight: ocr.weight_kg, expiry: ocr.expiry_date },
+      { receivedIso: localIsoDate(), typicalKg: typicalWeightFor(code, list), trusted: !manual },
+    );
+    traceBarcodeEvents(code, r.events, where, 'ocr');
+    return r;
+  }
+
+  /** The confirm payload's last pass: rows the OCR hand-off did not settle. */
+  function bookWithBarcode(rows: BoxScan[], where: 'pallet' | 'loose'): BoxScan[] {
+    const { rows: out, events } = applyBarcodeReadings(rows, localIsoDate());
+    for (const { barcode_digits, ...e } of events) traceBarcodeEvents(barcode_digits, [e], where, 'confirm');
+    return out;
+  }
+
+  function traceBarcodeEvents(code: string, events: BarcodeEvent[], where: 'pallet' | 'loose', at: 'ocr' | 'confirm') {
+    for (const e of events) trace('ui', 'barcode_reading', { carton: code, where, at, ...e });
+  }
+
   function runOcr(lookupKey: string, imageData: string, capturedIndex: number, manual = false): Promise<void> {
     // Pass the invoice catalog so the bot's OCR prompt picks a known canonical
     // Hebrew name (closed set) instead of free-form reading.
@@ -1997,18 +2040,15 @@ export default function PalletVerifyPage({
           }
         }
 
-        // Barcode-vs-OCR cross-check. Computed out here, not in the updater:
-        // it depends only on the OCR result and the box's own barcode, and a
-        // state updater may run twice (StrictMode) — which would double-toast.
-        // For a manual capture the identity is the OCR'd digit string, which is
-        // exactly what `resolvedBarcode` becomes inside the updater below.
-        const conflict = data?.ocr_data
-          ? findBarcodeConflict(
-              manual ? digitsOnly(data.ocr_data.barcode_digits) : lookupKey,
-              data.ocr_data.weight_kg,
-              data.ocr_data.expiry_date,
-            )
-          : null;
+        // Barcode wins (client rule, 19/10 — lib/barcode-reconcile.ts): a
+        // 31-digit carton barcode's weight and expiry are what gets booked,
+        // with no toast and no question. Computed out here, not in the
+        // updater: it depends only on the OCR result, the box's own barcode
+        // and the rest of the list, and a state updater may run twice
+        // (StrictMode) — which would double-trace. For a manual capture the
+        // code is the OCR'd digit string (what `resolvedBarcode` becomes
+        // below), which may only fill a blank.
+        const reading = data?.success && data.ocr_data ? barcodeReading(data.ocr_data, manual, lookupKey, scannedBoxesRef.current, 'pallet') : null;
         // The carton's own code (the scanned barcode, or a photo's printed
         // digits) comes first when the name is snapped to an invoice line,
         // and a name that points at another line is kept as a question, not
@@ -2109,8 +2149,10 @@ export default function PalletVerifyPage({
           // the captured sticker, and fix them before advancing.
           const heName = (data.ocr_data.product_name_hebrew || '').trim();
           const enName = (data.ocr_data.product_name_english || '').trim();
-          const ocrWeight = data.ocr_data.weight_kg ?? 0;
-          if ((!heName && !enName) || !(ocrWeight > 0)) {
+          // The barcode's weight counts: a carton it weighs is not a blank.
+          const weight = reading?.weight ?? 0;
+          const expiry = reading?.expiry ?? '';
+          if ((!heName && !enName) || !(weight > 0)) {
             needsReview = true;
           }
           // A read expiry on/before today or on/before the read production
@@ -2118,7 +2160,7 @@ export default function PalletVerifyPage({
           // the edit panel before the pallet closes (lib/date-validation.ts).
           if (validateCartonDates({
             production: data.ocr_data.production_date,
-            expiry: data.ocr_data.expiry_date,
+            expiry,
             receiptDate: localIsoDate(),
           }).expiryError) {
             needsReview = true;
@@ -2133,15 +2175,15 @@ export default function PalletVerifyPage({
               ocr_status: 'done' as OcrStatus,
               item_name: match?.item_name_english || rawEn,
               item_name_hebrew: match?.item_name_hebrew || rawHe,
-              weight: data.ocr_data.weight_kg ?? 0,
-              expiry: data.ocr_data.expiry_date || '',
+              weight,
+              expiry,
               // Same sticker, same OCR call — these were read and thrown away
               // until 2026-09. Priority needs the production date to open its
               // batch, and the supplier's lot code for traceability/recall.
               production_date: data.ocr_data.production_date || '',
               supplier_batch: data.ocr_data.supplier_batch || '',
               needs_review: needsReview || undefined,
-              barcode_conflict: conflict || undefined,
+              barcode_filled: reading && Object.keys(reading.filled).length ? reading.filled : undefined,
               name_conflict: nameConflict
                 ? {
                     ocr: rawHe || rawEn,
@@ -2179,25 +2221,6 @@ export default function PalletVerifyPage({
               code: nameConflict.byCode.item_name_hebrew || nameConflict.byCode.item_name_english,
               ocr: (data.ocr_data.product_name_hebrew || data.ocr_data.product_name_english || '').trim(),
             }),
-            'report_problem', '#fbbf5c',
-          );
-        } else
-        // Warn, don't block: the worker is still holding the carton, and the
-        // barcode has been right in every disagreement we have measured — but
-        // three cases is not a licence to overrule the label automatically.
-        if (conflict) {
-          const label = (data.ocr_data.product_name_hebrew
-            || data.ocr_data.product_name_english || '').trim();
-          showToast(
-            conflict.weight
-              ? tr('palletVerify.barcodeConflictWeight', {
-                  item: label, bc: conflict.weight.barcode.toFixed(2),
-                  ocr: conflict.weight.ocr.toFixed(2),
-                })
-              : tr('palletVerify.barcodeConflictExpiry', {
-                  item: label, bc: isoToDdmmyyyyShort(conflict.expiry!.barcode),
-                  ocr: isoToDdmmyyyyShort(conflict.expiry!.ocr),
-                }),
             'report_problem', '#fbbf5c',
           );
         }
@@ -2487,7 +2510,6 @@ export default function PalletVerifyPage({
       expiry: normalizeExpiry(box.expiry),
       production_date: normalizeExpiry(box.production_date),
       batch: box.supplier_batch || '',
-      conflict: box.barcode_conflict,
       image_data: box.image_data,
       isLoose,
       unidentified: isProvisional(box.barcode),
@@ -2675,12 +2697,14 @@ export default function PalletVerifyPage({
         // otherwise Save quietly books an unmatchable row, which is exactly
         // what it used to do.
         needs_review: hasName && hasWeight && !stillUnidentified ? undefined : true,
-        // The worker has now looked at both readings and chosen. Whatever they
-        // chose is the answer — don't keep flagging it.
-        barcode_conflict: undefined,
-        // Same for a suspect weight: saved = confirmed (lib/weight-sanity.ts).
+        // "From barcode" stays only on a value he left as the barcode gave it.
+        barcode_filled: keepBarcodeFilled(resolvedId, b.barcode_filled, newWeight, expiry),
+        // A suspect weight: saved = confirmed (lib/weight-sanity.ts).
         weight_suspect: undefined,
         weight_checked: true,
+        // His dates are his answer too: the last pass before booking leaves
+        // them (lib/barcode-reconcile.ts applyBarcodeReadings).
+        expiry_checked: true,
         // And for a code/name conflict: the name he saved is the product.
         name_conflict: undefined,
       };
@@ -4203,30 +4227,12 @@ export default function PalletVerifyPage({
       onProductionDateChange={(v) => { setEditForm({ ...editForm, production_date: v }); setEditError(null); }}
       batch={editForm.batch}
       onBatchChange={(v) => setEditForm({ ...editForm, batch: v })}
-      barcodeWeight={editForm.conflict?.weight?.barcode.toFixed(2)}
-      barcodeExpiry={
-        editForm.conflict?.expiry
-          ? isoToDdmmyyyyShort(editForm.conflict.expiry.barcode)
-          : undefined
-      }
-      onUseBarcodeWeight={
-        editForm.conflict?.weight
-          ? () => setEditForm({
-              ...editForm,
-              weight: String(editForm.conflict!.weight!.barcode),
-            })
-          : undefined
-      }
-      onUseBarcodeExpiry={
-        editForm.conflict?.expiry
-          // Apply the ISO form the OCR would have produced, so the stored value
-          // keeps one shape however it was arrived at.
-          ? () => setEditForm({
-              ...editForm,
-              expiry: editForm.conflict!.expiry!.barcode,
-            })
-          : undefined
-      }
+      // Neutral "from barcode" on a value that still is the barcode's
+      // (lib/barcode-reconcile.ts) — typed over, the marker goes.
+      fromBarcode={(() => {
+        const f = keepBarcodeFilled(editForm.barcode, editRow?.barcode_filled, parseFloat(editForm.weight), editForm.expiry);
+        return f ? { weight: 'weight' in f, expiry: 'expiry' in f } : undefined;
+      })()}
       onSave={handleSaveEdit}
       onCancel={() => {
         // A barcode minted in this edit but never saved onto the row would
@@ -4263,14 +4269,8 @@ export default function PalletVerifyPage({
           }
         }
 
-        // See the pallet-phase note — hoisted out of the updater for the same reason.
-        const conflict = data?.ocr_data
-          ? findBarcodeConflict(
-              manual ? digitsOnly(data.ocr_data.barcode_digits) : lookupKey,
-              data.ocr_data.weight_kg,
-              data.ocr_data.expiry_date,
-            )
-          : null;
+        // Barcode wins — see the pallet-phase note; hoisted for the same reason.
+        const reading = data?.success && data.ocr_data ? barcodeReading(data.ocr_data, manual, lookupKey, looseBoxesRef.current, 'loose') : null;
 
         setLooseBoxes((prev) => {
           const idx = prev.findIndex((b) => b.barcode === lookupKey);
@@ -4319,8 +4319,9 @@ export default function PalletVerifyPage({
           // resolved before the worker can finish the loose phase.
           const heName = (data.ocr_data.product_name_hebrew || '').trim();
           const enName = (data.ocr_data.product_name_english || '').trim();
-          const ocrWeight = data.ocr_data.weight_kg ?? 0;
-          if ((!heName && !enName) || !(ocrWeight > 0)) {
+          const weight = reading?.weight ?? 0;
+          const expiry = reading?.expiry ?? '';
+          if ((!heName && !enName) || !(weight > 0)) {
             needsReview = true;
           }
           // A read expiry on/before today or on/before the read production
@@ -4328,7 +4329,7 @@ export default function PalletVerifyPage({
           // the edit panel before the pallet closes (lib/date-validation.ts).
           if (validateCartonDates({
             production: data.ocr_data.production_date,
-            expiry: data.ocr_data.expiry_date,
+            expiry,
             receiptDate: localIsoDate(),
           }).expiryError) {
             needsReview = true;
@@ -4347,32 +4348,15 @@ export default function PalletVerifyPage({
               ocr_status: 'done' as OcrStatus,
               item_name: data.ocr_data.product_name_english || '',
               item_name_hebrew: data.ocr_data.product_name_hebrew || '',
-              weight: data.ocr_data.weight_kg ?? 0,
-              expiry: data.ocr_data.expiry_date || '',
+              weight,
+              expiry,
               production_date: data.ocr_data.production_date || '',
               supplier_batch: data.ocr_data.supplier_batch || '',
               needs_review: needsReview || undefined,
-              barcode_conflict: conflict || undefined,
+              barcode_filled: reading && Object.keys(reading.filled).length ? reading.filled : undefined,
             };
           }), { [resolvedBarcode]: [data.ocr_data.product_name_hebrew, data.ocr_data.product_name_english] });
         });
-
-        if (conflict) {
-          const label = (data.ocr_data.product_name_hebrew
-            || data.ocr_data.product_name_english || '').trim();
-          showToast(
-            conflict.weight
-              ? tr('palletVerify.barcodeConflictWeight', {
-                  item: label, bc: conflict.weight.barcode.toFixed(2),
-                  ocr: conflict.weight.ocr.toFixed(2),
-                })
-              : tr('palletVerify.barcodeConflictExpiry', {
-                  item: label, bc: isoToDdmmyyyyShort(conflict.expiry!.barcode),
-                  ocr: isoToDdmmyyyyShort(conflict.expiry!.ocr),
-                }),
-            'report_problem', '#fbbf5c',
-          );
-        }
       })
       .catch(() => {
         setLooseBoxes((prev) => {
@@ -4434,7 +4418,7 @@ export default function PalletVerifyPage({
       showToast(tr('palletVerify.listUpdatedFromServer'), 'cloud_sync', '#13a4ec');
       return;
     }
-    const looseToBook = looseBoxesRef.current;
+    const looseToBook = bookWithBarcode(looseBoxesRef.current, 'loose');
     try {
       const res = await fetch('/api/multi-pallet-loose-complete', {
         method: 'POST',
@@ -4831,8 +4815,10 @@ export default function PalletVerifyPage({
       showToast(tr('palletVerify.listUpdatedFromServer'), 'cloud_sync', '#13a4ec');
       return;
     }
-    // The list as it is now (the reconcile above awaited): book exactly this.
-    const rowsToBook = scannedBoxesRef.current;
+    // The list as it is now (the reconcile above awaited): book exactly this —
+    // with every carton's weight and expiry following its barcode, the last
+    // pass of the client's barcode-wins rule (lib/barcode-reconcile.ts).
+    const rowsToBook = bookWithBarcode(scannedBoxesRef.current, 'pallet');
 
     const declaredCount = override?.boxCount ?? confirmedBoxCount;
     const lockedGroups = override?.groups ?? uniformGroups;
@@ -5532,6 +5518,7 @@ export default function PalletVerifyPage({
                     unit={tr('common.kg')}
                     barcode={looseActive.barcode}
                     expiry={looseActive.expiry || undefined}
+                    fromBarcode={barcodeMarks(looseActive)}
                     status={
                       looseActive.ocr_status === 'processing'
                         ? 'reading'
@@ -5564,6 +5551,7 @@ export default function PalletVerifyPage({
                     name={box.item_name_hebrew || box.item_name || '—'}
                     barcode={isNoBarcodeId(box.barcode) ? undefined : box.barcode}
                     weight={box.weight > 0 ? box.weight.toFixed(2) : undefined}
+                    weightFromBarcode={barcodeMarks(box)?.weight ? tr('terminal.fromBarcode') : undefined}
                     unitLabel={tr('common.kg')}
                     status={
                       box.ocr_status === 'processing'
@@ -6166,6 +6154,7 @@ export default function PalletVerifyPage({
                   unit={tr('common.kg')}
                   barcode={activeBox.barcode}
                   expiry={activeBox.expiry || undefined}
+                  fromBarcode={barcodeMarks(activeBox)}
                   status={
                     activeBox.ocr_status === 'processing'
                       ? 'reading'
@@ -6199,6 +6188,7 @@ export default function PalletVerifyPage({
                   name={box.item_name_hebrew || box.item_name || '—'}
                   barcode={isNoBarcodeId(box.barcode) ? undefined : box.barcode}
                   weight={box.weight > 0 ? box.weight.toFixed(2) : undefined}
+                  weightFromBarcode={barcodeMarks(box)?.weight ? tr('terminal.fromBarcode') : undefined}
                   unitLabel={tr('common.kg')}
                   status={
                     box.ocr_status === 'processing'
