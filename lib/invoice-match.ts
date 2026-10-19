@@ -127,6 +127,19 @@ export function matchInvoiceItemByCode(
 }
 
 /**
+ * A list row's own codes for step 0 of matchInvoiceItem: its barcode and the
+ * supplier code a minted label stands in for — or none at all once the
+ * worker has settled which product the carton is (`named_by_worker`: he
+ * picked it in the identical form's "which product?", or saved a name of
+ * his own in the edit panel). His choice then decides by name, as the
+ * server books it: a meatball-coded carton he settled as kebab must not
+ * mint labels carrying the meatball line's item_code beside kebab names.
+ */
+export function cartonOwnCodes(b: { barcode: string; source_barcode?: string; named_by_worker?: boolean }): string[] {
+  return b.named_by_worker ? [] : [b.barcode, b.source_barcode || ''];
+}
+
+/**
  * The carton's code says one invoice line and its OCR'd name another — the
  * 19/10 meatball/kebab shape. Both lines, for a soft "which product?" (the
  * code's line is what the carton is booked as). Null when either is missing

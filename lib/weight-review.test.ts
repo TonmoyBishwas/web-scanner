@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { acceptDoubts, sharedDoubt, weightDoubts, type DoubtedRow } from './weight-review';
+import { acceptDoubts, releaseDoubtHold, sharedDoubt, weightDoubts, type DoubtedRow } from './weight-review';
 
 const KEBAB = 'קבב מוסדי 8 קג - גורמה';
 const doubt = { reason: 'name_number' as const, name: 'Frozen kebab 8g' };
@@ -41,5 +41,35 @@ describe('acceptDoubts', () => {
     const out = acceptDoubts(rows, new Set(['b']));
     expect(out[0].weight_suspect).toEqual(doubt);
     expect(out[1].weight_checked).toBe(true);
+  });
+});
+
+// A list open on the floor when the 19/10 build goes live: its doubted
+// cartons were flagged under the old rule, with needs_review: true too.
+describe('pre-19/10 doubts that also held the carton', () => {
+  type Held = DoubtedRow & { barcode: string; needs_review?: boolean };
+  const legacy = (barcode: string, extra: Partial<Held> = {}): Held => ({ ...row(barcode, 8, { weight_suspect: doubt }), needs_review: true, ...extra });
+  // The page's real reasons: here, a missing name.
+  const stillHeld = (r: Held) => !(r.item_name_hebrew || r.item_name);
+
+  it('"the weight is correct for all" releases the hold the doubt alone put there', () => {
+    const out = acceptDoubts([legacy('a'), legacy('b', { item_name_hebrew: '' })], undefined, stillHeld);
+    expect(out[0]).toMatchObject({ weight_checked: true, needs_review: undefined });
+    // Another reason still holds this one: it stays for the edit panel.
+    expect(out[1]).toMatchObject({ weight_checked: true, needs_review: true });
+  });
+
+  it("without the page's reasons, accept leaves needs_review alone", () => {
+    expect(acceptDoubts([legacy('a')])[0].needs_review).toBe(true);
+  });
+
+  it('a restored row loses the doubt-only hold and keeps the doubt', () => {
+    const r = releaseDoubtHold(legacy('a'), stillHeld);
+    expect(r.needs_review).toBeUndefined();
+    expect(r.weight_suspect).toEqual(doubt);
+    const held = legacy('b', { item_name_hebrew: '' });
+    expect(releaseDoubtHold(held, stillHeld)).toBe(held);
+    const plain = row('c', 8);
+    expect(releaseDoubtHold(plain, stillHeld)).toBe(plain);
   });
 });

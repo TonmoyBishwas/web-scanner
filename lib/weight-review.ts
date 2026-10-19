@@ -11,7 +11,8 @@
  * pallet open). The page shows a review bar instead — what looks odd, a
  * one-tap "the weight is correct for all" when the doubted cartons are one
  * item at one weight, and "review one by one" — and Confirm stays available.
- * Confirming with doubts still open asks once, then books as read.
+ * Confirming with doubts still open books them as read — no dialog on top
+ * of the slide (client rule 19/10: never stop the worker).
  *
  * Pure helpers; the page owns the rows.
  */
@@ -46,13 +47,35 @@ export function sharedDoubt(rows: ReadonlyArray<DoubtedRow>): { weight: number; 
  * are. Nothing but the doubt changes — the weight stays what was read.
  * `barcodes` limits it to some rows (default: every doubted row).
  */
-export function acceptDoubts<R extends DoubtedRow & { barcode: string }>(
+export function acceptDoubts<R extends DoubtedRow & { barcode: string; needs_review?: boolean }>(
   rows: ReadonlyArray<R>,
   barcodes?: ReadonlySet<string>,
+  /** The page's real reasons to hold a carton (no weight, no name…): with
+   *  it, a hold the doubt alone put there (releaseDoubtHold) goes too. */
+  stillHeld?: (r: R) => boolean,
 ): R[] {
   return rows.map((r) => {
     if (!r.weight_suspect || r.weight_checked) return r;
     if (barcodes && !barcodes.has(r.barcode)) return r;
-    return { ...r, weight_suspect: undefined, weight_checked: true };
+    const accepted = { ...r, weight_suspect: undefined, weight_checked: true };
+    return stillHeld && accepted.needs_review && !stillHeld(r) ? { ...accepted, needs_review: undefined } : accepted;
   });
+}
+
+/**
+ * A carton doubted under the rule before 19/10 also got `needs_review: true`
+ * — the hold that keeps a pallet open — from the doubt alone. A list open on
+ * the floor when this build goes live comes back (browser cache or the
+ * server copy) with that hold, so "the weight is correct for all" would say
+ * "16 cartons confirmed" while the footer still read "16 cartons need a
+ * detail filled in" and Confirm stayed shut. When nothing else holds the
+ * row (`stillHeld` is the page's own list of reasons), the hold goes and the
+ * doubt stays a question, as it is now.
+ */
+export function releaseDoubtHold<R extends DoubtedRow & { needs_review?: boolean }>(
+  r: R,
+  stillHeld: (r: R) => boolean,
+): R {
+  if (!r.needs_review || !r.weight_suspect || stillHeld(r)) return r;
+  return { ...r, needs_review: undefined };
 }

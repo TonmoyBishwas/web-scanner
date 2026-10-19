@@ -329,6 +329,12 @@ describe('scanNoticeMs', () => {
     expect(scanNoticeMs({ different: { n: 3, quickWeight: 15.26 } })).toBeNull();
     expect(scanNoticeMs({ short: true, newCarton: { label: 'x' } })).toBeNull();
   });
+
+  it('after "Same carton" the re-read notice keeps only the twin way in, and times out', () => {
+    // Never silent (a real twin read in that window still gets a way in),
+    // never stuck on screen while the camera stays parked on the carton.
+    expect(scanNoticeMs({ different: { n: 3, sameAnswered: true } })).toBe(SCAN_NOTICE_ACTION_MS);
+  });
 });
 
 describe('shouldExplainShortRead (document 48429: 406243 every 3 s)', () => {

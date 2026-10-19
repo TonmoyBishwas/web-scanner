@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { matchInvoiceItem, matchInvoiceItemByCode, invoiceNameConflict, type InvoiceItem } from './invoice-match';
+import { cartonOwnCodes, matchInvoiceItem, matchInvoiceItemByCode, invoiceNameConflict, type InvoiceItem } from './invoice-match';
 
 // Invoice 12083843 (Netto Melinda, 2026-10-04): the invoice names the
 // product one way ("... תפ לנדא"), the carton sticker another, led by a
@@ -152,5 +152,25 @@ describe('invoiceNameConflict', () => {
   it('no code match or no name match → null', () => {
     expect(invoiceNameConflict('קבב', '', GOURMET, ['7290002195832'])).toBeNull();
     expect(invoiceNameConflict('', '', GOURMET, ['2000097200258'])).toBeNull();
+  });
+});
+
+describe("cartonOwnCodes — the worker's choice of product beats the code", () => {
+  const GOURMET2: InvoiceItem[] = [
+    { item_code: '7290004456856', item_name_hebrew: 'קבב מוסדי 8 קג - גורמה העדה החרדית', item_name_english: 'Frozen kebab 8g' },
+    { item_code: '2000097200258', item_name_hebrew: 'קציצות בקר 35 גרם', item_name_english: 'Beef meatballs 35g' },
+  ];
+  const kebabNames = { item_name_hebrew: 'קבב מוסדי 8 קג - גורמה העדה החרדית', item_name: 'Frozen kebab 8g' };
+  const line = (b: { barcode: string; source_barcode?: string; named_by_worker?: boolean; item_name_hebrew: string; item_name: string }) =>
+    matchInvoiceItem(b.item_name_hebrew, b.item_name, GOURMET2, cartonOwnCodes(b))?.item_code;
+
+  it('a carton nobody settled follows its code (barcode, or the code a label stands in for)', () => {
+    expect(cartonOwnCodes({ barcode: '2826101900000123', source_barcode: '2000097200258' })).toEqual(['2826101900000123', '2000097200258']);
+    expect(line({ barcode: '2826101900000123', source_barcode: '2000097200258', ...kebabNames })).toBe('2000097200258');
+  });
+
+  it('a carton he settled as kebab follows the name he chose', () => {
+    expect(cartonOwnCodes({ barcode: '2000097200258', named_by_worker: true })).toEqual([]);
+    expect(line({ barcode: '2826101900000123', source_barcode: '2000097200258', named_by_worker: true, ...kebabNames })).toBe('7290004456856');
   });
 });

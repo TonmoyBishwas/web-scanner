@@ -734,7 +734,11 @@ nothing. Now `reconcileWithBarcode` decides the booked value:
 
 It runs in `runOcr` / `runLooseOcr` and again as the last pass over the
 confirm payload (`applyBarcodeReadings`, pallet and loose), which skips a
-value the worker saved himself (`weight_checked` / `expiry_checked`). No
+value the worker saved himself (`weight_checked` / `expiry_checked`). That
+last pass also runs the weight guard again on the OCR's own reading
+(`barcode_filled.weight`): a product's first carton had nothing to be an
+outlier against when it was read, so a barcode weight booked then goes back
+to the OCR's once the rest of the list says the barcode is the odd one. No
 toast, no question, no hold: the field carries a neutral "from barcode"
 marker (`terminal.fromBarcode`, "מהברקוד") on the card, the list row and the
 edit panel tile, and fills / disagreements / refusals are traced as

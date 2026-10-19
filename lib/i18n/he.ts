@@ -200,11 +200,8 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.weightReviewOpenOne': 'פתח את הקרטון',
   'palletVerify.weightAccepted': '{count} קרטונים אושרו במשקל שנקרא',
   'palletVerify.weightAcceptedOne': 'הקרטון אושר במשקל שנקרא',
-  'palletVerify.weightAskTitle': 'להמשיך עם המשקלים האלה?',
   'palletVerify.weightAskBody': 'ל-{count} קרטונים יש משקל שנראה חריג. הם ייקלטו במשקל שנקרא מהמדבקה.',
   'palletVerify.weightAskBodyOne': 'לקרטון אחד יש משקל שנראה חריג. הוא ייקלט במשקל שנקרא מהמדבקה.',
-  'palletVerify.weightAskContinue': 'המשך כמו שהם',
-  'palletVerify.weightAskReview': 'בדוק קודם',
   'palletVerify.docPrefix': 'מסמך: {doc}',
   'palletVerify.savingLoose': 'שומר קופסאות בודדות…',
   'palletVerify.savingPallet': 'שומר משטח…',
@@ -253,7 +250,7 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.totalWeightLine': '{weight} kg סה״כ',
   'palletVerify.itemTypesDetected': 'זוהו {count} סוגי פריטים',
   'palletVerify.confirmOrKeep': 'אשר עכשיו או המשך לסרוק קופסאות נוספות',
-  'palletVerify.uniformChoose': 'שני קרטונים זהים — אותו מוצר ואותו משקל ({weight} ק״ג). כל המשטח כזה?',
+  'palletVerify.uniformChoose': '{count} קרטונים זהים — אותו מוצר ואותו משקל ({weight} ק״ג). כל המשטח כזה?',
   'palletVerify.uniformCompleteBtn': 'כל המשטח כזה — הזן כמה קרטונים',
 
   'palletVerify.uniformContinueMix': 'יש גם מוצרים אחרים — המשך לסרוק',
@@ -305,6 +302,12 @@ export const he: Record<TranslationKey, string> = {
   'palletVerify.closeShortLooseTitle': 'לסיים את הקרטונים הבודדים עם פחות מהמוצהר?',
   'palletVerify.closeShortLooseBody': 'הוצהרו {declared} קרטונים בודדים. נסרקו {count}. רק הקרטונים שנסרקו ייקלטו.',
   'palletVerify.closeShortLooseConfirm': 'החלק לסיום עם {count} קרטונים',
+  // English: "No loose cartons arrived? Finish without them"
+  'palletVerify.closeShortLooseNoneBtn': 'לא הגיעו קרטונים בודדים? סיים בלעדיהם',
+  // English: "{declared} loose cartons were declared and none is scanned. No loose carton is booked."
+  'palletVerify.closeShortLooseNoneBody': 'הוצהרו {declared} קרטונים בודדים ולא נסרק אף אחד. לא ייקלט אף קרטון בודד.',
+  // English: "Slide to finish without loose cartons"
+  'palletVerify.closeShortLooseNoneConfirm': 'החלק לסיום בלי קרטונים בודדים',
   'palletVerify.deleteScan': 'מחק סריקה זו',
 
   'palletVerify.editScan': 'ערוך',
@@ -738,6 +741,8 @@ export const he: Record<TranslationKey, string> = {
   'terminal.alreadyCountedPlusTwins': 'הברקוד הזה כבר ברשימה (קרטון {n} ועוד {more} עם אותה מדבקה). זה אחד מהם, או עוד קרטון עם מדבקה זהה?',
   'terminal.differentCarton': 'קרטון אחר — הוסף',
   'terminal.sameCarton': 'אותו קרטון',
+  // English: "You marked "Same carton" (carton {n}). If the carton in your hands is another one with an identical label — add it."
+  'terminal.sameCartonHeld': 'סימנת "אותו קרטון" (קרטון {n}). אם בידך קרטון אחר עם מדבקה זהה — הוסף אותו.',
   'terminal.twinHowMany': 'יש כמה כאלה? הזן כמה',
   'terminal.twinExplain': 'קרטון שמוסיפים כך מקבל מדבקה משלו — הדפס אותה ממסך "מדבקות".',
   'terminal.ownLabelListed': 'זו מדבקה שהודפסה כאן — קרטון {n}, כבר ברשימה.',

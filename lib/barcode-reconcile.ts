@@ -192,13 +192,32 @@ export function applyBarcodeReadings<R extends BarcodeRow>(
   const out = rows.map((r) => {
     if (r.ocr_status && r.ocr_status !== 'done') return r;
     if (!parseCartonBarcode(r.barcode)) return r;
+    const typicalKg = typicalWeightFor(r.barcode, rows);
+    const trusted = r.captured_via !== 'manual';
     const rec = reconcileWithBarcode(
       r.barcode,
       { weight: r.weight, expiry: r.expiry },
-      { receivedIso, typicalKg: typicalWeightFor(r.barcode, rows), trusted: r.captured_via !== 'manual' },
+      { receivedIso, typicalKg, trusted },
     );
     let next: R = r;
-    if (!r.weight_checked && rec.filled.weight !== undefined && rec.weight !== null && rec.weight !== r.weight) {
+    // A barcode weight booked at the OCR hand-off, judged again now that the
+    // list is whole: on the first carton of a product there was nothing to
+    // call it an outlier against. IN264184063's shape read first — barcode
+    // 9.771 kg over an OCR 14.34, then 14 more cartons at ≈14.5 — kept 9.771
+    // for good, since at confirm the row already agreed with its barcode.
+    // The OCR's reading (barcode_filled.weight) goes through the same guard;
+    // when it refuses the barcode, the OCR's weight is what is booked.
+    const ocrRead = r.barcode_filled?.weight;
+    if (!r.weight_checked && typeof ocrRead === 'number' && ocrRead > 0 && ocrRead !== r.weight) {
+      const again = reconcileWithBarcode(r.barcode, { weight: ocrRead, expiry: r.expiry }, { receivedIso, typicalKg, trusted });
+      const refused = again.events.find((e) => e.field === 'weight' && e.action === 'kept_ocr');
+      if (refused) {
+        const { weight: _w, ...rest } = r.barcode_filled ?? {};
+        next = { ...next, weight: ocrRead, barcode_filled: 'expiry' in rest ? rest : undefined };
+        events.push({ ...refused, barcode_digits: r.barcode });
+      }
+    }
+    if (next === r && !r.weight_checked && rec.filled.weight !== undefined && rec.weight !== null && rec.weight !== r.weight) {
       next = { ...next, weight: rec.weight, barcode_filled: { ...next.barcode_filled, weight: rec.filled.weight } };
     }
     if (!r.expiry_checked && rec.filled.expiry !== undefined && rec.expiry !== null && rec.expiry !== normalizeExpiry(r.expiry)) {
@@ -206,7 +225,10 @@ export function applyBarcodeReadings<R extends BarcodeRow>(
     }
     if (next !== r) {
       for (const e of rec.events) {
-        if (e.action !== 'kept_ocr') events.push({ ...e, barcode_digits: r.barcode });
+        // The weight's events belong to the change made: a row reverted to
+        // its OCR weight above traced that, not the barcode it had.
+        if (e.action === 'kept_ocr' || (e.field === 'weight' && next.weight !== rec.weight)) continue;
+        events.push({ ...e, barcode_digits: r.barcode });
       }
     }
     return next;

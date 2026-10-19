@@ -185,6 +185,46 @@ describe('applyBarcodeReadings (the last pass before booking)', () => {
     expect(applyBarcodeReadings([row], RECEIVED).rows[0]).toBe(row);
   });
 
+  it('the outlier guard runs again at confirm: a first carton booked at its barcode goes back to the OCR (IN264184063 shape)', () => {
+    // Read first: no other carton of the product yet, so the hand-off booked 9.771.
+    const first = reconcileWithBarcode(LIGHT, { weight: 14.34, expiry: '2027-08-03' }, { receivedIso: '2026-10-07' });
+    expect(first.weight).toBe(9.771);
+    const light = { barcode: LIGHT, weight: first.weight!, expiry: '2027-08-03', ocr_status: 'done', barcode_filled: first.filled };
+    const others = [
+      { barcode: '7290003670444014571470303082027', weight: 14.571, expiry: '2027-08-03', ocr_status: 'done' },
+      { barcode: '7290003670444014500000103082027', weight: 14.5, expiry: '2027-08-03', ocr_status: 'done' },
+      { barcode: '7290003670444014600000203082027', weight: 14.6, expiry: '2027-08-03', ocr_status: 'done' },
+    ];
+    const { rows: out, events } = applyBarcodeReadings([light, ...others], '2026-10-07');
+    expect(out[0]).toMatchObject({ weight: 14.34, barcode_filled: undefined });
+    expect(events).toEqual([{ field: 'weight', action: 'kept_ocr', ocr: 14.34, barcode: 9.771, reason: 'weight_outlier', barcode_digits: LIGHT }]);
+    expect(out.slice(1)).toEqual(others);
+  });
+
+  it('…keeps the barcode when the list agrees with it, and leaves a weight the worker saved', () => {
+    const row = { barcode: MISREAD, weight: 12.46, expiry: '2027-07-14', ocr_status: 'done', barcode_filled: { weight: 4.38, expiry: null } };
+    const peers = [
+      { barcode: '7290002195832012400128912072027', weight: 12.4, expiry: '2027-07-12', ocr_status: 'done' },
+      { barcode: '7290002195832012300128812072027', weight: 12.3, expiry: '2027-07-12', ocr_status: 'done' },
+    ];
+    expect(applyBarcodeReadings([row, ...peers], RECEIVED).rows[0]).toBe(row);
+    const light = { barcode: LIGHT, weight: 9.771, expiry: '2027-08-03', ocr_status: 'done', weight_checked: true, barcode_filled: { weight: 14.34 } };
+    const heavy = [
+      { barcode: '7290003670444014500000103082027', weight: 14.5, expiry: '2027-08-03', ocr_status: 'done' },
+      { barcode: '7290003670444014600000203082027', weight: 14.6, expiry: '2027-08-03', ocr_status: 'done' },
+    ];
+    expect(applyBarcodeReadings([light, ...heavy], '2026-10-07').rows[0]).toBe(light);
+  });
+
+  it('a revert keeps the expiry marker', () => {
+    const light = { barcode: LIGHT, weight: 9.771, expiry: '2027-08-03', ocr_status: 'done', barcode_filled: { weight: 14.34, expiry: null } };
+    const heavy = [
+      { barcode: '7290003670444014500000103082027', weight: 14.5, expiry: '2027-08-03', ocr_status: 'done' },
+      { barcode: '7290003670444014600000203082027', weight: 14.6, expiry: '2027-08-03', ocr_status: 'done' },
+    ];
+    expect(applyBarcodeReadings([light, ...heavy], '2026-10-07').rows[0]).toMatchObject({ weight: 14.34, barcode_filled: { expiry: null } });
+  });
+
   it('a photo capture only gets its blanks filled', () => {
     const row = { barcode: MISREAD, weight: 4.38, expiry: '', ocr_status: 'done', captured_via: 'manual' as const };
     expect(applyBarcodeReadings([row], RECEIVED).rows[0]).toMatchObject({ weight: 4.38, expiry: '2027-07-14' });

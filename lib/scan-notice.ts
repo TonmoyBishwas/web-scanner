@@ -45,6 +45,9 @@ export const SCAN_NOTICE_ACTION_MS = 8000;
  * never waits on it.
  */
 export function scanNoticeMs(notice: { different?: unknown; newCarton?: unknown; short?: unknown }): number | null {
+  // "Same carton" already answered for this code: only the twin way in is
+  // left on it, and it goes like any action notice once the camera is away.
+  if ((notice.different as { sameAnswered?: boolean } | undefined)?.sameAnswered) return SCAN_NOTICE_ACTION_MS;
   if (notice.different || notice.short) return null;
   return notice.newCarton ? SCAN_NOTICE_ACTION_MS : SCAN_NOTICE_MS;
 }
