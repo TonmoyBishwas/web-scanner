@@ -69,6 +69,7 @@ import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
 import { freeNoBarcodeId, isNoBarcodeId, unreadDigitsOutcome } from '@/lib/no-barcode';
 import { useBackClose } from '@/lib/use-back-close';
 import { findWeightSuspects } from '@/lib/weight-sanity';
+import { acceptDoubts, sharedDoubt, weightDoubts } from '@/lib/weight-review';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback, scanAlreadyCountedFeedback } from '@/lib/scan-feedback';
 import { photoBelongsTo, photoUploadKey } from '@/lib/photo-rows';
@@ -175,9 +176,12 @@ interface BoxScan extends MultiPalletBoxScan {
   // while the label is unprinted.
   new_carton?: boolean;
   // lib/weight-sanity.ts: the OCR weight looks wrong (a number from the
-  // product name, or 3x off the item's median on this list). Folded into
-  // needs_review, so the worker has to confirm or fix it in the edit panel.
-  weight_suspect?: { typical?: number; reason: 'name_number' | 'ratio' };
+  // product name — `name` says which — or 3x off the item's median on this
+  // list). A question for the worker, NOT folded into needs_review: it never
+  // holds the pallet (lib/weight-review.ts). The row turns amber with a
+  // reason; the review bar, the edit panel's "the weight is correct" or an
+  // edit settles it, and Confirm asks once about any left.
+  weight_suspect?: { typical?: number; reason: 'name_number' | 'ratio'; name?: string };
   // The worker saved this carton in the edit panel: its weight is theirs.
   weight_checked?: boolean;
   // Its sticker photo is still uploading (archiveStickerPhoto). Never cached.
@@ -190,8 +194,8 @@ interface BoxScan extends MultiPalletBoxScan {
 /**
  * Flag every carton on the list whose weight looks wrong (lib/weight-sanity.ts)
  * — a new read can also expose an earlier one, e.g. a first carton read as
- * 120 kg once three real 12 kg ones are in. Only ever ADDS a flag: other
- * reasons may hold needs_review, and the worker's Save is what clears it.
+ * 120 kg once three real 12 kg ones are in. Only ever ADDS a doubt, and never
+ * touches needs_review: a doubt asks, it does not block (lib/weight-review.ts).
  */
 function flagSuspectWeights(
   list: BoxScan[],
@@ -203,19 +207,48 @@ function flagSuspectWeights(
   return list.map((b) => {
     const x = by.get(b.barcode);
     if (!x || b.weight_suspect) return b;
-    return { ...b, needs_review: true, weight_suspect: { typical: x.typical, reason: x.reason } };
+    return { ...b, weight_suspect: { typical: x.typical, reason: x.reason, name: x.name } };
   });
 }
 
-/** What the worker is told about a flagged weight (toast + edit panel). */
+type Tr = (k: Parameters<typeof t>[1], v?: Parameters<typeof t>[2]) => string;
+
+/**
+ * What the worker is told about a flagged weight (toast, edit panel, the
+ * identical form): which number looked odd and where it came from, and that
+ * a sticker saying the same weight means it is right.
+ */
 function weightWarningText(
   b: Pick<BoxScan, 'weight' | 'weight_suspect' | 'item_name_hebrew' | 'item_name'>,
-  tr: (k: Parameters<typeof t>[1], v?: Parameters<typeof t>[2]) => string,
+  tr: Tr,
 ): string {
   const item = (b.item_name_hebrew || b.item_name || '').trim();
   return b.weight_suspect?.typical
     ? tr('palletVerify.weightSuspectRatio', { item, w: b.weight, typical: b.weight_suspect.typical.toFixed(2) })
-    : tr('palletVerify.weightSuspectName', { item, w: b.weight });
+    : tr('palletVerify.weightSuspectName', { name: b.weight_suspect?.name || item, w: b.weight });
+}
+
+/**
+ * The short reason line under an amber carton card — why it is amber, in a
+ * few words. Undefined for a carton with nothing to look at.
+ */
+function cardNote(b: BoxScan, tr: Tr): string | undefined {
+  if (b.ocr_status === 'processing' || b.ocr_status === 'failed') return undefined;
+  if (b.needs_review) {
+    if (!(b.weight > 0)) return tr('palletVerify.reviewNoWeight');
+    if (!(b.item_name_hebrew || b.item_name || '').trim()) return tr('palletVerify.reviewNoName');
+    if (isProvisional(b.barcode)) return tr('palletVerify.reviewNoBarcode');
+    if (validateCartonDates({ production: b.production_date, expiry: b.expiry, receiptDate: localIsoDate() }).expiryError) {
+      return tr('palletVerify.reviewExpiry');
+    }
+    return tr('palletVerify.reviewGeneric');
+  }
+  if (b.weight_suspect && !b.weight_checked) {
+    return b.weight_suspect.typical
+      ? tr('palletVerify.weightDoubtShortRatio', { typical: b.weight_suspect.typical.toFixed(2) })
+      : tr('palletVerify.weightDoubtShortName', { w: b.weight });
+  }
+  return undefined;
 }
 
 function digitsOnly(s: string | null | undefined): string {
@@ -748,6 +781,13 @@ export default function PalletVerifyPage({
   // declared (likely a miscount) and taps "Create LPN anyway", this opens a
   // warning modal before the pallet is confirmed with the actual scanned count.
   const [pendingForceConfirm, setPendingForceConfirm] = useState(false);
+  // Confirm slid while some weights are still doubted (lib/weight-review.ts):
+  // asked once, then "Continue" books the list as read — through the confirm
+  // of the render it is tapped in, never a closure kept from the slide (a
+  // scan may land while the question is open). `swipeKey` remounts the slide
+  // when the worker chooses to check first (it stays "confirmed").
+  const [weightAsk, setWeightAsk] = useState<{ loose: boolean; count: number } | null>(null);
+  const [swipeKey, setSwipeKey] = useState(0);
   // Terminal chrome: bottom-sheet handle, side drawer host, lock/info toast,
   // active-card expand state, and the next-pallet number the pallet_done
   // card's "Scan pallet N" button advances to.
@@ -2593,7 +2633,15 @@ export default function PalletVerifyPage({
     const replaceSample = (prev: BoxScan[]): BoxScan[] => {
       // "Different carton?": the carton it was copied from is a counted
       // carton of its own and stays; the new one joins the end of the list.
-      if (target.anotherOf) return flagSuspectWeights([...prev, ...rows]);
+      // The form showed that carton's doubted weight and the worker saved it
+      // unchanged: the doubt is settled for it too.
+      if (target.anotherOf) {
+        const settled = form.weight_confirmed
+          ? acceptDoubts(prev, new Set(prev.filter((b) => b.barcode === target.box.barcode
+              && Math.abs(b.weight - form.weight) < 0.001).map((b) => b.barcode)))
+          : prev;
+        return flagSuspectWeights([...settled, ...rows]);
+      }
       const idx = prev.findIndex((b) => b.barcode === target.box.barcode);
       return flagSuspectWeights(
         idx === -1 ? [...prev, ...rows] : [...prev.slice(0, idx), ...rows, ...prev.slice(idx + 1)],
@@ -3084,8 +3132,10 @@ export default function PalletVerifyPage({
   /** The action is offered on a captured row with a real supplier barcode
    *  that is not itself minted and not still in OCR. */
   function canDeclareIdentical(box: BoxScan): boolean {
-    // A doubted weight is confirmed first: the form copies it onto every label.
-    return box.ocr_status !== 'processing' && !box.minted && !box.weight_suspect
+    // A doubted weight no longer hides this (2026-10-19: it pushed David onto
+    // 20 one-carton "Different carton?" saves). The form shows the doubt by
+    // the weight, and saving it confirms the weight for every label.
+    return box.ocr_status !== 'processing' && !box.minted
       && !isProvisional(box.barcode) && !isNoBarcodeId(box.barcode);
   }
 
@@ -3208,6 +3258,50 @@ export default function PalletVerifyPage({
 
   const cartonOverlays = (
     <>
+      {weightAsk && (
+        // Confirm with doubted weights left: one clear question, then he
+        // decides. Nothing changes on "Continue" — the weights go as read.
+        <div className="fixed inset-0 z-[72] bg-[rgba(5,8,10,0.74)] backdrop-blur-[3px] flex items-center justify-center p-[22px]">
+          <div role="alertdialog" aria-modal="true" className="w-full max-w-[330px] bg-amber-card border border-[rgba(245,158,11,0.5)] rounded-[20px] px-5 py-[22px] shadow-[0_26px_64px_rgba(0,0,0,0.72)] animate-doneRise">
+            <div className="flex justify-center mb-[13px]">
+              <div className="w-16 h-16 rounded-full bg-[rgba(245,158,11,0.16)] flex items-center justify-center">
+                <MI name="report_problem" size={34} style={{ color: '#fbbf5c' }} />
+              </div>
+            </div>
+            <h2 className="text-center text-[19px] font-black text-ink-inverse">{tr('palletVerify.weightAskTitle')}</h2>
+            <p className="text-center text-xs font-semibold text-[#d8c9a0] mt-1 leading-snug">
+              {weightAsk.count === 1
+                ? tr('palletVerify.weightAskBodyOne')
+                : tr('palletVerify.weightAskBody', { count: weightAsk.count })}
+            </p>
+            <div className="flex flex-col gap-2 mt-4">
+              <button
+                onClick={() => {
+                  const { loose, count } = weightAsk;
+                  trace('ui', 'weight_doubt_continue', { loose, count });
+                  setWeightAsk(null);
+                  if (loose) handleConfirmLooseBoxes(); else handleConfirmPallet();
+                }}
+                className="w-full py-3 rounded-[13px] font-black text-[14px] bg-warn text-canvas"
+              >
+                {tr('palletVerify.weightAskContinue')}
+              </button>
+              <button
+                onClick={() => {
+                  const { loose } = weightAsk;
+                  trace('ui', 'weight_doubt_check_first', { loose, count: weightAsk.count });
+                  setWeightAsk(null);
+                  setSwipeKey((k) => k + 1);
+                  reviewWeightDoubt(loose);
+                }}
+                className="w-full py-3 rounded-[13px] font-extrabold text-[14px] bg-tile border border-line-strong text-ink-inverse"
+              >
+                {tr('palletVerify.weightAskReview')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {showCartonCreator && (
         <CartonCreator
           key={cartonPreset ? `preset:${cartonPreset.item.item_code}` : 'blank'}
@@ -3277,6 +3371,8 @@ export default function PalletVerifyPage({
             production_date: identicalFor.box.production_date || '',
           }}
           anotherOf={identicalFor.anotherOf}
+          weightDoubt={identicalFor.box.weight_suspect && !identicalFor.box.weight_checked
+            ? weightWarningText(identicalFor.box, tr) : undefined}
           onBack={() => setIdenticalFor(null)}
           onCreated={(labels, form) => handleIdenticalCreated(identicalFor, labels, form)}
         />
@@ -3343,6 +3439,89 @@ export default function PalletVerifyPage({
       </button>
     </div>
   );
+
+  // ── Doubted weights: a review, never a block (lib/weight-review.ts) ──
+
+  /** "The weight is correct for all": the doubts shown, confirmed as read. */
+  function acceptWeightDoubts(loose: boolean, barcodes: ReadonlySet<string>, weight?: number) {
+    trace('ui', 'weight_doubt_accept_all', { loose, count: barcodes.size, weight });
+    const settle = (prev: BoxScan[]) => acceptDoubts(prev, barcodes);
+    if (loose) setLooseBoxes(settle); else setScannedBoxes(settle);
+    showToast(
+      barcodes.size === 1
+        ? tr('palletVerify.weightAcceptedOne')
+        : tr('palletVerify.weightAccepted', { count: barcodes.size }),
+      'check_circle',
+    );
+  }
+
+  /** Open the first carton whose weight is still doubted. */
+  function reviewWeightDoubt(loose: boolean) {
+    const first = weightDoubts(loose ? looseBoxes : scannedBoxes)[0];
+    trace('ui', 'weight_doubt_review', { loose, barcode: first?.barcode });
+    if (first) openEdit(first, loose);
+  }
+
+  /** Confirm with doubts still open: ask once, then let him. */
+  function confirmPastWeightDoubts(loose: boolean) {
+    const run = () => (loose ? handleConfirmLooseBoxes() : handleConfirmPallet());
+    const count = weightDoubts(loose ? looseBoxes : scannedBoxes).length;
+    if (count === 0) { run(); return; }
+    trace('ui', 'weight_doubt_ask', { loose, count });
+    setWeightAsk({ loose, count });
+  }
+
+  /**
+   * The amber review above the footer while any weight on the list is
+   * doubted: what looks odd, one tap to say it is right (when the doubts are
+   * one item at one weight), and one by one. Confirm below stays available.
+   */
+  function weightReviewBar(loose: boolean) {
+    const list = loose ? looseBoxes : scannedBoxes;
+    const doubts = weightDoubts(list);
+    if (doubts.length === 0) return null;
+    const shared = sharedDoubt(list);
+    const ids = new Set(doubts.map((b) => b.barcode));
+    const n = doubts.length;
+    return (
+      <div role="status" className="mb-2 rounded-[13px] border border-warn/60 bg-tile px-3 py-[9px]">
+        <div className="flex items-start gap-[6px] text-[12px] font-extrabold text-warn-weak-ink leading-[1.35]">
+          <MI name="report_problem" size={16} className="flex-none mt-[1px]" />
+          <span className="min-w-0">
+            {n === 1 ? tr('palletVerify.weightReviewTitleOne') : tr('palletVerify.weightReviewTitle', { count: n })}
+            {' '}
+            <span className="font-semibold text-ink-muted">
+              {shared
+                ? tr('palletVerify.weightReviewShared', { name: shared.name, w: shared.weight })
+                : tr('palletVerify.weightReviewMixed')}
+            </span>
+          </span>
+        </div>
+        <div className="flex gap-2 mt-[8px]">
+          {shared && (
+            <button
+              onClick={() => acceptWeightDoubts(loose, ids, shared.weight)}
+              className="flex-1 min-w-0 flex items-center justify-center gap-[5px] py-[9px] px-2 rounded-[11px] bg-warn text-canvas text-[12px] font-black leading-tight text-center"
+            >
+              <MI name="check" size={16} className="flex-none" />
+              <span className="min-w-0">
+                {n === 1
+                  ? tr('palletVerify.weightCorrectOne', { w: shared.weight })
+                  : tr('palletVerify.weightCorrectAll', { w: shared.weight })}
+              </span>
+            </button>
+          )}
+          <button
+            onClick={() => reviewWeightDoubt(loose)}
+            className="flex-1 min-w-0 flex items-center justify-center gap-[5px] py-[9px] px-2 rounded-[11px] bg-tile border border-line-strong text-ink-inverse text-[12px] font-extrabold leading-tight text-center"
+          >
+            <MI name="edit" size={15} className="flex-none" />
+            <span className="min-w-0">{n === 1 ? tr('palletVerify.weightReviewOpenOne') : tr('palletVerify.weightReviewOneByOne')}</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // The footer's error line, shared by both scan phases. Red = something
   // failed and the worker must act: persistent, `error`, role=alert.
@@ -4699,6 +4878,7 @@ export default function PalletVerifyPage({
     const looseFooter = (
       <>
         {footerError}
+        {weightReviewBar(true)}
         {canConfirmLoose && labelGate.count > 0 ? (
           // Ready to finish, but saved labels are unprinted: print first.
           labelGateFooter(true)
@@ -4706,7 +4886,8 @@ export default function PalletVerifyPage({
           // Brand (blue) slide: this books the loose cartons like any normal
           // confirm. Amber slides are kept for booking WITH a shortfall.
           <SwipeConfirm
-            onConfirm={handleConfirmLooseBoxes}
+            key={swipeKey}
+            onConfirm={() => confirmPastWeightDoubts(true)}
             label={tr('palletVerify.swipeConfirmLoose', { count: scanned })}
           />
         ) : (
@@ -4846,6 +5027,7 @@ export default function PalletVerifyPage({
                         ? 'failed'
                         : 'done'
                     }
+                    note={cardNote(looseActive, tr)}
                     expanded={activeExpanded}
                     onToggleExpand={() => setActiveExpanded((v) => !v)}
                     onEdit={() => openEdit(looseActive, true)}
@@ -4874,10 +5056,13 @@ export default function PalletVerifyPage({
                     status={
                       box.ocr_status === 'processing'
                         ? 'pending'
-                        : box.ocr_status === 'failed' || box.needs_review
-                        ? box.ocr_status === 'failed' ? 'failed' : 'pending'
+                        : box.ocr_status === 'failed'
+                        ? 'failed'
+                        : cardNote(box, tr)
+                        ? 'pending'
                         : 'done'
                     }
+                    note={cardNote(box, tr)}
                     onClick={selectMode
                       ? () => toggleSelectCarton(box.barcode)
                       : () => setSelectedBarcode(selectedBarcode === box.barcode ? null : box.barcode)}
@@ -5025,6 +5210,7 @@ export default function PalletVerifyPage({
   const mainFooter = (
     <>
       {footerError}
+      {weightReviewBar(false)}
       {!canConfirm && (
         <div className="flex items-center justify-center gap-1 text-[10px] font-bold text-ink-muted text-center mb-2">
           <span className="min-w-0">{statusText}</span>
@@ -5158,7 +5344,8 @@ export default function PalletVerifyPage({
             </button>
           ) : canConfirm && phase !== 'confirming' ? (
             <SwipeConfirm
-              onConfirm={() => handleConfirmPallet()}
+              key={swipeKey}
+              onConfirm={() => confirmPastWeightDoubts(false)}
               label={tr('palletVerify.swipeConfirmPallet', { current: currentPallet })}
             />
           ) : (
@@ -5430,6 +5617,7 @@ export default function PalletVerifyPage({
                       ? 'failed'
                       : 'done'
                   }
+                  note={cardNote(activeBox, tr)}
                   expanded={activeExpanded}
                   onToggleExpand={() => setActiveExpanded((v) => !v)}
                   onEdit={() => openEdit(activeBox)}
@@ -5461,10 +5649,11 @@ export default function PalletVerifyPage({
                       ? 'pending'
                       : box.ocr_status === 'failed'
                       ? 'failed'
-                      : box.needs_review
+                      : cardNote(box, tr)
                       ? 'pending'
                       : 'done'
                   }
+                  note={cardNote(box, tr)}
                   onClick={selectMode
                     ? () => toggleSelectCarton(box.barcode)
                     : () => setSelectedBarcode(selectedBarcode === box.barcode ? null : box.barcode)}
@@ -5520,6 +5709,15 @@ export default function PalletVerifyPage({
                 ? tr('palletVerify.closeShortBody', { declared: confirmedBoxCount, committed })
                 : tr('palletVerify.unreadableSoftNote', { count: unresolvedWarnings })}
             </p>
+            {weightDoubts(scannedBoxes).length > 0 && (
+              // Said here, in the one question this close already asks —
+              // never a second dialog on top of it.
+              <p className="text-center text-xs font-bold text-[#fbbf5c] mt-2 leading-snug">
+                {weightDoubts(scannedBoxes).length === 1
+                  ? tr('palletVerify.weightAskBodyOne')
+                  : tr('palletVerify.weightAskBody', { count: weightDoubts(scannedBoxes).length })}
+              </p>
+            )}
             <div className="flex gap-2 mt-4">
               <div className="flex-1 min-w-0 bg-amber-well border border-[rgba(245,158,11,0.28)] rounded-[11px] px-1.5 py-2.5 text-center">
                 <div className="font-mono font-black text-base text-ink-inverse" dir="ltr">{committed}</div>

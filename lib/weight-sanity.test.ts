@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findWeightSuspects, nonKgNumbers, weightFromName } from './weight-sanity';
+import { findWeightSuspects, kgNumbers, nonKgNumbers, weightFromName, weightStatedAsKg } from './weight-sanity';
 
 const SCHNITZEL = 'שניצל עוף פרוס 120-מוסדי-קפוא';
 const box = (barcode: string, weight: number, name = SCHNITZEL, extra: object = {}) => ({
@@ -84,5 +84,58 @@ describe('findWeightSuspects', () => {
   it('tests extra names (raw OCR / invoice name) for the name rule', () => {
     const list = [box('x', 120, 'Frozen sliced chicken schnitzel')];
     expect(findWeightSuspects(list, { x: [SCHNITZEL] }).map((s) => s.reason)).toEqual(['name_number']);
+  });
+});
+
+// 2026-10-19, IN264191356: the bot translated "קבב מוסדי 8 קג" (institutional
+// kebab 8 kg) to "Frozen kebab 8g", and the "8" flagged 28 correct cartons.
+const KEBAB_HE = 'קבב מוסדי 8 קג - גורמה העדה החרדית';
+const KEBAB_EN = 'Frozen kebab 8g, Badatz Haredit';
+
+describe('kgNumbers / weightStatedAsKg', () => {
+  it('reads the numbers a name marks as kg', () => {
+    expect(kgNumbers(KEBAB_HE)).toEqual([8]);
+    expect(kgNumbers('חזה 10-12 ק"ג')).toEqual([10, 12]);
+    expect(kgNumbers(SCHNITZEL)).toEqual([]);
+  });
+  it('is true only when a name states this weight in kg', () => {
+    expect(weightStatedAsKg(8, [KEBAB_EN, KEBAB_HE])).toBe(true);
+    expect(weightStatedAsKg(8.2, [KEBAB_HE])).toBe(false);
+    expect(weightStatedAsKg(0, [KEBAB_HE])).toBe(false);
+  });
+});
+
+describe('findWeightSuspects — names that disagree', () => {
+  const kebab = (barcode: string, extra: object = {}) => ({
+    barcode, weight: 8, item_name_hebrew: KEBAB_HE, item_name: KEBAB_EN, ocr_status: 'done', ...extra,
+  });
+
+  it('never flags a weight another name of the carton marks as kg', () => {
+    expect(findWeightSuspects([kebab('k1')])).toEqual([]);
+    expect(findWeightSuspects([kebab('k1')], { k1: [KEBAB_HE, KEBAB_EN] })).toEqual([]);
+  });
+
+  it('never reads a suspect number from the English invoice name', () => {
+    // No kg in the Hebrew name at all: the "8" of "8g" still does not count.
+    const list = [kebab('k1', { item_name_hebrew: 'קבב מוסדי - גורמה' })];
+    expect(findWeightSuspects(list)).toEqual([]);
+  });
+
+  it('still reads the raw OCR names', () => {
+    const list = [kebab('k1', { item_name_hebrew: 'קבב מוסדי - גורמה' })];
+    expect(findWeightSuspects(list, { k1: ['Kebab 8 pcs'] })).toEqual([
+      { barcode: 'k1', weight: 8, reason: 'name_number', name: 'Kebab 8 pcs' },
+    ]);
+  });
+
+  it('keeps the Glatt 120 kg read flagged, and says which name it came from', () => {
+    const list = [{ barcode: 'g', weight: 120, item_name_hebrew: SCHNITZEL, item_name: 'Sliced chicken schnitzel 120', ocr_status: 'done' }];
+    expect(findWeightSuspects(list)).toEqual([{ barcode: 'g', weight: 120, reason: 'name_number', name: SCHNITZEL }]);
+  });
+
+  it('does not ratio-flag a weight the name states in kg', () => {
+    const n = 'קבב מוסדי 2.8 ק"ג';
+    const list = [box('a', 8, n), box('b', 8, n), box('c', 8.1, n), box('ok', 2.8, n)];
+    expect(findWeightSuspects(list)).toEqual([]);
   });
 });

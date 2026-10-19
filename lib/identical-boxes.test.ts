@@ -242,4 +242,21 @@ describe('expandIdenticalBoxes and the weight check', () => {
     expect(expandIdenticalBoxes(confirmed, labels, form)[0].weight_checked).toBe(true);
     expect(expandIdenticalBoxes(confirmed, labels, { ...form, weight: 13 })[0].weight_checked).toBeUndefined();
   });
+  it('confirms every row when the form showed the weight and the worker saved it', () => {
+    // 2026-10-19: the kebab sample was doubted (8 kg); the 20 labels saved
+    // from the form at 8 kg must not each need their own Save.
+    const doubted = { ...sample, weight: 8, weight_suspect: { reason: 'name_number' }, weight_checked: undefined as boolean | undefined };
+    const rows = expandIdenticalBoxes(doubted, labels, { ...form, weight: 8, weight_confirmed: true });
+    for (const r of rows) {
+      expect(r.weight_checked).toBe(true);
+      expect(r.weight_suspect).toBeUndefined();
+    }
+  });
+  it('a New carton batch carries the typed weight as confirmed', () => {
+    const batch = newCartonBatch([{
+      barcode: '2826101300000001', batch_id: 'nc', weight_kg: 8, expiry_date: '', production_date: '',
+      item_name_hebrew: 'קבב', item_name_english: '',
+    }]);
+    expect(batch!.form.weight_confirmed).toBe(true);
+  });
 });

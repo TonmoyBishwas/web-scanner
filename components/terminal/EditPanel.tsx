@@ -233,10 +233,14 @@ export function EditPanel({
   const dirty = nChanged > 0;
   const hasConflict = !!(barcodeWeight || barcodeExpiry);
   const missing = missingList({ name, weight, expiry, barcodeMissing });
+  // A doubted weight (lib/weight-sanity.ts) no longer holds needs_review, but
+  // an unchanged Save still has to be tappable: it is how the worker says
+  // "the weight is correct".
+  const weightDoubted = !!weightWarning && !changed.weight;
   const mode = saveMode({
     dirty,
     hasConflict,
-    needsReview: !!needsReview,
+    needsReview: !!needsReview || weightDoubted,
     gateMissing: gateMissing({ name, weight, barcodeMissing }),
     datesInvalid: !!dateError,
   });
@@ -250,15 +254,17 @@ export function EditPanel({
 
   // The header's one-line status: what is missing (or doubtful), else what
   // Save will do.
-  let status: { icon: string; cls: string; text: string };
+  let status: { icon: string; cls: string; text: string; wrap?: boolean };
   if (dateError) {
     // First: it is the one thing that keeps Save disabled.
     status = { icon: 'error', cls: 'text-danger-weak-ink', text: tr(dateError) };
   } else if (missing.length) {
     const fields = missing.map((m) => tr(MISSING_KEY[m])).join(', ');
     status = { icon: 'warning', cls: 'text-warn-weak-ink', text: tr('terminal.missingList', { fields }) };
-  } else if (weightWarning && !changed.weight) {
-    status = { icon: 'warning', cls: 'text-warn-weak-ink', text: weightWarning };
+  } else if (weightDoubted) {
+    // Wraps: it names the number and where it came from, and a cut-off
+    // "…looks like a number from the product" told David nothing (19/10).
+    status = { icon: 'warning', cls: 'text-warn-weak-ink', text: weightWarning!, wrap: true };
   } else if (dirty) {
     const text = nChanged === 1 ? tr('terminal.changeReadyOne') : tr('terminal.changesReady', { n: nChanged });
     status = { icon: 'check_circle', cls: 'text-ok-weak-ink', text };
@@ -403,9 +409,9 @@ export function EditPanel({
           <div className="text-[13px] font-extrabold text-ink-inverse truncate">
             {tr('terminal.editCarton', { n: cartonNumber })}
           </div>
-          <div className={`flex items-center gap-[4px] min-w-0 text-[10.5px] font-extrabold ${status.cls}`}>
-            <MI name={status.icon} size={13} className="flex-none" />
-            <span className="truncate">{status.text}</span>
+          <div className={`flex ${status.wrap ? 'items-start' : 'items-center'} gap-[4px] min-w-0 text-[10.5px] font-extrabold ${status.cls}`}>
+            <MI name={status.icon} size={13} className={`flex-none ${status.wrap ? 'mt-[1px]' : ''}`} />
+            <span className={status.wrap ? 'min-w-0 leading-[1.3]' : 'truncate'}>{status.text}</span>
           </div>
         </div>
         <button
@@ -414,7 +420,8 @@ export function EditPanel({
           className={`flex-none flex items-center gap-[5px] min-h-[40px] text-[12px] font-extrabold rounded-full px-[14px] ${saveCls}`}
         >
           <MI name={mode === 'warn' ? 'warning' : 'check'} size={16} />
-          {tr('terminal.save')}
+          {/* Nothing changed on a doubted weight: Save says what it means. */}
+          {weightDoubted && !dirty && mode !== 'disabled' ? tr('terminal.weightIsCorrect') : tr('terminal.save')}
         </button>
       </div>
 

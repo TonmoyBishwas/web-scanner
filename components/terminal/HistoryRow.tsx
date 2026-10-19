@@ -33,6 +33,9 @@ interface HistoryRowProps {
    *  row's tap ticks it (the page passes that as onClick), no actions and no
    *  chevron. */
   select?: { checked: boolean; locked?: boolean };
+  /** Why the row is amber, in a few words ("Check weight: 8 is also in the
+   *  item name"). Wraps — it is the one thing the worker has to read. */
+  note?: string;
 }
 
 /** The nearest ancestor that scrolls vertically — the sheet's list. */
@@ -49,7 +52,7 @@ function scrollParent(el: HTMLElement): HTMLElement | null {
 export function HistoryRow({
   index, name, barcode, weight, unitLabel = 'ק"ג',
   status = 'done', onClick, actions, dimmed = false, unprinted = false, unprintedLabel,
-  highlight = false, select,
+  highlight = false, select, note,
 }: HistoryRowProps) {
   const statusIcon = highlight ? 'done_all' : status === 'failed' ? 'error' : status === 'pending' ? 'hourglass_empty' : 'check_circle';
   const statusColor = highlight ? '#13a4ec' : status === 'failed' ? '#ef4444' : status === 'pending' ? '#fbbf5c' : '#22c55e';
@@ -99,6 +102,11 @@ export function HistoryRow({
                 {name}
               </span>
             </div>
+            {note && (
+              <span className="block text-[10.5px] font-extrabold text-[#fbbf5c] leading-[1.3]">
+                {note}
+              </span>
+            )}
             {unprinted && unprintedLabel && (
               // Q5: said in words, not only the icon — a carton booked before
               // its label came out of the printer.

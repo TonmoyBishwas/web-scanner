@@ -60,6 +60,13 @@ interface IdenticalBoxesFormProps {
    * label matches. Starts the count at 1 and says what is happening.
    */
   anotherOf?: number;
+  /**
+   * The sample's weight is doubted (lib/weight-sanity.ts): what looks odd
+   * about it, shown by the weight field while it still holds that weight.
+   * The form is never hidden for a doubt — saving the weight shown here
+   * confirms it for every label (lib/identical-boxes.ts weight_confirmed).
+   */
+  weightDoubt?: string;
   onBack: () => void;
   /**
    * The batch is saved in carton_labels (unprinted). The page expands the
@@ -71,7 +78,7 @@ interface IdenticalBoxesFormProps {
 type DateField = 'production' | 'expiry';
 
 export function IdenticalBoxesForm({
-  token, palletNumber, sample, anotherOf, onBack, onCreated,
+  token, palletNumber, sample, anotherOf, weightDoubt, onBack, onCreated,
 }: IdenticalBoxesFormProps) {
   const tr = useT();
   const { toast, showToast } = useToast();
@@ -96,6 +103,9 @@ export function IdenticalBoxesForm({
   const dateError = validateCartonDates({ production: productionDate, expiry: expiryDate, receiptDate: localIsoDate() }).expiryError;
   const canSave = !saving && count >= 1 && weightOk && !dateError;
   const name = sample.item_name_hebrew || sample.item_name;
+  // The doubt is about the weight that was read; once the worker types
+  // another one it no longer applies.
+  const showDoubt = !!weightDoubt && weightOk && Math.abs(weightKg - sample.weight) < 0.001;
 
   const previewLabel: CartonLabel = {
     id: 'preview',
@@ -151,6 +161,9 @@ export function IdenticalBoxesForm({
         // the bot stored as box_expiry NULL — see lib/expiry.ts.
         expiry: expiryDate || '',
         production_date: productionDate || '',
+        // The weight was on screen and the worker saved it: one decision for
+        // the whole batch, never a Save per label.
+        weight_confirmed: true,
       });
     } finally {
       setSaving(false);
@@ -220,6 +233,12 @@ export function IdenticalBoxesForm({
           />
           {!weightOk && weight !== '' && (
             <p className="text-[10.5px] font-semibold text-danger-weak-ink mt-[6px] mx-[2px]">{tr('identical.weightInvalid')}</p>
+          )}
+          {showDoubt && (
+            <p role="status" className="flex items-start gap-[5px] text-[11px] font-bold text-warn-weak-ink mt-[6px] mx-[2px] leading-[1.45]">
+              <MI name="report_problem" size={15} className="flex-none mt-[1px]" />
+              <span className="min-w-0">{weightDoubt} {tr('identical.weightDoubtSave')}</span>
+            </p>
           )}
         </div>
 

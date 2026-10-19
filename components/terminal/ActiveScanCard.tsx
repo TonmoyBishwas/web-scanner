@@ -39,6 +39,9 @@ interface ActiveScanCardProps {
    *  card too, the summary line ticks it instead of expanding, and the
    *  action bar steps aside (the design hides Edit while selecting). */
   select?: { checked: boolean; locked?: boolean; onToggle: () => void };
+  /** Why this carton needs a look, in a few words — an amber line under the
+   *  name (a doubted weight, a missing value). Wraps, never truncated. */
+  note?: string;
 }
 
 // Design "active scan" summary card: #0a0f14 on 2px brand border, mono index
@@ -54,13 +57,13 @@ export function ActiveScanCard({
   index, name, value, unit, barcode, expiry,
   status = 'done', expanded, onToggleExpand,
   onEdit, onDelete, onRetry, onViewImage, onIdentical, onChangeCount, groupCount, tone = 'brand', unprinted = false,
-  highlight = false, select,
+  highlight = false, select, note,
 }: ActiveScanCardProps) {
   const tr = useT();
   // Blue = information / focus: while a re-read names this carton it wears
   // the brand ring whatever its own tone.
   const picked = !!select?.checked;
-  const borderColor = highlight || picked ? '#13a4ec' : status === 'failed' ? '#ef4444' : tone === 'warn' ? '#f59e0b' : '#13a4ec';
+  const borderColor = highlight || picked ? '#13a4ec' : status === 'failed' ? '#ef4444' : tone === 'warn' || note ? '#f59e0b' : '#13a4ec';
   const badgeBg = tone === 'warn' ? 'rgba(245,158,11,.16)' : 'rgba(19,164,236,.16)';
   const accentInk = tone === 'warn' ? '#fbbf5c' : '#7cc9f2';
   const failed = status === 'failed';
@@ -119,6 +122,12 @@ export function ActiveScanCard({
             <span className="block text-[14px] font-extrabold text-ink-inverse whitespace-nowrap overflow-hidden text-ellipsis">
               {name}
             </span>
+            {note && (
+              <span className="flex items-start gap-[3px] mt-[2px] text-[10.5px] font-extrabold text-[#fbbf5c] leading-[1.3]">
+                <MI name="report_problem" size={13} className="flex-none" />
+                <span className="min-w-0">{note}</span>
+              </span>
+            )}
           </span>
         </span>
         <span className="flex items-center gap-[6px] flex-none">

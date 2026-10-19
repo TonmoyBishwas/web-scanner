@@ -14,6 +14,13 @@
  *  1. The weight is a number printed in the product name that is NOT a kg
  *     quantity ("120-מוסדי", "30 גר'"). A name's "8 ק"ג" is the carton's real
  *     weight on many suppliers and is never flagged (31 real cartons).
+ *     Only the Hebrew name and the raw OCR names are read for this — never
+ *     the bot's English translation of the invoice line (2026-10-19,
+ *     IN264191356: "קבב מוסדי 8 קג" (institutional kebab 8 kg) came back as
+ *     "Frozen kebab 8g", and its "8" flagged 28 correct 8 kg cartons).
+ *
+ * A weight that ANY name of the carton marks as kg ("8 קג") is never
+ * flagged by either rule: the name agrees with it.
  *  2. The weight is more than 3× (or under a third of) the median weight of
  *     the same item on the same list, once the item has 3+ weighed cartons —
  *     the median of 3+ is a majority, so one bad read cannot hide the others
@@ -52,10 +59,37 @@ export function nonKgNumbers(name: string | null | undefined): number[] {
   return out;
 }
 
+/** Numbers in a product name that ARE marked as kg ("8 קג", the "10" of "10-12 ק"ג"). */
+export function kgNumbers(name: string | null | undefined): number[] {
+  const s = name || '';
+  const out: number[] = [];
+  const re = /\d+(?:[.,]\d+)?/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s))) {
+    const after = s.slice(m.index + m[0].length);
+    if (KG_AFTER.test(after) || KG_RANGE_AFTER.test(after)) out.push(Number(m[0].replace(',', '.')));
+  }
+  return out;
+}
+
+const same = (a: number, b: number) => Math.abs(a - b) < 0.001;
+
+/** The first name whose non-kg numbers include the weight, if any. */
+export function nameWithWeight(weight: number, names: Array<string | null | undefined>): string | undefined {
+  if (!(weight > 0)) return undefined;
+  const hit = names.find((n) => nonKgNumbers(n).some((v) => same(v, weight)));
+  return hit ? hit.trim() : undefined;
+}
+
 /** True when the weight equals a non-kg number printed in any of the names. */
 export function weightFromName(weight: number, names: Array<string | null | undefined>): boolean {
+  return nameWithWeight(weight, names) !== undefined;
+}
+
+/** True when some name states this very weight in kg — the name agrees with it. */
+export function weightStatedAsKg(weight: number, names: Array<string | null | undefined>): boolean {
   if (!(weight > 0)) return false;
-  return names.some((n) => nonKgNumbers(n).some((v) => Math.abs(v - weight) < 0.001));
+  return names.some((n) => kgNumbers(n).some((v) => same(v, weight)));
 }
 
 function median(xs: number[]): number {
@@ -77,12 +111,16 @@ export interface WeightSuspect {
   /** Median of the item on this list, when the ratio rule fired. */
   typical?: number;
   reason: 'name_number' | 'ratio';
+  /** The name the number was read from, when the name rule fired. */
+  name?: string;
 }
 
 /**
  * The cartons on one list (a pallet, or the loose list) whose weight looks
- * wrong. `names` gives extra names to test signal 1 against (the raw OCR
- * name, the matched invoice name) for a carton, by barcode.
+ * wrong. `extraNames` gives the raw OCR names of a carton, by barcode, to
+ * test signal 1 against alongside its Hebrew name. `item_name` (the bot's
+ * English invoice name) only ever counts for the kg agreement, never as a
+ * source of a suspect number.
  */
 export function findWeightSuspects<B extends WeighedBox>(
   boxes: B[],
@@ -98,9 +136,11 @@ export function findWeightSuspects<B extends WeighedBox>(
   }
   for (const b of boxes) {
     if (b.weight_checked || !(b.weight > 0) || (b.ocr_status && b.ocr_status !== 'done')) continue;
-    const names = [b.item_name_hebrew, b.item_name, ...(extraNames[b.barcode] ?? [])];
-    if (weightFromName(b.weight, names)) {
-      out.push({ barcode: b.barcode, weight: b.weight, reason: 'name_number' });
+    const extra = extraNames[b.barcode] ?? [];
+    if (weightStatedAsKg(b.weight, [b.item_name_hebrew, b.item_name, ...extra])) continue;
+    const name = nameWithWeight(b.weight, [b.item_name_hebrew, ...extra]);
+    if (name !== undefined) {
+      out.push({ barcode: b.barcode, weight: b.weight, reason: 'name_number', name });
       continue;
     }
     const g = groups.get(groupKeyForBox(b)) ?? [];
