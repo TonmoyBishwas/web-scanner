@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canSelect, selectedForDelete, toggleSelected, withoutSelected } from './carton-select';
+import { canSelect, selectedForDelete, sheetSnapAfterSelect, toggleSelected, withoutSelected } from './carton-select';
 import { ScanLedger, type LedgerOp, type LedgerTransport, type ServerCarton } from './scan-ledger';
 
 type Row = { barcode: string; weight: number; scanned_at: string; item?: string };
@@ -131,5 +131,25 @@ describe('Delete selected → server tombstones', () => {
     await L.flush();
     expect(s.live(0)).toEqual(['A']);
     expect(s.sent.filter((op) => op.deleted).map((op) => op.key)).toEqual(['B']);
+  });
+});
+
+describe('sheetSnapAfterSelect', () => {
+  it('the sheet goes back to where the worker had it, so the camera can aim again', () => {
+    expect(sheetSnapAfterSelect(1, 2)).toBe(1);
+    expect(sheetSnapAfterSelect(0, 2)).toBe(0);
+  });
+
+  it('a sheet that was already tall stays tall', () => {
+    expect(sheetSnapAfterSelect(2, 2)).toBeNull();
+  });
+
+  it('a sheet the worker moved himself while picking stays where he put it', () => {
+    expect(sheetSnapAfterSelect(1, 0)).toBeNull();
+    expect(sheetSnapAfterSelect(0, 1)).toBeNull();
+  });
+
+  it('nothing remembered (the mode ended with the list) → left alone', () => {
+    expect(sheetSnapAfterSelect(null, 2)).toBeNull();
   });
 });

@@ -68,3 +68,19 @@ export function withoutSelected<T extends Row>(rows: readonly T[], gone: readonl
   const set = new Set(gone);
   return rows.filter((r) => !set.has(r.barcode));
 }
+
+/** The sheet's tall snap (BottomSheet: 0 peek, 1 mid, 2 tall). */
+const SHEET_TALL = 2;
+
+/**
+ * Where the list sheet goes when selection mode ends. Opening it raises the
+ * sheet to tall (room for the checkboxes and the bar) and pauses the camera;
+ * when the mode ends the camera is back on, so the sheet goes back to where
+ * the worker had it — left tall, it covered the scan frame and the next
+ * carton could not be aimed at without dragging it down first. A sheet the
+ * worker moved himself while picking stays where he put it. null = leave it.
+ */
+export function sheetSnapAfterSelect(before: number | null, now: number): number | null {
+  if (before === null || before >= SHEET_TALL) return null;
+  return now === SHEET_TALL ? before : null;
+}

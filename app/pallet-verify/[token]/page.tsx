@@ -33,7 +33,7 @@ import { CartonCreator, type CartonCreatorPreset } from '@/components/terminal/C
 import { LabelsBrowser } from '@/components/terminal/LabelsBrowser';
 import { IdenticalBoxesForm } from '@/components/terminal/IdenticalBoxesForm';
 import { DeleteAllSheet, type DeleteAllAction } from '@/components/terminal/DeleteAllSheet';
-import { selectedForDelete, toggleSelected } from '@/lib/carton-select';
+import { selectedForDelete, sheetSnapAfterSelect, toggleSelected } from '@/lib/carton-select';
 import { GroupCountSheet } from '@/components/terminal/GroupCountSheet';
 import { PendingLabelsLink } from '@/components/terminal/PendingLabelsLink';
 import { countGroupOf, groupRows, growGroupRows, rowsToShrink } from '@/lib/pallet-clear';
@@ -791,6 +791,8 @@ export default function PalletVerifyPage({
   // (lib/carton-select.ts), so a scan landing meanwhile never moves a pick.
   const [selectMode, setSelectMode] = useState(false);
   const [selectPicked, setSelectPicked] = useState<ReadonlySet<string>>(() => new Set());
+  // Where the list sheet was when selection mode raised it (restored on exit).
+  const selectSheetBeforeRef = useRef<number | null>(null);
   const [countGroupFor, setCountGroupFor] = useState<{ group: string; loose: boolean } | null>(null);
   // Labels SAVED this session but not printed yet (identical / New carton /
   // edit-panel barcode). Server truth, refreshed after every save, print or
@@ -1155,6 +1157,7 @@ export default function PalletVerifyPage({
   useEffect(() => {
     setSelectMode(false);
     setSelectPicked((p) => (p.size ? new Set() : p));
+    selectSheetBeforeRef.current = null;
   }, [phase, listPallet]);
 
   // Cartons scanned without network got no label reading: read them when it
@@ -2883,7 +2886,18 @@ export default function PalletVerifyPage({
     setSelectPicked(new Set());
     setSelectMode(true);
     // Room for the checkboxes and the bar (the camera is paused meanwhile).
-    (loose ? looseSheetRef : sheetRef).current?.snapTo(2);
+    const sheet = (loose ? looseSheetRef : sheetRef).current;
+    selectSheetBeforeRef.current = sheet ? sheet.snapIndex() : null;
+    sheet?.snapTo(2);
+  }
+
+  // Selection mode is over and the camera is on again: the sheet goes back to
+  // where the worker had it, or the scan frame stays covered by a tall sheet.
+  function restoreSheetAfterSelect(loose: boolean) {
+    const sheet = (loose ? looseSheetRef : sheetRef).current;
+    const back = sheet ? sheetSnapAfterSelect(selectSheetBeforeRef.current, sheet.snapIndex()) : null;
+    selectSheetBeforeRef.current = null;
+    if (back !== null) sheet?.snapTo(back);
   }
 
   function cancelSelectMode(why: 'cancel' | 'chip' | 'bulk') {
@@ -2891,6 +2905,7 @@ export default function PalletVerifyPage({
     trace('ui', 'select_mode_cancel', { pallet: loose ? 0 : currentPallet, picked: selectPicked.size, why });
     setSelectMode(false);
     setSelectPicked(new Set());
+    restoreSheetAfterSelect(loose);
   }
 
   function toggleSelectCarton(barcode: string) {
@@ -2921,6 +2936,7 @@ export default function PalletVerifyPage({
     discardSavedLabels(gone);
     setSelectMode(false);
     setSelectPicked(new Set());
+    restoreSheetAfterSelect(loose);
     showToast(
       gone.length === 1 ? tr('terminal.deleteSelectedDoneOne') : tr('terminal.deleteAllRowsDone', { count: gone.length }),
       'delete',

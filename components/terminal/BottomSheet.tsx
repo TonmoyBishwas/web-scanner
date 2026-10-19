@@ -15,6 +15,8 @@ import { useT } from '@/lib/i18n';
 export interface BottomSheetHandle {
   /** Animate to a snap index (0 = peek, 1 = mid, 2 = tall) */
   snapTo: (index: number) => void;
+  /** The snap index the sheet is at now (where the worker left it). */
+  snapIndex: () => number;
 }
 
 interface BottomSheetProps {
@@ -336,7 +338,7 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
 
   // `snapTo` still records the index (so a later rotation back to a bottom
   // sheet lands where the page asked), but a side panel has no height to move.
-  useImperativeHandle(ref, () => ({ snapTo: settle }), [settle]);
+  useImperativeHandle(ref, () => ({ snapTo: settle, snapIndex: () => snapIndexRef.current }), [settle]);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
