@@ -1133,6 +1133,10 @@ export const en = {
   'receive.packagingNone': '—',
   'receive.expiry': 'Expiry date',
   'receive.noExpiry': 'No expiry',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.expiryPlaceholder': 'dd.mm.yyyy',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.openCalendar': 'Open calendar',
   'receive.shortBy': 'Short: {x}',
   'receive.over': 'Over: {x}',
   'receive.gapQuestion': 'Why is it short?',

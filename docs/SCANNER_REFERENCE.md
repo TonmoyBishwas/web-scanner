@@ -253,6 +253,32 @@ re-sent in a way that can make a duplicate draft.
   never sent from the page; Mark as found calls `priority_push_mark_found(p_outbox_id, docno, 'admin:<u>')`, which
   never touches the client's `wb_mark_gr_synced`.
 
+## Changes since the audit — 2026-10-20 typed expiry dates
+
+**Why.** On the non-meat receive form (`/receive/<form_id>`, the link the bot sends) David could not type an
+expiry: Android Chrome opens only its calendar dialog for an `<input type="date">`, never the keyboard.
+
+- **`components/shared/DateEntry.tsx`** — a text field (`inputMode="numeric"`, `dir="ltr"`, max 10 chars) the
+  worker types into, day first, with the dots added for him (`311227` → `31.12.27`, shown as `31.12.2027` once the
+  field is left), plus a calendar button that opens the phone's own picker (a hidden `<input type="date">`,
+  `showPicker()`, falling back to focus + click). `value` / `onChange` speak the draft's format: ISO when the date
+  is whole, `''` while empty or half-typed, the raw text when it is wrong (→ the existing "Not a valid date").
+  An outside change (same date for all, "No expiry", a restored draft) re-shows the field; "No expiry" also drops
+  a half-typed date. Enter (the keypad's "done") leaves the field.
+- **`lib/date-entry.ts`** (+ 50 tests) — `maskDateInput`, `parseDateEntry(text, {final})` (dd.mm.yyyy, d.m.yy,
+  dd/mm/yy, ddmmyy, ddmmyyyy; a 2-digit year is 20yy and waits while typing so `31.12.20` on its way to `2027` is
+  not judged as 2020; real-calendar check through `isRealIsoDate`), `entryToValue`, `isoToDotted`.
+- **Where:** `ReceiptForm.tsx` per-line expiry (the "No expiry" chip wraps to its own line on a narrow phone —
+  the date field keeps at least 13rem) and "One date for all lines"; the legacy `/scan` manual-entry modal and
+  `IssueResolution` cards (there the expiry stays optional and has no future-date rule, but a typed date that is
+  not a real one now shows "Not a valid date" and keeps Send / Resolve disabled; `IssueResolution` turns an OCR
+  `31/12/2027` into ISO before showing it). The meat terminal's own `CalendarPicker` is unchanged.
+- Nothing changes in `lib/receipt-form.ts`, the submit route, the bot or the database: the stored value is the
+  same ISO date. "Same date for all" still skips a line that already holds a (wrong) typed date — it stays red
+  for the worker to fix.
+- New texts (pending Mevaser): `receive.expiryPlaceholder` (`dd.mm.yyyy`), `receive.openCalendar` (the
+  calendar button's label).
+
 ## Table of contents
 
 - [Changes since the audit — the 2026-10-01 floor-feedback release](#changes-since-the-audit-the-2026-10-01-floor-feedback-release)

@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { t, useLangDir, type TranslationKey } from '@/lib/i18n';
+import { DateEntry } from '@/components/shared/DateEntry';
 import {
   EXTRA_UNITS,
   EXTRA_UNIT_LABELS,
@@ -94,6 +95,10 @@ const OK_BORDER = 'border-line-strong';
 const DONE_BORDER = 'border-ok/70';
 const TODO_BORDER = 'border-warn';
 const BAD_BORDER = 'border-danger';
+/** A date field + its calendar button: grows, but never so narrow that "dd.mm.yyyy" is cut — the row's next control wraps instead. */
+const DATE_ROW = 'min-w-[13rem] flex-1';
+const CALENDAR_BTN =
+  'grid h-12 w-12 shrink-0 place-items-center rounded-xl border-2 border-line-strong bg-tile text-ink active:scale-95 disabled:opacity-35';
 
 function Icon({ name, size = 20, className = '' }: { name: string; size?: number; className?: string }) {
   return (
@@ -429,18 +434,21 @@ const LineCard = memo(function LineCard({ line, d, errKey, language, today, flas
           <FieldLabel htmlFor={`e-${line.index}`} icon="event">
             {tr('receive.expiry')}
           </FieldLabel>
-          <div className="flex gap-2">
-            <input
+          {/* Typed (numeric keypad) or picked (calendar button) — Android opens no keyboard for a date input (20/10). Wraps "No expiry" to its own line on a narrow phone. */}
+          <div className="flex flex-wrap gap-2">
+            <DateEntry
               id={`e-${line.index}`}
-              type="date"
-              dir="ltr"
-              aria-invalid={!!expiryErr}
-              min={addDaysIso(today, 1)}
-              max={maxExpiryIso(today)}
               value={d.noExpiry ? '' : d.expiry}
               disabled={d.noExpiry}
-              onChange={(e) => set({ expiry: e.target.value, noExpiry: false })}
-              className={`${INPUT} flex-1 font-mono text-lg font-bold disabled:opacity-35 ${borderFor(expiryErr, expiryDone)}`}
+              invalid={!!expiryErr}
+              min={addDaysIso(today, 1)}
+              max={maxExpiryIso(today)}
+              placeholder={tr('receive.expiryPlaceholder')}
+              calendarLabel={tr('receive.openCalendar')}
+              onChange={(v) => set({ expiry: v, noExpiry: false })}
+              className={DATE_ROW}
+              inputClassName={`${INPUT} flex-1 font-mono text-lg font-bold disabled:opacity-35 ${borderFor(expiryErr, expiryDone)}`}
+              buttonClassName={CALENDAR_BTN}
             />
             <Chip
               tone="ok"
@@ -935,16 +943,19 @@ export function ReceiptForm({
               <label htmlFor="same-date" className="mb-1.5 block text-sm font-bold text-ink-body">
                 {tr('receive.sameDate')}
               </label>
-              <div className="flex gap-2">
-                <input
+              <div className="flex flex-wrap gap-2">
+                <DateEntry
                   id="same-date"
-                  type="date"
-                  dir="ltr"
+                  value={sameDate}
+                  onChange={setSameDate}
+                  invalid={!!sameDateErr}
                   min={addDaysIso(today, 1)}
                   max={maxExpiryIso(today)}
-                  value={sameDate}
-                  onChange={(e) => setSameDate(e.target.value)}
-                  className={`${INPUT} flex-1 font-mono text-lg font-bold ${sameDateErr ? BAD_BORDER : OK_BORDER}`}
+                  placeholder={tr('receive.expiryPlaceholder')}
+                  calendarLabel={tr('receive.openCalendar')}
+                  className={DATE_ROW}
+                  inputClassName={`${INPUT} flex-1 font-mono text-lg font-bold ${sameDateErr ? BAD_BORDER : OK_BORDER}`}
+                  buttonClassName={CALENDAR_BTN}
                 />
                 <button
                   type="button"

@@ -4,7 +4,10 @@ import { useState } from 'react';
 import { AlertTriangle, CheckCircle, Check, Search } from 'lucide-react';
 import type { OCRIssue, InvoiceItem } from '@/types';
 import { ImageModal } from '@/components/shared/ImageModal';
+import { DateEntry } from '@/components/shared/DateEntry';
 import { useT } from '@/lib/i18n';
+import { entryToValue, maskDateInput } from '@/lib/date-entry';
+import { isRealIsoDate } from '@/lib/receipt-form';
 
 interface IssueResolutionProps {
     issues: OCRIssue[];
@@ -82,7 +85,12 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
     const [weight, setWeight] = useState(
         issue.inferred_weight?.toString() || issue.ocr_data?.weight_kg?.toString() || ''
     );
-    const [expiry, setExpiry] = useState(issue.ocr_data?.expiry_date || '');
+    // The OCR's date, as ISO when it reads as one (31/12/2027 too); otherwise as is, for the worker to fix.
+    const [expiry, setExpiry] = useState(() => {
+        const raw = issue.ocr_data?.expiry_date || '';
+        const v = entryToValue(maskDateInput(raw), true);
+        return isRealIsoDate(raw) || !isRealIsoDate(v) ? raw : v;
+    });
     const [resolved, setResolved] = useState(false);
     const [showImageModal, setShowImageModal] = useState(false);
 
@@ -97,6 +105,8 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
 
     const needsName = issue.type === 'missing_name' || issue.type === 'missing_both';
     const needsWeight = issue.type === 'missing_weight' || issue.type === 'missing_both';
+    // Expiry stays optional, but a typed date must be a real one.
+    const expiryOk = !expiry || isRealIsoDate(expiry);
 
     return (
         <div className="bg-raised border border-warn/40 rounded-[14px] p-4 space-y-3">
@@ -183,14 +193,19 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
             {/* Expiry (always optional) */}
             <div>
                 <label className="block text-xs text-ink-muted mb-1">{tr('components.issueResolution.expiryLabel')}</label>
-                <input
-                    type="date"
-                    dir="ltr"
+                {/* Typed or picked — Android opens no keyboard for a date input (20/10). A wrong date blocks Resolve. */}
+                <DateEntry
                     value={expiry}
-                    onChange={(e) => setExpiry(e.target.value)}
-                    style={{ colorScheme: 'dark' }}
-                    className="w-full p-2.5 bg-sunken border border-line-strong rounded-[10px] text-sm font-mono text-ink focus:border-brand outline-none"
+                    onChange={setExpiry}
+                    invalid={!expiryOk}
+                    placeholder={tr('receive.expiryPlaceholder')}
+                    calendarLabel={tr('receive.openCalendar')}
+                    inputClassName={`w-full min-w-0 flex-1 p-2.5 bg-sunken border rounded-[10px] text-sm font-mono text-ink focus:border-brand outline-none ${expiryOk ? 'border-line-strong' : 'border-danger'}`}
+                    buttonClassName="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] border border-line-strong bg-sunken text-ink active:scale-95"
                 />
+                {!expiryOk && (
+                    <p className="mt-1 text-xs font-bold text-danger-weak-ink">{tr('receive.err.expiryInvalid')}</p>
+                )}
             </div>
 
             {/* Resolve button */}
@@ -198,6 +213,7 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
                 onClick={() => {
                     if (needsName && !selectedItem) return;
                     if (needsWeight && !weight) return;
+                    if (!expiryOk) return;
 
                     setResolved(true);
                     onResolve(issue.barcode, {
@@ -206,7 +222,7 @@ function IssueCard({ issue, index, invoiceItems, onResolve }: IssueCardProps) {
                         expiry: expiry || undefined,
                     });
                 }}
-                disabled={(needsName && !selectedItem) || (needsWeight && !weight)}
+                disabled={(needsName && !selectedItem) || (needsWeight && !weight) || !expiryOk}
                 className="w-full h-12 bg-brand hover:bg-brand-hover active:bg-brand-active text-ink-inverse disabled:bg-line-strong disabled:text-ink-muted disabled:cursor-not-allowed rounded-xl text-sm font-extrabold transition-colors flex items-center justify-center gap-2"
             >
                 <Check className="w-4 h-4" />

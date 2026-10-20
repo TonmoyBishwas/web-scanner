@@ -1135,6 +1135,10 @@ export const he: Record<TranslationKey, string> = {
   'receive.packagingNone': '—',
   'receive.expiry': 'תאריך תפוגה',
   'receive.noExpiry': 'אין תוקף',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.expiryPlaceholder': 'dd.mm.yyyy',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.openCalendar': 'פתיחת לוח שנה',
   'receive.shortBy': 'חסר: {x}',
   'receive.over': 'עודף: {x}',
   'receive.gapQuestion': 'למה חסר?',
