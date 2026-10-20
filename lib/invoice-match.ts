@@ -38,7 +38,7 @@ export interface InvoiceItem {
 const FUZZY_THRESHOLD = 0.82;
 
 /** Levenshtein edit distance between two strings. */
-function levenshtein(a: string, b: string): number {
+export function levenshtein(a: string, b: string): number {
   if (a === b) return 0;
   if (!a.length) return b.length;
   if (!b.length) return a.length;

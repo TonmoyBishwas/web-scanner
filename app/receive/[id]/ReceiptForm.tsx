@@ -40,6 +40,7 @@ import {
   type Packaging,
 } from '@/lib/receipt-form';
 import { isFinalStatus, isInFlightStatus } from '@/lib/receipt-form-submit';
+import { SEARCH_MIN_LINES, nextIncompleteLine, searchLines } from '@/lib/receipt-form-search';
 
 type Tr = (key: TranslationKey, vars?: Record<string, string | number>) => string;
 
@@ -619,6 +620,15 @@ export function ReceiptForm({
   const [sameDate, setSameDate] = useState('');
   const [phase, setPhase] = useState<Phase>({ kind: 'editing' });
   const [flashLine, setFlashLine] = useState<number | null>(null);
+  /** Item search (client 20/10) — a view filter only; validation, counts and submit see every line. */
+  const [query, setQuery] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
+  /**
+   * A line index, or an element id (`last`: its last child — a new extra item), to scroll
+   * to once the render that clears the search has committed.
+   */
+  const [pendingScroll, setPendingScroll] = useState<number | { id: string; last?: boolean } | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const sending = useRef(false);
 
   const today = todayInJerusalem();
@@ -650,6 +660,25 @@ export function ReceiptForm({
     return () => window.clearTimeout(id);
   }, [flashLine]);
 
+  const scrollToLine = useCallback((index: number) => {
+    document.getElementById(`line-${index}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setFlashLine(index);
+  }, []);
+
+  // A line hidden by the search is mounted only after the query clears, so
+  // the scroll waits for that render.
+  useEffect(() => {
+    if (pendingScroll === null) return;
+    if (typeof pendingScroll === 'number') {
+      scrollToLine(pendingScroll);
+    } else {
+      const el = document.getElementById(pendingScroll.id);
+      // 'center', not 'end': the fixed footer covers the bottom of the screen.
+      (pendingScroll.last ? el?.lastElementChild : el)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    setPendingScroll(null);
+  }, [pendingScroll, scrollToLine]);
+
   const clearStoredDraft = useCallback(() => {
     try {
       window.localStorage.removeItem(draftStorageKey(formId));
@@ -679,11 +708,12 @@ export function ReceiptForm({
   const onExtraRemove = useCallback((key: string) => {
     setDraft((d) => ({ ...d, extras: d.extras.filter((x) => x.key !== key) }));
   }, []);
-  const addExtra = () =>
+  /** `name` pre-fills the item (the search text, from the no-results card). */
+  const addExtra = (name = '') =>
     setDraft((d) =>
       d.extras.length >= MAX_EXTRAS
         ? d
-        : { ...d, extras: [...d.extras, { key: newExtraKey(), name: '', quantity: '', unit: 'units' }] },
+        : { ...d, extras: [...d.extras, { key: newExtraKey(), name: name.slice(0, 200), quantity: '', unit: 'units' }] },
     );
 
   const sameDateErr = sameDate ? expiryError(sameDate, today) : null;
@@ -696,6 +726,7 @@ export function ReceiptForm({
   const showOnlyMissing = (v: boolean) => {
     setOnlyMissing(v);
     setTouched(new Set());
+    setQuery('');
   };
 
   const pallets = draft.pallets.trim();
@@ -707,22 +738,45 @@ export function ReceiptForm({
       return { ...d, pallets: delta < 0 && cur === 0 ? d.pallets : String(next) };
     });
 
-  /** The first thing that still blocks approval, in page order. */
+  // A non-empty search shows matching lines from the whole note, whichever tab is on.
+  const search = useMemo(() => searchLines(lines, query), [lines, query]);
+  const shownBySearch = useMemo(
+    () => (search.active ? new Set(search.lines.map((l) => l.index)) : null),
+    [search],
+  );
+
+  /**
+   * The first thing that still blocks approval, in page order. During a
+   * search: the first incomplete result; when every result is done, the
+   * search clears so the next line of the note is on screen to scroll to.
+   */
   const goToNext = () => {
-    const nextLine = draft.lines.find((d) => check.lines[d.index]);
-    if (nextLine) {
-      const el = document.getElementById(`line-${nextLine.index}`);
-      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      setFlashLine(nextLine.index);
+    const next = nextIncompleteLine(
+      draft.lines.map((d) => d.index),
+      (i) => !!check.lines[i],
+      shownBySearch,
+    );
+    if (next) {
+      if (next.clearSearch) {
+        setQuery('');
+        setPendingScroll(next.index);
+      } else {
+        scrollToLine(next.index);
+      }
       return;
     }
-    const target = check.form.includes('pallets_invalid')
-      ? document.getElementById('pallets')
-      : document.getElementById('extras');
-    target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const id = check.form.includes('pallets_invalid') ? 'pallets' : 'extras';
+    if (query) {
+      setQuery('');
+      setPendingScroll({ id });
+      return;
+    }
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
-  const visible = draft.lines.filter((d) => !onlyMissing || check.lines[d.index] || touched.has(d.index));
+  const visible = shownBySearch
+    ? draft.lines.filter((d) => shownBySearch.has(d.index))
+    : draft.lines.filter((d) => !onlyMissing || check.lines[d.index] || touched.has(d.index));
 
   const submit = async () => {
     if (sending.current || remaining > 0) return;
@@ -981,8 +1035,76 @@ export function ReceiptForm({
           </div>
         )}
 
-        {/* Which lines to show */}
-        <div role="tablist" className="grid grid-cols-2 gap-1 rounded-2xl border-2 border-line bg-sunken p-1">
+        {/* Item search — from SEARCH_MIN_LINES lines; sticky so it is reachable deep in the list */}
+        {lines.length >= SEARCH_MIN_LINES && (
+          <div role="search" className="sticky top-0 z-20 -mx-3 bg-canvas/95 px-3 py-2 backdrop-blur">
+            <div
+              className={`flex min-h-12 items-center gap-2 rounded-2xl border-2 bg-sunken ps-3 transition-colors focus-within:border-brand focus-within:ring-4 focus-within:ring-brand/40 ${
+                query ? 'border-brand' : 'border-line-strong'
+              }`}
+            >
+              <Icon name="search" size={22} className="text-ink-muted" />
+              <input
+                ref={searchRef}
+                type="search"
+                inputMode="search"
+                enterKeyHint="search"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                // Page direction, not dir="auto": an empty field resolves "auto" to LTR and the Hebrew hint jumps left.
+                dir={dir}
+                // The wrapper's border shows focus; the global :focus-visible outline would draw a second box.
+                style={{ outline: 'none' }}
+                value={query}
+                placeholder={tr('receive.searchPlaceholder')}
+                aria-label={tr('receive.searchPlaceholder')}
+                onChange={(e) => setQuery(e.target.value)}
+                onFocus={() => setSearchFocused(true)}
+                onBlur={() => setSearchFocused(false)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setQuery('');
+                  if (e.key === 'Enter') {
+                    // The keyboard's search key: close the keyboard; one result → go to it.
+                    e.preventDefault();
+                    e.currentTarget.blur();
+                    if (search.lines.length === 1 && search.active) scrollToLine(search.lines[0].index);
+                  }
+                }}
+                className="min-w-0 flex-1 bg-transparent py-2 pe-3 text-base font-bold text-ink placeholder:text-ink-muted outline-none [&::-webkit-search-cancel-button]:hidden"
+              />
+              {query && (
+                <button
+                  type="button"
+                  aria-label={tr('receive.searchClear')}
+                  onClick={() => {
+                    setQuery('');
+                    searchRef.current?.focus();
+                  }}
+                  className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-ink-muted active:scale-95"
+                >
+                  <Icon name="close" size={22} />
+                </button>
+              )}
+            </div>
+            {search.active && search.lines.length > 0 && (
+              <p aria-live="polite" className="mt-1 px-1 text-xs font-bold text-ink-muted">
+                {search.fuzzy
+                  ? tr('receive.searchFuzzy')
+                  : tr('receive.searchCount', { n: search.lines.length, total: lines.length })}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Which lines to show (dimmed while a search shows lines from the whole note; a tap clears it) */}
+        <div
+          role="tablist"
+          className={`grid grid-cols-2 gap-1 rounded-2xl border-2 border-line bg-sunken p-1 transition-opacity ${
+            search.active ? 'opacity-50' : ''
+          }`}
+        >
           <button
             type="button"
             role="tab"
@@ -1026,7 +1148,36 @@ export function ReceiptForm({
             />
           );
         })}
-        {onlyMissing && visible.length === 0 && (
+        {search.active && visible.length === 0 && (
+          <div className="rounded-3xl border-2 border-line bg-raised p-5 text-center space-y-3">
+            <Icon name="search_off" size={36} className="mx-auto block text-ink-muted" />
+            <p className="text-base font-extrabold">{tr('receive.searchNone')}</p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                className="min-h-12 rounded-xl border-2 border-line-strong bg-tile px-4 font-extrabold text-ink active:scale-95"
+              >
+                {tr('receive.searchClear')}
+              </button>
+              {/* What he is holding is not on the note: start an extra item named as he typed it */}
+              <button
+                type="button"
+                disabled={draft.extras.length >= MAX_EXTRAS}
+                onClick={() => {
+                  addExtra(query.trim());
+                  setQuery('');
+                  setPendingScroll({ id: 'extras', last: true });
+                }}
+                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border-2 border-dashed border-info/60 bg-info-weak px-4 font-extrabold text-info-weak-ink active:scale-95 disabled:opacity-40"
+              >
+                <Icon name="add_circle" size={20} />
+                {tr('receive.addExtra')}
+              </button>
+            </div>
+          </div>
+        )}
+        {!search.active && onlyMissing && visible.length === 0 && (
           <div className="rounded-3xl border-2 border-ok/50 bg-[linear-gradient(180deg,rgba(34,197,94,0.14),rgba(16,28,34,1))] p-5 text-center space-y-2">
             <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-ok text-[#04210f] shadow-[0_0_30px_rgba(34,197,94,0.45)]">
               <Icon name="done_all" size={32} />
@@ -1058,7 +1209,7 @@ export function ReceiptForm({
         {check.form.includes('too_many_extras') && <FieldError text={tr('receive.err.tooManyExtras')} />}
         <button
           type="button"
-          onClick={addExtra}
+          onClick={() => addExtra()}
           disabled={draft.extras.length >= MAX_EXTRAS}
           className="inline-flex w-full min-h-14 items-center justify-center gap-2 rounded-3xl border-2 border-dashed border-info/60 bg-info-weak px-4 font-extrabold text-info-weak-ink active:scale-[0.98] disabled:opacity-40"
         >
@@ -1067,9 +1218,9 @@ export function ReceiptForm({
         </button>
       </div>
 
-      {/* Sticky footer */}
+      {/* Sticky footer — hidden while the search field has the keyboard up, so results have room */}
       <footer
-        className="fixed inset-x-0 bottom-0 border-t border-line bg-header/95 backdrop-blur px-3 pt-2.5 shadow-[0_-10px_30px_rgba(0,0,0,0.45)]"
+        className={`${searchFocused ? 'hidden ' : ''}fixed inset-x-0 bottom-0 border-t border-line bg-header/95 backdrop-blur px-3 pt-2.5 shadow-[0_-10px_30px_rgba(0,0,0,0.45)]`}
         style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
       >
         <div className="mx-auto max-w-xl space-y-2">

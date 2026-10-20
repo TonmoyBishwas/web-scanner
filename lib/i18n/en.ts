@@ -1201,6 +1201,17 @@ export const en = {
   'receive.goNext': 'Go to the next line to fill',
   'receive.palletsLess': 'One pallet less',
   'receive.palletsMore': 'One pallet more',
+  // ── Item search on the receive form (client 20/10) ─────
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.searchPlaceholder': 'Search by item name or code',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.searchClear': 'Clear the search',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.searchNone': 'No line on the note matches the search',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.searchCount': '{n} of {total} lines',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.searchFuzzy': 'No exact match. Maybe one of these:',
   // ── Delete sheet, group count, print-later link (2026-10-15) ─────
   'terminal.deleteAllTitle': 'Delete — pallet {n}',
   'terminal.deleteAllTitleLoose': 'Delete — loose cartons',

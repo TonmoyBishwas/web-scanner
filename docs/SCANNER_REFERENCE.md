@@ -279,6 +279,34 @@ expiry: Android Chrome opens only its calendar dialog for an `<input type="date"
 - New texts (pending Mevaser): `receive.expiryPlaceholder` (`dd.mm.yyyy`), `receive.openCalendar` (the
   calendar button's label).
 
+## Changes since the audit — 2026-10-20 item search on the receive form
+
+**Why.** A long non-meat note (today's Bnei Darom form: 18 lines, ~600 px a card) meant scrolling ~10,000 px to
+find the item David was holding; the tabs and "Go to the next line to fill" only walk the note in order.
+
+- **`lib/receipt-form-search.ts`** (+ 20 tests) — pure, client-side, no library: `searchKey` (lower-case, NFC,
+  drop niqqud U+0591–05C7, fold final letters ך→כ ם→מ ן→נ ף→פ ץ→צ, keep only a–z 0–9 א–ת, so `ק"ג` = `ק״ג` =
+  `קג`), `queryWords`, `searchLines` (every query word a substring of the folded `name_he` / `name_en` / `code`,
+  any order; a 1–3 digit word also matches the line number; only when nothing matches strictly, a typo fallback:
+  each word of 3+ letters within one edit of the start of a word of the name — `פרינר` finds `פריניר`), and
+  `nextIncompleteLine`. It uses `levenshtein`, now exported from `lib/invoice-match.ts` (no behaviour change).
+  Deliberately **not** `normalizeString` (it keeps niqqud and final letters, and keys stored groups).
+- **`ReceiptForm.tsx`** — a sticky search box above the tabs, shown only when the note has
+  `SEARCH_MIN_LINES` (6) lines or more. It is a **view filter only**: the draft, `validateAnswers`, the progress
+  bar, the footer's "N lines still to complete" and Send all still see every line. A non-empty search shows
+  matches from the whole note whichever tab is on (the tabs dim; tapping one clears the search). Results keep
+  note order; a small line under the box says "n of total lines", or "No exact match. Maybe one of these:" for
+  the typo fallback. "Go to the next line to fill" goes to the first incomplete *result*; when every result is
+  done it clears the search and then scrolls (a `pendingScroll` effect, since the card mounts only after that
+  render). No results → a card with "Clear the search" and the existing "Item not on the note" button, which
+  adds an extra item already named with the search text and scrolls to it. Keyboard: `type="search"`,
+  `enterKeyHint="search"`, 16 px text, no autocorrect; the keyboard's search key closes the keyboard and, with
+  exactly one result, flashes it; Escape clears; the fixed footer hides while the box has focus so the results
+  are not squeezed between footer and keyboard. The query is not saved — a reload shows the full list.
+- No barcode search: `receipt_forms.lines` carries no barcode (the supplier code is searchable).
+- New texts (pending Mevaser): `receive.searchPlaceholder`, `receive.searchClear`, `receive.searchNone`,
+  `receive.searchCount`, `receive.searchFuzzy`.
+
 ## Table of contents
 
 - [Changes since the audit — the 2026-10-01 floor-feedback release](#changes-since-the-audit-the-2026-10-01-floor-feedback-release)

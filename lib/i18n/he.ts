@@ -1203,6 +1203,17 @@ export const he: Record<TranslationKey, string> = {
   'receive.goNext': 'לשורה הבאה להשלמה',
   'receive.palletsLess': 'משטח אחד פחות',
   'receive.palletsMore': 'משטח אחד יותר',
+  // ── Item search on the receive form (client 20/10) ─────
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.searchPlaceholder': 'חיפוש לפי שם פריט או קוד',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.searchClear': 'ניקוי החיפוש',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.searchNone': 'אין בתעודה שורה שמתאימה לחיפוש',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.searchCount': '{n} מתוך {total} שורות',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.searchFuzzy': 'לא נמצאה התאמה מדויקת. אולי אחת מאלה:',
   // ── Delete sheet, group count, print-later link (2026-10-15) ─────
   'terminal.deleteAllTitle': 'מחיקה — משטח {n}',
   'terminal.deleteAllTitleLoose': 'מחיקה — קרטונים בודדים',
