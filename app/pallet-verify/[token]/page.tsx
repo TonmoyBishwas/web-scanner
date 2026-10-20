@@ -55,6 +55,9 @@ import {
 } from '@/lib/identical-boxes';
 import { isMintedLabelBarcode, newBatchId, labelSheetUrl, liveRowPlaces, loadLabelSize, openListsForPhase, sessionBookedBarcodes } from '@/lib/label-batches';
 import { printGate, LABELS_NOT_PRINTED } from '@/lib/label-gate';
+import {
+  labelPrintingEnabled, labelsChipLook, labelsInitialStatus, newCartonUncountedToast, unprintedMarkers,
+} from '@/lib/label-printing';
 import { useUnprintedLabels } from '@/lib/use-unprinted-labels';
 import { toIsoDate, normalizeExpiry } from '@/lib/expiry';
 import { itemOptions, localIsoDate } from '@/lib/edit-panel-state';
@@ -116,6 +119,11 @@ import { mergeServer, ScanLedger, type LedgerStatus, type ServerCarton } from '@
 // One id per page load: the tab that opened the scan last owns it
 // (lib/session-owner.ts — two tabs must not overwrite each other's cartons).
 const TAB_ID = newTabId();
+
+// Label printing (LABEL_PRINTING_ENABLED, lib/label-printing.ts — client
+// 20/10, default off): off, labels are still minted and booked, but nothing
+// on this page offers, asks for or reminds about printing them.
+const PRINTING = labelPrintingEnabled();
 
 // Set up the in-page console-log capture once at module load. Idempotent —
 // safe even with React Strict Mode mounting twice.
@@ -979,6 +987,9 @@ export default function PalletVerifyPage({
   // amber badge on the Labels chip and the marker on each unprinted row.
   const unprinted = useUnprintedLabels(token);
   const unprintedBarcodes = new Set(unprinted.labels.map((l) => l.barcode));
+  // The rows' "Label not printed" marker — none while printing is off. The
+  // real set above still drives deletes and group counts.
+  const unprintedShown = unprintedMarkers(unprintedBarcodes, PRINTING);
   // The print gate (lib/label-gate.ts): the unprinted labels that stop the
   // list in front of the worker from being booked — its own cartons' labels,
   // plus every New carton label. While it is non-empty the confirm slide
@@ -2621,7 +2632,8 @@ export default function PalletVerifyPage({
       if (!res.ok || !minted) throw new Error(data?.error || 'mint failed');
       setEditForm((f) => (f ? { ...f, forcedId: minted, unidentified: false, barcodeInput: '' } : f));
       unprinted.refresh();
-      showToast(tr('terminal.barcodeMinted', { code: minted }), 'label');
+      // Printing off: no "print it from Labels" — the panel shows the new code.
+      if (PRINTING) showToast(tr('terminal.barcodeMinted', { code: minted }), 'label');
     } catch {
       // Never strand the worker on a failed network call — offer the
       // book-without-a-barcode route instead, as a second, explicit tap.
@@ -2940,10 +2952,14 @@ export default function PalletVerifyPage({
       origin: target.newCarton ? 'new_carton' : 'identical', count: rows.length, batch_id: labels[0]?.batch_id, pallet: target.loose ? 0 : currentPallet,
       another_of: target.anotherOf, counted: target.newCarton || undefined,
     });
-    showToast(
-      savedText ?? (rows.length === 1 ? tr('identical.savedOne') : tr('identical.saved', { count: rows.length })),
-      'save',
-    );
+    // Every saved-toast text tells the worker to print (or that the label is
+    // not printed yet): printing off, the new rows on the list say it all.
+    if (PRINTING) {
+      showToast(
+        savedText ?? (rows.length === 1 ? tr('identical.savedOne') : tr('identical.saved', { count: rows.length })),
+        'save',
+      );
+    }
   }
 
   /**
@@ -3484,11 +3500,10 @@ export default function PalletVerifyPage({
         onPress: () => openCartonCreator(),
       },
       {
-        // Amber + count while saved labels wait for the printer.
+        // Amber + count while saved labels wait for the printer (printing on
+        // only — off, a plain chip onto the view-and-delete list).
         id: 'labels', icon: 'label', label: tr('terminal.toolLabels'),
-        tint: unprinted.labels.length > 0 ? 'amber' : 'neutral',
-        iconColor: unprinted.labels.length > 0 ? '#fbbf5c' : undefined,
-        badge: unprinted.labels.length,
+        ...labelsChipLook(unprinted.labels.length, PRINTING),
         onPress: () => setShowLabels(true),
       },
       { id: 'warehouses', icon: 'warehouse', label: tr('terminal.toolWarehouses'), tint: 'neutral', locked: true },
@@ -3789,8 +3804,12 @@ export default function PalletVerifyPage({
               origin: 'new_carton', count, batch_id: batchId, pallet: looseCartonPhase ? 0 : currentPallet,
             });
             // Not counted until the printed label is scanned (David
-            // 2026-10-11 printed labels and never scanned them back).
-            showToast(count === 1 ? tr('carton.savedNotCountedOne') : tr('carton.savedNotCounted', { count }), 'save');
+            // 2026-10-11 printed labels and never scanned them back). With
+            // printing off there is no label to scan: the save failed for
+            // him, so he saves again.
+            const key = newCartonUncountedToast(count, PRINTING);
+            if (key === 'carton.error') showToast(tr(key), 'error', '#ef8a8a');
+            else showToast(tr(key, { count }), 'save');
           }}
         />
       )}
@@ -3798,7 +3817,7 @@ export default function PalletVerifyPage({
         <LabelsBrowser
           token={token}
           onBack={() => { setShowLabels(false); unprinted.refresh(); }}
-          initialStatus={unprinted.labels.length > 0 ? 'created' : 'all'}
+          initialStatus={labelsInitialStatus(unprinted.labels.length, PRINTING)}
           onChanged={unprinted.refresh}
           liveRows={liveLabelRows()}
           onBatchDeleted={handleLabelBatchDeleted}
@@ -4103,8 +4122,11 @@ export default function PalletVerifyPage({
                   {tr('terminal.twinHowMany')}
                 </button>
               )}
-              {/* What "another carton" does, said where it is offered. */}
-              <p className="px-1 text-[10.5px] font-semibold text-ink-muted leading-[1.4]">{tr('terminal.twinExplain')}</p>
+              {/* What "another carton" does, said where it is offered (it
+                  says "print it from Labels": printing on only). */}
+              {PRINTING && (
+                <p className="px-1 text-[10.5px] font-semibold text-ink-muted leading-[1.4]">{tr('terminal.twinExplain')}</p>
+              )}
             </div>
           );
         })() : scanNotice.newCarton && scanNotice.short ? (
@@ -5271,20 +5293,24 @@ export default function PalletVerifyPage({
             </div>
 
             {/* Labels still waiting for the printer (Q5 New cartons, and with
-                the print gate off any label): the signed "print later" page. */}
-            <PendingLabelsLink
-              count={unprinted.labels.length}
-              url={unprinted.labelsUrl}
-              from="all_done"
-              onCopied={() => showToast(tr('labels.linkCopied'), 'content_copy')}
-            />
+                the print gate off any label): the signed "print later" page.
+                Printing off: nothing is waiting, so no card. */}
+            {PRINTING && (
+              <PendingLabelsLink
+                count={unprinted.labels.length}
+                url={unprinted.labelsUrl}
+                from="all_done"
+                onCopied={() => showToast(tr('labels.linkCopied'), 'content_copy')}
+              />
+            )}
 
             {/* Right under the stats so it is in view without scrolling on a
                 long pallet list. */}
             <PriorityPushStatus token={token} />
 
-            {/* Real: per-pallet sticker links (design list-row style) */}
-            {completed.length > 0 && (
+            {/* Real: per-pallet sticker links (design list-row style). Each
+                row says "Print": printing on only — the LPNs stay in Pallets. */}
+            {PRINTING && completed.length > 0 && (
               <div className="mt-4 flex flex-col gap-2">
                 <div className="text-[9px] font-extrabold text-[#cbd5e1] tracking-[2px]">
                   {tr('pallet.stickers.title')}
@@ -5312,15 +5338,18 @@ export default function PalletVerifyPage({
             )}
 
             {/* The carton stickers minted with New carton / identical boxes,
-                for a reprint after the job (opens the Labels screen). */}
-            <button
-              type="button"
-              onClick={() => setShowLabels(true)}
-              className="flex items-center justify-center gap-[7px] w-full mt-4 border border-[#35516a] text-[#e8eef2] text-[12px] font-extrabold rounded-[11px] py-[11px]"
-            >
-              <MI name="label" size={17} className="text-brand-weak-ink" />
-              {tr('terminal.reprintLabels')}
-            </button>
+                for a reprint after the job (opens the Labels screen).
+                Printing on only. */}
+            {PRINTING && (
+              <button
+                type="button"
+                onClick={() => setShowLabels(true)}
+                className="flex items-center justify-center gap-[7px] w-full mt-4 border border-[#35516a] text-[#e8eef2] text-[12px] font-extrabold rounded-[11px] py-[11px]"
+              >
+                <MI name="label" size={17} className="text-brand-weak-ink" />
+                {tr('terminal.reprintLabels')}
+              </button>
+            )}
 
             {looseCount > 0 && (
               <div className="mt-3 bg-warn-weak border border-warn/30 rounded-[11px] p-3 text-[11px] font-semibold text-warn-weak-ink">
@@ -5566,7 +5595,7 @@ export default function PalletVerifyPage({
                     {...groupCountAction(looseActive, true)}
                     onRetry={looseActive.ocr_status === 'failed' ? () => retryLooseOcr(looseActive.barcode) : undefined}
                     onViewImage={looseActive.image_data ? () => setViewingImage(looseActive.image_data!) : undefined}
-                    unprinted={unprintedBarcodes.has(looseActive.barcode)}
+                    unprinted={unprintedShown.has(looseActive.barcode)}
                     highlight={looseActive.barcode === flashBarcode}
                     select={selectMode ? {
                       checked: selectPicked.has(looseActive.barcode),
@@ -5599,7 +5628,7 @@ export default function PalletVerifyPage({
                       : () => setSelectedBarcode(selectedBarcode === box.barcode ? null : box.barcode)}
                     actions={selectMode ? undefined : looseRowActions(box)}
                     select={selectMode ? { checked: selectPicked.has(box.barcode), locked: bookedInSession.has(box.barcode) } : undefined}
-                    unprinted={unprintedBarcodes.has(box.barcode)}
+                    unprinted={unprintedShown.has(box.barcode)}
                     unprintedLabel={tr('terminal.labelNotPrinted')}
                     highlight={box.barcode === flashBarcode}
                   />
@@ -5649,14 +5678,17 @@ export default function PalletVerifyPage({
           ]}
         >
           {/* Labels still waiting for the printer — this pallet's and any
-              earlier one's: the signed "print later" page for the note. */}
-          <PendingLabelsLink
-            count={unprinted.labels.length}
-            url={unprinted.labelsUrl}
-            from="pallet_done"
-            onCopied={() => showToast(tr('labels.linkCopied'), 'content_copy')}
-          />
-          {lpnUrl && (
+              earlier one's: the signed "print later" page for the note.
+              Printing off: no card, and no "Print label for this pallet". */}
+          {PRINTING && (
+            <PendingLabelsLink
+              count={unprinted.labels.length}
+              url={unprinted.labelsUrl}
+              from="pallet_done"
+              onCopied={() => showToast(tr('labels.linkCopied'), 'content_copy')}
+            />
+          )}
+          {PRINTING && lpnUrl && (
             <a
               href={`${lpnUrl}?token=${encodeURIComponent(token)}${language === 'Hebrew' ? '&lang=Hebrew' : ''}`}
               target="_blank"
@@ -5817,8 +5849,9 @@ export default function PalletVerifyPage({
             <MI name="add" size={18} /> {tr('palletVerify.uniformContinueMix')}
           </button>
           {/* The other way to the same job: a printed label per carton
-              (All boxes identical), the scanned samples counted in. */}
-          {uniformLabelSample() && <button
+              (All boxes identical), the scanned samples counted in. Printing
+              on only — "All boxes identical" stays on the row itself. */}
+          {PRINTING && uniformLabelSample() && <button
             onClick={handleUniformAsLabels}
             disabled={phase === 'confirming'}
             className="flex items-center justify-center gap-1 w-full min-h-[36px] text-xs font-extrabold text-brand-weak-ink underline underline-offset-2"
@@ -6205,7 +6238,7 @@ export default function PalletVerifyPage({
                   {...groupCountAction(activeBox, false)}
                   onRetry={activeBox.ocr_status === 'failed' ? () => retryPalletOcr(activeBox.barcode) : undefined}
                   onViewImage={activeBox.image_data ? () => setViewingImage(activeBox.image_data!) : undefined}
-                  unprinted={unprintedBarcodes.has(activeBox.barcode)}
+                  unprinted={unprintedShown.has(activeBox.barcode)}
                   highlight={activeBox.barcode === flashBarcode}
                   select={selectMode ? {
                     checked: selectPicked.has(activeBox.barcode),
@@ -6239,7 +6272,7 @@ export default function PalletVerifyPage({
                     : () => setSelectedBarcode(selectedBarcode === box.barcode ? null : box.barcode)}
                   actions={selectMode ? undefined : palletRowActions(box)}
                   select={selectMode ? { checked: selectPicked.has(box.barcode), locked: bookedInSession.has(box.barcode) } : undefined}
-                  unprinted={unprintedBarcodes.has(box.barcode)}
+                  unprinted={unprintedShown.has(box.barcode)}
                   unprintedLabel={tr('terminal.labelNotPrinted')}
                   highlight={box.barcode === flashBarcode}
                 />

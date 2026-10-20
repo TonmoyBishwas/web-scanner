@@ -6,6 +6,7 @@ import { CartonSticker } from '@/components/terminal/CartonSticker';
 import { MI } from '@/components/terminal/MI';
 import { t } from '@/lib/i18n';
 import { isLabelSize } from '@/lib/label-batches';
+import { labelPrintingEnabled } from '@/lib/label-printing';
 import { startScannerTrace, trace } from '@/lib/scanner-trace';
 import type { CartonLabel, Language, LabelSize } from '@/types';
 
@@ -29,6 +30,12 @@ const SHEETS: Record<LabelSize, { margin: string; w: string; maxH: number; cols:
 
 /** CSS px → mm (1 CSS px is 1/96 in by definition). */
 const pxToMm = (px: number) => (px / 96) * 25.4;
+
+// Label printing off (LABEL_PRINTING_ENABLED, lib/label-printing.ts — the
+// default since 20/10): nothing links here any more, and a sheet opened from
+// an old tab or a bookmark shows its labels but never opens the print dialog
+// by itself, offers no Print button and marks nothing printed.
+const PRINTING = labelPrintingEnabled();
 
 export function LabelSheet() {
   const params = useSearchParams();
@@ -156,7 +163,7 @@ export function LabelSheet() {
   }, [markPrinted]);
 
   useEffect(() => {
-    if (printedRef.current || !labels?.length) return;
+    if (!PRINTING || printedRef.current || !labels?.length) return;
     // Wait for the measured page height, otherwise the dialog opens against
     // the pre-measurement layout and prints the blank strip we just removed.
     if (autoHeight && pageHeightMm == null) return;
@@ -242,7 +249,7 @@ export function LabelSheet() {
             {tr('labels.sheetBack')}
           </button>
         ) : null}
-        <button
+        {PRINTING && <button
           onClick={printNow}
           style={{
             background: dialogClosed ? '#fff' : '#13a4ec',
@@ -255,7 +262,7 @@ export function LabelSheet() {
         >
           <MI name="print" size={20} />
           {tr('labels.sheetPrint')}
-        </button>
+        </button>}
       </div>
 
       {labels === null && !failed ? (

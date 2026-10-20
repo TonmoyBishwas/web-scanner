@@ -12,7 +12,14 @@ import {
   signedLabelSheetUrl,
   type PalletLabelGroup,
 } from '@/lib/label-batches';
+import { labelPrintingEnabled } from '@/lib/label-printing';
 import type { CartonLabel, Language, LabelSize } from '@/types';
+
+// Label printing off (LABEL_PRINTING_ENABLED, lib/label-printing.ts — the
+// default since 20/10): the scanner no longer links here, and a link from an
+// older message shows the note's labels read-only — no size picker, "show
+// printed" switch, Print or Print all.
+const PRINTING = labelPrintingEnabled();
 
 const SIZES: { id: LabelSize; name: string }[] = [
   { id: '10x10', name: '10×10' },
@@ -170,7 +177,7 @@ export function PendingLabels({ doc }: { doc: string }) {
             <p className="text-center text-[13px] text-ink-muted py-10">{tr('labels.sheetLoading')}</p>
           ) : (
             <>
-              <div className="flex flex-wrap items-center gap-2">
+              {PRINTING && <div className="flex flex-wrap items-center gap-2">
                 {SIZES.map((s) => (
                   <button
                     key={s.id}
@@ -185,7 +192,7 @@ export function PendingLabels({ doc }: { doc: string }) {
                   <input type="checkbox" checked={showPrinted} onChange={(e) => setShowPrinted(e.target.checked)} />
                   {tr('pending.showPrinted')}
                 </label>
-              </div>
+              </div>}
 
               {blocked && <p className="text-[12px] font-bold text-danger-weak-ink">{tr('labels.printBlocked')}</p>}
 
@@ -200,13 +207,13 @@ export function PendingLabels({ doc }: { doc: string }) {
                     <section key={String(g.pallet_number)} className="bg-header border border-line rounded-[14px] overflow-hidden">
                       <div className="flex items-center justify-between gap-2 px-3 py-[10px] border-b border-line">
                         <h2 className="text-[14px] font-black text-ink-inverse">{groupTitle(g)}</h2>
-                        <button
+                        {PRINTING && <button
                           onClick={() => print(toPrint.length ? toPrint : g.labels)}
                           className="inline-flex items-center gap-[5px] px-3 py-[8px] rounded-[10px] bg-brand text-white text-[12px] font-black"
                         >
                           <MI name="print" size={16} />
                           {printLabel('pending.printGroup', toPrint.length || g.labels.length)}
-                        </button>
+                        </button>}
                       </div>
                       <ul className="divide-y divide-line">
                         {itemLines(g.labels).map((line) => (
@@ -235,7 +242,7 @@ export function PendingLabels({ doc }: { doc: string }) {
           )}
         </main>
 
-        {sig && state === 'ok' && waiting.length > 0 && (
+        {PRINTING && sig && state === 'ok' && waiting.length > 0 && (
           <footer className="flex-none sticky bottom-0 bg-header border-t border-line px-4 py-3 safe-bottom">
             <button
               onClick={() => print(waiting)}

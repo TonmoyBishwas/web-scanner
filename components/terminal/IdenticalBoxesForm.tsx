@@ -27,6 +27,10 @@
  * with a live "19 will be added · 1 already on the list". It used to ask how
  * many MORE, and the invoice's 20 typed there made 21 (IN264191356). What is
  * saved is the difference (lib/identical-boxes.ts labelsToSave).
+ *
+ * Label printing off (LABEL_PRINTING_ENABLED, lib/label-printing.ts — the
+ * default since 20/10): the intro (it promises a printed label) and the
+ * sticker preview with its "Print the labels from Labels" note are hidden.
  */
 
 import { useRef, useState } from 'react';
@@ -38,6 +42,7 @@ import { Toast, useToast } from './Toast';
 import { useT } from '@/lib/i18n';
 import { identicalLabelPayload, labelsToSave, postIdenticalLabels, type IdenticalForm } from '@/lib/identical-boxes';
 import { toIsoDate, isoToDdmmyyyy } from '@/lib/expiry';
+import { labelPrintingEnabled } from '@/lib/label-printing';
 import { validateCartonDates } from '@/lib/date-validation';
 import { localIsoDate } from '@/lib/edit-panel-state';
 import { batchIdForPayload } from '@/lib/label-batches';
@@ -110,6 +115,8 @@ export interface ProductOption {
 }
 
 type DateField = 'production' | 'expiry';
+
+const PRINTING = labelPrintingEnabled();
 
 export function IdenticalBoxesForm({
   token, palletNumber, sample, anotherOf, weightDoubt, listed: listedProp, lineBoxes, skuMismatch, productChoice, onBack, onCreated,
@@ -230,9 +237,11 @@ export function IdenticalBoxesForm({
           <span dir="ltr" className="block text-[10.5px] font-bold text-ink-muted mt-[2px] font-mono text-start">
             {sample.barcode}
           </span>
-          <span className="block text-[11px] font-semibold text-ink-muted mt-[6px] leading-[1.45]">
-            {anotherOf ? tr('identical.anotherIntro', { n: anotherOf }) : tr('identical.intro')}
-          </span>
+          {PRINTING && (
+            <span className="block text-[11px] font-semibold text-ink-muted mt-[6px] leading-[1.45]">
+              {anotherOf ? tr('identical.anotherIntro', { n: anotherOf }) : tr('identical.intro')}
+            </span>
+          )}
         </div>
 
         {/* The code and the read name are two products: ask, never block. */}
@@ -394,16 +403,18 @@ export function IdenticalBoxesForm({
           </p>
         )}
 
-        {/* Preview of the physical sticker */}
-        <div>
-          <div className={fieldLabel}>{tr('carton.preview')}</div>
-          <div className="rounded-[12px] overflow-hidden border border-line" style={{ height: 190 }}>
-            <CartonSticker label={previewLabel} fontSize="9px" />
+        {/* Preview of the physical sticker (printing on only) */}
+        {PRINTING && (
+          <div>
+            <div className={fieldLabel}>{tr('carton.preview')}</div>
+            <div className="rounded-[12px] overflow-hidden border border-line" style={{ height: 190 }}>
+              <CartonSticker label={previewLabel} fontSize="9px" />
+            </div>
+            <p className="text-[10.5px] font-semibold text-ink-muted mt-[8px] mx-[2px] leading-[1.45]">
+              {tr('identical.saveNote')}
+            </p>
           </div>
-          <p className="text-[10.5px] font-semibold text-ink-muted mt-[8px] mx-[2px] leading-[1.45]">
-            {tr('identical.saveNote')}
-          </p>
-        </div>
+        )}
       </div>
 
       <div className="flex-none px-3 py-[11px] border-t border-line bg-header safe-bottom">

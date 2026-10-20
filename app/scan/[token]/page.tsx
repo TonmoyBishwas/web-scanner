@@ -45,6 +45,7 @@ import type {
 } from '@/types';
 import { useLangDir, LanguageContext, t } from '@/lib/i18n';
 import { startScannerTrace, trace } from '@/lib/scanner-trace';
+import { labelPrintingEnabled, withoutPrintChips } from '@/lib/label-printing';
 
 // Phase enum for flow control
 type ScanPhase =
@@ -997,7 +998,11 @@ export default function ScanPage({
 
   // Terminal tool dock: real actions (document, photos, share, gap, debug)
   // + locked chips for features with no backend.
-  const scanDockChips: ToolChip[] = [
+  // New carton is label-only here (it counts once its PRINTED label is
+  // scanned) and Labels is its print queue: both go while label printing is
+  // off (LABEL_PRINTING_ENABLED, lib/label-printing.ts — the default since
+  // 20/10), so no step on this page waits on a printer.
+  const scanDockChips: ToolChip[] = withoutPrintChips([
     {
       id: 'invoice', icon: 'description', label: tr('terminal.toolInvoice'), tint: 'blue', iconColor: '#33b1f0',
       onPress: () => setShowInvoiceDrawer(true),
@@ -1034,7 +1039,7 @@ export default function ScanPage({
           tint: 'red' as const, onPress: () => setShowDebugPanel(!showDebugPanel),
         }]
       : []),
-  ];
+  ], ['create', 'labels'], labelPrintingEnabled());
 
   const scanFooter = (
     <>
