@@ -219,11 +219,18 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     // where it never got that far (a proxy error, a bot without the route).
     await reopenIfUnclaimed(id, `bot answered ${res.status} ${outcome.error}`);
     await log('receive_submit', { outcome: 'bot_refused', http: res.status, error: outcome.error, message: outcome.message });
+    // A form the bot closed on this tap (form_replaced: a newer link holds the
+    // note now; already_saved) carries its reason and the newer link, as a
+    // 409 not_open does — without them the page took 'closed' for "already
+    // saved" and dropped the worker's draft (review 20/10).
+    const after = await loadFormRow(id);
+    const st = after && after.status === 'closed' ? await formState(after) : null;
     return reply(outcome.httpStatus, {
       ok: false,
       error: outcome.error,
       message: outcome.message,
-      status: await currentStatus(id),
+      status: after?.status ?? null,
+      ...(st ? { closed_reason: st.closed_reason, newer: st.newer } : {}),
     });
   } catch (error) {
     console.error('[api/receipt-form] POST error:', id, error);

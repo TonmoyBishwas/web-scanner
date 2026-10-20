@@ -353,6 +353,13 @@ finished_in_chat / ops_duplicate, and `result.by` = the replacing form for `repl
 - **Draft v2** — `{v:2, rev, fp:{index: "code|name_he"}, draft}`. `restoreDraftMerged` merges by index; a line
   whose fingerprint changed (a re-numbered note) resets alone; a malformed saved line resets alone; v1 drafts
   still restore (index only). Lines the saved draft never saw are tagged New with the banner.
+- **Review fixes (20/10)** — (1) a bot refusal that closed the form on this tap (`form_replaced`, `already_saved`)
+  now answers with `closed_reason` + `newer` as `not_open` does; before, the page read the bare `closed` as
+  "already saved" and dropped the draft. (2) `page.tsx` passes `previousFormIds` (`replacedFormIds`: closed
+  forms of the same delivery + chat whose `result.by` is this form); a form with no stored draft of its own
+  restores the newest of theirs, so answers typed on the old link survive when the worker opens the NEW link
+  straight from WhatsApp. (3) `lines_changed` with no new line (the bot bumped `rev` for a header field only)
+  re-sends once on the new rev instead of showing "Saving failed".
 - **Trace** — `scanner_events` rows, `page='receive'`, `token` = form id, `chat_id` = the form's chat, `kind='server'`:
   `receive_open` (every page render: status, rev, line_count, closed_reason), `receive_poll_changed` (a poll that
   found a newer rev or a non-open row — an unchanged poll writes nothing), `receive_submit` (`outcome` ∈ not_open /

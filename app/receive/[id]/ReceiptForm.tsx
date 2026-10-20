@@ -684,6 +684,7 @@ export function ReceiptForm({
   language,
   header,
   lines: initialLines,
+  previousFormIds = [],
 }: {
   formId: string;
   exp: string;
@@ -691,6 +692,8 @@ export function ReceiptForm({
   language: FormLanguage;
   header: FormHeader;
   lines: FormLine[];
+  /** Forms this one replaced, newest first (page.tsx): their stored draft is restored when this form has none yet. */
+  previousFormIds?: string[];
 }) {
   useLangDir(language);
   const tr: Tr = useCallback((k, v) => t(language, k, v), [language]);
@@ -739,9 +742,17 @@ export function ReceiptForm({
   // first client render agree) — merged by index, so a draft typed on page 1
   // survives page 2 being added (20/10). Once per form: the live merge
   // handles later changes.
+  const previousKey = previousFormIds.join(',');
   useEffect(() => {
     try {
-      const raw = window.localStorage.getItem(draftStorageKey(formId));
+      let raw = window.localStorage.getItem(draftStorageKey(formId));
+      // No draft of its own yet: the one typed on the form this one replaced
+      // (the worker came straight to the new WhatsApp link, review 20/10).
+      // The merge below fits it by index + fingerprint.
+      for (const prev of previousKey ? previousKey.split(',') : []) {
+        if (raw) break;
+        raw = window.localStorage.getItem(draftStorageKey(prev));
+      }
       const saved = restoreDraftMerged(raw, linesRef.current);
       if (saved) {
         setDraft(saved.draft);
@@ -758,7 +769,7 @@ export function ReceiptForm({
       /* storage blocked — start from the note */
     }
     setRestored(true);
-  }, [formId]);
+  }, [formId, previousKey]);
 
   useEffect(() => {
     if (!restored || phase.kind === 'saved' || phase.kind === 'already') return;
@@ -1000,15 +1011,17 @@ export function ReceiptForm({
     setPhase({ kind: 'closed', view });
   }
 
-  const submit = async () => {
+  /** `pageRev` / `retry`: one automatic re-send when only the revision moved (no new line, see below). */
+  const submit = async (pageRev: number = rev, retry = true) => {
     if (sending.current || remaining > 0) return;
+    let again: number | null = null;
     sending.current = true;
     setPhase({ kind: 'submitting' });
     try {
       const res = await fetch(`/api/receipt-form/${encodeURIComponent(formId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ exp, sig, rev, answers }),
+        body: JSON.stringify({ exp, sig, rev: pageRev, answers }),
         cache: 'no-store',
       });
       const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
@@ -1021,7 +1034,15 @@ export function ReceiptForm({
       // A page was added since this page loaded: bring it in, keep the draft, ask again.
       if (data?.error === 'lines_changed') {
         const nextRev = Number(data.rev);
-        const n = applyLines(normalizeFormLines(data.lines), Number.isInteger(nextRev) && nextRev >= 1 ? nextRev : rev);
+        const okRev = Number.isInteger(nextRev) && nextRev >= 1;
+        const n = applyLines(normalizeFormLines(data.lines), okRev ? nextRev : pageRev);
+        // Only the header moved (the bot's append with no new line, e.g. the
+        // note's date from page 2): nothing to fill — send again on the new
+        // revision instead of "Saving failed" (review 20/10).
+        if (!n && retry && okRev && nextRev !== pageRev) {
+          again = nextRev;
+          return;
+        }
         setPhase({ kind: 'error', message: n ? tr('receive.linesChanged', { n }) : tr('receive.errorGeneric') });
         return;
       }
@@ -1053,6 +1074,7 @@ export function ReceiptForm({
       setPhase({ kind: 'error', message: tr('receive.errorNetwork') });
     } finally {
       sending.current = false;
+      if (again !== null) void submit(again, false);
     }
   };
 
@@ -1503,7 +1525,7 @@ export function ReceiptForm({
               </span>
               <button
                 type="button"
-                onClick={submit}
+                onClick={() => void submit()}
                 disabled={remaining > 0}
                 className="shrink-0 min-h-10 rounded-xl bg-danger px-3 font-extrabold text-white disabled:opacity-40"
               >
@@ -1522,7 +1544,7 @@ export function ReceiptForm({
           {allReady || submitting ? (
             <button
               type="button"
-              onClick={submit}
+              onClick={() => void submit()}
               disabled={submitting}
               aria-busy={submitting}
               className="w-full min-h-14 rounded-2xl px-4 text-lg font-black text-[#04210f] bg-[linear-gradient(135deg,#4ade80,#22c55e_50%,#16a34a)] shadow-[0_8px_28px_rgba(34,197,94,0.45)] active:scale-[0.98] disabled:opacity-80 flex items-center justify-center gap-2"

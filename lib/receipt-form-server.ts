@@ -87,6 +87,32 @@ export async function newerFormLink(row: FormRow): Promise<{ id: string; href: s
   return { id, href: `/receive/${id}?${new URLSearchParams({ exp, sig }).toString()}` };
 }
 
+/**
+ * The forms `row` replaced (`result.by` = its id, same delivery + chat),
+ * newest first. The worker usually opens the NEW link from WhatsApp, never
+ * the old one, so the page restores the newest of their stored drafts when
+ * this form has none of its own yet (review 20/10) — otherwise what was typed
+ * on the old link stays behind under the old form's key.
+ */
+export async function replacedFormIds(row: FormRow): Promise<string[]> {
+  if (!row.delivery_id) return [];
+  const { data, error } = await supabase
+    .from('receipt_forms')
+    .select('id, chat_id, created_at')
+    .eq('delivery_id', row.delivery_id)
+    .eq('status', 'closed')
+    .eq('result->>by', String(row.id).toLowerCase())
+    .order('created_at', { ascending: false })
+    .limit(5);
+  if (error) {
+    console.error('[receipt-form] replaced forms lookup failed:', row.id, error.message);
+    return [];
+  }
+  return ((data as { id: string; chat_id: string | null }[] | null) ?? [])
+    .filter((r) => String(r.chat_id ?? '') === String(row.chat_id ?? '') && isUuid(r.id))
+    .map((r) => String(r.id).toLowerCase());
+}
+
 export interface FormState {
   status: string;
   rev: number;

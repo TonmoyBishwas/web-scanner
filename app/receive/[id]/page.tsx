@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { verifyReceiptFormLink } from '@/lib/receipt-form-link';
 import { closedView, type FormLanguage } from '@/lib/receipt-form';
-import { formState, loadFormRow, logFormEvent, type FormRow } from '@/lib/receipt-form-server';
+import { formState, loadFormRow, logFormEvent, replacedFormIds, type FormRow } from '@/lib/receipt-form-server';
 import { isFinalStatus, isInFlightStatus } from '@/lib/receipt-form-submit';
 import { t, type TranslationKey } from '@/lib/i18n/server';
 import { FormMoved, ReceiptForm } from './ReceiptForm';
@@ -163,5 +163,17 @@ export default async function ReceivePage({
     return <Notice language={language} title="receive.linkInvalidTitle" body="receive.linkInvalidBody" tone="danger" />;
   }
 
-  return <ReceiptForm formId={id} exp={exp} sig={sig} language={language} header={st.header} lines={st.lines} />;
+  // The draft typed on a form this one replaced, if the worker came straight to the new link.
+  const previous = await replacedFormIds(row).catch(() => [] as string[]);
+  return (
+    <ReceiptForm
+      formId={id}
+      exp={exp}
+      sig={sig}
+      language={language}
+      header={st.header}
+      lines={st.lines}
+      previousFormIds={previous}
+    />
+  );
 }

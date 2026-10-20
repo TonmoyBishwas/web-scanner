@@ -214,3 +214,47 @@ describe('POST /api/receipt-form/{id} with rev', () => {
     expect(await res.json()).toMatchObject({ error: 'not_open', status: 'closed', closed_reason: 'reset', newer: null });
   });
 });
+
+describe('review 20/10', () => {
+  it('a bot refusal that closed the form (form_replaced) carries the reason and the newer link', async () => {
+    tables.receipt_forms.push(form());
+    tables.receipt_forms.push(form({ id: B, created_at: '2026-10-20T07:20:00Z' }));
+    // The bot claims the row, finds a newer link in the chat, and closes this one.
+    fetchMock.mockImplementation(async () => {
+      Object.assign(tables.receipt_forms[0], {
+        status: 'closed',
+        result: { ok: false, error: 'form_replaced', final: 'closed', closed_reason: 'replaced', by: B },
+      });
+      return new Response(
+        JSON.stringify({ ok: false, error: 'form_replaced', final: 'closed', closed_reason: 'replaced', by: B, message: 'x', status: 'closed' }),
+        { status: 409 },
+      );
+    });
+    const res = await post({ exp: EXP, sig: SIG, rev: 1, answers: { pallets: null, lines: [ans(1), ans(2)], extras: [] } });
+    expect(res.status).toBe(409);
+    const j = await res.json();
+    expect(j).toMatchObject({ error: 'form_replaced', status: 'closed', closed_reason: 'replaced' });
+    expect(j.newer.id).toBe(B);
+  });
+
+  it('a bot refusal that leaves the form open has no closed_reason', async () => {
+    tables.receipt_forms.push(form());
+    fetchMock.mockImplementation(async () => {
+      tables.receipt_forms[0].status = 'open';
+      return new Response(JSON.stringify({ ok: false, error: 'page_pending', message: 'm', status: 'open' }), { status: 500 });
+    });
+    const j = await (await post({ exp: EXP, sig: SIG, rev: 1, answers: { pallets: null, lines: [ans(1), ans(2)], extras: [] } })).json();
+    expect(j).toMatchObject({ error: 'page_pending', message: 'm', status: 'open' });
+    expect(j.closed_reason).toBeUndefined();
+  });
+
+  it('replacedFormIds: the closed forms that name this one as `by`, same chat only', async () => {
+    const { replacedFormIds } = await import('./receipt-form-server');
+    const C = 'cccccccc-2222-3333-4444-555555555555';
+    tables.receipt_forms.push(form({ status: 'closed', result: { closed_reason: 'replaced', by: B } }));
+    tables.receipt_forms.push(form({ id: C, status: 'closed', chat_id: '972599999999', result: { closed_reason: 'replaced', by: B } }));
+    tables.receipt_forms.push(form({ id: B, created_at: '2026-10-20T07:20:00Z' }));
+    const row = { ...tables.receipt_forms[2] } as unknown as Parameters<typeof replacedFormIds>[0];
+    expect(await replacedFormIds(row)).toEqual([A]);
+  });
+});
