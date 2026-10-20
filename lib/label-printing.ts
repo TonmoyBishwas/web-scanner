@@ -4,7 +4,9 @@
  * reminder, no block, nothing waiting on them. Make printing optional
  * everywhere, off by default."
  *
- * OFF unless the env says `on` (also `true` / `1`). Off:
+ * OFF unless the env says `on` (also `true` / `yes` / `1` — the same set the
+ * bot's LABEL_PRINTING_ENABLED accepts, so one value means the same on
+ * Railway and Vercel). Off:
  *   - no print dialog, no print button, no label-size picker, no "Not
  *     printed" filter, badge, row marker or "N labels waiting — print later"
  *     card, and no toast or form note that tells the worker to print;
@@ -25,7 +27,7 @@
 
 export function labelPrintingEnabled(raw: string | undefined = process.env.LABEL_PRINTING_ENABLED): boolean {
   const v = (raw ?? '').trim().toLowerCase();
-  return v === 'on' || v === 'true' || v === '1';
+  return v === 'on' || v === 'true' || v === 'yes' || v === '1';
 }
 
 /** The pallet-verify Labels dock chip: amber + count only while printing is on. */

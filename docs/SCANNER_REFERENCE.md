@@ -881,6 +881,8 @@ Others: `common.cancel`, `common.delete`, `common.kg`, `loose.title`, `ocr.retry
 | loose minimum | 2125 | `min(2, declared)` | |
 | consolidation debounce / timeout | 439 / 409 | 1500 ms / 15000 ms | |
 | `scanner-settings` localStorage | via settings-store | on | sound/vibration for scan feedback |
+| `LABEL_PRINT_GATE` (added 2026-10-15) | `lib/label-gate.ts` `labelPrintGateEnabled` / `printGate`; inlined by `next.config.ts` | `off` | `on`/`true`/`1`: an LPN or a loose finish is refused (page and server) while a saved label on the list being booked is unprinted. Since 20/10 it blocks only when `LABEL_PRINTING_ENABLED` is on as well |
+| `LABEL_PRINTING_ENABLED` (added 2026-10-20) | `lib/label-printing.ts` `labelPrintingEnabled`; inlined by `next.config.ts` | `off` | `on`/`true`/`yes`/`1` (same set as the bot's flag of that name): print dialog, print buttons, size picker, "Not printed" filter/badges/markers, print reminders, and the `/scan` + `/issue` New carton / Labels chips. Off: none of these; `28…` codes are still minted, saved and booked. Build-time — a change needs a Vercel redeploy |
 No `process.env.*` is read in this file; no role check exists in this file (roles are decided by the bot before the link is sent).
 
 ---

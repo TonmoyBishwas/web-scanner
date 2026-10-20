@@ -18,7 +18,8 @@
  * Writes only the `carton_labels` ledger — except that deleting a batch whose
  * cartons are still rows on the scan list also takes those rows off it (the
  * page does that through `onBatchDeleted`; the confirm says so first). A
- * batch already booked on an LPN cannot be deleted, only reprinted.
+ * batch already booked on an LPN cannot be deleted, only reprinted (printing
+ * off: it just says it could not delete).
  *
  * Label printing off (LABEL_PRINTING_ENABLED, lib/label-printing.ts — the
  * default since 20/10): a plain list of what was saved, for checking and
@@ -276,8 +277,10 @@ export function LabelsBrowser({
       const data = await res.json();
       if (res.status === 409 && data?.error === 'labels_booked') {
         // Already stock on an LPN: the stickers are on boxes in the
-        // warehouse, so the ledger keeps them (reprint only).
-        showToast(tr('labels.deleteBooked'), 'info', '#fbbf5c');
+        // warehouse, so the ledger keeps them (reprint only). With printing
+        // off there is no reprint to point to — the plain "could not delete".
+        if (PRINTING) showToast(tr('labels.deleteBooked'), 'info', '#fbbf5c');
+        else showToast(tr('labels.deleteFailed'), 'error', '#ef8a8a');
         setConfirm(null);
         return;
       }

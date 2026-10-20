@@ -387,8 +387,10 @@ export function NonMeatTypeAFlow({
         <div className="text-start">
           <PriorityPushStatus token={token} />
         </div>
-        {PRINTING && <div className="space-y-2 text-start">
-          {(session.completed_pallets || []).map((p) => (
+        {/* The LPNs stay listed with printing off (this flow has no Pallets
+            browser to find them in); only the sticker link goes. */}
+        <div className="space-y-2 text-start">
+          {(session.completed_pallets || []).map((p) => PRINTING ? (
             <a
               key={p.lpn}
               href={`/pallet/${p.lpn}`}
@@ -401,8 +403,15 @@ export function NonMeatTypeAFlow({
                 <Printer className="w-4 h-4" /> {tr('nonmeatTypeA.viewSticker')}
               </span>
             </a>
+          ) : (
+            <div
+              key={p.lpn}
+              className="flex items-center justify-between bg-raised rounded-[14px] px-4 py-3 border border-line"
+            >
+              <span className="font-mono text-sm font-bold text-ink" dir="ltr">{p.lpn}</span>
+            </div>
           ))}
-        </div>}
+        </div>
       </div>
     );
   } else if (phase === 'pallet_done' && lastLpn) {

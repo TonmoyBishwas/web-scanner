@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 describe('LABEL_PRINTING_ENABLED', () => {
-  it('is off unless the env says on / true / 1', () => {
+  it('is off unless the env says on / true / yes / 1 (the bot accepts the same)', () => {
     expect(labelPrintingEnabled(undefined)).toBe(false);
     expect(labelPrintingEnabled('')).toBe(false);
     expect(labelPrintingEnabled('off')).toBe(false);
@@ -33,6 +33,8 @@ describe('LABEL_PRINTING_ENABLED', () => {
     expect(labelPrintingEnabled(' ON ')).toBe(true);
     expect(labelPrintingEnabled('true')).toBe(true);
     expect(labelPrintingEnabled('1')).toBe(true);
+    expect(labelPrintingEnabled('yes')).toBe(true);
+    expect(labelPrintingEnabled(' Yes ')).toBe(true);
   });
 
   it('reads the env when called with nothing — unset is off', () => {
