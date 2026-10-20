@@ -1487,9 +1487,11 @@ export function ReceiptForm({
         </button>
       </div>
 
-      {/* Sticky footer — hidden while the search field has the keyboard up, so results have room */}
+      {/* Sticky footer — hidden while the search field has the keyboard up, so results have room.
+          z-30: above the sticky search bar (z-20), which otherwise covered the Next / Approve
+          button whenever its place in the page fell behind the footer (top of a long form). */}
       <footer
-        className={`${searchFocused ? 'hidden ' : ''}fixed inset-x-0 bottom-0 border-t border-line bg-header/95 backdrop-blur px-3 pt-2.5 shadow-[0_-10px_30px_rgba(0,0,0,0.45)]`}
+        className={`${searchFocused ? 'hidden ' : ''}fixed inset-x-0 bottom-0 z-30 border-t border-line bg-header/95 backdrop-blur px-3 pt-2.5 shadow-[0_-10px_30px_rgba(0,0,0,0.45)]`}
         style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
       >
         <div className="mx-auto max-w-xl space-y-2">
