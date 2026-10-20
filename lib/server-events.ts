@@ -20,13 +20,24 @@ function describeError(e: unknown): string {
   return String(e).slice(0, 500);
 }
 
-export async function logServerEvent(token: string | null | undefined, event: string, data?: unknown): Promise<void> {
+/**
+ * `opts.page` / `opts.chatId`: the receive form (20/10) has no session token —
+ * its rows go under page 'receive', token = the form id, and the worker's chat.
+ */
+export async function logServerEvent(
+  token: string | null | undefined,
+  event: string,
+  data?: unknown,
+  opts?: { page?: string; chatId?: string | number | null },
+): Promise<void> {
   try {
     const t = typeof token === 'string' && /^[A-Za-z0-9_-]{4,128}$/.test(token) ? token : '';
     const payload = data instanceof Error ? { error: describeError(data) } : data;
+    const chat = opts?.chatId === null || opts?.chatId === undefined ? '' : String(opts.chatId);
     const { error } = await supabase.from('scanner_events').insert({
       ts: new Date().toISOString(),
-      page: 'api',
+      ...(/^\d{1,18}$/.test(chat) ? { chat_id: chat } : {}),
+      page: opts?.page ?? 'api',
       token: t || 'unknown',
       load_id: 'server',
       seq: 0,

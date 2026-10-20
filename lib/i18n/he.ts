@@ -1131,7 +1131,8 @@ export const he: Record<TranslationKey, string> = {
   'receive.qtyPlain': 'כמות',
   'receive.notArrived': '0 – לא הגיע',
   'receive.cartons': 'קרטונים/אריזות',
-  'receive.packaging': 'סוג אריזה',
+  // PENDING MEVASER 20/10 — draft, not approved (was 'סוג אריזה')
+  'receive.packaging': 'אריזה חיצונית',
   'receive.packagingNone': '—',
   'receive.expiry': 'תאריך תפוגה',
   'receive.noExpiry': 'אין תוקף',
@@ -1203,6 +1204,29 @@ export const he: Record<TranslationKey, string> = {
   'receive.goNext': 'לשורה הבאה להשלמה',
   'receive.palletsLess': 'משטח אחד פחות',
   'receive.palletsMore': 'משטח אחד יותר',
+  // ── Outer package badge + two-page notes on the receive form (client 20/10) ─────
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.perPack': '{n} {inner} בכל {pack}',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.pageAdded': 'נוסף עמוד לתעודה — {n} שורות חדשות. הן מסומנות "חדש" למטה.',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.newLineTag': 'חדש',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.linesChanged': 'התעודה עודכנה: נוספו {n} שורות. מלאו אותן ואשרו שוב — מה שכבר מילאתם נשמר.',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.replacedTitle': 'יש קישור חדש לתעודה הזו',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.replacedBody': 'נוסף עמוד לתעודה. פתחו את הקישור האחרון בוואטסאפ — מה שמילאתם נשמר.',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.openNewer': 'פתיחת הטופס המעודכן',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.cancelledTitle': 'הקבלה הזו בוטלה',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.cancelledBody': 'אין צורך לעשות כאן דבר. אם הסחורה הגיעה — שלחו שוב את צילום התעודה בוואטסאפ.',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.duplicateTitle': 'הטופס הזה נסגר כי הוא כפול',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.duplicateBody': 'יש טופס אחר לאותה תעודה. אין צורך לעשות כאן דבר.',
   // ── Item search on the receive form (client 20/10) ─────
   // PENDING MEVASER 20/10 — draft, not approved
   'receive.searchPlaceholder': 'חיפוש לפי שם פריט או קוד',

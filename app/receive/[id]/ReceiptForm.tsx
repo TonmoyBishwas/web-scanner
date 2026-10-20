@@ -10,11 +10,14 @@ import {
   PACKAGING,
   PACKAGING_LABELS,
   addDaysIso,
+  closedReasonOf,
+  closedView,
   applySameDateToAll,
   countWantingExpiry,
   draftStorageKey,
   draftToAnswers,
   expiryError,
+  fingerprints,
   fmtQty,
   formatDdMmYyyy,
   initialDraft,
@@ -22,12 +25,16 @@ import {
   isShort,
   markRestNoExpiry,
   maxExpiryIso,
+  mergeDraft,
+  normalizeFormLines,
+  packBadge,
   parseDecimal,
   remainingCount,
-  restoreDraft,
+  restoreDraftMerged,
   serializeDraft,
   todayInJerusalem,
   validateAnswers,
+  type ClosedView,
   type ExtraDraft,
   type ExtraError,
   type FormDraft,
@@ -51,7 +58,12 @@ type Phase =
   | { kind: 'saved'; savedLines: number | null }
   | { kind: 'already' }
   | { kind: 'inflight' }
-  | { kind: 'failed' };
+  | { kind: 'failed' }
+  /** Closed elsewhere while open here (bot 20/10 closed_reason); 'replaced' with a newer link navigates instead. */
+  | { kind: 'closed'; view: Exclude<ClosedView, 'saved'> };
+
+/** How often the open page asks whether the bot added a page (only while the tab is visible). */
+const POLL_MS = 15_000;
 
 const LINE_ERROR_KEY: Record<LineError, TranslationKey> = {
   qty_invalid: 'receive.err.qty',
@@ -198,10 +210,12 @@ interface LineCardProps {
   today: string;
   /** Briefly ringed after "next line to fill" scrolled to it. */
   flash: boolean;
+  /** Arrived with a page added while the form was open (or since the draft was saved). */
+  isNew: boolean;
   onChange: (index: number, patch: Partial<LineDraft>) => void;
 }
 
-const LineCard = memo(function LineCard({ line, d, errKey, language, today, flash, onChange }: LineCardProps) {
+const LineCard = memo(function LineCard({ line, d, errKey, language, today, flash, isNew, onChange }: LineCardProps) {
   const tr: Tr = (k, v) => t(language, k, v);
   const lang = language === 'Hebrew' ? 'he' : 'en';
   const errors = (errKey ? errKey.split(',') : []) as LineError[];
@@ -243,12 +257,15 @@ const LineCard = memo(function LineCard({ line, d, errKey, language, today, flas
     : line.unit_label
       ? tr('receive.qtyUnit', { unit: line.unit_label })
       : tr('receive.qtyPlain');
-  const packWord = line.packaging ? PACKAGING_LABELS[line.packaging][lang] : tr('receive.packsWord');
+  // The OUTER package's plural ("3 קרטונים" = 3 cartons), never the inner unit
+  // ("3 בקבוק" = 3 bottle, client 20/10) — and what is in each one when the note says.
+  const badge = packBadge(line, lang, tr('receive.packsWord'));
   // Each figure+word is a bidi isolate, so a Hebrew unit on an English page
   // (or the reverse) cannot swap places with its number.
   const iso = (v: string) => `⁨${v}⁩`;
   const noteQty = iso(`${fmtQty(line.qty)} ${line.unit_label || ''}`.trim());
-  const notePacks = line.cartons !== null ? iso(tr('receive.onNotePacks', { n: line.cartons, pack: packWord })) : null;
+  const notePacks = badge.packs ? iso(tr('receive.onNotePacks', badge.packs)) : null;
+  const notePerPack = badge.perPack ? iso(tr('receive.perPack', badge.perPack)) : null;
 
   const set = (patch: Partial<LineDraft>) => onChange(line.index, patch);
   const gapChoice = (g: Gap) => set({ gap: d.gap === g ? null : g });
@@ -285,6 +302,12 @@ const LineCard = memo(function LineCard({ line, d, errKey, language, today, flas
             <Icon name={status === 'todo' && !errors.includes('expiry_missing') ? 'help' : st.icon} size={14} />
             {statusText}
           </span>
+          {isNew && (
+            <span className="ms-1.5 mt-1.5 inline-flex items-center gap-1 rounded-full bg-info px-2.5 py-0.5 text-xs font-extrabold text-[#160a33]">
+              <Icon name="fiber_new" size={14} />
+              {tr('receive.newLineTag')}
+            </span>
+          )}
         </div>
       </div>
 
@@ -297,6 +320,12 @@ const LineCard = memo(function LineCard({ line, d, errKey, language, today, flas
           <>
             <span className="text-ink-muted">·</span>
             <span className="font-extrabold text-ink">{notePacks}</span>
+          </>
+        )}
+        {notePerPack && (
+          <>
+            <span className="text-ink-muted">·</span>
+            <span className="font-bold text-ink-body">{notePerPack}</span>
           </>
         )}
       </div>
@@ -592,13 +621,69 @@ function newExtraKey(): string {
 
 // ── The form ─────────────────────────────────────────────────────────────
 
+/**
+ * Copy this form's stored draft to the form that replaced it, unless that
+ * one already has its own. The new form's restore fits it by index +
+ * fingerprint (lib/receipt-form.ts mergeDraft), so page-1 answers carry over.
+ */
+function carryDraft(fromId: string, toId: string): void {
+  try {
+    const raw = window.localStorage.getItem(draftStorageKey(fromId));
+    if (raw && !window.localStorage.getItem(draftStorageKey(toId))) {
+      window.localStorage.setItem(draftStorageKey(toId), raw);
+    }
+  } catch {
+    /* storage blocked — the new form starts from the note */
+  }
+}
+
+/**
+ * A replaced form opened from its old link (page.tsx): take the draft along
+ * and go to the newer form; the button is the fallback if the redirect is
+ * blocked.
+ */
+export function FormMoved({
+  formId,
+  language,
+  newer,
+}: {
+  formId: string;
+  language: FormLanguage;
+  newer: { id: string; href: string };
+}) {
+  useLangDir(language);
+  const dir = language === 'Hebrew' ? 'rtl' : 'ltr';
+  useEffect(() => {
+    carryDraft(formId, newer.id);
+    window.location.replace(newer.href);
+  }, [formId, newer.id, newer.href]);
+  return (
+    <Outcome
+      dir={dir}
+      icon="info"
+      tone="info"
+      title={t(language, 'receive.replacedTitle')}
+      body={t(language, 'receive.replacedBody')}
+      action={
+        <a
+          href={newer.href}
+          onClick={() => carryDraft(formId, newer.id)}
+          className="inline-flex min-h-12 items-center justify-center rounded-2xl bg-brand px-6 font-extrabold text-white"
+        >
+          {t(language, 'receive.openNewer')}
+        </a>
+      }
+    />
+  );
+}
+
 export function ReceiptForm({
   formId,
   exp,
   sig,
   language,
   header,
-  lines,
+  lines: initialLines,
 }: {
   formId: string;
   exp: string;
@@ -610,11 +695,21 @@ export function ReceiptForm({
   useLangDir(language);
   const tr: Tr = useCallback((k, v) => t(language, k, v), [language]);
   const dir = language === 'Hebrew' ? 'rtl' : 'ltr';
+  /**
+   * The note's lines and their revision, live: the bot appends a page to the
+   * open form in place (20/10) and the poll below brings it in.
+   */
+  const [lines, setLines] = useState<FormLine[]>(initialLines);
+  const [rev, setRev] = useState(header.rev);
   const lineByIndex = useMemo(() => new Map(lines.map((l) => [l.index, l])), [lines]);
+  /** Lines that arrived after the worker started (a page added); tagged "New". */
+  const [newLines, setNewLines] = useState<Set<number>>(() => new Set());
+  /** The "a page was added — N new lines" banner. */
+  const [pageAdded, setPageAdded] = useState<number | null>(null);
 
-  const [draft, setDraft] = useState<FormDraft>(() => initialDraft(lines));
+  const [draft, setDraft] = useState<FormDraft>(() => initialDraft(initialLines));
   const [restored, setRestored] = useState(false);
-  const [onlyMissing, setOnlyMissing] = useState(lines.length > 8);
+  const [onlyMissing, setOnlyMissing] = useState(initialLines.length > 8);
   /** Lines edited since "only missing" was switched on — they stay put while typed into. */
   const [touched, setTouched] = useState<Set<number>>(() => new Set());
   const [sameDate, setSameDate] = useState('');
@@ -630,29 +725,136 @@ export function ReceiptForm({
   const [pendingScroll, setPendingScroll] = useState<number | { id: string; last?: boolean } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const sending = useRef(false);
+  /** The latest lines / rev for callbacks that outlive a render (the poll). */
+  const linesRef = useRef(lines);
+  linesRef.current = lines;
+  const revRef = useRef(rev);
+  revRef.current = rev;
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
 
   const today = todayInJerusalem();
 
   // Restore a draft typed before a reload (after mount, so SSR and the
-  // first client render agree).
+  // first client render agree) — merged by index, so a draft typed on page 1
+  // survives page 2 being added (20/10). Once per form: the live merge
+  // handles later changes.
   useEffect(() => {
     try {
-      const saved = restoreDraft(window.localStorage.getItem(draftStorageKey(formId)), lines);
-      if (saved) setDraft(saved);
+      const raw = window.localStorage.getItem(draftStorageKey(formId));
+      const saved = restoreDraftMerged(raw, linesRef.current);
+      if (saved) {
+        setDraft(saved.draft);
+        // Lines the saved draft never saw: a page added since it was typed.
+        const fresh = [...saved.added, ...saved.reset];
+        const savedSome = saved.draft.lines.length > fresh.length;
+        if (fresh.length && savedSome) {
+          setNewLines(new Set(fresh));
+          setTouched(new Set(fresh));
+          setPageAdded(fresh.length);
+        }
+      }
     } catch {
       /* storage blocked — start from the note */
     }
     setRestored(true);
-  }, [formId, lines]);
+  }, [formId]);
 
   useEffect(() => {
     if (!restored || phase.kind === 'saved' || phase.kind === 'already') return;
     try {
-      window.localStorage.setItem(draftStorageKey(formId), serializeDraft(draft));
+      window.localStorage.setItem(draftStorageKey(formId), serializeDraft(draft, lines, rev));
     } catch {
       /* quota / private mode — the form still works */
     }
-  }, [draft, restored, formId, phase.kind]);
+  }, [draft, lines, rev, restored, formId, phase.kind]);
+
+  /**
+   * New lines from the bot (a page appended in place): keep everything typed
+   * by index, pre-fill the new ones from the note, tag them "New" and keep
+   * them on the "to fill" tab. Returns how many lines are new.
+   */
+  const applyLines = useCallback((next: FormLine[], nextRev: number): number => {
+    // An unreadable answer never empties the form.
+    if (next.length === 0) return 0;
+    const prev = linesRef.current;
+    const prevFp = fingerprints(prev);
+    // The fresh/added split is decided against the CURRENT lines, not the
+    // draft (the draft follows them in the same update).
+    const probe = mergeDraft(initialDraft(prev), prevFp, next);
+    const fresh = [...probe.added, ...probe.reset];
+    setLines(next);
+    setRev(nextRev);
+    setDraft((d) => mergeDraft(d, prevFp, next).draft);
+    if (fresh.length) {
+      setNewLines((s) => new Set([...s, ...fresh]));
+      setTouched((s) => new Set([...s, ...fresh]));
+      setPageAdded(fresh.length);
+      setFlashLine(fresh[0]);
+    }
+    return fresh.length;
+  }, []);
+
+  /** Leave for the form that replaced this one, taking the draft along (its restore merges by index). */
+  const goToNewer = useCallback(
+    (href: string, newerId: string) => {
+      carryDraft(formId, newerId);
+      window.location.replace(href);
+    },
+    [formId],
+  );
+
+  /** One poll: what the row is now. Acts only while the worker is editing. */
+  const poll = useCallback(async () => {
+    const p = phaseRef.current.kind;
+    if (sending.current || (p !== 'editing' && p !== 'error')) return;
+    try {
+      const q = new URLSearchParams({ exp, sig, rev: String(revRef.current) });
+      const res = await fetch(`/api/receipt-form/${encodeURIComponent(formId)}?${q.toString()}`, { cache: 'no-store' });
+      if (!res.ok) return; // a bad link / blip: the next poll or the submit says so
+      const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+      if (!data || data.ok !== true || sending.current) return;
+      const status = String(data.status ?? '');
+      if (status === 'open') {
+        const nextRev = Number(data.rev);
+        if (Number.isInteger(nextRev) && nextRev > revRef.current) applyLines(normalizeFormLines(data.lines), nextRev);
+        return;
+      }
+      if (isInFlightStatus(status)) return; // another phone is saving it; the submit would say so
+      if (status === 'failed') return setPhase({ kind: 'failed' });
+      onNotOpen(status, data);
+    } catch {
+      /* offline — try again next time */
+    }
+    // onNotOpen is stable enough: it only reads its arguments and setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exp, sig, formId, applyLines]);
+
+  useEffect(() => {
+    let timer: number | null = null;
+    const start = () => {
+      if (timer === null && document.visibilityState === 'visible') timer = window.setInterval(() => void poll(), POLL_MS);
+    };
+    const stop = () => {
+      if (timer !== null) window.clearInterval(timer);
+      timer = null;
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void poll();
+        start();
+      } else stop();
+    };
+    const onFocus = () => void poll();
+    start();
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      stop();
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [poll]);
 
   useEffect(() => {
     if (flashLine === null) return;
@@ -778,6 +980,26 @@ export function ReceiptForm({
     ? draft.lines.filter((d) => shownBySearch.has(d.index))
     : draft.lines.filter((d) => !onlyMissing || check.lines[d.index] || touched.has(d.index));
 
+  /**
+   * The row is done / closed (seen by the poll or the submit): say why
+   * (closed_reason, 20/10). Only a really saved note drops the stored draft.
+   */
+  function onNotOpen(status: unknown, data: Record<string, unknown> | null) {
+    const view = closedView(String(status ?? ''), closedReasonOf(data));
+    const newer = data?.newer as { id?: unknown; href?: unknown } | null | undefined;
+    if (view === 'replaced' && newer && typeof newer.href === 'string' && newer.href.startsWith('/receive/') && typeof newer.id === 'string') {
+      goToNewer(newer.href, newer.id);
+      setPhase({ kind: 'closed', view });
+      return;
+    }
+    if (view === 'saved') {
+      clearStoredDraft();
+      setPhase({ kind: 'already' });
+      return;
+    }
+    setPhase({ kind: 'closed', view });
+  }
+
   const submit = async () => {
     if (sending.current || remaining > 0) return;
     sending.current = true;
@@ -786,7 +1008,7 @@ export function ReceiptForm({
       const res = await fetch(`/api/receipt-form/${encodeURIComponent(formId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ exp, sig, answers }),
+        body: JSON.stringify({ exp, sig, rev, answers }),
         cache: 'no-store',
       });
       const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
@@ -796,10 +1018,16 @@ export function ReceiptForm({
         setPhase({ kind: 'saved', savedLines: Number.isFinite(n) ? n : null });
         return;
       }
+      // A page was added since this page loaded: bring it in, keep the draft, ask again.
+      if (data?.error === 'lines_changed') {
+        const nextRev = Number(data.rev);
+        const n = applyLines(normalizeFormLines(data.lines), Number.isInteger(nextRev) && nextRev >= 1 ? nextRev : rev);
+        setPhase({ kind: 'error', message: n ? tr('receive.linesChanged', { n }) : tr('receive.errorGeneric') });
+        return;
+      }
       const status = data?.status;
       if (isFinalStatus(status)) {
-        clearStoredDraft();
-        setPhase({ kind: 'already' });
+        onNotOpen(status, data);
         return;
       }
       if (isInFlightStatus(status)) {
@@ -845,6 +1073,15 @@ export function ReceiptForm({
   }
   if (phase.kind === 'failed') {
     return <Outcome dir={dir} icon="info" tone="info" title={tr('receive.failedTitle')} body={tr('receive.failedBody')} />;
+  }
+  if (phase.kind === 'closed') {
+    const [title, body]: [TranslationKey, TranslationKey] =
+      phase.view === 'replaced'
+        ? ['receive.replacedTitle', 'receive.replacedBody']
+        : phase.view === 'duplicate'
+          ? ['receive.duplicateTitle', 'receive.duplicateBody']
+          : ['receive.cancelledTitle', 'receive.cancelledBody'];
+    return <Outcome dir={dir} icon="info" tone="info" title={tr(title)} body={tr(body)} />;
   }
   if (phase.kind === 'inflight') {
     return (
@@ -934,6 +1171,37 @@ export function ReceiptForm({
           <Icon name="lightbulb" size={20} className="text-[#fde047]" />
           <span>{tr('receive.hint')}</span>
         </p>
+
+        {/* A page was added to the note while it was open (20/10) — a tap shows the first new line */}
+        {pageAdded !== null && (
+          <div
+            role="status"
+            className="flex items-start gap-2 rounded-2xl border-2 border-info bg-info-weak px-3 py-2.5 text-sm font-extrabold text-info-weak-ink"
+          >
+            <Icon name="note_add" size={20} />
+            <button
+              type="button"
+              className="min-w-0 flex-1 text-start"
+              onClick={() => {
+                const first = draft.lines.find((d) => newLines.has(d.index));
+                if (!first) return;
+                setOnlyMissing(false);
+                setQuery('');
+                setPendingScroll(first.index);
+              }}
+            >
+              {tr('receive.pageAdded', { n: pageAdded })}
+            </button>
+            <button
+              type="button"
+              aria-label={tr('receive.remove')}
+              onClick={() => setPageAdded(null)}
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg active:scale-95"
+            >
+              <Icon name="close" size={18} />
+            </button>
+          </div>
+        )}
 
         {/* Pallets */}
         <div className="flex items-center gap-3 rounded-3xl border-2 border-line bg-raised p-3">
@@ -1144,6 +1412,7 @@ export function ReceiptForm({
               language={language}
               today={today}
               flash={flashLine === d.index}
+              isNew={newLines.has(d.index)}
               onChange={onLineChange}
             />
           );

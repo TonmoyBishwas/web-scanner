@@ -20,7 +20,17 @@ import {
   parseWholeOrBlank,
   remainingCount,
   restoreDraft,
+  restoreDraftMerged,
   serializeDraft,
+  mergeDraft,
+  packBadge,
+  closedReasonOf,
+  closedView,
+  formRev,
+  lineFingerprint,
+  PACKAGING,
+  PACKAGING_LABELS,
+  PACKAGING_PLURAL,
   todayInJerusalem,
   validateAnswers,
   type Answers,
@@ -42,6 +52,8 @@ function line(over: Partial<FormLine> = {}): FormLine {
     weighed: false,
     cartons: 2,
     packaging: 'bucket',
+    per_pack: null,
+    inner: null,
     needs_expiry: true,
     ...over,
   };
@@ -308,6 +320,7 @@ describe('row normalisation', () => {
       invoice_number: '123',
       invoice_date: '2026-10-12',
       line_count: 26,
+      rev: 1,
     });
     expect(normalizeFormHeader(null, 2).invoice_date).toBe('');
   });
@@ -374,16 +387,143 @@ describe('draft', () => {
     expect(validateAnswers(lines, a, TODAY).lines[2]).toEqual(['qty_invalid']);
   });
 
-  it('restoreDraft round-trips and refuses a draft for other lines', () => {
+  it('restoreDraft round-trips (v2) and rejects junk', () => {
     const d = initialDraft(lines);
     d.lines[0] = { ...d.lines[0], expiry: '2027-01-01' };
     d.extras = [{ key: 'k', name: 'x', quantity: '1', unit: 'units' }];
-    const raw = serializeDraft(d);
+    const raw = serializeDraft(d, lines, 1);
+    expect(JSON.parse(raw)).toMatchObject({ v: 2, rev: 1, fp: { 1: '100|טחינה גולמית' } });
     expect(restoreDraft(raw, lines)).toEqual(d);
-    expect(restoreDraft(raw, lines.slice(0, 2))).toBeNull();
-    expect(restoreDraft(raw, [lines[1], lines[0], lines[2]])).toBeNull();
     expect(restoreDraft('{bad json', lines)).toBeNull();
     expect(restoreDraft(null, lines)).toBeNull();
-    expect(restoreDraft(JSON.stringify({ v: 2, draft: d }), lines)).toBeNull();
+    expect(restoreDraft(JSON.stringify({ v: 3, draft: d }), lines)).toBeNull();
+    expect(restoreDraft(JSON.stringify({ v: 2, draft: d }), lines)).toBeNull(); // v2 without fingerprints
+  });
+
+  it('a v1 draft (saved before 20/10) still restores, by index', () => {
+    const d = initialDraft(lines);
+    d.lines[1] = { ...d.lines[1], qty: '7' };
+    d.pallets = '2';
+    const raw = JSON.stringify({ v: 1, draft: d, savedAt: 1 });
+    expect(restoreDraft(raw, lines)).toEqual(d);
+    // Old rule refused a draft for other lines outright; now the kept indexes survive.
+    const r = restoreDraftMerged(raw, lines.slice(0, 2));
+    expect(r?.draft.lines.map((l) => l.qty)).toEqual(['10', '7']);
+    expect(r?.added).toEqual([]);
+    expect(r?.rev).toBeNull();
+  });
+
+  it('page 2 appended (14 → 32 lines): the 14 typed answers stay, the 18 new start from the note', () => {
+    const page1 = Array.from({ length: 14 }, (_, i) => line({ index: i + 1, code: `C${i + 1}`, name_he: `פריט ${i + 1}` }));
+    const page2 = Array.from({ length: 18 }, (_, i) => line({ index: 15 + i, code: `D${i + 1}`, name_he: `עמוד 2 ${i + 1}`, qty: 3 }));
+    const d = initialDraft(page1);
+    d.lines = d.lines.map((l) => ({ ...l, expiry: '2027-03-01' }));
+    d.lines[4] = { ...d.lines[4], qty: '6', gap: 'will' };
+    const raw = serializeDraft(d, page1, 1);
+    const r = restoreDraftMerged(raw, [...page1, ...page2]);
+    expect(r).not.toBeNull();
+    expect(r!.rev).toBe(1);
+    expect(r!.draft.lines).toHaveLength(32);
+    expect(r!.draft.lines.slice(0, 14)).toEqual(d.lines);
+    expect(r!.draft.lines[14]).toMatchObject({ index: 15, qty: '3', expiry: '' });
+    expect(r!.added).toEqual(page2.map((l) => l.index));
+    expect(r!.reset).toEqual([]);
+    // live merge (no storage) gives the same result
+    const live = mergeDraft(d, Object.fromEntries(page1.map((l) => [l.index, lineFingerprint(l)])), [...page1, ...page2]);
+    expect(live.draft).toEqual(r!.draft);
+  });
+
+  it('a re-numbered line (fingerprint changed) resets only that line', () => {
+    const d = initialDraft(lines);
+    d.lines = d.lines.map((l) => ({ ...l, qty: '1' }));
+    const raw = serializeDraft(d, lines, 2);
+    const moved = [lines[0], { ...lines[1], code: '999', name_he: 'אחר' }, lines[2]];
+    const r = restoreDraftMerged(raw, moved)!;
+    expect(r.draft.lines.map((l) => l.qty)).toEqual(['1', '10', '1']);
+    expect(r.reset).toEqual([2]);
+    expect(r.rev).toBe(2);
+  });
+
+  it('a malformed saved line is replaced by the note, the rest kept', () => {
+    const d = initialDraft(lines);
+    d.lines[0] = { ...d.lines[0], qty: '4' };
+    const bad = { ...d, lines: [d.lines[0], { index: 2, qty: 5 }, d.lines[2]] };
+    const r = restoreDraftMerged(JSON.stringify({ v: 2, rev: 1, fp: {}, draft: bad }), lines)!;
+    expect(r.draft.lines.map((l) => l.qty)).toEqual(['4', '10', '12.5']);
+    expect(r.added).toEqual([2]);
+  });
+});
+
+describe('outer package (client 20/10)', () => {
+  it('the 13 keys, in the bot order (contract_packaging.json)', () => {
+    expect([...PACKAGING]).toEqual([
+      'carton', 'pack', 'sack', 'bag', 'bucket', 'can', 'jar', 'bottle', 'gallon', 'crate', 'tray', 'unit', 'other',
+    ]);
+    for (const k of PACKAGING) {
+      expect(PACKAGING_LABELS[k].he).toBeTruthy();
+      expect(PACKAGING_PLURAL[k].he).toBeTruthy();
+    }
+  });
+
+  it('normalizeFormLines keeps per_pack / inner, nulls junk, and old rows still parse', () => {
+    const out = normalizeFormLines([
+      { index: 7, name_he: 'מיץ ענבים', qty: 36, cartons: 3, packaging: 'carton', per_pack: 12, inner: 'bottle' },
+      { index: 9, name_he: 'מלפפון', qty: 96, cartons: 8, packaging: 'can', per_pack: 12, inner: 'unit' },
+      { index: 3, name_he: 'חרדל', qty: 2, cartons: 2, packaging: 'bucket' }, // before 20/10
+      { index: 4, qty: 5, packaging: 'jar', per_pack: 1.5, inner: 'barrel' },
+      { index: 5, qty: 5, per_pack: 1, inner: 'bottle' },
+      { index: 6, qty: 5, per_pack: '12', inner: 'bottle' },
+    ]);
+    expect(out[0]).toMatchObject({ packaging: 'carton', per_pack: 12, inner: 'bottle' });
+    expect(out[1]).toMatchObject({ packaging: 'can', per_pack: 12, inner: 'unit' });
+    expect(out[2]).toMatchObject({ packaging: 'bucket', per_pack: null, inner: null });
+    expect(out[3]).toMatchObject({ packaging: 'jar', per_pack: null, inner: null });
+    expect(out[4]).toMatchObject({ per_pack: null, inner: null }); // inner only with per_pack
+    expect(out[5]).toMatchObject({ per_pack: null, inner: null });
+  });
+
+  it('badge: the outer plural, never the inner word ("3 קרטונים", not "3 בקבוק")', () => {
+    const juice = line({ cartons: 3, packaging: 'carton', per_pack: 12, inner: 'bottle' });
+    expect(packBadge(juice, 'he', 'אריזות')).toEqual({
+      packs: { n: 3, pack: 'קרטונים' },
+      perPack: { n: 12, inner: 'בקבוקים', pack: 'קרטון' },
+    });
+    expect(packBadge(juice, 'en', 'packs').perPack).toEqual({ n: 12, inner: 'bottles', pack: 'carton' });
+    // per_pack without inner → units
+    expect(packBadge(line({ cartons: 15, packaging: 'pack', per_pack: 10, inner: null }), 'he', 'x').perPack).toEqual({
+      n: 10, inner: 'יחידות', pack: 'מארז',
+    });
+    // one package → singular; unknown type → the generic word; no cartons → none
+    expect(packBadge(line({ cartons: 1, packaging: 'bucket' }), 'he', 'אריזות').packs).toEqual({ n: 1, pack: 'דלי' });
+    expect(packBadge(line({ cartons: 2, packaging: null }), 'he', 'אריזות')).toEqual({
+      packs: { n: 2, pack: 'אריזות' },
+      perPack: null,
+    });
+    expect(packBadge(line({ cartons: null }), 'he', 'אריזות').packs).toBeNull();
+  });
+});
+
+describe('form revision + closed reason (two-page notes, 20/10)', () => {
+  it('formRev: a form without rev is rev 1', () => {
+    expect(formRev({ rev: 3 })).toBe(3);
+    expect(formRev({ rev: '2' })).toBe(2);
+    expect(formRev({})).toBe(1);
+    expect(formRev(null)).toBe(1);
+    expect(formRev({ rev: 0 })).toBe(1);
+    expect(formRev({ rev: 1.5 })).toBe(1);
+    expect(normalizeFormHeader({ rev: 4, line_count: 32 }, 14)).toMatchObject({ rev: 4, line_count: 32 });
+  });
+
+  it('closedReasonOf / closedView', () => {
+    expect(closedReasonOf({ closed_reason: 'replaced', by: 'x' })).toBe('replaced');
+    expect(closedReasonOf({ closed_reason: 'nope' })).toBeNull();
+    expect(closedReasonOf(null)).toBeNull();
+    expect(closedView('closed', 'replaced')).toBe('replaced');
+    expect(closedView('closed', 'cancelled')).toBe('cancelled');
+    expect(closedView('closed', 'reset')).toBe('cancelled');
+    expect(closedView('closed', 'ops_duplicate')).toBe('duplicate');
+    expect(closedView('closed', 'finished_in_chat')).toBe('saved');
+    expect(closedView('closed', null)).toBe('saved');
+    expect(closedView('done', 'replaced')).toBe('saved');
   });
 });

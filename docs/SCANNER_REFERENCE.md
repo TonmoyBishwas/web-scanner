@@ -307,6 +307,61 @@ find the item David was holding; the tabs and "Go to the next line to fill" only
 - New texts (pending Mevaser): `receive.searchPlaceholder`, `receive.searchClear`, `receive.searchNone`,
   `receive.searchCount`, `receive.searchFuzzy`.
 
+## Changes since the audit — 2026-10-20 outer package + two-page notes on the receive form
+
+**Why (package).** The "package type" dropdown carried the INNER unit the OCR saw (bottle), and the badge printed it
+next to the OUTER package count: "36 יחידות · 3 בקבוק" (36 units · 3 bottle). The bot now sends the outer package
+(`receipt_form.outer_packaging`, bot 2fa7026).
+
+- **`lib/receipt-form.ts`** — `PACKAGING` is the bot's 13 keys in the same order (`carton, pack, sack, bag,
+  bucket, can, jar, bottle, gallon, crate, tray, unit, other`; contract `scratchpad/oct20b/contract_packaging.json`,
+  pinned by a test). `PACKAGING_LABELS` gains pack/can/jar/gallon (and `unit` reads "יחידה בודדת" = single unit);
+  new `PACKAGING_PLURAL`. `FormLine` gains `per_pack` (integer ≥ 2 or null) and `inner` (bottle/can/jar/gallon/unit
+  or null, only with `per_pack`), parsed defensively — rows written before 20/10 have neither and still load.
+  `packBadge(line, lang, packsWord)` → the badge figures: the outer plural ("3 קרטונים" = 3 cartons; singular for 1;
+  the generic "אריזות" when the type is unknown) and, when the note says so, "12 בקבוקים בכל קרטון" (12 bottles
+  in each carton, `receive.perPack`). The draft / answers are unchanged: `packaging` stays one key or null.
+- **`ReceiptForm.tsx`** — the badge uses `packBadge`; the field label `receive.packaging` is now "אריזה חיצונית"
+  (outer package).
+
+**Why (two pages).** The bot sent a NEW form for page 2 and closed the open one, whose page then said "already
+saved" and dropped what David had typed (triage `twopage_scanner`, defects A–C). Contract with the bot (20/10): the
+bot appends a page to the OPEN form in place and bumps `header.rev` (int, 1 on create; a form without `rev` is
+rev 1) and `header.line_count`; a closed form carries `result.closed_reason` ∈ replaced / cancelled / reset /
+finished_in_chat / ops_duplicate, and `result.by` = the replacing form for `replaced`.
+
+- **`GET /api/receipt-form/{id}?exp&sig[&rev]`** (new) — same signed link; `no-store`; `{ok, status, rev,
+  line_count, lines, header, closed_reason, newer, expired}`. `newer` = `{id, href}`, a link to the replacing form
+  signed here (`lib/receipt-form-server.ts newerFormLink`): only the same delivery AND chat, still open, `exp` =
+  that row's `expires_at` capped at the verifier's 7 days. Without `result.by`, the newest open form of the same
+  delivery + chat created after this one stands in.
+- **`POST`** — the page sends `rev`. A different `rev` → **409 `{error:'lines_changed', rev, line_count, lines}`
+  before validation** (not a generic 422); the claim UPDATE also filters `header->>rev` (or `IS NULL` for a form
+  without one), and a claim that misses because the rev moved meanwhile answers `lines_changed` too. A page
+  without `rev` (loaded before this deploy) skips the check. `not_open` now carries `closed_reason` + `newer`.
+- **`ReceiptForm.tsx`** — `lines` / `rev` live in state. Poll every 15 s while the tab is visible, plus on
+  `visibilitychange` → visible and `focus`; only while editing (not during a submit). A higher `rev` →
+  `mergeDraft` by index: typed answers stay, the new lines start from the note, are tagged "חדש" (New), kept on
+  the "to fill" tab, and the banner `receive.pageAdded` ("A page was added — N new lines"; a tap shows the first)
+  appears. `lines_changed` on Approve does the same and says `receive.linesChanged`; the draft is never cleared.
+  Seen closed: replaced + `newer` → copy the stored draft to the new form's key (unless it has its own) and
+  `location.replace`; cancelled / reset → `receive.cancelled*`; ops_duplicate → `receive.duplicate*`;
+  finished_in_chat / no reason / done → the old "already saved" (only this clears the stored draft).
+- **`page.tsx`** — the same mapping when the link is opened on a closed form (replaced → `FormMoved`, which carries
+  the draft and redirects, with an "Open the updated form" button as fallback; no open successor →
+  `receive.replaced*` "open the latest link in WhatsApp").
+- **Draft v2** — `{v:2, rev, fp:{index: "code|name_he"}, draft}`. `restoreDraftMerged` merges by index; a line
+  whose fingerprint changed (a re-numbered note) resets alone; a malformed saved line resets alone; v1 drafts
+  still restore (index only). Lines the saved draft never saw are tagged New with the banner.
+- **Trace** — `scanner_events` rows, `page='receive'`, `token` = form id, `chat_id` = the form's chat, `kind='server'`:
+  `receive_open` (every page render: status, rev, line_count, closed_reason), `receive_poll_changed` (a poll that
+  found a newer rev or a non-open row — an unchanged poll writes nothing), `receive_submit` (`outcome` ∈ not_open /
+  expired / lines_changed / bad_answers / invalid / claimed / done / bot_refused / bot_unreachable /
+  bot_not_configured). `logServerEvent` takes an optional `{page, chatId}` for this.
+- New texts (pending Mevaser): `receive.perPack`, `receive.pageAdded`, `receive.newLineTag`, `receive.linesChanged`,
+  `receive.replacedTitle`/`Body`, `receive.openNewer`, `receive.cancelledTitle`/`Body`, `receive.duplicateTitle`/`Body`,
+  the new `PACKAGING_LABELS` / `PACKAGING_PLURAL` words; changed: `receive.packaging`, `PACKAGING_LABELS.unit`.
+
 ## Table of contents
 
 - [Changes since the audit — the 2026-10-01 floor-feedback release](#changes-since-the-audit-the-2026-10-01-floor-feedback-release)

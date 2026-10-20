@@ -1129,7 +1129,8 @@ export const en = {
   'receive.qtyPlain': 'Quantity',
   'receive.notArrived': '0 – didn\'t arrive',
   'receive.cartons': 'Cartons/packs',
-  'receive.packaging': 'Packaging',
+  // PENDING MEVASER 20/10 — draft, not approved (was 'Packaging')
+  'receive.packaging': 'Outer package',
   'receive.packagingNone': '—',
   'receive.expiry': 'Expiry date',
   'receive.noExpiry': 'No expiry',
@@ -1201,6 +1202,29 @@ export const en = {
   'receive.goNext': 'Go to the next line to fill',
   'receive.palletsLess': 'One pallet less',
   'receive.palletsMore': 'One pallet more',
+  // ── Outer package badge + two-page notes on the receive form (client 20/10) ─────
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.perPack': '{n} {inner} in each {pack}',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.pageAdded': 'A page was added to this note — {n} new lines, marked "New" below.',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.newLineTag': 'New',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.linesChanged': 'The note was updated: {n} lines were added. Fill them in and approve again — what you already filled in is kept.',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.replacedTitle': 'There is a newer link for this note',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.replacedBody': 'A page was added. Open the latest link in WhatsApp — what you filled in is kept.',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.openNewer': 'Open the updated form',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.cancelledTitle': 'This receipt was cancelled',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.cancelledBody': 'Nothing to do here. If the goods arrived, send the note photo again in WhatsApp.',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.duplicateTitle': 'This form was closed as a duplicate',
+  // PENDING MEVASER 20/10 — draft, not approved
+  'receive.duplicateBody': 'There is another form for the same note. Nothing to do here.',
   // ── Item search on the receive form (client 20/10) ─────
   // PENDING MEVASER 20/10 — draft, not approved
   'receive.searchPlaceholder': 'Search by item name or code',
