@@ -39,16 +39,12 @@ interface EditPanelProps {
   /** Supplier's own batch/lot code, free text. Often blank — see below. */
   batch: string;
   /**
-   * What the carton's own 31-digit barcode says, when it disagrees with the
-   * OCR. Offered as a one-tap correction, never applied automatically: the
-   * barcode has won every disagreement we have measured, but on 67 cartons
-   * from two suppliers that is a hint, not authority. Undefined = agree, or
-   * the format carries nothing.
+   * The weight / expiry shown is the carton's own 31-digit barcode reading
+   * (client rule 19/10: the barcode wins — lib/barcode-reconcile.ts). A small
+   * neutral marker on the tile, nothing to answer; typing over the value
+   * takes it away.
    */
-  barcodeWeight?: string;
-  barcodeExpiry?: string;
-  onUseBarcodeWeight?: () => void;
-  onUseBarcodeExpiry?: () => void;
+  fromBarcode?: { weight?: boolean; expiry?: boolean };
   barcode: string;
   /**
    * This carton has NO identity yet — a manual capture whose printed digits
@@ -98,6 +94,12 @@ interface EditPanelProps {
    * where a worker never saw "5 digits — need at least 13".
    */
   saveError?: string | null;
+  /**
+   * Ways forward for `saveError`, drawn as buttons under it — e.g. typed
+   * digits already on the list: "Same carton — remove this row" and
+   * "Another carton, identical label — add it". `primary` = the brand one.
+   */
+  saveErrorActions?: Array<{ label: string; onPress: () => void; primary?: boolean }>;
   /** Invoice item chips for name snapping (design's iField) */
   itemChips?: EditItemChip[];
   imageData?: string;
@@ -177,10 +179,10 @@ const TILE_BADGE: Record<TileState, { cls: string; icon: string }> = {
 export function EditPanel({
   cartonNumber, name, weight, expiry, productionDate, batch, barcode, itemChips,
   imageData, photoPending = false, onViewImage,
-  barcodeWeight, barcodeExpiry, onUseBarcodeWeight, onUseBarcodeExpiry,
+  fromBarcode,
   barcodeEditable, barcodeInput = '', onBarcodeChange,
   onCreateBarcode, minting, onNoBarcode, showNoBarcode, onAddBarcode,
-  needsReview, weightWarning, saveError,
+  needsReview, weightWarning, saveError, saveErrorActions,
   onNameChange, onWeightChange, onExpiryChange, onProductionDateChange, onBatchChange, onSave, onCancel,
 }: EditPanelProps) {
   const tr = useT();
@@ -231,12 +233,14 @@ export function EditPanel({
     barcode !== initial.barcode || barcodeInput !== initial.barcodeInput,
   ].filter(Boolean).length;
   const dirty = nChanged > 0;
-  const hasConflict = !!(barcodeWeight || barcodeExpiry);
   const missing = missingList({ name, weight, expiry, barcodeMissing });
+  // A doubted weight (lib/weight-sanity.ts) no longer holds needs_review, but
+  // an unchanged Save still has to be tappable: it is how the worker says
+  // "the weight is correct".
+  const weightDoubted = !!weightWarning && !changed.weight;
   const mode = saveMode({
     dirty,
-    hasConflict,
-    needsReview: !!needsReview,
+    needsReview: !!needsReview || weightDoubted,
     gateMissing: gateMissing({ name, weight, barcodeMissing }),
     datesInvalid: !!dateError,
   });
@@ -250,20 +254,22 @@ export function EditPanel({
 
   // The header's one-line status: what is missing (or doubtful), else what
   // Save will do.
-  let status: { icon: string; cls: string; text: string };
+  let status: { icon: string; cls: string; text: string; wrap?: boolean };
   if (dateError) {
     // First: it is the one thing that keeps Save disabled.
     status = { icon: 'error', cls: 'text-danger-weak-ink', text: tr(dateError) };
   } else if (missing.length) {
     const fields = missing.map((m) => tr(MISSING_KEY[m])).join(', ');
     status = { icon: 'warning', cls: 'text-warn-weak-ink', text: tr('terminal.missingList', { fields }) };
-  } else if (weightWarning && !changed.weight) {
-    status = { icon: 'warning', cls: 'text-warn-weak-ink', text: weightWarning };
+  } else if (weightDoubted) {
+    // Wraps: it names the number and where it came from, and a cut-off
+    // "…looks like a number from the product" told David nothing (19/10).
+    status = { icon: 'warning', cls: 'text-warn-weak-ink', text: weightWarning!, wrap: true };
   } else if (dirty) {
     const text = nChanged === 1 ? tr('terminal.changeReadyOne') : tr('terminal.changesReady', { n: nChanged });
     status = { icon: 'check_circle', cls: 'text-ok-weak-ink', text };
   } else if (mode !== 'disabled') {
-    // Flagged or in conflict, nothing to fill in: Save confirms what is there.
+    // Flagged, nothing to fill in: Save confirms what is there.
     status = { icon: 'touch_app', cls: 'text-brand-weak-ink', text: tr('terminal.checkThenSave') };
   } else {
     status = { icon: 'touch_app', cls: 'text-ink-muted', text: tr('terminal.tapFieldToEdit') };
@@ -275,7 +281,7 @@ export function EditPanel({
       ? 'bg-warn-weak text-warn-weak-ink border border-warn'
       : 'bg-brand text-ink-inverse border border-brand';
 
-  const tile = (f: EditField, label: string, value: ReactNode, grow: string) => {
+  const tile = (f: EditField, label: string, value: ReactNode, grow: string, barcodeMark = false) => {
     const st = tileState(f, states, changed[f]);
     const editing = field === f;
     // The frame says which field is open; the badge says how its value is
@@ -304,6 +310,12 @@ export function EditPanel({
             </>
           ) : value}
         </div>
+        {barcodeMark && st !== 'missing' && (
+          <div className="flex items-center gap-[3px] mt-[2px] text-[9.5px] font-bold leading-[1.2] text-ink-muted truncate">
+            <MI name="qr_code_scanner" size={11} className="flex-none" />
+            <span className="truncate">{tr('terminal.fromBarcode')}</span>
+          </div>
+        )}
         <span
           className={`absolute -top-[7px] -end-[7px] w-[20px] h-[20px] rounded-full border-2 border-canvas flex items-center justify-center ${badge.cls}`}
         >
@@ -319,27 +331,6 @@ export function EditPanel({
       </button>
     );
   };
-
-  // The barcode's version of a value the OCR read differently. Amber, not red:
-  // nothing is wrong yet and nothing is blocked — the worker decides.
-  const suggestion = (value: string, onUse: () => void) => (
-    <button
-      onClick={onUse}
-      className="w-full flex items-center justify-between gap-2 rounded-[9px] px-[10px] py-[7px] mb-[10px] border"
-      style={{ background: 'rgba(245,158,11,.10)', borderColor: 'rgba(245,158,11,.42)' }}
-    >
-      <span className="flex items-center gap-[6px] min-w-0">
-        <MI name="qr_code_scanner" size={15} style={{ color: '#fbbf5c' }} className="flex-none" />
-        <span className="text-[11px] font-extrabold truncate" style={{ color: '#e8d3a8' }}>
-          {tr('terminal.barcodeSays', { value })}
-        </span>
-      </span>
-      <span className="flex-none text-[11px] font-black px-[9px] py-[3px] rounded-full"
-            style={{ background: '#fbbf5c', color: '#1a1408' }}>
-        {tr('terminal.useBarcodeValue')}
-      </span>
-    </button>
-  );
 
   // One date: its label, its value (a tap opens the calendar) and a clear
   // button. A blank date is a valid answer for both.
@@ -403,9 +394,9 @@ export function EditPanel({
           <div className="text-[13px] font-extrabold text-ink-inverse truncate">
             {tr('terminal.editCarton', { n: cartonNumber })}
           </div>
-          <div className={`flex items-center gap-[4px] min-w-0 text-[10.5px] font-extrabold ${status.cls}`}>
-            <MI name={status.icon} size={13} className="flex-none" />
-            <span className="truncate">{status.text}</span>
+          <div className={`flex ${status.wrap ? 'items-start' : 'items-center'} gap-[4px] min-w-0 text-[10.5px] font-extrabold ${status.cls}`}>
+            <MI name={status.icon} size={13} className={`flex-none ${status.wrap ? 'mt-[1px]' : ''}`} />
+            <span className={status.wrap ? 'min-w-0 leading-[1.3]' : 'truncate'}>{status.text}</span>
           </div>
         </div>
         <button
@@ -414,7 +405,8 @@ export function EditPanel({
           className={`flex-none flex items-center gap-[5px] min-h-[40px] text-[12px] font-extrabold rounded-full px-[14px] ${saveCls}`}
         >
           <MI name={mode === 'warn' ? 'warning' : 'check'} size={16} />
-          {tr('terminal.save')}
+          {/* Nothing changed on a doubted weight: Save says what it means. */}
+          {weightDoubted && !dirty && mode !== 'disabled' ? tr('terminal.weightIsCorrect') : tr('terminal.save')}
         </button>
       </div>
 
@@ -425,6 +417,22 @@ export function EditPanel({
         >
           <MI name="error" size={17} className="flex-none" />
           <span className="min-w-0">{saveError}</span>
+        </div>
+      )}
+      {saveError && saveErrorActions && saveErrorActions.length > 0 && (
+        <div className="flex-none flex gap-2 px-[13px] py-[8px] bg-danger-weak border-b border-danger/40">
+          {saveErrorActions.map((a) => (
+            <button
+              key={a.label}
+              type="button"
+              onClick={a.onPress}
+              className={`flex-1 min-w-0 min-h-[44px] px-2 py-1 rounded-[11px] text-[12px] font-black leading-tight text-center ${
+                a.primary ? 'bg-brand text-white' : 'bg-tile border border-line-strong text-ink-inverse'
+              }`}
+            >
+              {a.label}
+            </button>
+          ))}
         </div>
       )}
 
@@ -543,6 +551,7 @@ export function EditPanel({
               <span className="flex-none text-[10px] font-extrabold text-brand-weak-ink">{tr('common.kg')}</span>
             </span>,
             'flex-[0.95]',
+            !!fromBarcode?.weight,
           )}
           {tile(
             'expiry',
@@ -551,6 +560,7 @@ export function EditPanel({
               {isoToDdmmyyyy(expiry)}
             </span>,
             'flex-[1.15]',
+            !!fromBarcode?.expiry,
           )}
         </div>
 
@@ -558,8 +568,6 @@ export function EditPanel({
         <div className="px-[13px] pt-[9px] pb-3 border-t-2 border-brand" style={{ background: 'linear-gradient(180deg,#0d171d,#0a1015)' }}>
           {field === 'weight' && (
             <>
-              {barcodeWeight && onUseBarcodeWeight
-                && suggestion(`${barcodeWeight} ${tr('common.kg')}`, onUseBarcodeWeight)}
               <div
                 className={`flex items-center justify-end gap-[6px] bg-overlay-card border rounded-[10px] px-[14px] py-[6px] ${
                   states.weight === 'invalid' ? 'border-danger' : 'border-line'
@@ -579,7 +587,7 @@ export function EditPanel({
                 </div>
               ) : (
                 <div className="mt-[4px] mb-[7px] h-[16px] text-[11px] font-bold text-ink-muted truncate">
-                  {tr('terminal.weightHint')}
+                  {fromBarcode?.weight ? tr('terminal.weightFromBarcode') : tr('terminal.weightHint')}
                 </div>
               )}
               <Keypad onKey={handleKey} />
@@ -675,8 +683,6 @@ export function EditPanel({
           )}
           {field === 'expiry' && (
             <>
-              {barcodeExpiry && onUseBarcodeExpiry
-                && suggestion(barcodeExpiry, onUseBarcodeExpiry)}
               {/* Both dates, each pre-filled with what was read and each
                   editable. The expiry is checked against today and against the
                   production date (lib/date-validation.ts); either may be

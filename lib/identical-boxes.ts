@@ -17,6 +17,7 @@
  */
 
 import type { CartonLabel, MultiPalletBoxScan } from '@/types';
+import { isMintedLabelBarcode } from './label-batches';
 
 /** What the confirmation form settles for the whole batch. */
 export interface IdenticalForm {
@@ -24,6 +25,20 @@ export interface IdenticalForm {
   /** ISO `YYYY-MM-DD` like every scan row ('' when unknown) — see lib/expiry.ts. */
   expiry: string;
   production_date: string;
+  /**
+   * The worker saw this weight on screen and saved it (the identical /
+   * "Different carton?" form, New carton): every row of the batch is then
+   * confirmed by that one decision and the weight check (lib/weight-sanity.ts)
+   * never flags them one by one. Absent on a save that showed no weight —
+   * the one-tap twin — where only an already-confirmed sample carries over.
+   */
+  weight_confirmed?: boolean;
+  /**
+   * The product the worker picked when the carton's code and its read name
+   * pointed at two invoice lines (the form's "which product?"). Absent: the
+   * sample's own names.
+   */
+  item?: { item_code: string; item_name_hebrew: string; item_name_english: string };
 }
 
 export interface MintedLabelRef {
@@ -47,7 +62,7 @@ export function sourceSku(barcode: string): string {
 type SampleRow = MultiPalletBoxScan & {
   image_data?: string;
   needs_review?: boolean;
-  barcode_conflict?: unknown;
+  barcode_filled?: unknown;
   minted?: boolean;
   label_batch_id?: string;
   source_barcode?: string;
@@ -85,11 +100,14 @@ export function expandIdenticalBoxes<T extends SampleRow>(
     scanned_at: now,
     image_data: i === 0 ? sample.image_data : undefined,
     needs_review: undefined,
-    barcode_conflict: undefined,
-    // The weight check (lib/weight-sanity.ts) judges each new row afresh; a
-    // weight the worker already confirmed on the sample stays confirmed.
+    // The form's weight and dates are the worker's, never a barcode reading.
+    barcode_filled: undefined,
+    // The weight check (lib/weight-sanity.ts) judges each new row afresh,
+    // unless the worker settled the weight: in the form that showed it
+    // (2026-10-19: 20 kebab labels saved at 8 kg each came out flagged, and
+    // were saved one by one with nothing changed), or on the sample already.
     weight_suspect: undefined,
-    weight_checked: sample.weight_checked && form.weight === sample.weight ? true : undefined,
+    weight_checked: form.weight_confirmed || (sample.weight_checked && form.weight === sample.weight) ? true : undefined,
     minted: true as const,
     label_batch_id: label.batch_id,
     source_barcode: sample.barcode,
@@ -253,6 +271,8 @@ export function newCartonBatch(
       weight: Number(first.weight_kg),
       expiry: first.expiry_date || '',
       production_date: first.production_date || '',
+      // The worker typed this weight in New carton.
+      weight_confirmed: true,
     },
   };
 }
@@ -272,4 +292,57 @@ export function asNewCartonRows<T extends { barcode: string; source_barcode?: st
     source_barcode: undefined,
     new_carton: true as const,
   }));
+}
+
+/**
+ * The identical / "Different carton?" form asks for the TOTAL (19/10).
+ *
+ * It used to ask "how many MORE cartons carry this label". On IN264191356
+ * David typed the invoice's 20 kebab cartons into it: 20 labels were saved
+ * on top of the counted carton, 21 in all. Now he types how many there are
+ * in total and the form shows what will happen ("19 will be added · 1
+ * already on the list"); `listed` = the cartons of this kind already on the
+ * list that stay on it. What is saved is the difference — never below 0,
+ * and Save waits for at least 1.
+ */
+export function labelsToSave(total: number, listed: number): number {
+  const t = Math.floor(Number(total) || 0);
+  const l = Math.max(0, Math.floor(Number(listed) || 0));
+  return Math.max(0, t - l);
+}
+
+/** A row's product code: the supplier code's first 13 digits — a minted row
+ *  carries the code it stands in for; our own `28…` labels carry none. */
+function supplierSku(row: { barcode: string; source_barcode?: string; minted?: boolean }): string {
+  const code = row.minted ? row.source_barcode || '' : row.barcode;
+  const sku = sourceSku(code);
+  return sku.length === 13 && !isMintedLabelBarcode(code) ? sku : '';
+}
+
+/**
+ * Soft check before "All boxes identical" / "Different carton?" copies a
+ * carton: do the other cartons with this NAME on the list carry one product
+ * code, and is this carton's own code a different one? Then the name may
+ * belong to a neighbouring sticker (IN264191356: a meatball carton read as
+ * 'קבב' (kebab) beside 7290004456856 kebab cartons, its own code
+ * 2000097200258) — the form says so and lets him go on. Returns the others'
+ * code, or null.
+ */
+export function groupSkuMismatch<T extends { barcode: string; source_barcode?: string; minted?: boolean }>(
+  sample: T,
+  rows: ReadonlyArray<T>,
+  keyOf: (r: T) => string,
+): string | null {
+  const own = supplierSku(sample);
+  if (!own) return null;
+  const key = keyOf(sample);
+  const others = new Set<string>();
+  for (const r of rows) {
+    if (r.barcode === sample.barcode || keyOf(r) !== key) continue;
+    const sku = supplierSku(r);
+    if (sku) others.add(sku);
+  }
+  if (others.size !== 1) return null;
+  const [other] = [...others];
+  return other === own ? null : other;
 }

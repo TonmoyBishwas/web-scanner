@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { matchInvoiceItem, type InvoiceItem } from './invoice-match';
+import { cartonOwnCodes, matchInvoiceItem, matchInvoiceItemByCode, invoiceNameConflict, type InvoiceItem } from './invoice-match';
 
 // Invoice 12083843 (Netto Melinda, 2026-10-04): the invoice names the
 // product one way ("... תפ לנדא"), the carton sticker another, led by a
@@ -91,5 +91,86 @@ describe('matchInvoiceItem — brand-led sticker names', () => {
   it('a swap tolerance does not turn a longer word into a shorter one', () => {
     const only = [{ item_code: '1', item_name_hebrew: 'שניצל עוף 150', item_name_english: '' }];
     expect(matchInvoiceItem('שניצלון הודו', '', only)).toBeNull();
+  });
+});
+
+// IN264191356 (19/10): a photo of a meatball carton read the meatball line's
+// own code and the kebab sticker's name beside it; the name ladder snapped it
+// to kebab and 7 meatball labels were minted as kebab.
+const GOURMET: InvoiceItem[] = [
+  { item_code: '7290004456856', item_name_hebrew: 'קבב מוסדי 8 קג - גורמה העדה החרדית', item_name_english: 'Frozen kebab 8g' },
+  { item_code: '2000097200258', item_name_hebrew: 'קציצות בקר 35 גרם', item_name_english: 'Beef meatballs 35g' },
+  { item_code: '7290006289360', item_name_hebrew: 'שוקיים וול דאן בדץ', item_name_english: '' },
+  { item_code: '501004', item_name_hebrew: 'כנפיים', item_name_english: '' },
+];
+
+describe('matchInvoiceItem — the carton code comes first (19/10)', () => {
+  it('names alone snap the kebab name to the kebab line (unchanged)', () => {
+    expect(matchInvoiceItem('קבב -גורמה', '', GOURMET)?.item_code).toBe('7290004456856');
+  });
+
+  it("the carton's own code wins over the name read beside it", () => {
+    expect(matchInvoiceItem('קבב -גורמה', '', GOURMET, ['2000097200258'])?.item_code).toBe('2000097200258');
+  });
+
+  it('a code that is the GS1 prefix of a 31-digit label counts', () => {
+    expect(matchInvoiceItem('', '', GOURMET, ['7290006289360012350128430052027'])?.item_code).toBe('7290006289360');
+  });
+
+  it('no code on the invoice in the barcode → the name ladder as before', () => {
+    expect(matchInvoiceItem('שוקיים', '', GOURMET, ['7290002195832012350128430052027'])?.item_code).toBe('7290006289360');
+  });
+
+  it('a short item code is never looked for inside a barcode', () => {
+    expect(matchInvoiceItemByCode(['5010041234567'], GOURMET)).toBeNull();
+  });
+
+  it('two different lines that both fit → no code match', () => {
+    const lines: InvoiceItem[] = [
+      { item_code: '729000445685', item_name_hebrew: 'א', item_name_english: '' },
+      { item_code: '7290004456856', item_name_hebrew: 'ב', item_name_english: '' },
+    ];
+    expect(matchInvoiceItemByCode(['7290004456856'], lines)).toBeNull();
+  });
+
+  it('empty / provisional codes are ignored', () => {
+    expect(matchInvoiceItemByCode(['', null, undefined, 'MANUAL-17-abc'], GOURMET)).toBeNull();
+  });
+});
+
+describe('invoiceNameConflict', () => {
+  it('code says meatballs, name says kebab → both lines', () => {
+    const c = invoiceNameConflict('קבב -גורמה', '', GOURMET, ['2000097200258']);
+    expect(c?.byCode.item_code).toBe('2000097200258');
+    expect(c?.byName.item_code).toBe('7290004456856');
+  });
+
+  it('code and name agree → null', () => {
+    expect(invoiceNameConflict('קציצות בקר', '', GOURMET, ['2000097200258'])).toBeNull();
+  });
+
+  it('no code match or no name match → null', () => {
+    expect(invoiceNameConflict('קבב', '', GOURMET, ['7290002195832'])).toBeNull();
+    expect(invoiceNameConflict('', '', GOURMET, ['2000097200258'])).toBeNull();
+  });
+});
+
+describe("cartonOwnCodes — the worker's choice of product beats the code", () => {
+  const GOURMET2: InvoiceItem[] = [
+    { item_code: '7290004456856', item_name_hebrew: 'קבב מוסדי 8 קג - גורמה העדה החרדית', item_name_english: 'Frozen kebab 8g' },
+    { item_code: '2000097200258', item_name_hebrew: 'קציצות בקר 35 גרם', item_name_english: 'Beef meatballs 35g' },
+  ];
+  const kebabNames = { item_name_hebrew: 'קבב מוסדי 8 קג - גורמה העדה החרדית', item_name: 'Frozen kebab 8g' };
+  const line = (b: { barcode: string; source_barcode?: string; named_by_worker?: boolean; item_name_hebrew: string; item_name: string }) =>
+    matchInvoiceItem(b.item_name_hebrew, b.item_name, GOURMET2, cartonOwnCodes(b))?.item_code;
+
+  it('a carton nobody settled follows its code (barcode, or the code a label stands in for)', () => {
+    expect(cartonOwnCodes({ barcode: '2826101900000123', source_barcode: '2000097200258' })).toEqual(['2826101900000123', '2000097200258']);
+    expect(line({ barcode: '2826101900000123', source_barcode: '2000097200258', ...kebabNames })).toBe('2000097200258');
+  });
+
+  it('a carton he settled as kebab follows the name he chose', () => {
+    expect(cartonOwnCodes({ barcode: '2000097200258', named_by_worker: true })).toEqual([]);
+    expect(line({ barcode: '2826101900000123', source_barcode: '2000097200258', named_by_worker: true, ...kebabNames })).toBe('7290004456856');
   });
 });

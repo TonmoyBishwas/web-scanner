@@ -8,6 +8,10 @@
  * eliminating drift-induced fragmentation.
  *
  * Matching ladder (most → least confident):
+ *   0. the carton's own code (`codes`, optional): an invoice item code of 12+
+ *      digits that IS the carton's barcode, or its GS1 prefix — the label
+ *      says which product it is, whatever name the OCR read (19/10 incident
+ *      below, matchInvoiceItemByCode)
  *   1. exact normalized Hebrew, then exact normalized English
  *   2. first-Hebrew-word prefix (invoice OCR sometimes captures a shorter form)
  *   3. fuzzy: normalized Levenshtein similarity ≥ FUZZY_THRESHOLD
@@ -67,8 +71,100 @@ export function matchInvoiceItem(
   nameHebrew: string | undefined,
   nameEnglish: string | undefined,
   invoiceItems: InvoiceItem[] | undefined,
+  /** The carton's own codes (barcode, the supplier code a label stands in
+   *  for, OCR'd printed digits) — step 0. Omitted: names only, as before. */
+  codes?: ReadonlyArray<string | null | undefined>,
 ): InvoiceItem | null {
   if (!invoiceItems || invoiceItems.length === 0) return null;
+
+  // 0. the carton's own code
+  if (codes) {
+    const byCode = matchInvoiceItemByCode(codes, invoiceItems);
+    if (byCode) return byCode;
+  }
+  return matchInvoiceItemByName(nameHebrew, nameEnglish, invoiceItems);
+}
+
+/**
+ * Item codes shorter than this are never looked for inside a carton barcode:
+ * a 5–6 digit short code (`501004`) would match the start of unrelated
+ * barcodes by chance. 12+ digits is a GTIN, which names one product.
+ */
+const MIN_CODE_DIGITS = 12;
+
+const codeDigits = (v: unknown) => String(v ?? '').replace(/\D/g, '');
+
+/**
+ * The invoice line whose item code the carton's own code carries: the code
+ * itself, or the code as the barcode's GS1 prefix (a 31-digit catch-weight
+ * label starts with its GTIN). Null when no line's code is there, or when
+ * two different lines would both fit.
+ *
+ * Why (IN264191356, 19/10): a photo of a beef-meatball carton read its
+ * printed digits `2000097200258` — exactly the meatball line's item code —
+ * and the name 'קבב -גורמה' (Kebab - Gourmet) off the kebab sticker beside
+ * it. The name ladder snapped it to the kebab line on its first word, and
+ * "All boxes identical" then minted 7 meatball cartons as kebab. The barcode
+ * was right; the name belonged to another carton.
+ */
+export function matchInvoiceItemByCode(
+  codes: ReadonlyArray<string | null | undefined>,
+  invoiceItems: InvoiceItem[] | undefined,
+): InvoiceItem | null {
+  if (!invoiceItems || invoiceItems.length === 0) return null;
+  const own = codes.map(codeDigits).filter((c) => c.length >= MIN_CODE_DIGITS);
+  if (own.length === 0) return null;
+  let hit: InvoiceItem | null = null;
+  for (const line of invoiceItems) {
+    const code = codeDigits(line.item_code);
+    if (code.length < MIN_CODE_DIGITS) continue;
+    if (!own.some((c) => c === code || c.startsWith(code))) continue;
+    // Two lines with one code (a multi-invoice delivery) are one product.
+    if (hit && codeDigits(hit.item_code) !== code) return null;
+    hit ??= line;
+  }
+  return hit;
+}
+
+/**
+ * A list row's own codes for step 0 of matchInvoiceItem: its barcode and the
+ * supplier code a minted label stands in for — or none at all once the
+ * worker has settled which product the carton is (`named_by_worker`: he
+ * picked it in the identical form's "which product?", or saved a name of
+ * his own in the edit panel). His choice then decides by name, as the
+ * server books it: a meatball-coded carton he settled as kebab must not
+ * mint labels carrying the meatball line's item_code beside kebab names.
+ */
+export function cartonOwnCodes(b: { barcode: string; source_barcode?: string; named_by_worker?: boolean }): string[] {
+  return b.named_by_worker ? [] : [b.barcode, b.source_barcode || ''];
+}
+
+/**
+ * The carton's code says one invoice line and its OCR'd name another — the
+ * 19/10 meatball/kebab shape. Both lines, for a soft "which product?" (the
+ * code's line is what the carton is booked as). Null when either is missing
+ * or they agree.
+ */
+export function invoiceNameConflict(
+  nameHebrew: string | undefined,
+  nameEnglish: string | undefined,
+  invoiceItems: InvoiceItem[] | undefined,
+  codes: ReadonlyArray<string | null | undefined>,
+): { byCode: InvoiceItem; byName: InvoiceItem } | null {
+  const byCode = matchInvoiceItemByCode(codes, invoiceItems);
+  if (!byCode) return null;
+  const byName = matchInvoiceItemByName(nameHebrew, nameEnglish, invoiceItems ?? []);
+  if (!byName || codeDigits(byName.item_code) === codeDigits(byCode.item_code)) return null;
+  return { byCode, byName };
+}
+
+/** Steps 1–4 of the ladder: names only. */
+function matchInvoiceItemByName(
+  nameHebrew: string | undefined,
+  nameEnglish: string | undefined,
+  invoiceItems: InvoiceItem[],
+): InvoiceItem | null {
+  if (invoiceItems.length === 0) return null;
 
   const heNorm = normalizeString(nameHebrew);
   const enNorm = normalizeString(nameEnglish);

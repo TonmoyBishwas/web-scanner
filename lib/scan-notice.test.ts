@@ -17,6 +17,10 @@ import {
   DUPLICATE_QUIET_MS,
   SCAN_NOTICE_MS,
   SCAN_NOTICE_ACTION_MS,
+  SHORT_NOTICE_QUIET_MS,
+  shouldExplainShortRead,
+  sameLabelOnList,
+  listedNoticeKey,
 } from './scan-notice';
 
 // Carton #8 and #9 of IN264172698 pallet 3 (2026-09-24).
@@ -314,12 +318,64 @@ describe('noteTwinHoldRead (no second one-tap from a parked camera)', () => {
 });
 
 describe('scanNoticeMs', () => {
-  it('a notice with an action stays up twice as long', () => {
+  it('a notice with only an action stays up twice as long', () => {
     expect(scanNoticeMs({})).toBe(SCAN_NOTICE_MS);
-    expect(scanNoticeMs({ different: { n: 3 } })).toBe(SCAN_NOTICE_ACTION_MS);
-    // The one-tap twin button is an action too: never shorter than the link.
-    expect(scanNoticeMs({ different: { n: 3, quickWeight: 15.26 } })).toBe(SCAN_NOTICE_ACTION_MS);
+    expect(scanNoticeMs({ newCarton: { label: 'x' } })).toBe(SCAN_NOTICE_ACTION_MS);
     expect(SCAN_NOTICE_ACTION_MS).toBeGreaterThan(SCAN_NOTICE_MS);
+  });
+
+  it('a notice that asks a question stays until answered (19/10)', () => {
+    expect(scanNoticeMs({ different: { n: 3 } })).toBeNull();
+    expect(scanNoticeMs({ different: { n: 3, quickWeight: 15.26 } })).toBeNull();
+    expect(scanNoticeMs({ short: true, newCarton: { label: 'x' } })).toBeNull();
+  });
+
+  it('after "Same carton" the re-read notice keeps only the twin way in, and times out', () => {
+    // Never silent (a real twin read in that window still gets a way in),
+    // never stuck on screen while the camera stays parked on the carton.
+    expect(scanNoticeMs({ different: { n: 3, sameAnswered: true } })).toBe(SCAN_NOTICE_ACTION_MS);
+  });
+});
+
+describe('shouldExplainShortRead (document 48429: 406243 every 3 s)', () => {
+  it('the first short read is explained', () => {
+    expect(shouldExplainShortRead(new Map(), '406243', 1_000)).toBe(true);
+  });
+
+  it('the same code inside a minute is not explained again', () => {
+    const last = new Map<string, number>();
+    shouldExplainShortRead(last, '406243', 0);
+    expect(shouldExplainShortRead(last, '406243', 3_300)).toBe(false);
+    expect(shouldExplainShortRead(last, '406243', SHORT_NOTICE_QUIET_MS - 1)).toBe(false);
+  });
+
+  it('the window is fixed, not sliding: a parked camera hears again after a minute', () => {
+    const last = new Map<string, number>();
+    shouldExplainShortRead(last, '406243', 0);
+    for (let t = 3_300; t < SHORT_NOTICE_QUIET_MS; t += 3_300) shouldExplainShortRead(last, '406243', t);
+    expect(shouldExplainShortRead(last, '406243', SHORT_NOTICE_QUIET_MS)).toBe(true);
+  });
+
+  it("another carton's short code is explained at once", () => {
+    const last = new Map<string, number>();
+    shouldExplainShortRead(last, '406243', 0);
+    expect(shouldExplainShortRead(last, '405589', 3_300)).toBe(true);
+  });
+});
+
+describe('sameLabelOnList', () => {
+  it('the carton itself plus its twins', () => {
+    const rows = [
+      { barcode: C8 },
+      { barcode: C9 },
+      { barcode: '2826101900000011', minted: true, twin: true, source_barcode: C8 },
+      { barcode: '2826101900000012', minted: true, twin: true, source_barcode: C8 },
+      // A batch standing in for C8 is not "this label on the list" per carton.
+      { barcode: '2826101900000013', minted: true, source_barcode: C8 },
+    ];
+    expect(sameLabelOnList(rows, C8)).toBe(3);
+    expect(sameLabelOnList(rows, C9)).toBe(1);
+    expect(sameLabelOnList(rows, '')).toBe(0);
   });
 });
 
@@ -339,5 +395,33 @@ describe('nearestScrollTop', () => {
 
   it('a collapsed sheet (list shorter than two rows) → leave it alone', () => {
     expect(nearestScrollTop(500, 60, 0, 100)).toBeNull();
+  });
+});
+
+describe('listedNoticeKey (ask, never "scan the next carton", 19/10)', () => {
+  const done = { barcode: C8, ocr_status: 'done' };
+  it('a supplier code that can have twins asks same-or-another', () => {
+    expect(listedNoticeKey(C8, done, { photo: false, twins: 0 })).toBe('terminal.alreadyCounted');
+    expect(listedNoticeKey(C8, done, { photo: true, twins: 0 })).toBe('terminal.photoAlreadyCounted');
+    expect(listedNoticeKey(C8, done, { photo: false, twins: 2 })).toBe('terminal.alreadyCountedPlusTwins');
+  });
+
+  it('a 13-digit EAN asks too (the kebab twins of IN264191356)', () => {
+    expect(listedNoticeKey('7290004456856', { barcode: '7290004456856', ocr_status: 'done' }, { photo: false, twins: 0 }))
+      .toBe('terminal.alreadyCounted');
+  });
+
+  it('our own printed label only says where it is', () => {
+    expect(listedNoticeKey('2826101900000011', { barcode: '2826101900000011', minted: true }, { photo: false, twins: 0 }))
+      .toBe('terminal.ownLabelListed');
+  });
+
+  it('a carton still being read says scan again in a moment', () => {
+    expect(listedNoticeKey(C8, { barcode: C8, ocr_status: 'processing' }, { photo: false, twins: 0 }))
+      .toBe('terminal.alreadyListedReading');
+  });
+
+  it('no row found → plain "already on the list"', () => {
+    expect(listedNoticeKey(C8, null, { photo: false, twins: 0 })).toBe('terminal.alreadyListed');
   });
 });

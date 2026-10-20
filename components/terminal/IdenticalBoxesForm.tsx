@@ -17,11 +17,16 @@
  * saves several products and prints them together, any time before the
  * pallet is closed.
  *
- * Also opened from "Different carton?" on an already-counted notice
- * (`anotherOf`): the carton in hand carries a label byte-identical to a
- * carton already on the list. Same form and same save, prefilled to ONE
- * carton and worded for that case; the page adds the new row and keeps the
- * counted one.
+ * Also opened from "Another carton — add it" on an already-on-the-list
+ * notice (`anotherOf`): the carton in hand carries a label byte-identical to
+ * a carton already on the list. Same form and same save, worded for that
+ * case; the page adds the new rows and keeps the counted one.
+ *
+ * Both ask for the TOTAL when cartons of this kind are already on the list
+ * (`listed`, 19/10): "How many cartons with this label are there in total?",
+ * with a live "19 will be added · 1 already on the list". It used to ask how
+ * many MORE, and the invoice's 20 typed there made 21 (IN264191356). What is
+ * saved is the difference (lib/identical-boxes.ts labelsToSave).
  */
 
 import { useRef, useState } from 'react';
@@ -31,7 +36,7 @@ import { CalendarPicker } from './CalendarPicker';
 import { CartonSticker } from './CartonSticker';
 import { Toast, useToast } from './Toast';
 import { useT } from '@/lib/i18n';
-import { identicalLabelPayload, postIdenticalLabels, type IdenticalForm } from '@/lib/identical-boxes';
+import { identicalLabelPayload, labelsToSave, postIdenticalLabels, type IdenticalForm } from '@/lib/identical-boxes';
 import { toIsoDate, isoToDdmmyyyy } from '@/lib/expiry';
 import { validateCartonDates } from '@/lib/date-validation';
 import { localIsoDate } from '@/lib/edit-panel-state';
@@ -60,6 +65,36 @@ interface IdenticalBoxesFormProps {
    * label matches. Starts the count at 1 and says what is happening.
    */
   anotherOf?: number;
+  /**
+   * The sample's weight is doubted (lib/weight-sanity.ts): what looks odd
+   * about it, shown by the weight field while it still holds that weight.
+   * The form is never hidden for a doubt — saving the weight shown here
+   * confirms it for every label (lib/identical-boxes.ts weight_confirmed).
+   */
+  weightDoubt?: string;
+  /**
+   * Cartons of this kind already on the list that stay on it: the form then
+   * asks for the total and saves only the rest. A twin (`anotherOf`) counts
+   * at least its original.
+   */
+  listed?: number;
+  /** The invoice line's carton count, offered as one tap (null: not this list's to offer). */
+  lineBoxes?: number | null;
+  /**
+   * This carton's own code differs from the other cartons with its name on
+   * the list (lib/identical-boxes.ts groupSkuMismatch): a soft "make sure it
+   * is the same product". Save stays available.
+   */
+  skuMismatch?: { own: string; other: string };
+  /**
+   * The carton's code and its read name point at two invoice lines: "which
+   * product is it?" with both names. The first option (the code's line, as
+   * the carton was booked) is picked until he taps the other.
+   */
+  productChoice?: {
+    ocr: string;
+    options: [ProductOption, ProductOption];
+  };
   onBack: () => void;
   /**
    * The batch is saved in carton_labels (unprinted). The page expands the
@@ -68,15 +103,28 @@ interface IdenticalBoxesFormProps {
   onCreated: (labels: CartonLabel[], form: IdenticalForm) => void;
 }
 
+export interface ProductOption {
+  item_code: string;
+  item_name_hebrew: string;
+  item_name_english: string;
+}
+
 type DateField = 'production' | 'expiry';
 
 export function IdenticalBoxesForm({
-  token, palletNumber, sample, anotherOf, onBack, onCreated,
+  token, palletNumber, sample, anotherOf, weightDoubt, listed: listedProp, lineBoxes, skuMismatch, productChoice, onBack, onCreated,
 }: IdenticalBoxesFormProps) {
   const tr = useT();
   const { toast, showToast } = useToast();
 
-  const [quantity, setQuantity] = useState(anotherOf ? '1' : '');
+  // Cartons of this kind already on the list. A twin's original always is.
+  const listed = Math.max(anotherOf ? 1 : 0, listedProp ?? 0);
+  // The number typed is the TOTAL whenever something is already listed.
+  const totalMode = listed > 0;
+  const [quantity, setQuantity] = useState(anotherOf ? String(listed + 1) : '');
+  // "Which product?" — 0 = the code's line (as booked), 1 = the read name's.
+  const [pick, setPick] = useState<0 | 1>(0);
+  const chosen: ProductOption | null = productChoice ? productChoice.options[pick] : null;
   const [weight, setWeight] = useState(sample.weight > 0 ? String(sample.weight) : '');
   const [productionDate, setProductionDate] = useState(toIsoDate(sample.production_date));
   const [expiryDate, setExpiryDate] = useState(toIsoDate(sample.expiry));
@@ -88,14 +136,23 @@ export function IdenticalBoxesForm({
   // dates changed meanwhile is never answered with the old labels.
   const batchIdsRef = useRef(new Map<string, string>());
 
-  const count = Math.min(Math.max(parseInt(quantity, 10) || 0, 0), 500);
+  const typed = Math.min(Math.max(parseInt(quantity, 10) || 0, 0), 500);
+  // What is saved: the total less what is already listed (or the count as typed).
+  const count = totalMode ? labelsToSave(typed, listed) : typed;
+  const minTyped = totalMode ? listed + 1 : 1;
   const weightKg = Number(weight);
   const weightOk = Number.isFinite(weightKg) && weightKg > 0 && weightKg <= 2000;
   // Every carton this saves carries these dates: a refused expiry (on/before
   // today or on/before the production date) blocks Save; a blank one never does.
   const dateError = validateCartonDates({ production: productionDate, expiry: expiryDate, receiptDate: localIsoDate() }).expiryError;
   const canSave = !saving && count >= 1 && weightOk && !dateError;
-  const name = sample.item_name_hebrew || sample.item_name;
+  const itemCode = chosen ? chosen.item_code || null : sample.item_code ?? null;
+  const nameHe = chosen ? chosen.item_name_hebrew : sample.item_name_hebrew;
+  const nameEn = chosen ? chosen.item_name_english : sample.item_name;
+  const name = nameHe || nameEn;
+  // The doubt is about the weight that was read; once the worker types
+  // another one it no longer applies.
+  const showDoubt = !!weightDoubt && weightOk && Math.abs(weightKg - sample.weight) < 0.001;
 
   const previewLabel: CartonLabel = {
     id: 'preview',
@@ -104,9 +161,9 @@ export function IdenticalBoxesForm({
     serial: 'C-000000-0000',
     session_token: null,
     document_number: null,
-    item_code: sample.item_code ?? null,
-    item_name_hebrew: sample.item_name_hebrew || null,
-    item_name_english: sample.item_name || null,
+    item_code: itemCode,
+    item_name_hebrew: nameHe || null,
+    item_name_english: nameEn || null,
     weight_kg: weightOk ? weightKg : null,
     quantity: count || 1,
     production_date: productionDate || null,
@@ -132,9 +189,9 @@ export function IdenticalBoxesForm({
       const payload = identicalLabelPayload({
         sourceBarcode: sample.barcode,
         palletNumber,
-        itemCode: sample.item_code,
-        itemNameHebrew: sample.item_name_hebrew,
-        itemNameEnglish: sample.item_name,
+        itemCode,
+        itemNameHebrew: nameHe,
+        itemNameEnglish: nameEn,
         weightKg,
         quantity: count,
         productionDate,
@@ -151,6 +208,11 @@ export function IdenticalBoxesForm({
         // the bot stored as box_expiry NULL — see lib/expiry.ts.
         expiry: expiryDate || '',
         production_date: productionDate || '',
+        // The weight was on screen and the worker saved it: one decision for
+        // the whole batch, never a Save per label.
+        weight_confirmed: true,
+        // He picked the other product in "which product?".
+        item: chosen && pick === 1 ? chosen : undefined,
       });
     } finally {
       setSaving(false);
@@ -173,12 +235,49 @@ export function IdenticalBoxesForm({
           </span>
         </div>
 
+        {/* The code and the read name are two products: ask, never block. */}
+        {productChoice && (
+          <div role="status" className="rounded-[12px] border border-warn/60 bg-tile px-3 py-[10px]">
+            <p className="flex items-start gap-[6px] text-[11.5px] font-bold text-warn-weak-ink leading-[1.45]">
+              <MI name="report_problem" size={15} className="flex-none mt-[1px]" />
+              <span className="min-w-0">
+                {tr('identical.whichProduct', {
+                  code: productChoice.options[0].item_name_hebrew || productChoice.options[0].item_name_english,
+                  ocr: productChoice.ocr,
+                })}
+              </span>
+            </p>
+            <div className="flex gap-2 mt-[8px]">
+              {productChoice.options.map((o, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setPick(i as 0 | 1)}
+                  aria-pressed={pick === i}
+                  className={`flex-1 min-w-0 min-h-[44px] px-2 py-2 rounded-[11px] text-[12px] font-extrabold leading-tight text-center ${
+                    pick === i ? 'bg-brand text-white' : 'bg-tile border border-line-strong text-ink-inverse'
+                  }`}
+                >
+                  {o.item_name_hebrew || o.item_name_english || '—'}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {skuMismatch && !productChoice && (
+          <p role="status" className="flex items-start gap-[6px] rounded-[12px] border border-warn/60 bg-tile px-3 py-[9px] text-[11.5px] font-bold text-warn-weak-ink leading-[1.45]">
+            <MI name="report_problem" size={15} className="flex-none mt-[1px]" />
+            <span dir="auto" className="min-w-0">{tr('identical.skuMismatch', skuMismatch)}</span>
+          </p>
+        )}
+
         {/* Count */}
         <div>
           <div className={fieldLabel}>{anotherOf ? tr('identical.anotherQuantity') : tr('identical.quantity')}</div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setQuantity(String(Math.max(1, count - 1)))}
+              onClick={() => setQuantity(String(Math.max(minTyped, typed - 1)))}
               className={`${tile} w-[52px] h-[52px] flex items-center justify-center text-ink-inverse`}
               aria-label="-"
             >
@@ -193,17 +292,37 @@ export function IdenticalBoxesForm({
               className={`${tile} flex-1 min-w-0 h-[52px] text-center bg-tile outline-none text-[20px] font-extrabold text-ink-inverse font-mono placeholder:text-search-ink`}
             />
             <button
-              onClick={() => setQuantity(String(Math.min(500, count + 1)))}
+              onClick={() => setQuantity(String(Math.min(500, Math.max(minTyped, typed + 1))))}
               className={`${tile} w-[52px] h-[52px] flex items-center justify-center text-ink-inverse`}
               aria-label="+"
             >
               <MI name="add" size={22} />
             </button>
           </div>
-          {!anotherOf && (
+          {totalMode ? (
+            // What the total does, live: added vs already on the list.
+            <p role="status" className={`text-[11px] font-bold mt-[6px] mx-[2px] leading-[1.45] ${typed > 0 && count === 0 ? 'text-warn-weak-ink' : typed === 0 ? 'text-ink-muted' : 'text-brand-weak-ink'}`}>
+              {typed === 0
+                ? tr('identical.totalHint', { listed })
+                : count === 0
+                ? tr('identical.allListed', { listed })
+                : tr(anotherOf ? 'identical.willAdd' : 'identical.willSave', { add: count, listed })}
+            </p>
+          ) : (
             <p className="text-[10.5px] font-semibold text-ink-muted mt-[6px] mx-[2px] leading-[1.45]">
               {tr('identical.quantityHint')}
             </p>
+          )}
+          {!!lineBoxes && lineBoxes > listed && typed !== lineBoxes && (
+            // The note's figure, one tap — never filled in for him.
+            <button
+              type="button"
+              onClick={() => setQuantity(String(lineBoxes))}
+              className="mt-[6px] mx-[2px] inline-flex items-center gap-[4px] min-h-[34px] px-3 rounded-full border border-brand/50 bg-brand-weak text-brand-weak-ink text-[11.5px] font-extrabold"
+            >
+              <MI name="receipt_long" size={15} />
+              {tr('identical.invoiceCount', { count: lineBoxes })}
+            </button>
           )}
         </div>
 
@@ -220,6 +339,12 @@ export function IdenticalBoxesForm({
           />
           {!weightOk && weight !== '' && (
             <p className="text-[10.5px] font-semibold text-danger-weak-ink mt-[6px] mx-[2px]">{tr('identical.weightInvalid')}</p>
+          )}
+          {showDoubt && (
+            <p role="status" className="flex items-start gap-[5px] text-[11px] font-bold text-warn-weak-ink mt-[6px] mx-[2px] leading-[1.45]">
+              <MI name="report_problem" size={15} className="flex-none mt-[1px]" />
+              <span className="min-w-0">{weightDoubt} {tr('identical.weightDoubtSave')}</span>
+            </p>
           )}
         </div>
 

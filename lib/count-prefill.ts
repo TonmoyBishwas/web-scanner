@@ -23,7 +23,11 @@ import { nonMeatItemKey } from './nonmeat-key';
  *     single-item shortcut, where the list holds just the 2 samples and
  *     offering "2" invites booking a 40-carton pallet as 2.
  *
- * A figure below the input's own minimum (max(2, scanned)) is not offered.
+ * A figure below what is on the list IS offered (2026-10-19, document
+ * 48429): the input no longer has a floor, and a note figure under the list
+ * is the clearest sign a carton was counted twice — on Set the page says so
+ * and offers the ways forward (lib/count-check.ts). It used to be withheld,
+ * and the list's 25 was offered instead of the note's real 22.
  */
 
 export type CountPrefillSource = 'note' | 'scanned';
@@ -58,8 +62,6 @@ export interface CountPrefillInput {
   singleItemLine?: NoteLine | null;
   /** What the list counts now (listTotal). */
   scannedTotal: number;
-  /** The input's floor: max(2, scanned rows). */
-  minRequired: number;
 }
 
 function cartons(v: unknown): number {
@@ -81,7 +83,8 @@ export function noteRemainingForPallet(input: CountPrefillInput): number | null 
 }
 
 export function countPrefill(input: CountPrefillInput): CountPrefill | null {
-  const floor = Math.max(2, input.minRequired);
+  // A total of at least one carton; nothing else is a floor (see above).
+  const floor = 1;
   const palletRemaining = noteRemainingForPallet(input);
 
   if (input.singleItemLine !== undefined) {
