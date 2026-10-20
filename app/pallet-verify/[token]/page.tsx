@@ -5357,9 +5357,12 @@ export default function PalletVerifyPage({
               </div>
             )}
 
-            <p className="text-[10px] text-ink-muted text-center mt-3">
-              {tr('palletVerify.expiryNote')}
-            </p>
+            {/* Points to the sticker pages, which are not linked while printing is off. */}
+            {PRINTING && (
+              <p className="text-[10px] text-ink-muted text-center mt-3">
+                {tr('palletVerify.expiryNote')}
+              </p>
+            )}
           </div>
         </div>
         <Toast toast={toast} />
