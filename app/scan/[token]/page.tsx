@@ -981,7 +981,7 @@ export default function ScanPage({
     for (const [barcode] of scannedBarcodes) {
       const ocr = ocrResults.get(barcode);
       const nm = ocr?.product_name_hebrew || ocr?.product_name || '';
-      lines.push(`${i++}. ${nm ? `${nm} · ` : ''}${barcode}${ocr?.weight_kg ? ` · ${ocr.weight_kg} kg` : ''}`);
+      lines.push(`${i++}. ${nm ? `${nm} · ` : ''}${barcode}${ocr?.weight_kg ? ` · ${ocr.weight_kg} ${tr('common.kg')}` : ''}`);
     }
     const text = lines.join('\n');
     try {

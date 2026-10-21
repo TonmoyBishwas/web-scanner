@@ -13,15 +13,20 @@
  *     push switched off …; failed / expired only once the office alert is
  *     on record) or the session expires.
  *
- * Colour + icon per state (lib/priority-status.ts has the rules): green =
- * in Priority, blue = on its way, amber = needs attention, red = failed,
- * grey = nothing will happen by itself. The worker is never asked to do
- * anything about Priority: the database alerts the office, and the row says
- * "the office has it" only once that alert is stamped on the outbox row.
+ * The worker is never asked to do anything about Priority: the database
+ * alerts the office, and the row says "the office has it" only once that
+ * alert is stamped on the outbox row.
+ *
+ * Mevaser 21/10 (text sweep, table E): the worker's line is calm and
+ * "done first". In Hebrew every state reads "✅ תעודה {document_number}
+ * נקלטה. תודה! אפשר להמשיך." (note received, thanks, carry on), and the
+ * office-on-record states "… המשרד ישלים את השאר …" (the office will
+ * complete the rest). No system name, no heading, no item codes, no red or
+ * amber: green while all is well, grey when the office has something to do.
+ * The English lines keep the detailed Priority states.
  */
 
 import { useEffect, useState } from 'react';
-import { MI } from './MI';
 import { useT, type TranslationKey } from '@/lib/i18n';
 import {
   nextPollDelay,
@@ -30,34 +35,34 @@ import {
   type PriorityStatus,
 } from '@/lib/priority-status';
 
-type Tone = 'brand' | 'ok' | 'warn' | 'danger' | 'muted';
+type Tone = 'brand' | 'ok' | 'muted';
 
 const TONE_CLASS: Record<Tone, string> = {
   brand: 'bg-brand-weak border-brand/30 text-brand-weak-ink',
   ok: 'bg-ok-weak border-ok/30 text-ok-weak-ink',
-  warn: 'bg-warn-weak border-warn/30 text-warn-weak-ink',
-  danger: 'bg-danger-weak border-danger/30 text-danger-weak-ink',
   muted: 'bg-sunken border-line text-ink-muted',
 };
 
-const LOOK: Record<PriorityState, { icon: string; tone: Tone; busy?: boolean }> = {
-  checking: { icon: 'cloud_sync', tone: 'muted', busy: true },
-  closing: { icon: 'cloud_sync', tone: 'brand', busy: true },
-  sending: { icon: 'cloud_sync', tone: 'brand', busy: true },
-  awaiting: { icon: 'schedule', tone: 'brand' },
-  received: { icon: 'check_circle', tone: 'ok' },
-  already: { icon: 'check_circle', tone: 'ok' },
-  unconfirmed: { icon: 'sync_problem', tone: 'warn' },
-  noWriteback: { icon: 'sync_problem', tone: 'warn' },
-  waitingPo: { icon: 'receipt_long', tone: 'warn' },
-  waiting: { icon: 'report_problem', tone: 'warn' },
-  cancelled: { icon: 'report_problem', tone: 'warn' },
-  failed: { icon: 'error', tone: 'danger' },
-  expired: { icon: 'error', tone: 'danger' },
-  held: { icon: 'pause_circle', tone: 'muted' },
-  test: { icon: 'info', tone: 'muted' },
-  off: { icon: 'cloud_off', tone: 'muted' },
-  unknown: { icon: 'help_outline', tone: 'muted' },
+/** Calm on purpose (Mevaser 21/10, rule 4): never red or amber on the worker's
+ *  card. Grey = the office has something to complete or check. */
+const LOOK: Record<PriorityState, { tone: Tone }> = {
+  checking: { tone: 'ok' },
+  closing: { tone: 'ok' },
+  sending: { tone: 'ok' },
+  awaiting: { tone: 'ok' },
+  received: { tone: 'ok' },
+  already: { tone: 'ok' },
+  unconfirmed: { tone: 'muted' },
+  noWriteback: { tone: 'muted' },
+  waitingPo: { tone: 'brand' },
+  waiting: { tone: 'muted' },
+  cancelled: { tone: 'muted' },
+  failed: { tone: 'muted' },
+  expired: { tone: 'muted' },
+  held: { tone: 'muted' },
+  test: { tone: 'ok' },
+  off: { tone: 'ok' },
+  unknown: { tone: 'ok' },
 };
 
 const TEXT: Record<Exclude<PriorityState, 'received' | 'waiting'>, TranslationKey> = {
@@ -93,9 +98,6 @@ const OFFICE_TEXT: Partial<Record<PriorityState, TranslationKey>> = {
   held: 'priority.heldOffice',
 };
 
-/** At most this many unmapped item codes are listed; the rest are counted. */
-const MAX_CODES = 6;
-
 function messageKey(status: PriorityStatus): TranslationKey {
   switch (status.state) {
     case 'received':
@@ -107,7 +109,7 @@ function messageKey(status: PriorityStatus): TranslationKey {
   }
 }
 
-export function PriorityPushStatus({ token }: { token: string }) {
+export function PriorityPushStatus({ token, documentNumber }: { token: string; documentNumber?: string }) {
   const tr = useT();
   const [status, setStatus] = useState<PriorityStatus>({ state: 'checking' });
 
@@ -180,40 +182,19 @@ export function PriorityPushStatus({ token }: { token: string }) {
   }, [token]);
 
   const look = LOOK[status.state] ?? LOOK.unknown;
-  const codes = status.state === 'waiting' && status.reason === 'items' ? status.codes ?? [] : [];
-  const shownCodes = codes.slice(0, MAX_CODES);
-  const moreCodes = codes.length - shownCodes.length;
+  // Empty in Hebrew: the worker never reads the system's name.
+  const heading = tr('priority.heading');
 
   return (
     <div className="mt-4" role="status" aria-live="polite">
-      <div className="text-[9px] font-extrabold text-[#cbd5e1] tracking-[2px] mb-2">
-        {tr('priority.heading')}
-      </div>
-      <div className={`flex items-start gap-2 border rounded-[11px] px-3 py-[10px] ${TONE_CLASS[look.tone]}`}>
-        <MI
-          name={look.icon}
-          size={18}
-          className={`flex-none mt-[1px] ${look.busy ? 'motion-safe:animate-pulse' : ''}`}
-        />
-        <div className="flex-1 min-w-0 text-[12px] font-semibold leading-[1.4] break-words">
-          {tr(messageKey(status), { docno: status.docno ?? '' })}
-          {shownCodes.length > 0 && (
-            <div className="mt-[6px] flex flex-wrap items-center gap-1">
-              <span className="text-[10px] font-bold opacity-80">{tr('priority.codesLabel')}:</span>
-              {shownCodes.map((code) => (
-                <span
-                  key={code}
-                  dir="ltr"
-                  className="font-mono text-[10px] font-bold bg-[rgba(0,0,0,.25)] rounded-[5px] px-[5px] py-[1px] break-all"
-                >
-                  {code}
-                </span>
-              ))}
-              {moreCodes > 0 && (
-                <span dir="ltr" className="font-mono text-[10px] font-bold">+{moreCodes}</span>
-              )}
-            </div>
-          )}
+      {heading && (
+        <div className="text-[9px] font-extrabold text-[#cbd5e1] tracking-[2px] mb-2">
+          {heading}
+        </div>
+      )}
+      <div className={`border rounded-[11px] px-3 py-[10px] ${TONE_CLASS[look.tone]}`}>
+        <div className="min-w-0 text-[12px] font-semibold leading-[1.4] break-words">
+          {tr(messageKey(status), { docno: status.docno ?? '', document_number: documentNumber || '—' })}
         </div>
       </div>
     </div>

@@ -2847,7 +2847,7 @@ export default function PalletVerifyPage({
     src.forEach((b, i) => {
       const nm = b.item_name_hebrew || b.item_name || '—';
       lines.push(
-        `${i + 1}. ${nm}${b.weight > 0 ? ` · ${b.weight.toFixed(3)} kg` : ''}${b.barcode ? ` · ${b.barcode}` : ''}`,
+        `${i + 1}. ${nm}${b.weight > 0 ? ` · ${b.weight.toFixed(3)} ${tr('common.kg')}` : ''}${b.barcode ? ` · ${b.barcode}` : ''}`,
       );
     });
     const text = lines.join('\n');
@@ -5306,7 +5306,7 @@ export default function PalletVerifyPage({
 
             {/* Right under the stats so it is in view without scrolling on a
                 long pallet list. */}
-            <PriorityPushStatus token={token} />
+            <PriorityPushStatus token={token} documentNumber={session?.document_number} />
 
             {/* Real: per-pallet sticker links (design list-row style). Each
                 row says "Print": printing on only — the LPNs stay in Pallets. */}

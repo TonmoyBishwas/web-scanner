@@ -221,7 +221,7 @@ export function PendingLabels({ doc }: { doc: string }) {
                             <span className="flex-1 min-w-0">
                               <span className="block text-[13px] font-extrabold text-ink-inverse truncate">{line.name}</span>
                               <span className="block text-[11px] font-semibold text-ink-muted" dir="ltr">
-                                {line.weight != null ? `${line.weight} kg` : ''}
+                                {line.weight != null ? `${line.weight} ${tr('common.kg')}` : ''}
                                 {line.expiry ? ` · ${shortDate(line.expiry)}` : ''}
                               </span>
                             </span>

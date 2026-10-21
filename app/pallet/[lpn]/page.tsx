@@ -174,11 +174,11 @@ export default async function PalletStickerPage({
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">{t(language, 'lpn.weightLabelShort')}</span>
-                <span className="font-bold text-gray-900">{pallet.calc_weight} kg</span>
+                <span className="font-bold text-gray-900">{pallet.calc_weight} {t(language, 'common.kg')}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">{t(language, 'lpn.scaleLabel')}</span>
-                <span className="text-gray-700">{pallet.scale_weight} kg</span>
+                <span className="text-gray-700">{pallet.scale_weight} {t(language, 'common.kg')}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">{t(language, 'lpn.docLabel')}</span>

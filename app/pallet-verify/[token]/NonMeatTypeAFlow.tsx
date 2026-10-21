@@ -385,7 +385,7 @@ export function NonMeatTypeAFlow({
         {/* Where the automatic Priority push stands — the same status row as
             the meat all-done card; it updates by itself. */}
         <div className="text-start">
-          <PriorityPushStatus token={token} />
+          <PriorityPushStatus token={token} documentNumber={session.document_number} />
         </div>
         {/* The LPNs stay listed with printing off (this flow has no Pallets
             browser to find them in); only the sticker link goes. */}

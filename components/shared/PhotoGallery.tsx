@@ -69,7 +69,7 @@ export function PhotoGallery({ images, ocrResults, onClose }: PhotoGalleryProps)
                         </p>
                         {ocr.weight_kg && (
                           <p className="text-[10px] font-mono text-white/80" dir="ltr">
-                            {ocr.weight_kg} kg
+                            {ocr.weight_kg} {tr('common.kg')}
                           </p>
                         )}
                       </>

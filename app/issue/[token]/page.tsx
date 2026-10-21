@@ -452,7 +452,7 @@ function IssueRender({
                 >
                   <span className="text-ink truncate me-2">{box.item_name}</span>
                   <span className="text-info-weak-ink font-mono font-bold whitespace-nowrap" dir="ltr">
-                    {box.weight} kg
+                    {box.weight} {tr('common.kg')}
                   </span>
                 </div>
               ))}
@@ -488,7 +488,7 @@ function IssueRender({
 
   // Scanning / Box Detail — terminal main screen
   const shareIssued = async () => {
-    const lines = issuedBoxes.map((b, i) => `${i + 1}. ${b.item_name} · ${b.weight} kg`);
+    const lines = issuedBoxes.map((b, i) => `${i + 1}. ${b.item_name} · ${b.weight} ${tr('common.kg')}`);
     const text = [tr('issue.summaryTitle'), ...lines].join('\n');
     try {
       if (navigator.share) { await navigator.share({ text }); return; }
