@@ -1,10 +1,10 @@
 import type { Metadata } from 'next';
-import { supabase } from '@/lib/supabase';
 import { verifyReceiptFormLink } from '@/lib/receipt-form-link';
-import { normalizeFormHeader, normalizeFormLines, type FormLanguage } from '@/lib/receipt-form';
+import { closedView, type FormLanguage } from '@/lib/receipt-form';
+import { formState, loadFormRow, logFormEvent, replacedFormIds, type FormRow } from '@/lib/receipt-form-server';
 import { isFinalStatus, isInFlightStatus } from '@/lib/receipt-form-submit';
 import { t, type TranslationKey } from '@/lib/i18n/server';
-import { ReceiptForm } from './ReceiptForm';
+import { FormMoved, ReceiptForm } from './ReceiptForm';
 
 /**
  * The non-meat "fill in what's missing" form.
@@ -16,6 +16,12 @@ import { ReceiptForm } from './ReceiptForm';
  *
  * Server component: the link is verified BEFORE the row is read, so a bad
  * link learns nothing about the form.
+ *
+ * A closed form says why (bot 20/10, `result.closed_reason`): replaced → on
+ * to the newer link (the draft goes with it), cancelled / reset → "this
+ * receipt was cancelled", ops_duplicate → "closed as a duplicate", finished in
+ * the chat (or no reason) → "already saved". Every open is one scanner_events
+ * row (page 'receive', token = form id).
  */
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -107,15 +113,9 @@ export default async function ReceivePage({
   );
   if (!verifyReceiptFormLink(id, exp, sig)) return invalid;
 
-  let row: Record<string, unknown> | null = null;
+  let row: FormRow | null = null;
   try {
-    const { data, error } = await supabase
-      .from('receipt_forms')
-      .select('id, status, language, header, lines, expires_at')
-      .eq('id', id)
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    row = data as Record<string, unknown> | null;
+    row = await loadFormRow(id);
   } catch (err) {
     console.error('[receive] load failed:', id, err);
     throw err; // Next's error page; a refresh retries
@@ -123,10 +123,26 @@ export default async function ReceivePage({
   if (!row) return invalid;
 
   const language: FormLanguage = row.language === 'English' ? 'English' : 'Hebrew';
-  const status = String(row.status ?? '');
+  const st = await formState(row);
+  const status = st.status;
   const self = `/receive/${id}?${new URLSearchParams({ exp, sig }).toString()}`;
+  await logFormEvent(row, 'receive_open', {
+    status, rev: st.rev, line_count: st.line_count, closed_reason: st.closed_reason,
+    newer: st.newer?.id ?? null, expired: st.expired,
+  });
 
   if (isFinalStatus(status)) {
+    const view = closedView(status, st.closed_reason);
+    if (view === 'replaced') {
+      if (st.newer) return <FormMoved formId={id} language={language} newer={st.newer} />;
+      return <Notice language={language} title="receive.replacedTitle" body="receive.replacedBody" tone="info" />;
+    }
+    if (view === 'cancelled') {
+      return <Notice language={language} title="receive.cancelledTitle" body="receive.cancelledBody" tone="info" />;
+    }
+    if (view === 'duplicate') {
+      return <Notice language={language} title="receive.duplicateTitle" body="receive.duplicateBody" tone="info" />;
+    }
     return <Notice language={language} title="receive.alreadySavedTitle" body="receive.alreadySavedBody" tone="ok" />;
   }
   if (isInFlightStatus(status)) {
@@ -143,12 +159,21 @@ export default async function ReceivePage({
   if (status !== 'open') {
     return <Notice language={language} title="receive.failedTitle" body="receive.failedBody" tone="info" />;
   }
-  const expiresAt = new Date(String(row.expires_at ?? '')).getTime();
-  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+  if (st.expired) {
     return <Notice language={language} title="receive.linkInvalidTitle" body="receive.linkInvalidBody" tone="danger" />;
   }
 
-  const lines = normalizeFormLines(row.lines);
-  const header = normalizeFormHeader(row.header, lines.length);
-  return <ReceiptForm formId={id} exp={exp} sig={sig} language={language} header={header} lines={lines} />;
+  // The draft typed on a form this one replaced, if the worker came straight to the new link.
+  const previous = await replacedFormIds(row).catch(() => [] as string[]);
+  return (
+    <ReceiptForm
+      formId={id}
+      exp={exp}
+      sig={sig}
+      language={language}
+      header={st.header}
+      lines={st.lines}
+      previousFormIds={previous}
+    />
+  );
 }

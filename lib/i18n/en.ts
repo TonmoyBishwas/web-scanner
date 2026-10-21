@@ -1129,10 +1129,15 @@ export const en = {
   'receive.qtyPlain': 'Quantity',
   'receive.notArrived': '0 – didn\'t arrive',
   'receive.cartons': 'Cartons/packs',
-  'receive.packaging': 'Packaging',
+  // Mevaser 21/10: approved
+  'receive.packaging': 'Outer package',
   'receive.packagingNone': '—',
   'receive.expiry': 'Expiry date',
   'receive.noExpiry': 'No expiry',
+  // Mevaser 21/10: approved
+  'receive.expiryPlaceholder': 'dd.mm.yyyy',
+  // Mevaser 21/10: approved
+  'receive.openCalendar': 'Open calendar',
   'receive.shortBy': 'Short: {x}',
   'receive.over': 'Over: {x}',
   'receive.gapQuestion': 'Why is it short?',
@@ -1197,6 +1202,42 @@ export const en = {
   'receive.goNext': 'Go to the next line to fill',
   'receive.palletsLess': 'One pallet less',
   'receive.palletsMore': 'One pallet more',
+  // ── Outer package badge + two-page notes on the receive form (client 20/10) ─────
+  // Mevaser 21/10: approved
+  'receive.perPack': '{n} {inner} in each {pack}',
+  // Mevaser 21/10: his wording
+  'receive.pageAdded': 'Page added: {n} new lines',
+  'receive.pageAddedOne': 'Page added: 1 new line',
+  // Mevaser 21/10: approved
+  'receive.newLineTag': 'New',
+  // Mevaser 21/10: his wording
+  'receive.linesChanged': '{n} lines were added. Fill in and approve again.',
+  'receive.linesChangedOne': '1 line was added. Fill in and approve again.',
+  // Mevaser 21/10: his wording
+  'receive.replacedTitle': 'There is a new link for this note',
+  // Mevaser 21/10: his wording
+  'receive.replacedBody': 'Open the latest link in WhatsApp.',
+  // Mevaser 21/10: his wording
+  'receive.openNewer': 'To the new form',
+  // Mevaser 21/10: his wording
+  'receive.cancelledTitle': 'The receiving was cancelled',
+  // Mevaser 21/10: his wording
+  'receive.cancelledBody': 'If the goods arrived, send a photo of the note again.',
+  // Mevaser 21/10: his wording
+  'receive.duplicateTitle': 'Duplicate form, closed',
+  // Mevaser 21/10: his wording
+  'receive.duplicateBody': 'Continue in the other form.',
+  // ── Item search on the receive form (client 20/10) ─────
+  // Mevaser 21/10: his wording
+  'receive.searchPlaceholder': 'Search item or SKU',
+  // Mevaser 21/10: his wording
+  'receive.searchClear': 'Clear',
+  // Mevaser 21/10: his wording
+  'receive.searchNone': 'Not on the note',
+  // Mevaser 21/10: approved
+  'receive.searchCount': '{n} of {total} lines',
+  // Mevaser 21/10: his wording
+  'receive.searchFuzzy': 'Did you mean:',
   // ── Delete sheet, group count, print-later link (2026-10-15) ─────
   'terminal.deleteAllTitle': 'Delete — pallet {n}',
   'terminal.deleteAllTitleLoose': 'Delete — loose cartons',

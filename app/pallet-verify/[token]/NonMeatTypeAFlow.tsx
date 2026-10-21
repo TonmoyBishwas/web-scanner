@@ -33,9 +33,15 @@ import type { Language, MultiPalletSession, ParsedBarcode } from '@/types';
 import { matchInvoiceItem, type InvoiceItem } from '@/lib/invoice-match';
 import { nonMeatItemKey } from '@/lib/nonmeat-key';
 import { LABELS_NOT_PRINTED } from '@/lib/label-gate';
+import { labelPrintingEnabled } from '@/lib/label-printing';
 import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
 
 type Phase = 'scanning' | 'saving' | 'pallet_done' | 'all_done' | 'error';
+
+// Label printing off (LABEL_PRINTING_ENABLED, lib/label-printing.ts — the
+// default since 20/10): no "ready to print" hint and no "View & Print
+// Sticker" links on the done cards. The LPN itself is still shown.
+const PRINTING = labelPrintingEnabled();
 
 /** Minimal shape shared by invoice `ocr_data` lines and `matchInvoiceItem`
  *  results — both have names + code; box_count/unit_weight are Type A extras. */
@@ -375,14 +381,16 @@ export function NonMeatTypeAFlow({
         <h1 className="text-xl font-extrabold text-ok-weak-ink">
           {tr('nonmeatTypeA.allDone', { count: palletCount })}
         </h1>
-        <p className="text-sm text-ink-muted">{tr('nonmeatTypeA.allDoneHint')}</p>
+        {PRINTING && <p className="text-sm text-ink-muted">{tr('nonmeatTypeA.allDoneHint')}</p>}
         {/* Where the automatic Priority push stands — the same status row as
             the meat all-done card; it updates by itself. */}
         <div className="text-start">
           <PriorityPushStatus token={token} />
         </div>
+        {/* The LPNs stay listed with printing off (this flow has no Pallets
+            browser to find them in); only the sticker link goes. */}
         <div className="space-y-2 text-start">
-          {(session.completed_pallets || []).map((p) => (
+          {(session.completed_pallets || []).map((p) => PRINTING ? (
             <a
               key={p.lpn}
               href={`/pallet/${p.lpn}`}
@@ -395,6 +403,13 @@ export function NonMeatTypeAFlow({
                 <Printer className="w-4 h-4" /> {tr('nonmeatTypeA.viewSticker')}
               </span>
             </a>
+          ) : (
+            <div
+              key={p.lpn}
+              className="flex items-center justify-between bg-raised rounded-[14px] px-4 py-3 border border-line"
+            >
+              <span className="font-mono text-sm font-bold text-ink" dir="ltr">{p.lpn}</span>
+            </div>
           ))}
         </div>
       </div>
@@ -409,14 +424,16 @@ export function NonMeatTypeAFlow({
           {tr('nonmeatTypeA.palletDone', { current: currentPallet, total: palletCount })}
         </h1>
         <p className="font-mono text-sm font-bold text-ink" dir="ltr">{tr('nonmeatTypeA.lpn', { lpn: lastLpn.lpn })}</p>
-        <a
-          href={lastLpn.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 bg-tile border border-line-strong rounded-xl px-4 py-3 font-bold text-ink"
-        >
-          <Printer className="w-4 h-4" /> {tr('nonmeatTypeA.viewSticker')}
-        </a>
+        {PRINTING && (
+          <a
+            href={lastLpn.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 bg-tile border border-line-strong rounded-xl px-4 py-3 font-bold text-ink"
+          >
+            <Printer className="w-4 h-4" /> {tr('nonmeatTypeA.viewSticker')}
+          </a>
+        )}
         <button
           onClick={goNextPallet}
           className="w-full bg-brand text-ink-inverse rounded-xl py-3.5 font-extrabold hover:bg-brand-hover transition"

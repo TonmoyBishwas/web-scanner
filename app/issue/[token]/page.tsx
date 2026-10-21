@@ -26,6 +26,7 @@ import { LabelsBrowser } from '@/components/terminal/LabelsBrowser';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback } from '@/lib/scan-feedback';
 import { startScannerTrace, trace } from '@/lib/scanner-trace';
+import { labelPrintingEnabled, withoutPrintChips } from '@/lib/label-printing';
 
 type IssuePhase =
   | 'loading'
@@ -500,7 +501,9 @@ function IssueRender({
     } catch { /* no fallback left */ }
   };
 
-  const issueDockChips: ToolChip[] = [
+  // Labels is here only to reprint: gone while label printing is off
+  // (LABEL_PRINTING_ENABLED, lib/label-printing.ts — the default since 20/10).
+  const issueDockChips: ToolChip[] = withoutPrintChips([
     { id: 'create', icon: 'add', label: tr('terminal.toolCreateCarton'), tint: 'blue', iconColor: '#33b1f0', locked: true },
     { id: 'labels', icon: 'label', label: tr('terminal.toolLabels'), tint: 'neutral', onPress: () => setShowLabels(true) },
     { id: 'warehouses', icon: 'warehouse', label: tr('terminal.toolWarehouses'), tint: 'neutral', locked: true },
@@ -512,7 +515,7 @@ function IssueRender({
       id: 'gap', icon: 'report_problem', label: tr('terminal.toolGap'), tint: 'amber', iconColor: '#fbbf5c',
       onPress: () => showInfoToast(tr('terminal.gapNotApplicable'), 'report_problem', '#fbbf5c'),
     },
-  ];
+  ], ['labels'], labelPrintingEnabled());
 
   return (
     <div className="h-dvh bg-canvas text-ink flex flex-col overflow-hidden">

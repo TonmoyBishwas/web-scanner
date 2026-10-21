@@ -943,7 +943,7 @@ export const he: Record<TranslationKey, string> = {
   'split.board.completeBanner': 'המשלוח הושלם.',
   'split.board.rosterEditHint': 'בטל סימון של מי שלא הגיע כדי לשחרר את המכסה שלו לבריכה. אי אפשר להוסיף מישהו שלא היה בתוכנית המקורית.',
   'split.board.quotaLabel': 'מכסה {quota}',
-  'split.board.error.stillHoldsPallet': '{names} עדיין מחזיק/ה משטח — יש לשחרר אותו לפני ההסרה.',
+  'split.board.error.stillHoldsPallet': 'עדיין יש משטח אצל {names}. יש לשחרר אותו לפני ההסרה.',
   'split.board.error.noWorkersLeft': 'חייב להישאר לפחות עובד אחד במשימה.',
   'split.board.save': 'שמור',
   'split.board.saving': 'שומר…',
@@ -1131,10 +1131,15 @@ export const he: Record<TranslationKey, string> = {
   'receive.qtyPlain': 'כמות',
   'receive.notArrived': '0 – לא הגיע',
   'receive.cartons': 'קרטונים/אריזות',
-  'receive.packaging': 'סוג אריזה',
+  // Mevaser 21/10: approved
+  'receive.packaging': 'אריזה חיצונית',
   'receive.packagingNone': '—',
   'receive.expiry': 'תאריך תפוגה',
   'receive.noExpiry': 'אין תוקף',
+  // Mevaser 21/10: approved
+  'receive.expiryPlaceholder': 'dd.mm.yyyy',
+  // Mevaser 21/10: approved
+  'receive.openCalendar': 'פתיחת לוח שנה',
   'receive.shortBy': 'חסר: {x}',
   'receive.over': 'עודף: {x}',
   'receive.gapQuestion': 'למה חסר?',
@@ -1199,6 +1204,42 @@ export const he: Record<TranslationKey, string> = {
   'receive.goNext': 'לשורה הבאה להשלמה',
   'receive.palletsLess': 'משטח אחד פחות',
   'receive.palletsMore': 'משטח אחד יותר',
+  // ── Outer package badge + two-page notes on the receive form (client 20/10) ─────
+  // Mevaser 21/10: approved
+  'receive.perPack': '{n} {inner} בכל {pack}',
+  // Mevaser 21/10: his wording
+  'receive.pageAdded': 'נוסף עמוד: {n} שורות חדשות',
+  'receive.pageAddedOne': 'נוסף עמוד: שורה חדשה אחת',
+  // Mevaser 21/10: approved
+  'receive.newLineTag': 'חדש',
+  // Mevaser 21/10: his wording
+  'receive.linesChanged': 'נוספו {n} שורות. מלאו ואשרו שוב.',
+  'receive.linesChangedOne': 'נוספה שורה אחת. מלאו ואשרו שוב.',
+  // Mevaser 21/10: his wording
+  'receive.replacedTitle': 'יש קישור חדש לתעודה',
+  // Mevaser 21/10: his wording
+  'receive.replacedBody': 'פתחו את הקישור האחרון בוואטסאפ.',
+  // Mevaser 21/10: his wording
+  'receive.openNewer': 'לטופס החדש',
+  // Mevaser 21/10: his wording
+  'receive.cancelledTitle': 'הקליטה בוטלה',
+  // Mevaser 21/10: his wording
+  'receive.cancelledBody': 'אם הסחורה הגיעה, שלחו שוב צילום של התעודה.',
+  // Mevaser 21/10: his wording
+  'receive.duplicateTitle': 'טופס כפול, נסגר',
+  // Mevaser 21/10: his wording
+  'receive.duplicateBody': 'ממשיכים בטופס השני.',
+  // ── Item search on the receive form (client 20/10) ─────
+  // Mevaser 21/10: his wording
+  'receive.searchPlaceholder': 'חיפוש פריט או מק"ט',
+  // Mevaser 21/10: his wording
+  'receive.searchClear': 'ניקוי',
+  // Mevaser 21/10: his wording
+  'receive.searchNone': 'לא נמצא בתעודה',
+  // Mevaser 21/10: approved
+  'receive.searchCount': '{n} מתוך {total} שורות',
+  // Mevaser 21/10: his wording
+  'receive.searchFuzzy': 'אולי התכוונתם ל:',
   // ── Delete sheet, group count, print-later link (2026-10-15) ─────
   'terminal.deleteAllTitle': 'מחיקה — משטח {n}',
   'terminal.deleteAllTitleLoose': 'מחיקה — קרטונים בודדים',

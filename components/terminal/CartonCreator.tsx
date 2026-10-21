@@ -18,6 +18,10 @@
  * row per saved label on the open list at once, counted at the weight typed
  * here — so the weight is required — and the pallet may close before the
  * labels are printed (lib/label-gate.ts).
+ *
+ * Label printing off (LABEL_PRINTING_ENABLED, lib/label-printing.ts — the
+ * default since 20/10): no "Print a barcode" toggle (the label keeps its
+ * barcode), no sticker preview and no footer note that says to print.
  */
 
 import { useMemo, useRef, useState } from 'react';
@@ -28,6 +32,7 @@ import { CartonSticker } from './CartonSticker';
 import { Toast, useToast } from './Toast';
 import { useT } from '@/lib/i18n';
 import { normalizeString } from '@/lib/string-utils';
+import { labelPrintingEnabled } from '@/lib/label-printing';
 import { batchIdForPayload } from '@/lib/label-batches';
 import { validateCartonDates } from '@/lib/date-validation';
 import { localIsoDate } from '@/lib/edit-panel-state';
@@ -114,6 +119,8 @@ interface CartonCreatorProps {
 
 type Step = 'item' | 'form';
 type DateField = 'production' | 'expiry';
+
+const PRINTING = labelPrintingEnabled();
 
 function displayDate(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
@@ -442,8 +449,8 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
             )}
 
             {/* Barcode toggle — default on, because a sticker without bars
-                cannot be scanned into stock. */}
-            <button
+                cannot be scanned into stock. Printing on only. */}
+            {PRINTING && <button
               onClick={() => setPrintBarcode(v => !v)}
               className={`${tile} w-full px-[14px] py-[13px] flex items-start gap-[10px] text-start`}
             >
@@ -463,7 +470,7 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
               >
                 <span className="block w-[18px] h-[18px] rounded-full bg-white" />
               </span>
-            </button>
+            </button>}
 
             {/* Note */}
             <div>
@@ -478,8 +485,8 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
               />
             </div>
 
-            {/* Preview of the physical sticker */}
-            {previewLabel ? (
+            {/* Preview of the physical sticker (printing on only) */}
+            {PRINTING && previewLabel ? (
               <div>
                 <div className={fieldLabel}>{tr('carton.preview')}</div>
                 <div className="rounded-[12px] overflow-hidden border border-line" style={{ height: 190 }}>
@@ -493,7 +500,9 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
           </div>
 
           <div className="flex-none px-3 py-[11px] border-t border-line bg-header safe-bottom">
-            {countOnSave && (
+            {/* The weight-filled note says "Print the label later": printing
+                on only. The missing-weight one always shows. */}
+            {countOnSave && (weightMissing || PRINTING) && (
               <p className="flex items-start gap-1.5 mb-[9px] text-[11.5px] font-bold leading-snug text-ink-muted">
                 <MI name="inventory_2" size={16} className="shrink-0 mt-px" />
                 <span className="min-w-0">{tr(weightMissing ? 'carton.countOnSaveNeedWeight' : 'carton.countOnSaveNote')}</span>

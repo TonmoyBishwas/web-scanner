@@ -5,6 +5,7 @@ import type { Language } from '@/types';
 import { LPN_STICKER_MARKER } from '@/lib/lpn-constants';
 import { computeLpnSignature } from '@/lib/lpn-signature';
 import { supabase } from '@/lib/supabase';
+import { labelPrintingEnabled } from '@/lib/label-printing';
 
 // NEVER cache this page. `supabase-js` reads through `fetch`, so any segment
 // `revalidate` also caches the Supabase response in the Data Cache. The bot
@@ -119,9 +120,11 @@ export default async function PalletStickerPage({
       id="pallet-page"
       className="min-h-screen bg-canvas print:bg-white flex flex-col items-center justify-center p-4"
     >
-      {/* Print button (hidden when printing) */}
+      {/* Print button (hidden when printing). Label printing off
+          (LABEL_PRINTING_ENABLED, lib/label-printing.ts — the default since
+          20/10): no Print button; the page stays for its QR and the pallet. */}
       <div className="no-print mb-6 flex gap-3">
-        <PrintButton />
+        {labelPrintingEnabled() && <PrintButton />}
         <a
           href={backHref}
           className="inline-flex items-center h-12 px-6 bg-tile border border-line-strong text-ink rounded-xl font-bold hover:bg-hover transition text-sm"

@@ -32,6 +32,8 @@
  * Kept free of React and Supabase so vitest can run it in node.
  */
 
+import { labelPrintingEnabled } from './label-printing';
+
 /** The 409 reason code both completion routes answer with. */
 export const LABELS_NOT_PRINTED = 'labels_not_printed';
 
@@ -103,13 +105,16 @@ export const NO_GATE: LabelGate = Object.freeze({ count: 0, batchIds: [] }) as L
 
 /**
  * The gate both the page and the completion routes consult: `blockingLabels`
- * when LABEL_PRINT_GATE is on, NO_GATE when it is off.
+ * when LABEL_PRINT_GATE is on, NO_GATE when it is off. It also needs label
+ * printing on (LABEL_PRINTING_ENABLED, lib/label-printing.ts, client 20/10):
+ * with no printer a label can never reach paper, so a LABEL_PRINT_GATE=on
+ * left in an env must never hold a pallet.
  */
 export function printGate(
   unprinted: readonly GateLabel[],
   listBarcodes: Iterable<string>,
   bookedBarcodes?: Iterable<string>,
-  enabled: boolean = labelPrintGateEnabled(),
+  enabled: boolean = labelPrintGateEnabled() && labelPrintingEnabled(),
 ): LabelGate {
   return enabled ? blockingLabels(unprinted, listBarcodes, bookedBarcodes) : NO_GATE;
 }

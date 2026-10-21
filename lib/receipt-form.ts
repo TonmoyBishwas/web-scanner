@@ -17,6 +17,10 @@
  * - a short line (received < note − 0.0005) says why: will arrive / won't /
  *   other (+ a note 1..500 chars). An over line needs no reason.
  *
+ * Two-page notes (20/10): the bot appends a page's lines to the open row
+ * (`header.rev` +1); the page polls and merges them into the draft by index
+ * (`mergeDraft`), and a closed row says why (`closedReasonOf`).
+ *
  * Client-safe: no node imports. Used by the page (client), the page's server
  * component and the API route.
  */
@@ -24,20 +28,66 @@ import { validateCartonDates } from './date-validation';
 
 // ── Types (the receipt_forms row) ────────────────────────────────────────
 
-export const PACKAGING = ['carton', 'sack', 'bag', 'bucket', 'crate', 'tray', 'bottle', 'unit', 'other'] as const;
+/**
+ * The OUTER package the worker counts next to "cartons/packages" (client
+ * 20/10: "36 יחידות · 3 בקבוק" = 36 units · 3 bottle mixed the inner unit into
+ * the package count). Same 14 keys, same order, as the bot's
+ * `receipt_form.PACKAGINGS` — `lib/receipt-form.test.ts` pins the literal
+ * list. `box` (קופסה, the notes print "קפ") added by Mevaser 21/10.
+ */
+export const PACKAGING = [
+  'carton', 'pack', 'sack', 'bag', 'bucket', 'can', 'jar', 'bottle', 'gallon', 'crate', 'tray', 'box', 'unit', 'other',
+] as const;
 export type Packaging = (typeof PACKAGING)[number];
 
+// Dropdown options. Mevaser 21/10: approved, with can = פח (not פחית, a small
+// drink can), gallon = גלון, unit = יחידה; box = קופסה is his.
 export const PACKAGING_LABELS: Record<Packaging, { he: string; en: string }> = {
   carton: { he: 'קרטון', en: 'Carton' },
+  pack: { he: 'מארז', en: 'Pack' },
   sack: { he: 'שק', en: 'Sack' },
   bag: { he: 'שקית', en: 'Bag' },
   bucket: { he: 'דלי', en: 'Bucket' },
+  can: { he: 'פח', en: 'Tin' },
+  jar: { he: 'צנצנת', en: 'Jar' },
+  bottle: { he: 'בקבוק', en: 'Bottle' },
+  gallon: { he: 'גלון', en: 'Gallon' },
   crate: { he: 'ארגז', en: 'Crate' },
   tray: { he: 'מגש', en: 'Tray' },
-  bottle: { he: 'בקבוק', en: 'Bottle' },
+  box: { he: 'קופסה', en: 'Box' },
   unit: { he: 'יחידה', en: 'Unit' },
   other: { he: 'אחר', en: 'Other' },
 };
+
+/** The package word for ONE package in the badge ("1 קרטון", "בכל קרטון").
+ * Mevaser 21/10: 'other' reads אריזה (package), never "אחר". */
+export const PACKAGING_SINGULAR: Record<Packaging, { he: string; en: string }> = {
+  ...PACKAGING_LABELS,
+  other: { he: 'אריזה', en: 'Package' },
+};
+
+/** Plural package words for the "on the note" badge ("3 קרטונים" = 3 cartons).
+ * Mevaser 21/10: approved, with פחים (tins) and קופסאות (boxes). */
+export const PACKAGING_PLURAL: Record<Packaging, { he: string; en: string }> = {
+  carton: { he: 'קרטונים', en: 'cartons' },
+  pack: { he: 'מארזים', en: 'packs' },
+  sack: { he: 'שקים', en: 'sacks' },
+  bag: { he: 'שקיות', en: 'bags' },
+  bucket: { he: 'דליים', en: 'buckets' },
+  can: { he: 'פחים', en: 'tins' },
+  jar: { he: 'צנצנות', en: 'jars' },
+  bottle: { he: 'בקבוקים', en: 'bottles' },
+  gallon: { he: 'גלונים', en: 'gallons' },
+  crate: { he: 'ארגזים', en: 'crates' },
+  tray: { he: 'מגשים', en: 'trays' },
+  box: { he: 'קופסאות', en: 'boxes' },
+  unit: { he: 'יחידות', en: 'units' },
+  other: { he: 'אריזות', en: 'packages' },
+};
+
+/** How ONE unit inside an outer package is packed (bot `outer_packaging` → `inner`). */
+export const INNER_PACKAGING = ['bottle', 'can', 'jar', 'gallon', 'box', 'unit'] as const satisfies readonly Packaging[];
+export type InnerPackaging = (typeof INNER_PACKAGING)[number];
 
 export const EXTRA_UNITS = ['units', 'kg', 'cartons', 'packs', 'litres'] as const;
 export type ExtraUnit = (typeof EXTRA_UNITS)[number];
@@ -62,6 +112,11 @@ export interface FormHeader {
   /** 'YYYY-MM-DD' or '' */
   invoice_date: string;
   line_count: number;
+  /**
+   * The lines' revision (bot 20/10: 1 on create, +1 each time a page is
+   * appended in place). A row written before revisions existed is rev 1.
+   */
+  rev: number;
 }
 
 export interface FormLine {
@@ -78,7 +133,12 @@ export interface FormLine {
   /** qty is a weight in kg. */
   weighed: boolean;
   cartons: number | null;
+  /** The OUTER package (bot 20/10); null = not known. */
   packaging: Packaging | null;
+  /** Units in each package when the note says so exactly (≥ 2), e.g. 12; null otherwise or on an old row. */
+  per_pack: number | null;
+  /** How one unit inside is packed, set with `per_pack`; null otherwise or on an old row. */
+  inner: InnerPackaging | null;
   needs_expiry: boolean;
 }
 
@@ -390,6 +450,11 @@ export function normalizeFormLines(raw: unknown): FormLine[] {
     const qty = typeof o.qty === 'number' ? o.qty : Number(o.qty);
     const cartons = typeof o.cartons === 'number' && Number.isInteger(o.cartons) && o.cartons >= 0 ? o.cartons : null;
     const packaging = (PACKAGING as readonly string[]).includes(o.packaging as string) ? (o.packaging as Packaging) : null;
+    // per_pack / inner arrived with the bot's 20/10 outer-package change; rows before it have neither.
+    const perPack = typeof o.per_pack === 'number' && Number.isInteger(o.per_pack) && o.per_pack >= 2 && o.per_pack <= MAX_QTY
+      ? o.per_pack
+      : null;
+    const inner = (INNER_PACKAGING as readonly string[]).includes(o.inner as string) ? (o.inner as InnerPackaging) : null;
     out.push({
       index: typeof o.index === 'number' && Number.isInteger(o.index) ? o.index : i + 1,
       code: str(o.code),
@@ -401,10 +466,19 @@ export function normalizeFormLines(raw: unknown): FormLine[] {
       weighed: o.weighed === true,
       cartons,
       packaging,
+      per_pack: perPack,
+      inner: perPack === null ? null : inner,
       needs_expiry: o.needs_expiry === true,
     });
   });
   return out;
+}
+
+/** `header.rev` as the bot writes it; missing / junk → 1 (a form from before revisions). */
+export function formRev(rawHeader: unknown): number {
+  const o = (rawHeader && typeof rawHeader === 'object' ? rawHeader : {}) as Record<string, unknown>;
+  const n = typeof o.rev === 'number' ? o.rev : typeof o.rev === 'string' && /^\d{1,9}$/.test(o.rev) ? Number(o.rev) : NaN;
+  return Number.isInteger(n) && n >= 1 ? n : 1;
 }
 
 export function normalizeFormHeader(raw: unknown, lineCount: number): FormHeader {
@@ -415,7 +489,64 @@ export function normalizeFormHeader(raw: unknown, lineCount: number): FormHeader
     invoice_number: str(o.invoice_number),
     invoice_date: isRealIsoDate(o.invoice_date) ? (o.invoice_date as string) : '',
     line_count: Number.isInteger(n) && n > 0 ? n : lineCount,
+    rev: formRev(o),
   };
+}
+
+// ── The "on the note" package badge ──────────────────────────────────────
+
+/**
+ * The package figures of the "on the note" badge, in the form's language:
+ * `packs` = "3 קרטונים" (3 cartons) — the OUTER package's plural word, singular
+ * for 1, the generic "אריזות" (packages) when the type is not known; and
+ * `inner` = what is in each one, "12 בקבוקים" (12 bottles) + the package word
+ * "קרטון" (carton) for `receive.perPack`. Never "3 בקבוק" (3 bottle).
+ */
+export function packBadge(
+  line: Pick<FormLine, 'cartons' | 'packaging' | 'per_pack' | 'inner'>,
+  lang: 'he' | 'en',
+  packsWord: string,
+): { packs: { n: number; pack: string } | null; perPack: { n: number; inner: string; pack: string } | null } {
+  const p = line.packaging;
+  const packs =
+    line.cartons === null
+      ? null
+      : { n: line.cartons, pack: p ? (line.cartons === 1 ? PACKAGING_SINGULAR[p] : PACKAGING_PLURAL[p])[lang] : packsWord };
+  const perPack =
+    line.per_pack !== null && p
+      ? {
+          n: line.per_pack,
+          inner: PACKAGING_PLURAL[line.inner ?? 'unit'][lang],
+          // Mid-sentence in English: "12 bottles in each carton".
+          pack: lang === 'en' ? PACKAGING_SINGULAR[p].en.toLowerCase() : PACKAGING_SINGULAR[p].he,
+        }
+      : null;
+  return { packs, perPack };
+}
+
+// ── Why a form is closed (bot 20/10: receipt_forms.result.closed_reason) ─
+
+export const CLOSED_REASONS = ['replaced', 'cancelled', 'reset', 'finished_in_chat', 'ops_duplicate'] as const;
+export type ClosedReason = (typeof CLOSED_REASONS)[number];
+
+/** `result.closed_reason`, or null (an older close, or not closed). */
+export function closedReasonOf(result: unknown): ClosedReason | null {
+  const o = (result && typeof result === 'object' && !Array.isArray(result) ? result : {}) as Record<string, unknown>;
+  return (CLOSED_REASONS as readonly string[]).includes(o.closed_reason as string) ? (o.closed_reason as ClosedReason) : null;
+}
+
+/**
+ * What a closed (or done) form's page says. `finished_in_chat` and an
+ * unknown reason keep the old "already saved"; `replaced` goes to the newer
+ * link when there is one.
+ */
+export type ClosedView = 'saved' | 'replaced' | 'cancelled' | 'duplicate';
+export function closedView(status: string, reason: ClosedReason | null): ClosedView {
+  if (status !== 'closed') return 'saved';
+  if (reason === 'replaced') return 'replaced';
+  if (reason === 'cancelled' || reason === 'reset') return 'cancelled';
+  if (reason === 'ops_duplicate') return 'duplicate';
+  return 'saved';
 }
 
 // ── The page's editable draft (strings while typing) ─────────────────────
@@ -531,24 +662,89 @@ export function draftStorageKey(formId: string): string {
   return `receipt-form-draft:${formId}`;
 }
 
+/** What a line IS, to tell a kept index from a re-numbered note: `code|name_he`. */
+export function lineFingerprint(l: Pick<FormLine, 'code' | 'name_he'>): string {
+  return `${l.code}|${l.name_he}`;
+}
+
+export function fingerprints(lines: FormLine[]): Record<number, string> {
+  const out: Record<number, string> = {};
+  for (const l of lines) out[l.index] = lineFingerprint(l);
+  return out;
+}
+
+function isLineDraft(l: unknown): l is LineDraft {
+  if (!l || typeof l !== 'object') return false;
+  const o = l as Record<string, unknown>;
+  return (
+    typeof o.index === 'number' &&
+    typeof o.qty === 'string' &&
+    typeof o.cartons === 'string' &&
+    typeof o.expiry === 'string' &&
+    typeof o.noExpiry === 'boolean' &&
+    typeof o.gapNote === 'string' &&
+    (o.packaging === '' || (PACKAGING as readonly string[]).includes(o.packaging as string)) &&
+    (o.gap === null || (GAPS as readonly string[]).includes(o.gap as string))
+  );
+}
+
+export interface MergedDraft {
+  draft: FormDraft;
+  /** Line indexes that had nothing to keep (a page added): pre-filled from the note. */
+  added: number[];
+  /** Line indexes whose saved answer was for a different item (fingerprint changed): reset to the note. */
+  reset: number[];
+}
+
 /**
- * A stored draft, if it still fits these lines (same indexes in the same
- * order) — otherwise null, and the page starts from the note again.
+ * Fit a draft to (new) lines, BY INDEX (two-page notes, 20/10): a line keeps
+ * what was typed for its index unless `savedFp` says that index was another
+ * item then; a line with nothing saved starts from the note; saved indexes no
+ * longer on the note are dropped. Pallets and extras are kept. Used by the
+ * reload restore and by the live merge when the bot appends a page.
+ * `savedFp` null = no fingerprints (a v1 draft): index alone decides.
  */
-export function restoreDraft(raw: string | null, lines: FormLine[]): FormDraft | null {
+export function mergeDraft(saved: FormDraft, savedFp: Record<number, string> | null, lines: FormLine[]): MergedDraft {
+  const byIndex = new Map<number, LineDraft>();
+  for (const l of saved.lines) if (isLineDraft(l) && !byIndex.has(l.index)) byIndex.set(l.index, l);
+  const fresh = initialDraft(lines).lines;
+  const added: number[] = [];
+  const reset: number[] = [];
+  const out = lines.map((line, i) => {
+    const kept = byIndex.get(line.index);
+    if (!kept) {
+      added.push(line.index);
+      return fresh[i];
+    }
+    const fp = savedFp?.[line.index];
+    if (savedFp && fp !== undefined && fp !== lineFingerprint(line)) {
+      reset.push(line.index);
+      return fresh[i];
+    }
+    return kept;
+  });
+  return { draft: { pallets: saved.pallets, lines: out, extras: saved.extras }, added, reset };
+}
+
+/**
+ * A stored draft fitted to these lines (`mergeDraft`), with the revision it
+ * was saved at — or null when there is none or it is unreadable, and the page
+ * starts from the note. Reads v2 `{v:2, rev, fp, draft}` and the v1
+ * `{v:1, draft}` drafts phones still hold from before 20/10.
+ */
+export function restoreDraftMerged(raw: string | null, lines: FormLine[]): (MergedDraft & { rev: number | null }) | null {
   if (!raw) return null;
   try {
-    const o = JSON.parse(raw) as { v?: number; draft?: FormDraft };
+    const o = JSON.parse(raw) as { v?: number; rev?: unknown; fp?: unknown; draft?: FormDraft };
     const d = o?.draft;
-    if (o?.v !== 1 || !d || !Array.isArray(d.lines) || !Array.isArray(d.extras)) return null;
-    if (d.lines.length !== lines.length) return null;
-    for (let i = 0; i < lines.length; i++) {
-      const l = d.lines[i];
-      if (!l || l.index !== lines[i].index) return null;
-      if (typeof l.qty !== 'string' || typeof l.cartons !== 'string' || typeof l.expiry !== 'string') return null;
-      if (typeof l.noExpiry !== 'boolean' || typeof l.gapNote !== 'string') return null;
-      if (l.packaging !== '' && !(PACKAGING as readonly string[]).includes(l.packaging)) return null;
-      if (l.gap !== null && !(GAPS as readonly string[]).includes(l.gap)) return null;
+    if ((o?.v !== 1 && o?.v !== 2) || !d || !Array.isArray(d.lines) || !Array.isArray(d.extras)) return null;
+    let fp: Record<number, string> | null = null;
+    if (o.v === 2) {
+      if (!o.fp || typeof o.fp !== 'object' || Array.isArray(o.fp)) return null;
+      fp = {};
+      for (const [k, v] of Object.entries(o.fp as Record<string, unknown>)) {
+        if (/^\d{1,6}$/.test(k) && typeof v === 'string') fp[Number(k)] = v;
+      }
     }
     const extras = d.extras
       .filter(
@@ -560,12 +756,20 @@ export function restoreDraft(raw: string | null, lines: FormLine[]): FormDraft |
           (EXTRA_UNITS as readonly string[]).includes(x.unit),
       )
       .slice(0, MAX_EXTRAS);
-    return { pallets: typeof d.pallets === 'string' ? d.pallets : '', lines: d.lines, extras };
+    const merged = mergeDraft({ pallets: typeof d.pallets === 'string' ? d.pallets : '', lines: d.lines, extras }, fp, lines);
+    const rev = o.v === 2 && typeof o.rev === 'number' && Number.isInteger(o.rev) && o.rev >= 1 ? o.rev : null;
+    return { ...merged, rev };
   } catch {
     return null;
   }
 }
 
-export function serializeDraft(draft: FormDraft): string {
-  return JSON.stringify({ v: 1, draft, savedAt: Date.now() });
+/** `restoreDraftMerged`'s draft alone. */
+export function restoreDraft(raw: string | null, lines: FormLine[]): FormDraft | null {
+  return restoreDraftMerged(raw, lines)?.draft ?? null;
+}
+
+/** v2: the draft + the lines' fingerprints and revision it was typed against. */
+export function serializeDraft(draft: FormDraft, lines: FormLine[], rev: number): string {
+  return JSON.stringify({ v: 2, rev, fp: fingerprints(lines), draft, savedAt: Date.now() });
 }

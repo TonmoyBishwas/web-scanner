@@ -10,6 +10,7 @@ import { UndoToast } from '@/components/shared/UndoToast';
 import { InvoiceDrawer } from '@/components/shared/InvoiceDrawer';
 import { OfflineBanner } from '@/components/shared/OfflineBanner';
 import { SwipeConfirm } from '@/components/shared/SwipeConfirm';
+import { DateEntry } from '@/components/shared/DateEntry';
 import { PhotoGallery } from '@/components/shared/PhotoGallery';
 import { DesignHeader } from '@/components/terminal/DesignHeader';
 import { ProgressHeader } from '@/components/terminal/ProgressHeader';
@@ -45,6 +46,8 @@ import type {
 } from '@/types';
 import { useLangDir, LanguageContext, t } from '@/lib/i18n';
 import { startScannerTrace, trace } from '@/lib/scanner-trace';
+import { labelPrintingEnabled, withoutPrintChips } from '@/lib/label-printing';
+import { isRealIsoDate } from '@/lib/receipt-form';
 
 // Phase enum for flow control
 type ScanPhase =
@@ -997,7 +1000,11 @@ export default function ScanPage({
 
   // Terminal tool dock: real actions (document, photos, share, gap, debug)
   // + locked chips for features with no backend.
-  const scanDockChips: ToolChip[] = [
+  // New carton is label-only here (it counts once its PRINTED label is
+  // scanned) and Labels is its print queue: both go while label printing is
+  // off (LABEL_PRINTING_ENABLED, lib/label-printing.ts — the default since
+  // 20/10), so no step on this page waits on a printer.
+  const scanDockChips: ToolChip[] = withoutPrintChips([
     {
       id: 'invoice', icon: 'description', label: tr('terminal.toolInvoice'), tint: 'blue', iconColor: '#33b1f0',
       onPress: () => setShowInvoiceDrawer(true),
@@ -1034,7 +1041,7 @@ export default function ScanPage({
           tint: 'red' as const, onPress: () => setShowDebugPanel(!showDebugPanel),
         }]
       : []),
-  ];
+  ], ['create', 'labels'], labelPrintingEnabled());
 
   const scanFooter = (
     <>
@@ -1310,7 +1317,9 @@ function ForceConfirmModal({
     onClose();
   };
 
-  const allFilled = entries.every(e => e.item_name && e.weight);
+  // Expiry stays optional, but a typed date must be a real one.
+  const expiryOk = (v: string) => !v || isRealIsoDate(v);
+  const allFilled = entries.every(e => e.item_name && e.weight && expiryOk(e.expiry));
 
   return (
     <div className="fixed inset-0 z-60 bg-black/60 backdrop-blur-sm flex items-end xl:items-center justify-center animate-fadeIn">
@@ -1369,18 +1378,23 @@ function ForceConfirmModal({
               className="w-full p-2 min-h-11 bg-tile border border-line-strong rounded-lg text-sm text-ink font-mono focus:border-brand focus:outline-none"
             />
 
-            <input
-              type="date"
-              placeholder={tr('scan.expiryPlaceholder')}
+            {/* Typed or picked — Android opens no keyboard for a date input (20/10). Optional; a wrong date blocks the send. */}
+            <DateEntry
               value={entry.expiry}
-              onChange={e => {
+              onChange={v => {
                 const updated = [...entries];
-                updated[idx].expiry = e.target.value;
+                updated[idx].expiry = v;
                 setEntries(updated);
               }}
-              dir="ltr"
-              className="w-full p-2 min-h-11 bg-tile border border-line-strong rounded-lg text-sm text-ink font-mono focus:border-brand focus:outline-none [color-scheme:dark]"
+              invalid={!expiryOk(entry.expiry)}
+              placeholder={tr('scan.expiryPlaceholder')}
+              calendarLabel={tr('receive.openCalendar')}
+              inputClassName={`w-full min-w-0 flex-1 p-2 min-h-11 bg-tile border rounded-lg text-sm text-ink font-mono focus:border-brand focus:outline-none ${expiryOk(entry.expiry) ? 'border-line-strong' : 'border-danger'}`}
+              buttonClassName="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-line-strong bg-tile text-ink active:scale-95"
             />
+            {!expiryOk(entry.expiry) && (
+              <p className="text-xs font-bold text-danger-weak-ink">{tr('receive.err.expiryInvalid')}</p>
+            )}
           </div>
         ))}
 

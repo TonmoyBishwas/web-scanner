@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { t, useLangDir, type TranslationKey } from '@/lib/i18n';
+import { DateEntry } from '@/components/shared/DateEntry';
 import {
   EXTRA_UNITS,
   EXTRA_UNIT_LABELS,
@@ -9,11 +10,14 @@ import {
   PACKAGING,
   PACKAGING_LABELS,
   addDaysIso,
+  closedReasonOf,
+  closedView,
   applySameDateToAll,
   countWantingExpiry,
   draftStorageKey,
   draftToAnswers,
   expiryError,
+  fingerprints,
   fmtQty,
   formatDdMmYyyy,
   initialDraft,
@@ -21,12 +25,16 @@ import {
   isShort,
   markRestNoExpiry,
   maxExpiryIso,
+  mergeDraft,
+  normalizeFormLines,
+  packBadge,
   parseDecimal,
   remainingCount,
-  restoreDraft,
+  restoreDraftMerged,
   serializeDraft,
   todayInJerusalem,
   validateAnswers,
+  type ClosedView,
   type ExtraDraft,
   type ExtraError,
   type FormDraft,
@@ -39,6 +47,7 @@ import {
   type Packaging,
 } from '@/lib/receipt-form';
 import { isFinalStatus, isInFlightStatus } from '@/lib/receipt-form-submit';
+import { SEARCH_MIN_LINES, nextIncompleteLine, searchLines } from '@/lib/receipt-form-search';
 
 type Tr = (key: TranslationKey, vars?: Record<string, string | number>) => string;
 
@@ -49,7 +58,12 @@ type Phase =
   | { kind: 'saved'; savedLines: number | null }
   | { kind: 'already' }
   | { kind: 'inflight' }
-  | { kind: 'failed' };
+  | { kind: 'failed' }
+  /** Closed elsewhere while open here (bot 20/10 closed_reason); 'replaced' with a newer link navigates instead. */
+  | { kind: 'closed'; view: Exclude<ClosedView, 'saved'> };
+
+/** How often the open page asks whether the bot added a page (only while the tab is visible). */
+const POLL_MS = 15_000;
 
 const LINE_ERROR_KEY: Record<LineError, TranslationKey> = {
   qty_invalid: 'receive.err.qty',
@@ -94,6 +108,10 @@ const OK_BORDER = 'border-line-strong';
 const DONE_BORDER = 'border-ok/70';
 const TODO_BORDER = 'border-warn';
 const BAD_BORDER = 'border-danger';
+/** A date field + its calendar button: grows, but never so narrow that "dd.mm.yyyy" is cut — the row's next control wraps instead. */
+const DATE_ROW = 'min-w-[13rem] flex-1';
+const CALENDAR_BTN =
+  'grid h-12 w-12 shrink-0 place-items-center rounded-xl border-2 border-line-strong bg-tile text-ink active:scale-95 disabled:opacity-35';
 
 function Icon({ name, size = 20, className = '' }: { name: string; size?: number; className?: string }) {
   return (
@@ -192,10 +210,12 @@ interface LineCardProps {
   today: string;
   /** Briefly ringed after "next line to fill" scrolled to it. */
   flash: boolean;
+  /** Arrived with a page added while the form was open (or since the draft was saved). */
+  isNew: boolean;
   onChange: (index: number, patch: Partial<LineDraft>) => void;
 }
 
-const LineCard = memo(function LineCard({ line, d, errKey, language, today, flash, onChange }: LineCardProps) {
+const LineCard = memo(function LineCard({ line, d, errKey, language, today, flash, isNew, onChange }: LineCardProps) {
   const tr: Tr = (k, v) => t(language, k, v);
   const lang = language === 'Hebrew' ? 'he' : 'en';
   const errors = (errKey ? errKey.split(',') : []) as LineError[];
@@ -237,12 +257,15 @@ const LineCard = memo(function LineCard({ line, d, errKey, language, today, flas
     : line.unit_label
       ? tr('receive.qtyUnit', { unit: line.unit_label })
       : tr('receive.qtyPlain');
-  const packWord = line.packaging ? PACKAGING_LABELS[line.packaging][lang] : tr('receive.packsWord');
+  // The OUTER package's plural ("3 קרטונים" = 3 cartons), never the inner unit
+  // ("3 בקבוק" = 3 bottle, client 20/10) — and what is in each one when the note says.
+  const badge = packBadge(line, lang, tr('receive.packsWord'));
   // Each figure+word is a bidi isolate, so a Hebrew unit on an English page
   // (or the reverse) cannot swap places with its number.
   const iso = (v: string) => `⁨${v}⁩`;
   const noteQty = iso(`${fmtQty(line.qty)} ${line.unit_label || ''}`.trim());
-  const notePacks = line.cartons !== null ? iso(tr('receive.onNotePacks', { n: line.cartons, pack: packWord })) : null;
+  const notePacks = badge.packs ? iso(tr('receive.onNotePacks', badge.packs)) : null;
+  const notePerPack = badge.perPack ? iso(tr('receive.perPack', badge.perPack)) : null;
 
   const set = (patch: Partial<LineDraft>) => onChange(line.index, patch);
   const gapChoice = (g: Gap) => set({ gap: d.gap === g ? null : g });
@@ -279,6 +302,12 @@ const LineCard = memo(function LineCard({ line, d, errKey, language, today, flas
             <Icon name={status === 'todo' && !errors.includes('expiry_missing') ? 'help' : st.icon} size={14} />
             {statusText}
           </span>
+          {isNew && (
+            <span className="ms-1.5 mt-1.5 inline-flex items-center gap-1 rounded-full bg-info px-2.5 py-0.5 text-xs font-extrabold text-[#160a33]">
+              <Icon name="fiber_new" size={14} />
+              {tr('receive.newLineTag')}
+            </span>
+          )}
         </div>
       </div>
 
@@ -291,6 +320,12 @@ const LineCard = memo(function LineCard({ line, d, errKey, language, today, flas
           <>
             <span className="text-ink-muted">·</span>
             <span className="font-extrabold text-ink">{notePacks}</span>
+          </>
+        )}
+        {notePerPack && (
+          <>
+            <span className="text-ink-muted">·</span>
+            <span className="font-bold text-ink-body">{notePerPack}</span>
           </>
         )}
       </div>
@@ -429,18 +464,21 @@ const LineCard = memo(function LineCard({ line, d, errKey, language, today, flas
           <FieldLabel htmlFor={`e-${line.index}`} icon="event">
             {tr('receive.expiry')}
           </FieldLabel>
-          <div className="flex gap-2">
-            <input
+          {/* Typed (numeric keypad) or picked (calendar button) — Android opens no keyboard for a date input (20/10). Wraps "No expiry" to its own line on a narrow phone. */}
+          <div className="flex flex-wrap gap-2">
+            <DateEntry
               id={`e-${line.index}`}
-              type="date"
-              dir="ltr"
-              aria-invalid={!!expiryErr}
-              min={addDaysIso(today, 1)}
-              max={maxExpiryIso(today)}
               value={d.noExpiry ? '' : d.expiry}
               disabled={d.noExpiry}
-              onChange={(e) => set({ expiry: e.target.value, noExpiry: false })}
-              className={`${INPUT} flex-1 font-mono text-lg font-bold disabled:opacity-35 ${borderFor(expiryErr, expiryDone)}`}
+              invalid={!!expiryErr}
+              min={addDaysIso(today, 1)}
+              max={maxExpiryIso(today)}
+              placeholder={tr('receive.expiryPlaceholder')}
+              calendarLabel={tr('receive.openCalendar')}
+              onChange={(v) => set({ expiry: v, noExpiry: false })}
+              className={DATE_ROW}
+              inputClassName={`${INPUT} flex-1 font-mono text-lg font-bold disabled:opacity-35 ${borderFor(expiryErr, expiryDone)}`}
+              buttonClassName={CALENDAR_BTN}
             />
             <Chip
               tone="ok"
@@ -583,13 +621,70 @@ function newExtraKey(): string {
 
 // ── The form ─────────────────────────────────────────────────────────────
 
+/**
+ * Copy this form's stored draft to the form that replaced it, unless that
+ * one already has its own. The new form's restore fits it by index +
+ * fingerprint (lib/receipt-form.ts mergeDraft), so page-1 answers carry over.
+ */
+function carryDraft(fromId: string, toId: string): void {
+  try {
+    const raw = window.localStorage.getItem(draftStorageKey(fromId));
+    if (raw && !window.localStorage.getItem(draftStorageKey(toId))) {
+      window.localStorage.setItem(draftStorageKey(toId), raw);
+    }
+  } catch {
+    /* storage blocked — the new form starts from the note */
+  }
+}
+
+/**
+ * A replaced form opened from its old link (page.tsx): take the draft along
+ * and go to the newer form; the button is the fallback if the redirect is
+ * blocked.
+ */
+export function FormMoved({
+  formId,
+  language,
+  newer,
+}: {
+  formId: string;
+  language: FormLanguage;
+  newer: { id: string; href: string };
+}) {
+  useLangDir(language);
+  const dir = language === 'Hebrew' ? 'rtl' : 'ltr';
+  useEffect(() => {
+    carryDraft(formId, newer.id);
+    window.location.replace(newer.href);
+  }, [formId, newer.id, newer.href]);
+  return (
+    <Outcome
+      dir={dir}
+      icon="info"
+      tone="info"
+      title={t(language, 'receive.replacedTitle')}
+      body={t(language, 'receive.replacedBody')}
+      action={
+        <a
+          href={newer.href}
+          onClick={() => carryDraft(formId, newer.id)}
+          className="inline-flex min-h-12 items-center justify-center rounded-2xl bg-brand px-6 font-extrabold text-white"
+        >
+          {t(language, 'receive.openNewer')}
+        </a>
+      }
+    />
+  );
+}
+
 export function ReceiptForm({
   formId,
   exp,
   sig,
   language,
   header,
-  lines,
+  lines: initialLines,
+  previousFormIds = [],
 }: {
   formId: string;
   exp: string;
@@ -597,50 +692,205 @@ export function ReceiptForm({
   language: FormLanguage;
   header: FormHeader;
   lines: FormLine[];
+  /** Forms this one replaced, newest first (page.tsx): their stored draft is restored when this form has none yet. */
+  previousFormIds?: string[];
 }) {
   useLangDir(language);
   const tr: Tr = useCallback((k, v) => t(language, k, v), [language]);
   const dir = language === 'Hebrew' ? 'rtl' : 'ltr';
+  /**
+   * The note's lines and their revision, live: the bot appends a page to the
+   * open form in place (20/10) and the poll below brings it in.
+   */
+  const [lines, setLines] = useState<FormLine[]>(initialLines);
+  const [rev, setRev] = useState(header.rev);
   const lineByIndex = useMemo(() => new Map(lines.map((l) => [l.index, l])), [lines]);
+  /** Lines that arrived after the worker started (a page added); tagged "New". */
+  const [newLines, setNewLines] = useState<Set<number>>(() => new Set());
+  /** The "a page was added — N new lines" banner. */
+  const [pageAdded, setPageAdded] = useState<number | null>(null);
 
-  const [draft, setDraft] = useState<FormDraft>(() => initialDraft(lines));
+  const [draft, setDraft] = useState<FormDraft>(() => initialDraft(initialLines));
   const [restored, setRestored] = useState(false);
-  const [onlyMissing, setOnlyMissing] = useState(lines.length > 8);
+  const [onlyMissing, setOnlyMissing] = useState(initialLines.length > 8);
   /** Lines edited since "only missing" was switched on — they stay put while typed into. */
   const [touched, setTouched] = useState<Set<number>>(() => new Set());
   const [sameDate, setSameDate] = useState('');
   const [phase, setPhase] = useState<Phase>({ kind: 'editing' });
   const [flashLine, setFlashLine] = useState<number | null>(null);
+  /** Item search (client 20/10) — a view filter only; validation, counts and submit see every line. */
+  const [query, setQuery] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
+  /**
+   * A line index, or an element id (`last`: its last child — a new extra item), to scroll
+   * to once the render that clears the search has committed.
+   */
+  const [pendingScroll, setPendingScroll] = useState<number | { id: string; last?: boolean } | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const sending = useRef(false);
+  /** The latest lines / rev for callbacks that outlive a render (the poll). */
+  const linesRef = useRef(lines);
+  linesRef.current = lines;
+  const revRef = useRef(rev);
+  revRef.current = rev;
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
 
   const today = todayInJerusalem();
 
   // Restore a draft typed before a reload (after mount, so SSR and the
-  // first client render agree).
+  // first client render agree) — merged by index, so a draft typed on page 1
+  // survives page 2 being added (20/10). Once per form: the live merge
+  // handles later changes.
+  const previousKey = previousFormIds.join(',');
   useEffect(() => {
     try {
-      const saved = restoreDraft(window.localStorage.getItem(draftStorageKey(formId)), lines);
-      if (saved) setDraft(saved);
+      let raw = window.localStorage.getItem(draftStorageKey(formId));
+      // No draft of its own yet: the one typed on the form this one replaced
+      // (the worker came straight to the new WhatsApp link, review 20/10).
+      // The merge below fits it by index + fingerprint.
+      for (const prev of previousKey ? previousKey.split(',') : []) {
+        if (raw) break;
+        raw = window.localStorage.getItem(draftStorageKey(prev));
+      }
+      const saved = restoreDraftMerged(raw, linesRef.current);
+      if (saved) {
+        setDraft(saved.draft);
+        // Lines the saved draft never saw: a page added since it was typed.
+        const fresh = [...saved.added, ...saved.reset];
+        const savedSome = saved.draft.lines.length > fresh.length;
+        if (fresh.length && savedSome) {
+          setNewLines(new Set(fresh));
+          setTouched(new Set(fresh));
+          setPageAdded(fresh.length);
+        }
+      }
     } catch {
       /* storage blocked — start from the note */
     }
     setRestored(true);
-  }, [formId, lines]);
+  }, [formId, previousKey]);
 
   useEffect(() => {
     if (!restored || phase.kind === 'saved' || phase.kind === 'already') return;
     try {
-      window.localStorage.setItem(draftStorageKey(formId), serializeDraft(draft));
+      window.localStorage.setItem(draftStorageKey(formId), serializeDraft(draft, lines, rev));
     } catch {
       /* quota / private mode — the form still works */
     }
-  }, [draft, restored, formId, phase.kind]);
+  }, [draft, lines, rev, restored, formId, phase.kind]);
+
+  /**
+   * New lines from the bot (a page appended in place): keep everything typed
+   * by index, pre-fill the new ones from the note, tag them "New" and keep
+   * them on the "to fill" tab. Returns how many lines are new.
+   */
+  const applyLines = useCallback((next: FormLine[], nextRev: number): number => {
+    // An unreadable answer never empties the form.
+    if (next.length === 0) return 0;
+    const prev = linesRef.current;
+    const prevFp = fingerprints(prev);
+    // The fresh/added split is decided against the CURRENT lines, not the
+    // draft (the draft follows them in the same update).
+    const probe = mergeDraft(initialDraft(prev), prevFp, next);
+    const fresh = [...probe.added, ...probe.reset];
+    setLines(next);
+    setRev(nextRev);
+    setDraft((d) => mergeDraft(d, prevFp, next).draft);
+    if (fresh.length) {
+      setNewLines((s) => new Set([...s, ...fresh]));
+      setTouched((s) => new Set([...s, ...fresh]));
+      setPageAdded(fresh.length);
+      setFlashLine(fresh[0]);
+    }
+    return fresh.length;
+  }, []);
+
+  /** Leave for the form that replaced this one, taking the draft along (its restore merges by index). */
+  const goToNewer = useCallback(
+    (href: string, newerId: string) => {
+      carryDraft(formId, newerId);
+      window.location.replace(href);
+    },
+    [formId],
+  );
+
+  /** One poll: what the row is now. Acts only while the worker is editing. */
+  const poll = useCallback(async () => {
+    const p = phaseRef.current.kind;
+    if (sending.current || (p !== 'editing' && p !== 'error')) return;
+    try {
+      const q = new URLSearchParams({ exp, sig, rev: String(revRef.current) });
+      const res = await fetch(`/api/receipt-form/${encodeURIComponent(formId)}?${q.toString()}`, { cache: 'no-store' });
+      if (!res.ok) return; // a bad link / blip: the next poll or the submit says so
+      const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+      if (!data || data.ok !== true || sending.current) return;
+      const status = String(data.status ?? '');
+      if (status === 'open') {
+        const nextRev = Number(data.rev);
+        if (Number.isInteger(nextRev) && nextRev > revRef.current) applyLines(normalizeFormLines(data.lines), nextRev);
+        return;
+      }
+      if (isInFlightStatus(status)) return; // another phone is saving it; the submit would say so
+      if (status === 'failed') return setPhase({ kind: 'failed' });
+      onNotOpen(status, data);
+    } catch {
+      /* offline — try again next time */
+    }
+    // onNotOpen is stable enough: it only reads its arguments and setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exp, sig, formId, applyLines]);
+
+  useEffect(() => {
+    let timer: number | null = null;
+    const start = () => {
+      if (timer === null && document.visibilityState === 'visible') timer = window.setInterval(() => void poll(), POLL_MS);
+    };
+    const stop = () => {
+      if (timer !== null) window.clearInterval(timer);
+      timer = null;
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void poll();
+        start();
+      } else stop();
+    };
+    const onFocus = () => void poll();
+    start();
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      stop();
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [poll]);
 
   useEffect(() => {
     if (flashLine === null) return;
     const id = window.setTimeout(() => setFlashLine(null), 1400);
     return () => window.clearTimeout(id);
   }, [flashLine]);
+
+  const scrollToLine = useCallback((index: number) => {
+    document.getElementById(`line-${index}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setFlashLine(index);
+  }, []);
+
+  // A line hidden by the search is mounted only after the query clears, so
+  // the scroll waits for that render.
+  useEffect(() => {
+    if (pendingScroll === null) return;
+    if (typeof pendingScroll === 'number') {
+      scrollToLine(pendingScroll);
+    } else {
+      const el = document.getElementById(pendingScroll.id);
+      // 'center', not 'end': the fixed footer covers the bottom of the screen.
+      (pendingScroll.last ? el?.lastElementChild : el)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    setPendingScroll(null);
+  }, [pendingScroll, scrollToLine]);
 
   const clearStoredDraft = useCallback(() => {
     try {
@@ -671,11 +921,12 @@ export function ReceiptForm({
   const onExtraRemove = useCallback((key: string) => {
     setDraft((d) => ({ ...d, extras: d.extras.filter((x) => x.key !== key) }));
   }, []);
-  const addExtra = () =>
+  /** `name` pre-fills the item (the search text, from the no-results card). */
+  const addExtra = (name = '') =>
     setDraft((d) =>
       d.extras.length >= MAX_EXTRAS
         ? d
-        : { ...d, extras: [...d.extras, { key: newExtraKey(), name: '', quantity: '', unit: 'units' }] },
+        : { ...d, extras: [...d.extras, { key: newExtraKey(), name: name.slice(0, 200), quantity: '', unit: 'units' }] },
     );
 
   const sameDateErr = sameDate ? expiryError(sameDate, today) : null;
@@ -688,6 +939,7 @@ export function ReceiptForm({
   const showOnlyMissing = (v: boolean) => {
     setOnlyMissing(v);
     setTouched(new Set());
+    setQuery('');
   };
 
   const pallets = draft.pallets.trim();
@@ -699,32 +951,77 @@ export function ReceiptForm({
       return { ...d, pallets: delta < 0 && cur === 0 ? d.pallets : String(next) };
     });
 
-  /** The first thing that still blocks approval, in page order. */
+  // A non-empty search shows matching lines from the whole note, whichever tab is on.
+  const search = useMemo(() => searchLines(lines, query), [lines, query]);
+  const shownBySearch = useMemo(
+    () => (search.active ? new Set(search.lines.map((l) => l.index)) : null),
+    [search],
+  );
+
+  /**
+   * The first thing that still blocks approval, in page order. During a
+   * search: the first incomplete result; when every result is done, the
+   * search clears so the next line of the note is on screen to scroll to.
+   */
   const goToNext = () => {
-    const nextLine = draft.lines.find((d) => check.lines[d.index]);
-    if (nextLine) {
-      const el = document.getElementById(`line-${nextLine.index}`);
-      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      setFlashLine(nextLine.index);
+    const next = nextIncompleteLine(
+      draft.lines.map((d) => d.index),
+      (i) => !!check.lines[i],
+      shownBySearch,
+    );
+    if (next) {
+      if (next.clearSearch) {
+        setQuery('');
+        setPendingScroll(next.index);
+      } else {
+        scrollToLine(next.index);
+      }
       return;
     }
-    const target = check.form.includes('pallets_invalid')
-      ? document.getElementById('pallets')
-      : document.getElementById('extras');
-    target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const id = check.form.includes('pallets_invalid') ? 'pallets' : 'extras';
+    if (query) {
+      setQuery('');
+      setPendingScroll({ id });
+      return;
+    }
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
-  const visible = draft.lines.filter((d) => !onlyMissing || check.lines[d.index] || touched.has(d.index));
+  const visible = shownBySearch
+    ? draft.lines.filter((d) => shownBySearch.has(d.index))
+    : draft.lines.filter((d) => !onlyMissing || check.lines[d.index] || touched.has(d.index));
 
-  const submit = async () => {
+  /**
+   * The row is done / closed (seen by the poll or the submit): say why
+   * (closed_reason, 20/10). Only a really saved note drops the stored draft.
+   */
+  function onNotOpen(status: unknown, data: Record<string, unknown> | null) {
+    const view = closedView(String(status ?? ''), closedReasonOf(data));
+    const newer = data?.newer as { id?: unknown; href?: unknown } | null | undefined;
+    if (view === 'replaced' && newer && typeof newer.href === 'string' && newer.href.startsWith('/receive/') && typeof newer.id === 'string') {
+      goToNewer(newer.href, newer.id);
+      setPhase({ kind: 'closed', view });
+      return;
+    }
+    if (view === 'saved') {
+      clearStoredDraft();
+      setPhase({ kind: 'already' });
+      return;
+    }
+    setPhase({ kind: 'closed', view });
+  }
+
+  /** `pageRev` / `retry`: one automatic re-send when only the revision moved (no new line, see below). */
+  const submit = async (pageRev: number = rev, retry = true) => {
     if (sending.current || remaining > 0) return;
+    let again: number | null = null;
     sending.current = true;
     setPhase({ kind: 'submitting' });
     try {
       const res = await fetch(`/api/receipt-form/${encodeURIComponent(formId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ exp, sig, answers }),
+        body: JSON.stringify({ exp, sig, rev: pageRev, answers }),
         cache: 'no-store',
       });
       const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
@@ -734,10 +1031,24 @@ export function ReceiptForm({
         setPhase({ kind: 'saved', savedLines: Number.isFinite(n) ? n : null });
         return;
       }
+      // A page was added since this page loaded: bring it in, keep the draft, ask again.
+      if (data?.error === 'lines_changed') {
+        const nextRev = Number(data.rev);
+        const okRev = Number.isInteger(nextRev) && nextRev >= 1;
+        const n = applyLines(normalizeFormLines(data.lines), okRev ? nextRev : pageRev);
+        // Only the header moved (the bot's append with no new line, e.g. the
+        // note's date from page 2): nothing to fill — send again on the new
+        // revision instead of "Saving failed" (review 20/10).
+        if (!n && retry && okRev && nextRev !== pageRev) {
+          again = nextRev;
+          return;
+        }
+        setPhase({ kind: 'error', message: n ? tr(n === 1 ? 'receive.linesChangedOne' : 'receive.linesChanged', { n }) : tr('receive.errorGeneric') });
+        return;
+      }
       const status = data?.status;
       if (isFinalStatus(status)) {
-        clearStoredDraft();
-        setPhase({ kind: 'already' });
+        onNotOpen(status, data);
         return;
       }
       if (isInFlightStatus(status)) {
@@ -763,6 +1074,7 @@ export function ReceiptForm({
       setPhase({ kind: 'error', message: tr('receive.errorNetwork') });
     } finally {
       sending.current = false;
+      if (again !== null) void submit(again, false);
     }
   };
 
@@ -783,6 +1095,15 @@ export function ReceiptForm({
   }
   if (phase.kind === 'failed') {
     return <Outcome dir={dir} icon="info" tone="info" title={tr('receive.failedTitle')} body={tr('receive.failedBody')} />;
+  }
+  if (phase.kind === 'closed') {
+    const [title, body]: [TranslationKey, TranslationKey] =
+      phase.view === 'replaced'
+        ? ['receive.replacedTitle', 'receive.replacedBody']
+        : phase.view === 'duplicate'
+          ? ['receive.duplicateTitle', 'receive.duplicateBody']
+          : ['receive.cancelledTitle', 'receive.cancelledBody'];
+    return <Outcome dir={dir} icon="info" tone="info" title={tr(title)} body={tr(body)} />;
   }
   if (phase.kind === 'inflight') {
     return (
@@ -873,6 +1194,37 @@ export function ReceiptForm({
           <span>{tr('receive.hint')}</span>
         </p>
 
+        {/* A page was added to the note while it was open (20/10) — a tap shows the first new line */}
+        {pageAdded !== null && (
+          <div
+            role="status"
+            className="flex items-start gap-2 rounded-2xl border-2 border-info bg-info-weak px-3 py-2.5 text-sm font-extrabold text-info-weak-ink"
+          >
+            <Icon name="note_add" size={20} />
+            <button
+              type="button"
+              className="min-w-0 flex-1 text-start"
+              onClick={() => {
+                const first = draft.lines.find((d) => newLines.has(d.index));
+                if (!first) return;
+                setOnlyMissing(false);
+                setQuery('');
+                setPendingScroll(first.index);
+              }}
+            >
+              {tr(pageAdded === 1 ? 'receive.pageAddedOne' : 'receive.pageAdded', { n: pageAdded })}
+            </button>
+            <button
+              type="button"
+              aria-label={tr('receive.remove')}
+              onClick={() => setPageAdded(null)}
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg active:scale-95"
+            >
+              <Icon name="close" size={18} />
+            </button>
+          </div>
+        )}
+
         {/* Pallets */}
         <div className="flex items-center gap-3 rounded-3xl border-2 border-line bg-raised p-3">
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#0ea5e9]/20 text-[#7dd3fc]">
@@ -935,16 +1287,19 @@ export function ReceiptForm({
               <label htmlFor="same-date" className="mb-1.5 block text-sm font-bold text-ink-body">
                 {tr('receive.sameDate')}
               </label>
-              <div className="flex gap-2">
-                <input
+              <div className="flex flex-wrap gap-2">
+                <DateEntry
                   id="same-date"
-                  type="date"
-                  dir="ltr"
+                  value={sameDate}
+                  onChange={setSameDate}
+                  invalid={!!sameDateErr}
                   min={addDaysIso(today, 1)}
                   max={maxExpiryIso(today)}
-                  value={sameDate}
-                  onChange={(e) => setSameDate(e.target.value)}
-                  className={`${INPUT} flex-1 font-mono text-lg font-bold ${sameDateErr ? BAD_BORDER : OK_BORDER}`}
+                  placeholder={tr('receive.expiryPlaceholder')}
+                  calendarLabel={tr('receive.openCalendar')}
+                  className={DATE_ROW}
+                  inputClassName={`${INPUT} flex-1 font-mono text-lg font-bold ${sameDateErr ? BAD_BORDER : OK_BORDER}`}
+                  buttonClassName={CALENDAR_BTN}
                 />
                 <button
                   type="button"
@@ -970,8 +1325,76 @@ export function ReceiptForm({
           </div>
         )}
 
-        {/* Which lines to show */}
-        <div role="tablist" className="grid grid-cols-2 gap-1 rounded-2xl border-2 border-line bg-sunken p-1">
+        {/* Item search — from SEARCH_MIN_LINES lines; sticky so it is reachable deep in the list */}
+        {lines.length >= SEARCH_MIN_LINES && (
+          <div role="search" className="sticky top-0 z-20 -mx-3 bg-canvas/95 px-3 py-2 backdrop-blur">
+            <div
+              className={`flex min-h-12 items-center gap-2 rounded-2xl border-2 bg-sunken ps-3 transition-colors focus-within:border-brand focus-within:ring-4 focus-within:ring-brand/40 ${
+                query ? 'border-brand' : 'border-line-strong'
+              }`}
+            >
+              <Icon name="search" size={22} className="text-ink-muted" />
+              <input
+                ref={searchRef}
+                type="search"
+                inputMode="search"
+                enterKeyHint="search"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                // Page direction, not dir="auto": an empty field resolves "auto" to LTR and the Hebrew hint jumps left.
+                dir={dir}
+                // The wrapper's border shows focus; the global :focus-visible outline would draw a second box.
+                style={{ outline: 'none' }}
+                value={query}
+                placeholder={tr('receive.searchPlaceholder')}
+                aria-label={tr('receive.searchPlaceholder')}
+                onChange={(e) => setQuery(e.target.value)}
+                onFocus={() => setSearchFocused(true)}
+                onBlur={() => setSearchFocused(false)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setQuery('');
+                  if (e.key === 'Enter') {
+                    // The keyboard's search key: close the keyboard; one result → go to it.
+                    e.preventDefault();
+                    e.currentTarget.blur();
+                    if (search.lines.length === 1 && search.active) scrollToLine(search.lines[0].index);
+                  }
+                }}
+                className="min-w-0 flex-1 bg-transparent py-2 pe-3 text-base font-bold text-ink placeholder:text-ink-muted outline-none [&::-webkit-search-cancel-button]:hidden"
+              />
+              {query && (
+                <button
+                  type="button"
+                  aria-label={tr('receive.searchClear')}
+                  onClick={() => {
+                    setQuery('');
+                    searchRef.current?.focus();
+                  }}
+                  className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-ink-muted active:scale-95"
+                >
+                  <Icon name="close" size={22} />
+                </button>
+              )}
+            </div>
+            {search.active && search.lines.length > 0 && (
+              <p aria-live="polite" className="mt-1 px-1 text-xs font-bold text-ink-muted">
+                {search.fuzzy
+                  ? tr('receive.searchFuzzy')
+                  : tr('receive.searchCount', { n: search.lines.length, total: lines.length })}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Which lines to show (dimmed while a search shows lines from the whole note; a tap clears it) */}
+        <div
+          role="tablist"
+          className={`grid grid-cols-2 gap-1 rounded-2xl border-2 border-line bg-sunken p-1 transition-opacity ${
+            search.active ? 'opacity-50' : ''
+          }`}
+        >
           <button
             type="button"
             role="tab"
@@ -1011,11 +1434,41 @@ export function ReceiptForm({
               language={language}
               today={today}
               flash={flashLine === d.index}
+              isNew={newLines.has(d.index)}
               onChange={onLineChange}
             />
           );
         })}
-        {onlyMissing && visible.length === 0 && (
+        {search.active && visible.length === 0 && (
+          <div className="rounded-3xl border-2 border-line bg-raised p-5 text-center space-y-3">
+            <Icon name="search_off" size={36} className="mx-auto block text-ink-muted" />
+            <p className="text-base font-extrabold">{tr('receive.searchNone')}</p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                className="min-h-12 rounded-xl border-2 border-line-strong bg-tile px-4 font-extrabold text-ink active:scale-95"
+              >
+                {tr('receive.searchClear')}
+              </button>
+              {/* What he is holding is not on the note: start an extra item named as he typed it */}
+              <button
+                type="button"
+                disabled={draft.extras.length >= MAX_EXTRAS}
+                onClick={() => {
+                  addExtra(query.trim());
+                  setQuery('');
+                  setPendingScroll({ id: 'extras', last: true });
+                }}
+                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border-2 border-dashed border-info/60 bg-info-weak px-4 font-extrabold text-info-weak-ink active:scale-95 disabled:opacity-40"
+              >
+                <Icon name="add_circle" size={20} />
+                {tr('receive.addExtra')}
+              </button>
+            </div>
+          </div>
+        )}
+        {!search.active && onlyMissing && visible.length === 0 && (
           <div className="rounded-3xl border-2 border-ok/50 bg-[linear-gradient(180deg,rgba(34,197,94,0.14),rgba(16,28,34,1))] p-5 text-center space-y-2">
             <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-ok text-[#04210f] shadow-[0_0_30px_rgba(34,197,94,0.45)]">
               <Icon name="done_all" size={32} />
@@ -1047,7 +1500,7 @@ export function ReceiptForm({
         {check.form.includes('too_many_extras') && <FieldError text={tr('receive.err.tooManyExtras')} />}
         <button
           type="button"
-          onClick={addExtra}
+          onClick={() => addExtra()}
           disabled={draft.extras.length >= MAX_EXTRAS}
           className="inline-flex w-full min-h-14 items-center justify-center gap-2 rounded-3xl border-2 border-dashed border-info/60 bg-info-weak px-4 font-extrabold text-info-weak-ink active:scale-[0.98] disabled:opacity-40"
         >
@@ -1056,9 +1509,11 @@ export function ReceiptForm({
         </button>
       </div>
 
-      {/* Sticky footer */}
+      {/* Sticky footer — hidden while the search field has the keyboard up, so results have room.
+          z-30: above the sticky search bar (z-20), which otherwise covered the Next / Approve
+          button whenever its place in the page fell behind the footer (top of a long form). */}
       <footer
-        className="fixed inset-x-0 bottom-0 border-t border-line bg-header/95 backdrop-blur px-3 pt-2.5 shadow-[0_-10px_30px_rgba(0,0,0,0.45)]"
+        className={`${searchFocused ? 'hidden ' : ''}fixed inset-x-0 bottom-0 z-30 border-t border-line bg-header/95 backdrop-blur px-3 pt-2.5 shadow-[0_-10px_30px_rgba(0,0,0,0.45)]`}
         style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
       >
         <div className="mx-auto max-w-xl space-y-2">
@@ -1070,7 +1525,7 @@ export function ReceiptForm({
               </span>
               <button
                 type="button"
-                onClick={submit}
+                onClick={() => void submit()}
                 disabled={remaining > 0}
                 className="shrink-0 min-h-10 rounded-xl bg-danger px-3 font-extrabold text-white disabled:opacity-40"
               >
@@ -1089,7 +1544,7 @@ export function ReceiptForm({
           {allReady || submitting ? (
             <button
               type="button"
-              onClick={submit}
+              onClick={() => void submit()}
               disabled={submitting}
               aria-busy={submitting}
               className="w-full min-h-14 rounded-2xl px-4 text-lg font-black text-[#04210f] bg-[linear-gradient(135deg,#4ade80,#22c55e_50%,#16a34a)] shadow-[0_8px_28px_rgba(34,197,94,0.45)] active:scale-[0.98] disabled:opacity-80 flex items-center justify-center gap-2"

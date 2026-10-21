@@ -18,7 +18,13 @@
  * Writes only the `carton_labels` ledger — except that deleting a batch whose
  * cartons are still rows on the scan list also takes those rows off it (the
  * page does that through `onBatchDeleted`; the confirm says so first). A
- * batch already booked on an LPN cannot be deleted, only reprinted.
+ * batch already booked on an LPN cannot be deleted, only reprinted (printing
+ * off: it just says it could not delete).
+ *
+ * Label printing off (LABEL_PRINTING_ENABLED, lib/label-printing.ts — the
+ * default since 20/10): a plain list of what was saved, for checking and
+ * Delete. No size picker, status filter, selection, printed/not-printed
+ * pill, "Mark as printed" or Print footer.
  */
 
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -37,11 +43,14 @@ import {
   type LabelTag,
   type LiveRowPlace,
 } from '@/lib/label-batches';
+import { labelPrintingEnabled } from '@/lib/label-printing';
 import { trace } from '@/lib/scanner-trace';
 import type { CartonLabel, LabelSize } from '@/types';
 
 type StatusFilter = 'all' | 'created' | 'printed';
 type Scope = 'session' | 'all';
+
+const PRINTING = labelPrintingEnabled();
 
 const SIZES: { id: LabelSize; name: string }[] = [
   { id: '10x10', name: '10×10' },
@@ -114,7 +123,7 @@ export function LabelsBrowser({
   // session, and showing both runs side by side is how a worker reprints
   // yesterday's label onto today's carton.
   const [scope, setScope] = useState<Scope>('session');
-  const [status, setStatus] = useState<StatusFilter>(initialStatus);
+  const [status, setStatus] = useState<StatusFilter>(PRINTING ? initialStatus : 'all');
   const [labels, setLabels] = useState<CartonLabel[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorKey, setErrorKey] = useState<'labels.error' | 'labels.sessionExpired' | null>(null);
@@ -268,8 +277,10 @@ export function LabelsBrowser({
       const data = await res.json();
       if (res.status === 409 && data?.error === 'labels_booked') {
         // Already stock on an LPN: the stickers are on boxes in the
-        // warehouse, so the ledger keeps them (reprint only).
-        showToast(tr('labels.deleteBooked'), 'info', '#fbbf5c');
+        // warehouse, so the ledger keeps them (reprint only). With printing
+        // off there is no reprint to point to — the plain "could not delete".
+        if (PRINTING) showToast(tr('labels.deleteBooked'), 'info', '#fbbf5c');
+        else showToast(tr('labels.deleteFailed'), 'error', '#ef8a8a');
         setConfirm(null);
         return;
       }
@@ -314,7 +325,7 @@ export function LabelsBrowser({
   return (
     <ScreenOverlay title={tr('labels.title')} onBack={onBack}>
       <div className="flex-none px-3 pt-3 pb-2 flex flex-col gap-[10px] border-b border-line">
-        <div>
+        {PRINTING && <div>
           <div className="text-[10px] font-extrabold tracking-[1px] text-brand-weak-ink mb-[7px] mx-[2px]">
             {tr('labels.size')}
           </div>
@@ -334,7 +345,7 @@ export function LabelsBrowser({
               </button>
             ))}
           </div>
-        </div>
+        </div>}
 
         <div className="flex gap-[6px] overflow-x-auto no-scrollbar">
           <button onClick={() => setScope('session')} className={chip(scope === 'session')}>
@@ -343,23 +354,26 @@ export function LabelsBrowser({
           <button onClick={() => setScope('all')} className={chip(scope === 'all')}>
             {tr('labels.scopeAll')}
           </button>
-          <span className="w-px bg-line flex-none my-1" />
-          <button onClick={() => setStatus('all')} className={chip(status === 'all')}>
-            {tr('labels.filterAll')}
-          </button>
-          <button
-            ref={initialStatus === 'created' ? activeStatusRef : undefined}
-            onClick={() => setStatus('created')}
-            className={chip(status === 'created')}
-          >
-            {tr('labels.filterCreated')}
-          </button>
-          <button onClick={() => setStatus('printed')} className={chip(status === 'printed')}>
-            {tr('labels.filterPrinted')}
-          </button>
+          {PRINTING && <>
+            <span className="w-px bg-line flex-none my-1" />
+            <button onClick={() => setStatus('all')} className={chip(status === 'all')}>
+              {tr('labels.filterAll')}
+            </button>
+            <button
+              ref={initialStatus === 'created' ? activeStatusRef : undefined}
+              onClick={() => setStatus('created')}
+              className={chip(status === 'created')}
+            >
+              {tr('labels.filterCreated')}
+            </button>
+            <button onClick={() => setStatus('printed')} className={chip(status === 'printed')}>
+              {tr('labels.filterPrinted')}
+            </button>
+          </>}
         </div>
 
-        {batches.length > 0 ? (
+        {/* Selection only feeds Print. */}
+        {PRINTING && batches.length > 0 ? (
           <div className="flex items-center justify-between mx-[2px]">
             <span className="text-[10px] font-extrabold tracking-[1px] text-brand-weak-ink">
               {tr('labels.selectedCount', { selected: totalSelectedLabels, total: labels.length })}
@@ -406,8 +420,11 @@ export function LabelsBrowser({
                 key={batch.batch_id}
                 className={`rounded-[13px] border bg-raised ${isSelected ? 'border-brand' : 'border-line'}`}
               >
-                <button onClick={() => toggleBatch(batch.batch_id)} className="w-full p-[11px] flex items-center gap-[11px] text-start">
-                  <span
+                <button
+                  onClick={PRINTING ? () => toggleBatch(batch.batch_id) : undefined}
+                  className="w-full p-[11px] flex items-center gap-[11px] text-start"
+                >
+                  {PRINTING && <span
                     className="flex-none w-[22px] h-[22px] rounded-[7px] border flex items-center justify-center"
                     style={{
                       background: isSelected ? '#13a4ec' : 'transparent',
@@ -415,7 +432,7 @@ export function LabelsBrowser({
                     }}
                   >
                     {isSelected ? <MI name="check" size={15} className="text-white" /> : null}
-                  </span>
+                  </span>}
 
                   {/* Sticker thumbnail — the physical thing this row prints. */}
                   <span
@@ -438,8 +455,8 @@ export function LabelsBrowser({
                     </span>
                     <span className="flex flex-wrap items-center gap-[6px] mt-[5px]">
                       {/* Amber + crossed-out printer = still to print;
-                          green + tick = printed. */}
-                      <span
+                          green + tick = printed. Printing on only. */}
+                      {PRINTING && <span
                         className="inline-flex items-center gap-[3px] px-[7px] py-[2px] rounded-[6px] text-[9.5px] font-extrabold"
                         style={
                           printed
@@ -453,7 +470,7 @@ export function LabelsBrowser({
                             ? tr('labels.printedTimes', { count: batch.maxPrintCount })
                             : tr('labels.statusPrinted')
                           : tr('labels.statusCreated')}
-                      </span>
+                      </span>}
                       {labelTags(label).map(tag => (
                         <span
                           key={tag.kind}
@@ -530,7 +547,7 @@ export function LabelsBrowser({
                   </div>
                 ) : (
                   <div className="flex items-center border-t border-line">
-                    {!printed ? (
+                    {PRINTING && !printed ? (
                       <button
                         onClick={() => setConfirm({ batchId: batch.batch_id, kind: 'mark' })}
                         className="flex-1 min-w-0 py-[9px] px-2 flex items-center justify-center gap-[6px] text-[11.5px] font-extrabold text-ink-inverse border-e border-line"
@@ -554,7 +571,7 @@ export function LabelsBrowser({
         )}
       </div>
 
-      <div className="flex-none px-3 py-[11px] border-t border-line bg-header safe-bottom">
+      {PRINTING && <div className="flex-none px-3 py-[11px] border-t border-line bg-header safe-bottom">
         <button
           onClick={handlePrint}
           disabled={totalSelectedLabels === 0}
@@ -567,7 +584,7 @@ export function LabelsBrowser({
             ? tr('labels.printOne')
             : tr('labels.print', { count: totalSelectedLabels })}
         </button>
-      </div>
+      </div>}
 
       <Toast toast={toast} />
     </ScreenOverlay>

@@ -253,6 +253,122 @@ re-sent in a way that can make a duplicate draft.
   never sent from the page; Mark as found calls `priority_push_mark_found(p_outbox_id, docno, 'admin:<u>')`, which
   never touches the client's `wb_mark_gr_synced`.
 
+## Changes since the audit — 2026-10-20 typed expiry dates
+
+**Why.** On the non-meat receive form (`/receive/<form_id>`, the link the bot sends) David could not type an
+expiry: Android Chrome opens only its calendar dialog for an `<input type="date">`, never the keyboard.
+
+- **`components/shared/DateEntry.tsx`** — a text field (`inputMode="numeric"`, `dir="ltr"`, max 10 chars) the
+  worker types into, day first, with the dots added for him (`311227` → `31.12.27`, shown as `31.12.2027` once the
+  field is left), plus a calendar button that opens the phone's own picker (a hidden `<input type="date">`,
+  `showPicker()`, falling back to focus + click). `value` / `onChange` speak the draft's format: ISO when the date
+  is whole, `''` while empty or half-typed, the raw text when it is wrong (→ the existing "Not a valid date").
+  An outside change (same date for all, "No expiry", a restored draft) re-shows the field; "No expiry" also drops
+  a half-typed date. Enter (the keypad's "done") leaves the field.
+- **`lib/date-entry.ts`** (+ 50 tests) — `maskDateInput`, `parseDateEntry(text, {final})` (dd.mm.yyyy, d.m.yy,
+  dd/mm/yy, ddmmyy, ddmmyyyy; a 2-digit year is 20yy and waits while typing so `31.12.20` on its way to `2027` is
+  not judged as 2020; real-calendar check through `isRealIsoDate`), `entryToValue`, `isoToDotted`.
+- **Where:** `ReceiptForm.tsx` per-line expiry (the "No expiry" chip wraps to its own line on a narrow phone —
+  the date field keeps at least 13rem) and "One date for all lines"; the legacy `/scan` manual-entry modal and
+  `IssueResolution` cards (there the expiry stays optional and has no future-date rule, but a typed date that is
+  not a real one now shows "Not a valid date" and keeps Send / Resolve disabled; `IssueResolution` turns an OCR
+  `31/12/2027` into ISO before showing it). The meat terminal's own `CalendarPicker` is unchanged.
+- Nothing changes in `lib/receipt-form.ts`, the submit route, the bot or the database: the stored value is the
+  same ISO date. "Same date for all" still skips a line that already holds a (wrong) typed date — it stays red
+  for the worker to fix.
+- New texts (pending Mevaser): `receive.expiryPlaceholder` (`dd.mm.yyyy`), `receive.openCalendar` (the
+  calendar button's label).
+
+## Changes since the audit — 2026-10-20 item search on the receive form
+
+**Why.** A long non-meat note (today's Bnei Darom form: 18 lines, ~600 px a card) meant scrolling ~10,000 px to
+find the item David was holding; the tabs and "Go to the next line to fill" only walk the note in order.
+
+- **`lib/receipt-form-search.ts`** (+ 20 tests) — pure, client-side, no library: `searchKey` (lower-case, NFC,
+  drop niqqud U+0591–05C7, fold final letters ך→כ ם→מ ן→נ ף→פ ץ→צ, keep only a–z 0–9 א–ת, so `ק"ג` = `ק״ג` =
+  `קג`), `queryWords`, `searchLines` (every query word a substring of the folded `name_he` / `name_en` / `code`,
+  any order; a 1–3 digit word also matches the line number; only when nothing matches strictly, a typo fallback:
+  each word of 3+ letters within one edit of the start of a word of the name — `פרינר` finds `פריניר`), and
+  `nextIncompleteLine`. It uses `levenshtein`, now exported from `lib/invoice-match.ts` (no behaviour change).
+  Deliberately **not** `normalizeString` (it keeps niqqud and final letters, and keys stored groups).
+- **`ReceiptForm.tsx`** — a sticky search box above the tabs, shown only when the note has
+  `SEARCH_MIN_LINES` (6) lines or more. It is a **view filter only**: the draft, `validateAnswers`, the progress
+  bar, the footer's "N lines still to complete" and Send all still see every line. A non-empty search shows
+  matches from the whole note whichever tab is on (the tabs dim; tapping one clears the search). Results keep
+  note order; a small line under the box says "n of total lines", or "No exact match. Maybe one of these:" for
+  the typo fallback. "Go to the next line to fill" goes to the first incomplete *result*; when every result is
+  done it clears the search and then scrolls (a `pendingScroll` effect, since the card mounts only after that
+  render). No results → a card with "Clear the search" and the existing "Item not on the note" button, which
+  adds an extra item already named with the search text and scrolls to it. Keyboard: `type="search"`,
+  `enterKeyHint="search"`, 16 px text, no autocorrect; the keyboard's search key closes the keyboard and, with
+  exactly one result, flashes it; Escape clears; the fixed footer hides while the box has focus so the results
+  are not squeezed between footer and keyboard. The query is not saved — a reload shows the full list.
+- No barcode search: `receipt_forms.lines` carries no barcode (the supplier code is searchable).
+- New texts (pending Mevaser): `receive.searchPlaceholder`, `receive.searchClear`, `receive.searchNone`,
+  `receive.searchCount`, `receive.searchFuzzy`.
+
+## Changes since the audit — 2026-10-20 outer package + two-page notes on the receive form
+
+**Why (package).** The "package type" dropdown carried the INNER unit the OCR saw (bottle), and the badge printed it
+next to the OUTER package count: "36 יחידות · 3 בקבוק" (36 units · 3 bottle). The bot now sends the outer package
+(`receipt_form.outer_packaging`, bot 2fa7026).
+
+- **`lib/receipt-form.ts`** — `PACKAGING` is the bot's 13 keys in the same order (`carton, pack, sack, bag,
+  bucket, can, jar, bottle, gallon, crate, tray, unit, other`; contract `scratchpad/oct20b/contract_packaging.json`,
+  pinned by a test). `PACKAGING_LABELS` gains pack/can/jar/gallon (and `unit` reads "יחידה בודדת" = single unit);
+  new `PACKAGING_PLURAL`. `FormLine` gains `per_pack` (integer ≥ 2 or null) and `inner` (bottle/can/jar/gallon/unit
+  or null, only with `per_pack`), parsed defensively — rows written before 20/10 have neither and still load.
+  `packBadge(line, lang, packsWord)` → the badge figures: the outer plural ("3 קרטונים" = 3 cartons; singular for 1;
+  the generic "אריזות" when the type is unknown) and, when the note says so, "12 בקבוקים בכל קרטון" (12 bottles
+  in each carton, `receive.perPack`). The draft / answers are unchanged: `packaging` stays one key or null.
+- **`ReceiptForm.tsx`** — the badge uses `packBadge`; the field label `receive.packaging` is now "אריזה חיצונית"
+  (outer package).
+
+**Why (two pages).** The bot sent a NEW form for page 2 and closed the open one, whose page then said "already
+saved" and dropped what David had typed (triage `twopage_scanner`, defects A–C). Contract with the bot (20/10): the
+bot appends a page to the OPEN form in place and bumps `header.rev` (int, 1 on create; a form without `rev` is
+rev 1) and `header.line_count`; a closed form carries `result.closed_reason` ∈ replaced / cancelled / reset /
+finished_in_chat / ops_duplicate, and `result.by` = the replacing form for `replaced`.
+
+- **`GET /api/receipt-form/{id}?exp&sig[&rev]`** (new) — same signed link; `no-store`; `{ok, status, rev,
+  line_count, lines, header, closed_reason, newer, expired}`. `newer` = `{id, href}`, a link to the replacing form
+  signed here (`lib/receipt-form-server.ts newerFormLink`): only the same delivery AND chat, still open, `exp` =
+  that row's `expires_at` capped at the verifier's 7 days. Without `result.by`, the newest open form of the same
+  delivery + chat created after this one stands in.
+- **`POST`** — the page sends `rev`. A different `rev` → **409 `{error:'lines_changed', rev, line_count, lines}`
+  before validation** (not a generic 422); the claim UPDATE also filters `header->>rev` (or `IS NULL` for a form
+  without one), and a claim that misses because the rev moved meanwhile answers `lines_changed` too. A page
+  without `rev` (loaded before this deploy) skips the check. `not_open` now carries `closed_reason` + `newer`.
+- **`ReceiptForm.tsx`** — `lines` / `rev` live in state. Poll every 15 s while the tab is visible, plus on
+  `visibilitychange` → visible and `focus`; only while editing (not during a submit). A higher `rev` →
+  `mergeDraft` by index: typed answers stay, the new lines start from the note, are tagged "חדש" (New), kept on
+  the "to fill" tab, and the banner `receive.pageAdded` ("A page was added — N new lines"; a tap shows the first)
+  appears. `lines_changed` on Approve does the same and says `receive.linesChanged`; the draft is never cleared.
+  Seen closed: replaced + `newer` → copy the stored draft to the new form's key (unless it has its own) and
+  `location.replace`; cancelled / reset → `receive.cancelled*`; ops_duplicate → `receive.duplicate*`;
+  finished_in_chat / no reason / done → the old "already saved" (only this clears the stored draft).
+- **`page.tsx`** — the same mapping when the link is opened on a closed form (replaced → `FormMoved`, which carries
+  the draft and redirects, with an "Open the updated form" button as fallback; no open successor →
+  `receive.replaced*` "open the latest link in WhatsApp").
+- **Draft v2** — `{v:2, rev, fp:{index: "code|name_he"}, draft}`. `restoreDraftMerged` merges by index; a line
+  whose fingerprint changed (a re-numbered note) resets alone; a malformed saved line resets alone; v1 drafts
+  still restore (index only). Lines the saved draft never saw are tagged New with the banner.
+- **Review fixes (20/10)** — (1) a bot refusal that closed the form on this tap (`form_replaced`, `already_saved`)
+  now answers with `closed_reason` + `newer` as `not_open` does; before, the page read the bare `closed` as
+  "already saved" and dropped the draft. (2) `page.tsx` passes `previousFormIds` (`replacedFormIds`: closed
+  forms of the same delivery + chat whose `result.by` is this form); a form with no stored draft of its own
+  restores the newest of theirs, so answers typed on the old link survive when the worker opens the NEW link
+  straight from WhatsApp. (3) `lines_changed` with no new line (the bot bumped `rev` for a header field only)
+  re-sends once on the new rev instead of showing "Saving failed".
+- **Trace** — `scanner_events` rows, `page='receive'`, `token` = form id, `chat_id` = the form's chat, `kind='server'`:
+  `receive_open` (every page render: status, rev, line_count, closed_reason), `receive_poll_changed` (a poll that
+  found a newer rev or a non-open row — an unchanged poll writes nothing), `receive_submit` (`outcome` ∈ not_open /
+  expired / lines_changed / bad_answers / invalid / claimed / done / bot_refused / bot_unreachable /
+  bot_not_configured). `logServerEvent` takes an optional `{page, chatId}` for this.
+- New texts (pending Mevaser): `receive.perPack`, `receive.pageAdded`, `receive.newLineTag`, `receive.linesChanged`,
+  `receive.replacedTitle`/`Body`, `receive.openNewer`, `receive.cancelledTitle`/`Body`, `receive.duplicateTitle`/`Body`,
+  the new `PACKAGING_LABELS` / `PACKAGING_PLURAL` words; changed: `receive.packaging`, `PACKAGING_LABELS.unit`.
+
 ## Table of contents
 
 - [Changes since the audit — the 2026-10-01 floor-feedback release](#changes-since-the-audit-the-2026-10-01-floor-feedback-release)
@@ -881,6 +997,8 @@ Others: `common.cancel`, `common.delete`, `common.kg`, `loose.title`, `ocr.retry
 | loose minimum | 2125 | `min(2, declared)` | |
 | consolidation debounce / timeout | 439 / 409 | 1500 ms / 15000 ms | |
 | `scanner-settings` localStorage | via settings-store | on | sound/vibration for scan feedback |
+| `LABEL_PRINT_GATE` (added 2026-10-15) | `lib/label-gate.ts` `labelPrintGateEnabled` / `printGate`; inlined by `next.config.ts` | `off` | `on`/`true`/`1`: an LPN or a loose finish is refused (page and server) while a saved label on the list being booked is unprinted. Since 20/10 it blocks only when `LABEL_PRINTING_ENABLED` is on as well |
+| `LABEL_PRINTING_ENABLED` (added 2026-10-20) | `lib/label-printing.ts` `labelPrintingEnabled`; inlined by `next.config.ts` | `off` | `on`/`true`/`yes`/`1` (same set as the bot's flag of that name): print dialog, print buttons, size picker, "Not printed" filter/badges/markers, print reminders, and the `/scan` + `/issue` New carton / Labels chips. Off: none of these; `28…` codes are still minted, saved and booked. Build-time — a change needs a Vercel redeploy |
 No `process.env.*` is read in this file; no role check exists in this file (roles are decided by the bot before the link is sent).
 
 ---
