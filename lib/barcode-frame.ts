@@ -117,22 +117,49 @@ export class ReadConfirmer {
     private readonly windowMs = 3000,
   ) {}
 
-  /** Feed one frame's reads. Returns the confirmed value (if any) and the best progress count for the UI. */
-  add(reads: FrameRead[], now: number): { confirmed: string | null; progress: number } {
+  /**
+   * Feed one frame's reads. Returns the confirmed value (if any) and the best progress count for the UI.
+   *
+   * `known` (optional) says which values are already on the list (2026-10-21,
+   * Glatt 261060451, Mevaser's fix 1.1): a neighbour's label that was scanned
+   * earlier must never win the frame from a label that is not on the list
+   * yet, nor wipe its progress. So when several values confirm on the same
+   * frame, one that is NOT known wins (nearest the centre among those); a
+   * known value wins only when no new value confirmed. And a known value
+   * confirming drops only its own count — the new label it shares the frame
+   * with keeps counting. A new value confirming clears everything, as before.
+   */
+  add(
+    reads: FrameRead[],
+    now: number,
+    known?: (value: string) => boolean,
+  ): { confirmed: string | null; progress: number } {
     for (const [v, p] of this.pending) {
       if (now - p.first > this.windowMs) this.pending.delete(v);
     }
-    let confirmed: string | null = null;
+    let confirmedNew: string | null = null;
+    let confirmedKnown: string | null = null;
     for (const r of orderReads(reads)) {
       const p = this.pending.get(r.value);
       const count = p ? p.count + 1 : 1;
       this.pending.set(r.value, { count, first: p ? p.first : now });
       // orderReads sorted by centre distance, so the first to confirm is the nearest.
-      if (confirmed === null && count >= this.need) confirmed = r.value;
+      if (count < this.need) continue;
+      if (known && known(r.value)) {
+        if (confirmedKnown === null) confirmedKnown = r.value;
+      } else if (confirmedNew === null) {
+        confirmedNew = r.value;
+      }
     }
-    if (confirmed !== null) {
+    if (confirmedNew !== null) {
       this.pending.clear();
-      return { confirmed, progress: 0 };
+      return { confirmed: confirmedNew, progress: 0 };
+    }
+    if (confirmedKnown !== null) {
+      this.pending.delete(confirmedKnown);
+      let rest = 0;
+      for (const p of this.pending.values()) rest = Math.max(rest, p.count);
+      return { confirmed: confirmedKnown, progress: rest };
     }
     let progress = 0;
     for (const p of this.pending.values()) progress = Math.max(progress, p.count);

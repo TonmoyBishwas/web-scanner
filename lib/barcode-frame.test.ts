@@ -182,6 +182,44 @@ describe('ReadConfirmer', () => {
     expect(c.add([{ value: 'A', dist: 0 }], 100).confirmed).toBe('A');
     expect(c.add([{ value: 'B', dist: 0.3 }], 150)).toEqual({ confirmed: null, progress: 1 });
   });
+
+  // Glatt 261060451 (2026-10-21, Mevaser's fix 1.1): a neighbour's label that
+  // is already on the list sat in the centre of the frame and won it.
+  describe('with a known-on-the-list predicate', () => {
+    const listed = new Set(['OLD']);
+    const known = (v: string) => listed.has(v);
+
+    it('a new label beats an already-listed one on the same frame, even off-centre', () => {
+      const c = new ReadConfirmer();
+      c.add([{ value: 'OLD', dist: 0.02 }, { value: 'NEW', dist: 0.4 }], 0, known);
+      const r = c.add([{ value: 'OLD', dist: 0.02 }, { value: 'NEW', dist: 0.4 }], 100, known);
+      expect(r.confirmed).toBe('NEW');
+    });
+
+    it('a listed label confirming does not wipe the new label\'s progress', () => {
+      const c = new ReadConfirmer();
+      c.add([{ value: 'OLD', dist: 0.02 }], 0, known);
+      // OLD confirms here; NEW is seen for the first time on this frame.
+      const r1 = c.add([{ value: 'OLD', dist: 0.02 }, { value: 'NEW', dist: 0.4 }], 100, known);
+      expect(r1).toEqual({ confirmed: 'OLD', progress: 1 });
+      // NEW's second read confirms it (the old rule had cleared it on r1).
+      const r2 = c.add([{ value: 'NEW', dist: 0.4 }], 200, known);
+      expect(r2.confirmed).toBe('NEW');
+    });
+
+    it('a listed label still confirms when it is alone (the page decides what to say)', () => {
+      const c = new ReadConfirmer();
+      c.add([{ value: 'OLD', dist: 0 }], 0, known);
+      expect(c.add([{ value: 'OLD', dist: 0 }], 100, known).confirmed).toBe('OLD');
+    });
+
+    it('two new labels: the centred one wins and clears the rest, as before', () => {
+      const c = new ReadConfirmer();
+      c.add([{ value: 'N1', dist: 0.5 }, { value: 'N2', dist: 0.1 }], 0, known);
+      const r = c.add([{ value: 'N1', dist: 0.5 }, { value: 'N2', dist: 0.1 }], 100, known);
+      expect(r).toEqual({ confirmed: 'N2', progress: 0 });
+    });
+  });
 });
 
 describe('nextPass', () => {

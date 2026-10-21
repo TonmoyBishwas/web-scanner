@@ -608,6 +608,16 @@ export default function PalletVerifyPage({
    *  the worker's finger is on it (see holdScanNotice), or it asks a
    *  question: then it stays until answered or replaced (scanNoticeMs). */
   function showScanNotice(notice: ScanNotice) {
+    // Every time the "same carton or another?" question comes up for a code
+    // (Mevaser's fix 1.5: the answers were logged, the questions were not).
+    const asked = notice.different;
+    const before = scanNoticeRef.current?.different;
+    if (asked && (!before || before.box.barcode !== asked.box.barcode || !!before.sameAnswered !== !!asked.sameAnswered)) {
+      trace('ui', 'same_or_another_shown', {
+        barcode: asked.box.barcode, of: asked.n, loose: asked.loose,
+        same_held: asked.sameAnswered || undefined, quick: asked.quickWeight !== undefined || undefined,
+      });
+    }
     setScanNotice(notice);
     scanNoticeRef.current = notice;
     const ms = scanNoticeMs(notice);
@@ -3871,7 +3881,19 @@ export default function PalletVerifyPage({
               : undefined}
             weightDoubt={box.weight_suspect && !box.weight_checked
               ? weightWarningText(box, tr) : undefined}
-            onBack={() => setIdenticalFor(null)}
+            onBack={() => {
+              // Closed without adding, from the "same or another?" question
+              // (Glatt 261060451, 2026-10-21, Mevaser's fix 1a): the camera is
+              // usually still on that sticker, and its next read re-asked the
+              // question within a second and sent him back into this form.
+              // Treat it as "same carton": its re-reads stay quiet until the
+              // camera has been away (sameHoldRef), the twin way in remains.
+              if (identicalFor.anotherOf !== undefined) {
+                trace('ui', 'different_carton_back', { barcode: identicalFor.box.barcode, of: identicalFor.anotherOf, loose: identicalFor.loose });
+                sameHoldRef.current = { code: identicalFor.box.barcode, lastRead: Date.now() };
+              }
+              setIdenticalFor(null);
+            }}
             onCreated={(labels, form) => handleIdenticalCreated(identicalFor, labels, form)}
           />
         );
@@ -4094,7 +4116,9 @@ export default function PalletVerifyPage({
                 <button
                   type="button"
                   onClick={() => answerSameCarton(d)}
-                  className="flex-1 min-w-0 min-h-[48px] rounded-[10px] flex items-center justify-center gap-[5px] bg-tile border border-line-strong text-ink-inverse px-2 py-2 text-[13px] font-extrabold"
+                  // The main (blue) button: "same carton" is the safe answer
+                  // (Mevaser's fix 1.3 — the risky "add" was the highlighted one).
+                  className="flex-[1.5] min-w-0 min-h-[48px] rounded-[10px] flex items-center justify-center gap-[5px] bg-brand text-white px-2 py-2 text-[13px] font-black"
                 >
                   <MI name="check" size={17} className="flex-none" />
                   <span className="min-w-0">{tr('terminal.sameCarton')}</span>
@@ -4104,7 +4128,7 @@ export default function PalletVerifyPage({
                   type="button"
                   disabled={quick && twinBusy}
                   onClick={() => { if (quick) void addTwinCarton(d); else openDifferentCarton(d); }}
-                  className="flex-[1.5] min-w-0 min-h-[48px] rounded-[10px] flex items-center justify-center gap-[6px] bg-brand text-white px-2 py-2 text-[13px] font-black disabled:opacity-60"
+                  className={`${d.sameAnswered ? 'flex-[1.5] bg-brand text-white font-black' : 'flex-1 bg-tile border border-line-strong text-ink-inverse font-extrabold'} min-w-0 min-h-[48px] rounded-[10px] flex items-center justify-center gap-[6px] px-2 py-2 text-[13px] disabled:opacity-60`}
                 >
                   {quick && twinBusy ? <Loader2 className="w-4 h-4 animate-spin flex-none" /> : !quick && <MI name="new_label" size={17} className="flex-none" />}
                   <span className="min-w-0">
@@ -5574,7 +5598,6 @@ export default function PalletVerifyPage({
                 {selectHint}
                 {looseActive && looseItemFilter.matches(looseActive) && (
                   <ActiveScanCard
-                    tone="warn"
                     index={looseBoxes.length}
                     name={looseActive.item_name_hebrew || looseActive.item_name || '—'}
                     value={looseActive.weight > 0 ? looseActive.weight.toFixed(2) : '—'}

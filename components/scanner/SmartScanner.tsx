@@ -605,6 +605,11 @@ export function SmartScanner({
   // Read by triggerRedFlash to decide whether a rejection lands inside the hold
   // it needs to correct, or is a standalone one (a rejected manual capture).
   const inCooldownRef = useRef(false);
+  // What the current 3 s hold is for — a carton just saved, or a label that
+  // was already on the list — kept apart from outcomeRef (which the parent's
+  // red flash may rewrite) so the per-barcode cooldown can tell them apart.
+  const lastHoldOutcomeRef = useRef<'saved' | 'duplicate'>('saved');
+  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // The duplicate predicate lives behind a ref: `detect` is a long-lived rAF
   // closure and would otherwise capture the first render's prop forever.
   const isDupRef = useRef(isDuplicateBarcode);
@@ -944,6 +949,11 @@ export function SmartScanner({
     };
   }, [onScannerTypeDetected, enumerateCameras]);
 
+  // The hold's countdown timer never outlives the scanner.
+  useEffect(() => () => {
+    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+  }, []);
+
   // Function to trigger duplicate indicator (called by parent on duplicate detection)
   // The parent rejecting a scan the predicate could not have known about — a
   // split-assignment clash, or a manual capture whose OCR resolved to a box
@@ -1254,7 +1264,13 @@ export function SmartScanner({
       }
 
       // Multi-read validation: 2 identical reads within 3 seconds, per value.
-      const { confirmed, progress } = confirmerRef.current.add(frameReads, now);
+      // A label already on the list never wins the frame from one that is
+      // not (Glatt 261060451, 2026-10-21 — lib/barcode-frame.ts `known`).
+      const { confirmed, progress } = confirmerRef.current.add(
+        frameReads,
+        now,
+        (v) => isDupRef.current?.(v.trim()) ?? false,
+      );
       if (!confirmed) {
         setCaptureCount(progress);
         // A value seen but not (yet) confirmed — the "camera sees it, nothing
@@ -1288,14 +1304,28 @@ export function SmartScanner({
         return;
       }
 
-      // Check cooldown
+      // Check cooldown — per barcode (2026-10-21, Mevaser's fix 1.4). The
+      // same code inside its 3 s hold is the camera resting on it: dropped.
+      // A DIFFERENT code is dropped only while a freshly saved carton's hold
+      // runs (its sticker photo is still being taken, and on an image-read
+      // supplier a second label in that frame must not borrow its photo).
+      // A hold for a label that was already on the list never blocks a code
+      // that is NOT on the list: that was the neighbour's old sticker keeping
+      // the new carton out. (Another listed code still waits, as before — no
+      // burst of "already on the list" notices while the camera sweeps.)
       const timeSinceLastScan = now - lastScanTimeRef.current;
-      if (timeSinceLastScan < 3000) {
+      const sameAsHeld = barcode === lastScannedRef.current;
+      const heldBySave = lastHoldOutcomeRef.current === 'saved';
+      const listedAlready = isDupRef.current?.(barcode) ?? false;
+      if (timeSinceLastScan < 3000 && (sameAsHeld || heldBySave || listedAlready)) {
         console.log('[SmartScanner] Cooldown active, ignoring confirmed scan');
         if (cooldownThrottleRef.current.allow(barcode, now)) {
           trace('ui', 'cooldown_drop', { value: barcode, held_by: lastScannedRef.current, ms: timeSinceLastScan });
         }
         return;
+      }
+      if (timeSinceLastScan < 3000) {
+        trace('ui', 'cooldown_pass', { value: barcode, held_by: lastScannedRef.current, ms: timeSinceLastScan });
       }
 
       // Process confirmed scan
@@ -1308,6 +1338,7 @@ export function SmartScanner({
       // the sharpest-frame capture below (~400ms), which is far too late
       // to be showing a green "saved" in the meantime.
       const isDup = isDupRef.current?.(barcode) ?? false;
+      lastHoldOutcomeRef.current = isDup ? 'duplicate' : 'saved';
       outcomeRef.current = isDup ? 'duplicate' : 'saved';
       setScanOutcome(outcomeRef.current);
       if (isDup) setRejectKind('duplicate');
@@ -1321,17 +1352,22 @@ export function SmartScanner({
       setIsInCooldown(true);
       setCooldownTimeLeft(3);
 
-      // Start cooldown countdown timer
+      // Start cooldown countdown timer. One timer at a time: a different code
+      // may now start a new hold inside the previous one (per-barcode
+      // cooldown), and the old timer must not end the new hold early.
+      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
       let countdown = 3;
       const countdownInterval = setInterval(() => {
         countdown--;
         setCooldownTimeLeft(countdown);
         if (countdown <= 0) {
           clearInterval(countdownInterval);
+          if (countdownTimerRef.current === countdownInterval) countdownTimerRef.current = null;
           inCooldownRef.current = false;
           setIsInCooldown(false);
         }
       }, 1000);
+      countdownTimerRef.current = countdownInterval;
 
       // Long enough to register as a deliberate confirmation rather than a
       // blink. A re-read keeps the old short blink — blue where a decode
