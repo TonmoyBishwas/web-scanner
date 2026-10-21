@@ -1131,14 +1131,14 @@ export const he: Record<TranslationKey, string> = {
   'receive.qtyPlain': 'כמות',
   'receive.notArrived': '0 – לא הגיע',
   'receive.cartons': 'קרטונים/אריזות',
-  // PENDING MEVASER 20/10 — draft, not approved (was 'סוג אריזה')
+  // Mevaser 21/10: approved
   'receive.packaging': 'אריזה חיצונית',
   'receive.packagingNone': '—',
   'receive.expiry': 'תאריך תפוגה',
   'receive.noExpiry': 'אין תוקף',
-  // PENDING MEVASER 20/10 — draft, not approved
+  // Mevaser 21/10: approved
   'receive.expiryPlaceholder': 'dd.mm.yyyy',
-  // PENDING MEVASER 20/10 — draft, not approved
+  // Mevaser 21/10: approved
   'receive.openCalendar': 'פתיחת לוח שנה',
   'receive.shortBy': 'חסר: {x}',
   'receive.over': 'עודף: {x}',
@@ -1205,39 +1205,41 @@ export const he: Record<TranslationKey, string> = {
   'receive.palletsLess': 'משטח אחד פחות',
   'receive.palletsMore': 'משטח אחד יותר',
   // ── Outer package badge + two-page notes on the receive form (client 20/10) ─────
-  // PENDING MEVASER 20/10 — draft, not approved
+  // Mevaser 21/10: approved
   'receive.perPack': '{n} {inner} בכל {pack}',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.pageAdded': 'נוסף עמוד לתעודה — {n} שורות חדשות. הן מסומנות "חדש" למטה.',
-  // PENDING MEVASER 20/10 — draft, not approved
+  // Mevaser 21/10: his wording
+  'receive.pageAdded': 'נוסף עמוד: {n} שורות חדשות',
+  'receive.pageAddedOne': 'נוסף עמוד: שורה חדשה אחת',
+  // Mevaser 21/10: approved
   'receive.newLineTag': 'חדש',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.linesChanged': 'התעודה עודכנה: נוספו {n} שורות. מלאו אותן ואשרו שוב — מה שכבר מילאתם נשמר.',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.replacedTitle': 'יש קישור חדש לתעודה הזו',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.replacedBody': 'נוסף עמוד לתעודה. פתחו את הקישור האחרון בוואטסאפ — מה שמילאתם נשמר.',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.openNewer': 'פתיחת הטופס המעודכן',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.cancelledTitle': 'הקבלה הזו בוטלה',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.cancelledBody': 'אין צורך לעשות כאן דבר. אם הסחורה הגיעה — שלחו שוב את צילום התעודה בוואטסאפ.',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.duplicateTitle': 'הטופס הזה נסגר כי הוא כפול',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.duplicateBody': 'יש טופס אחר לאותה תעודה. אין צורך לעשות כאן דבר.',
+  // Mevaser 21/10: his wording
+  'receive.linesChanged': 'נוספו {n} שורות. מלאו ואשרו שוב.',
+  'receive.linesChangedOne': 'נוספה שורה אחת. מלאו ואשרו שוב.',
+  // Mevaser 21/10: his wording
+  'receive.replacedTitle': 'יש קישור חדש לתעודה',
+  // Mevaser 21/10: his wording
+  'receive.replacedBody': 'פתחו את הקישור האחרון בוואטסאפ.',
+  // Mevaser 21/10: his wording
+  'receive.openNewer': 'לטופס החדש',
+  // Mevaser 21/10: his wording
+  'receive.cancelledTitle': 'הקליטה בוטלה',
+  // Mevaser 21/10: his wording
+  'receive.cancelledBody': 'אם הסחורה הגיעה, שלחו שוב צילום של התעודה.',
+  // Mevaser 21/10: his wording
+  'receive.duplicateTitle': 'טופס כפול, נסגר',
+  // Mevaser 21/10: his wording
+  'receive.duplicateBody': 'ממשיכים בטופס השני.',
   // ── Item search on the receive form (client 20/10) ─────
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.searchPlaceholder': 'חיפוש לפי שם פריט או קוד',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.searchClear': 'ניקוי החיפוש',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.searchNone': 'אין בתעודה שורה שמתאימה לחיפוש',
-  // PENDING MEVASER 20/10 — draft, not approved
+  // Mevaser 21/10: his wording
+  'receive.searchPlaceholder': 'חיפוש פריט או מק"ט',
+  // Mevaser 21/10: his wording
+  'receive.searchClear': 'ניקוי',
+  // Mevaser 21/10: his wording
+  'receive.searchNone': 'לא נמצא בתעודה',
+  // Mevaser 21/10: approved
   'receive.searchCount': '{n} מתוך {total} שורות',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.searchFuzzy': 'לא נמצאה התאמה מדויקת. אולי אחת מאלה:',
+  // Mevaser 21/10: his wording
+  'receive.searchFuzzy': 'אולי התכוונתם ל:',
   // ── Delete sheet, group count, print-later link (2026-10-15) ─────
   'terminal.deleteAllTitle': 'מחיקה — משטח {n}',
   'terminal.deleteAllTitleLoose': 'מחיקה — קרטונים בודדים',

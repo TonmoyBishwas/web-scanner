@@ -31,52 +31,62 @@ import { validateCartonDates } from './date-validation';
 /**
  * The OUTER package the worker counts next to "cartons/packages" (client
  * 20/10: "36 יחידות · 3 בקבוק" = 36 units · 3 bottle mixed the inner unit into
- * the package count). Same 13 keys, same order, as the bot's
- * `receipt_form.PACKAGINGS` — contract file scratchpad/oct20b/contract_packaging.json;
- * `lib/receipt-form.test.ts` pins the literal list.
+ * the package count). Same 14 keys, same order, as the bot's
+ * `receipt_form.PACKAGINGS` — `lib/receipt-form.test.ts` pins the literal
+ * list. `box` (קופסה, the notes print "קפ") added by Mevaser 21/10.
  */
 export const PACKAGING = [
-  'carton', 'pack', 'sack', 'bag', 'bucket', 'can', 'jar', 'bottle', 'gallon', 'crate', 'tray', 'unit', 'other',
+  'carton', 'pack', 'sack', 'bag', 'bucket', 'can', 'jar', 'bottle', 'gallon', 'crate', 'tray', 'box', 'unit', 'other',
 ] as const;
 export type Packaging = (typeof PACKAGING)[number];
 
-// PENDING MEVASER 20/10 — draft, not approved: pack, can, jar, gallon are new; unit was 'יחידה' / 'Unit'.
+// Dropdown options. Mevaser 21/10: approved, with can = פח (not פחית, a small
+// drink can), gallon = גלון, unit = יחידה; box = קופסה is his.
 export const PACKAGING_LABELS: Record<Packaging, { he: string; en: string }> = {
   carton: { he: 'קרטון', en: 'Carton' },
   pack: { he: 'מארז', en: 'Pack' },
   sack: { he: 'שק', en: 'Sack' },
   bag: { he: 'שקית', en: 'Bag' },
   bucket: { he: 'דלי', en: 'Bucket' },
-  can: { he: 'פחית / שימורים', en: 'Can / tin' },
+  can: { he: 'פח', en: 'Tin' },
   jar: { he: 'צנצנת', en: 'Jar' },
   bottle: { he: 'בקבוק', en: 'Bottle' },
-  gallon: { he: "גלון / ג'ריקן", en: 'Gallon / jerrycan' },
+  gallon: { he: 'גלון', en: 'Gallon' },
   crate: { he: 'ארגז', en: 'Crate' },
   tray: { he: 'מגש', en: 'Tray' },
-  unit: { he: 'יחידה בודדת', en: 'Single unit' },
+  box: { he: 'קופסה', en: 'Box' },
+  unit: { he: 'יחידה', en: 'Unit' },
   other: { he: 'אחר', en: 'Other' },
 };
 
-/** Plural package words for the "on the note" badge ("3 קרטונים" = 3 cartons). */
-// PENDING MEVASER 20/10 — draft, not approved (all new).
+/** The package word for ONE package in the badge ("1 קרטון", "בכל קרטון").
+ * Mevaser 21/10: 'other' reads אריזה (package), never "אחר". */
+export const PACKAGING_SINGULAR: Record<Packaging, { he: string; en: string }> = {
+  ...PACKAGING_LABELS,
+  other: { he: 'אריזה', en: 'Package' },
+};
+
+/** Plural package words for the "on the note" badge ("3 קרטונים" = 3 cartons).
+ * Mevaser 21/10: approved, with פחים (tins) and קופסאות (boxes). */
 export const PACKAGING_PLURAL: Record<Packaging, { he: string; en: string }> = {
   carton: { he: 'קרטונים', en: 'cartons' },
   pack: { he: 'מארזים', en: 'packs' },
   sack: { he: 'שקים', en: 'sacks' },
   bag: { he: 'שקיות', en: 'bags' },
   bucket: { he: 'דליים', en: 'buckets' },
-  can: { he: 'פחיות', en: 'cans' },
+  can: { he: 'פחים', en: 'tins' },
   jar: { he: 'צנצנות', en: 'jars' },
   bottle: { he: 'בקבוקים', en: 'bottles' },
   gallon: { he: 'גלונים', en: 'gallons' },
   crate: { he: 'ארגזים', en: 'crates' },
   tray: { he: 'מגשים', en: 'trays' },
+  box: { he: 'קופסאות', en: 'boxes' },
   unit: { he: 'יחידות', en: 'units' },
   other: { he: 'אריזות', en: 'packages' },
 };
 
 /** How ONE unit inside an outer package is packed (bot `outer_packaging` → `inner`). */
-export const INNER_PACKAGING = ['bottle', 'can', 'jar', 'gallon', 'unit'] as const satisfies readonly Packaging[];
+export const INNER_PACKAGING = ['bottle', 'can', 'jar', 'gallon', 'box', 'unit'] as const satisfies readonly Packaging[];
 export type InnerPackaging = (typeof INNER_PACKAGING)[number];
 
 export const EXTRA_UNITS = ['units', 'kg', 'cartons', 'packs', 'litres'] as const;
@@ -501,14 +511,14 @@ export function packBadge(
   const packs =
     line.cartons === null
       ? null
-      : { n: line.cartons, pack: p ? (line.cartons === 1 ? PACKAGING_LABELS[p] : PACKAGING_PLURAL[p])[lang] : packsWord };
+      : { n: line.cartons, pack: p ? (line.cartons === 1 ? PACKAGING_SINGULAR[p] : PACKAGING_PLURAL[p])[lang] : packsWord };
   const perPack =
     line.per_pack !== null && p
       ? {
           n: line.per_pack,
           inner: PACKAGING_PLURAL[line.inner ?? 'unit'][lang],
           // Mid-sentence in English: "12 bottles in each carton".
-          pack: lang === 'en' ? PACKAGING_LABELS[p].en.toLowerCase() : PACKAGING_LABELS[p].he,
+          pack: lang === 'en' ? PACKAGING_SINGULAR[p].en.toLowerCase() : PACKAGING_SINGULAR[p].he,
         }
       : null;
   return { packs, perPack };

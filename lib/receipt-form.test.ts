@@ -31,6 +31,7 @@ import {
   PACKAGING,
   PACKAGING_LABELS,
   PACKAGING_PLURAL,
+  PACKAGING_SINGULAR,
   todayInJerusalem,
   validateAnswers,
   type Answers,
@@ -455,14 +456,28 @@ describe('draft', () => {
 });
 
 describe('outer package (client 20/10)', () => {
-  it('the 13 keys, in the bot order (contract_packaging.json)', () => {
+  it('the 14 keys, in the bot order (receipt_form.PACKAGINGS)', () => {
     expect([...PACKAGING]).toEqual([
-      'carton', 'pack', 'sack', 'bag', 'bucket', 'can', 'jar', 'bottle', 'gallon', 'crate', 'tray', 'unit', 'other',
+      'carton', 'pack', 'sack', 'bag', 'bucket', 'can', 'jar', 'bottle', 'gallon', 'crate', 'tray', 'box', 'unit', 'other',
     ]);
     for (const k of PACKAGING) {
       expect(PACKAGING_LABELS[k].he).toBeTruthy();
+      expect(PACKAGING_SINGULAR[k].he).toBeTruthy();
       expect(PACKAGING_PLURAL[k].he).toBeTruthy();
     }
+  });
+
+  it("Mevaser 21/10: פח / פחים for tins, קופסה / קופסאות, and 'other' reads אריזה in the badge", () => {
+    expect(PACKAGING_LABELS.can.he).toBe('פח');
+    expect(PACKAGING_PLURAL.can.he).toBe('פחים');
+    expect(PACKAGING_PLURAL.box.he).toBe('קופסאות');
+    expect(packBadge(line({ cartons: 1, packaging: 'other' }), 'he', 'אריזות').packs).toEqual({ n: 1, pack: 'אריזה' });
+    expect(packBadge(line({ cartons: 8, packaging: 'carton', per_pack: 12, inner: 'box' }), 'he', 'x').perPack).toEqual({
+      n: 12, inner: 'קופסאות', pack: 'קרטון',
+    });
+    expect(packBadge(line({ cartons: 4, packaging: 'other', per_pack: 6, inner: 'can' }), 'he', 'x').perPack).toEqual({
+      n: 6, inner: 'פחים', pack: 'אריזה',
+    });
   });
 
   it('normalizeFormLines keeps per_pack / inner, nulls junk, and old rows still parse', () => {

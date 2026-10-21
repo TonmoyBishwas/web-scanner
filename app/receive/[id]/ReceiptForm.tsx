@@ -1043,7 +1043,7 @@ export function ReceiptForm({
           again = nextRev;
           return;
         }
-        setPhase({ kind: 'error', message: n ? tr('receive.linesChanged', { n }) : tr('receive.errorGeneric') });
+        setPhase({ kind: 'error', message: n ? tr(n === 1 ? 'receive.linesChangedOne' : 'receive.linesChanged', { n }) : tr('receive.errorGeneric') });
         return;
       }
       const status = data?.status;
@@ -1212,7 +1212,7 @@ export function ReceiptForm({
                 setPendingScroll(first.index);
               }}
             >
-              {tr('receive.pageAdded', { n: pageAdded })}
+              {tr(pageAdded === 1 ? 'receive.pageAddedOne' : 'receive.pageAdded', { n: pageAdded })}
             </button>
             <button
               type="button"

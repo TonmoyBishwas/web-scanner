@@ -1129,14 +1129,14 @@ export const en = {
   'receive.qtyPlain': 'Quantity',
   'receive.notArrived': '0 – didn\'t arrive',
   'receive.cartons': 'Cartons/packs',
-  // PENDING MEVASER 20/10 — draft, not approved (was 'Packaging')
+  // Mevaser 21/10: approved
   'receive.packaging': 'Outer package',
   'receive.packagingNone': '—',
   'receive.expiry': 'Expiry date',
   'receive.noExpiry': 'No expiry',
-  // PENDING MEVASER 20/10 — draft, not approved
+  // Mevaser 21/10: approved
   'receive.expiryPlaceholder': 'dd.mm.yyyy',
-  // PENDING MEVASER 20/10 — draft, not approved
+  // Mevaser 21/10: approved
   'receive.openCalendar': 'Open calendar',
   'receive.shortBy': 'Short: {x}',
   'receive.over': 'Over: {x}',
@@ -1203,39 +1203,41 @@ export const en = {
   'receive.palletsLess': 'One pallet less',
   'receive.palletsMore': 'One pallet more',
   // ── Outer package badge + two-page notes on the receive form (client 20/10) ─────
-  // PENDING MEVASER 20/10 — draft, not approved
+  // Mevaser 21/10: approved
   'receive.perPack': '{n} {inner} in each {pack}',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.pageAdded': 'A page was added to this note — {n} new lines, marked "New" below.',
-  // PENDING MEVASER 20/10 — draft, not approved
+  // Mevaser 21/10: his wording
+  'receive.pageAdded': 'Page added: {n} new lines',
+  'receive.pageAddedOne': 'Page added: 1 new line',
+  // Mevaser 21/10: approved
   'receive.newLineTag': 'New',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.linesChanged': 'The note was updated: {n} lines were added. Fill them in and approve again — what you already filled in is kept.',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.replacedTitle': 'There is a newer link for this note',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.replacedBody': 'A page was added. Open the latest link in WhatsApp — what you filled in is kept.',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.openNewer': 'Open the updated form',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.cancelledTitle': 'This receipt was cancelled',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.cancelledBody': 'Nothing to do here. If the goods arrived, send the note photo again in WhatsApp.',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.duplicateTitle': 'This form was closed as a duplicate',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.duplicateBody': 'There is another form for the same note. Nothing to do here.',
+  // Mevaser 21/10: his wording
+  'receive.linesChanged': '{n} lines were added. Fill in and approve again.',
+  'receive.linesChangedOne': '1 line was added. Fill in and approve again.',
+  // Mevaser 21/10: his wording
+  'receive.replacedTitle': 'There is a new link for this note',
+  // Mevaser 21/10: his wording
+  'receive.replacedBody': 'Open the latest link in WhatsApp.',
+  // Mevaser 21/10: his wording
+  'receive.openNewer': 'To the new form',
+  // Mevaser 21/10: his wording
+  'receive.cancelledTitle': 'The receiving was cancelled',
+  // Mevaser 21/10: his wording
+  'receive.cancelledBody': 'If the goods arrived, send a photo of the note again.',
+  // Mevaser 21/10: his wording
+  'receive.duplicateTitle': 'Duplicate form, closed',
+  // Mevaser 21/10: his wording
+  'receive.duplicateBody': 'Continue in the other form.',
   // ── Item search on the receive form (client 20/10) ─────
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.searchPlaceholder': 'Search by item name or code',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.searchClear': 'Clear the search',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.searchNone': 'No line on the note matches the search',
-  // PENDING MEVASER 20/10 — draft, not approved
+  // Mevaser 21/10: his wording
+  'receive.searchPlaceholder': 'Search item or SKU',
+  // Mevaser 21/10: his wording
+  'receive.searchClear': 'Clear',
+  // Mevaser 21/10: his wording
+  'receive.searchNone': 'Not on the note',
+  // Mevaser 21/10: approved
   'receive.searchCount': '{n} of {total} lines',
-  // PENDING MEVASER 20/10 — draft, not approved
-  'receive.searchFuzzy': 'No exact match. Maybe one of these:',
+  // Mevaser 21/10: his wording
+  'receive.searchFuzzy': 'Did you mean:',
   // ── Delete sheet, group count, print-later link (2026-10-15) ─────
   'terminal.deleteAllTitle': 'Delete — pallet {n}',
   'terminal.deleteAllTitleLoose': 'Delete — loose cartons',
