@@ -31,7 +31,7 @@ export function BoxDetailModal({
         <div className="mb-6">
           <DetailRow label={tr('components.boxDetail.itemName')} value={box.item_name} />
           <DetailRow label={tr('components.boxDetail.sku')} value={box.sku} mono />
-          <DetailRow label={tr('components.boxDetail.weight')} value={`${box.weight} kg`} highlight mono />
+          <DetailRow label={tr('components.boxDetail.weight')} value={`${box.weight} ${tr('common.kg')}`} highlight mono />
           <DetailRow label={tr('components.boxDetail.expiry')} value={box.expiry || na} mono />
           <DetailRow label={tr('components.boxDetail.supplier')} value={box.supplier} />
           <DetailRow label={tr('components.boxDetail.invoice')} value={box.invoice_number || na} mono />

@@ -25,7 +25,7 @@ export function IssuedBoxList({ issuedBoxes }: IssuedBoxListProps) {
         <h3 className="text-ink font-bold">
           {tr('components.issuedBoxList.issuedHeader', { count: issuedBoxes.length })}
         </h3>
-        <span className="text-ok-weak-ink font-extrabold font-mono" dir="ltr">{totalWeight.toFixed(2)} kg</span>
+        <span className="text-ok-weak-ink font-extrabold font-mono" dir="ltr">{totalWeight.toFixed(2)} {tr('common.kg')}</span>
       </div>
 
       <div className="space-y-2 max-h-48 overflow-y-auto">
@@ -36,7 +36,7 @@ export function IssuedBoxList({ issuedBoxes }: IssuedBoxListProps) {
           >
             <span className="text-ink font-semibold truncate me-2">{box.item_name}</span>
             <span className="text-ok-weak-ink font-bold font-mono whitespace-nowrap" dir="ltr">
-              {box.weight} kg
+              {box.weight} {tr('common.kg')}
             </span>
           </div>
         ))}

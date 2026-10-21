@@ -30,7 +30,7 @@ export function ItemProgress({ items, scanned, ocrResults = new Map(), ocrPendin
         <div className="flex justify-between items-center mb-2">
           <span className="text-sm font-bold text-ink">{tr('components.itemProgress.overall')}</span>
           <span className="text-sm font-mono text-ink-muted" dir="ltr">
-            {totalWeightScanned.toFixed(2)} kg / {totalWeightExpected.toFixed(2)} kg
+            {totalWeightScanned.toFixed(2)} {tr('common.kg')} / {totalWeightExpected.toFixed(2)} {tr('common.kg')}
           </span>
         </div>
         <div className="w-full bg-sunken rounded-full h-3">

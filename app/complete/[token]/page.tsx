@@ -20,9 +20,9 @@ function CompleteContent({ session }: { session: ScanSession }) {
     const lines = [
       `${tr('complete.summary')} — ${tr('complete.title')}`,
       `${tr('complete.totalScanned')}: ${totalScans}`,
-      `${tr('complete.totalWeightLabel')}: ${totalWeight.toFixed(2)} kg`,
+      `${tr('complete.totalWeightLabel')}: ${totalWeight.toFixed(2)} ${tr('common.kg')}`,
       ...scannedItems.map(
-        item => `• ${item.item_name}: ${tr('complete.boxesUnit', { count: item.scanned_count })}, ${item.scanned_weight.toFixed(2)} kg`
+        item => `• ${item.item_name}: ${tr('complete.boxesUnit', { count: item.scanned_count })}, ${item.scanned_weight.toFixed(2)} ${tr('common.kg')}`
       ),
     ];
     const text = lines.join('\n');
@@ -65,7 +65,7 @@ function CompleteContent({ session }: { session: ScanSession }) {
           </div>
           <div className="flex-[1.3] bg-sunken border border-line rounded-[11px] px-[6px] py-[10px] text-center">
             <div className="text-[16px] font-black text-ink-inverse font-mono" dir="ltr">
-              {totalWeight.toFixed(1)}<span className="text-[9px] font-sans font-extrabold text-ink-muted"> kg</span>
+              {totalWeight.toFixed(1)}<span className="text-[9px] font-sans font-extrabold text-ink-muted"> {tr('common.kg')}</span>
             </div>
             <div className="text-[9px] font-bold text-ink-muted mt-[2px]">{tr('complete.totalWeightLabel')}</div>
           </div>
@@ -92,7 +92,7 @@ function CompleteContent({ session }: { session: ScanSession }) {
                   <div className="text-sm text-ink-muted space-y-1">
                     <p>{tr('complete.boxesUnit', { count: item.scanned_count })}</p>
                     <p className="font-mono" dir="ltr">
-                      {item.scanned_weight.toFixed(2)} / {item.expected_weight.toFixed(2)} kg
+                      {item.scanned_weight.toFixed(2)} / {item.expected_weight.toFixed(2)} {tr('common.kg')}
                       {' '}({percentage.toFixed(0)}%)
                     </p>
                   </div>

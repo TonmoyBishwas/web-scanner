@@ -106,7 +106,7 @@ export function ScannedList({
                   <p className="text-sm text-ink-body truncate">
                     {ocrResult.product_name || ocrResult.product_name_hebrew || tr('common.unknown')}
                     {ocrResult.weight_kg ? (
-                      <span className="text-brand-weak-ink font-mono font-bold ms-1.5" dir="ltr">{ocrResult.weight_kg} kg</span>
+                      <span className="text-brand-weak-ink font-mono font-bold ms-1.5" dir="ltr">{ocrResult.weight_kg} {tr('common.kg')}</span>
                     ) : null}
                   </p>
                 ) : isPending ? (

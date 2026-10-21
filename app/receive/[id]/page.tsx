@@ -27,7 +27,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export const metadata: Metadata = {
-  title: 'קבלת סחורה',
+  title: 'קליטת סחורה',
   // The signed link is in the URL: keep it out of Referer headers and indexes.
   referrer: 'no-referrer',
   robots: { index: false, follow: false },
