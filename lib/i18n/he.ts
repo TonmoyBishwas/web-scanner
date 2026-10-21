@@ -703,8 +703,8 @@ export const he: Record<TranslationKey, string> = {
   'priority.waitingNothing': 'נשמר. אין מה לשלוח לפריוריטי. לא נקלטה כמות.',
   'priority.waitingOther': 'נשמר. פריוריטי עדיין לא יכולה לקלוט. ננסה שוב אוטומטית.',
   'priority.codesLabel': 'קודי פריט',
-  'priority.failed': 'נשמר במחסן, אבל פריוריטי לא קיבלה את הקבלה.', // English: Saved in the warehouse, but Priority did not accept the receipt.
-  'priority.failedOffice': 'נשמר במחסן. פריוריטי לא קיבלה את הקבלה. המשרד מטפל, אין צורך לעשות דבר.', // English: Saved in the warehouse. Priority did not accept the receipt — the office is handling it, nothing for you to do.
+  'priority.failed': 'נשמר במחסן, אבל פריוריטי לא קיבלה את התעודה.', // English: Saved in the warehouse, but Priority did not accept the receipt.
+  'priority.failedOffice': 'נשמר במחסן. פריוריטי לא קיבלה את התעודה. המשרד מטפל, אין צורך לעשות דבר.', // English: Saved in the warehouse. Priority did not accept the receipt — the office is handling it, nothing for you to do.
   'priority.expired': 'נשמר במחסן. לא נשלח לפריוריטי. לא היה מוכן לשליחה.', // English: Saved in the warehouse. Not sent to Priority — it was never ready to send.
   'priority.expiredOffice': 'נשמר במחסן. לא נשלח לפריוריטי. לא היה מוכן לשליחה. המשרד מטפל, אין צורך לעשות דבר.', // English: Saved in the warehouse. Not sent to Priority — it was never ready to send. The office is handling it, nothing for you to do.
   'priority.test': 'משתמש בדיקה. לא נשלח לפריוריטי',
@@ -1111,7 +1111,7 @@ export const he: Record<TranslationKey, string> = {
   'labels.gateOpenList': 'בחרו במסך מדבקות',
   'labels.gateHintManual': 'קודם הדפיסו את המדבקות השמורות. חזרו ופתחו את מסך "מדבקות".',
   // ── Non-meat fill-in form (/receive/[id]) ───────────────────────────
-  'receive.title': 'קבלת סחורה',
+  'receive.title': 'קליטת סחורה',
   'receive.invoice': 'תעודה {n}',
   'receive.lineCount': '{n} שורות',
   'receive.pallets': 'כמה משטחים?',
@@ -1158,7 +1158,7 @@ export const he: Record<TranslationKey, string> = {
   'receive.allReady': 'הכל מוכן',
   'receive.submit': 'אישור ושליחה',
   'receive.submitting': 'שומר…',
-  'receive.saved': 'נשמר. הקבלה נשלחת לפריוריטי. אפשר לחזור לוואטסאפ.',
+  'receive.saved': 'נשמר. התעודה נשלחת לפריוריטי. אפשר לחזור לוואטסאפ.',
   'receive.savedLines': '{n} שורות נשמרו',
   'receive.errorGeneric': 'השמירה נכשלה. נסו שוב.',
   'receive.errorNetwork': 'אין חיבור. בדקו קליטה ונסו שוב.',
