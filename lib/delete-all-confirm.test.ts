@@ -34,6 +34,6 @@ describe('deleteAllQuestion', () => {
     expect(deleteAllQuestion('rows', false, 5).tone).toBe('danger');
     expect(deleteAllQuestion('unprinted', true, 5).tone).toBe('danger');
     expect(deleteAllQuestion('void_printed', false, 5).tone).toBe('warn');
-    expect(t('Hebrew', deleteAllQuestion('rows', false, 5).confirmKey)).toBe('כן, מחק');
+    expect(t('Hebrew', deleteAllQuestion('rows', false, 5).confirmKey)).toBe('כן, מחקו');
   });
 });
