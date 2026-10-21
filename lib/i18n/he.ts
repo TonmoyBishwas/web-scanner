@@ -943,7 +943,7 @@ export const he: Record<TranslationKey, string> = {
   'split.board.completeBanner': 'המשלוח הושלם.',
   'split.board.rosterEditHint': 'בטל סימון של מי שלא הגיע כדי לשחרר את המכסה שלו לבריכה. אי אפשר להוסיף מישהו שלא היה בתוכנית המקורית.',
   'split.board.quotaLabel': 'מכסה {quota}',
-  'split.board.error.stillHoldsPallet': '{names} עדיין מחזיק/ה משטח — יש לשחרר אותו לפני ההסרה.',
+  'split.board.error.stillHoldsPallet': 'עדיין יש משטח אצל {names}. יש לשחרר אותו לפני ההסרה.',
   'split.board.error.noWorkersLeft': 'חייב להישאר לפחות עובד אחד במשימה.',
   'split.board.save': 'שמור',
   'split.board.saving': 'שומר…',
