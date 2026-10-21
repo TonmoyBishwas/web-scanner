@@ -47,14 +47,49 @@ const OFFICE_ONLY_PREFIXES = ['receipts.']; // /priority/receipts, the owner's b
 // new worker text with one of the words fails here.
 const PRIORITY_WORDS_PENDING = new Set([
   'errors.lockFailed', // קבלת נעילה = acquiring a lock, not a receipt
-  'priority.heading', 'priority.checking', 'priority.closing', 'priority.sending',
-  'priority.awaiting', 'priority.unconfirmed', 'priority.unconfirmedOffice', 'priority.noWriteback',
-  'priority.received', 'priority.receivedFinal', 'priority.cancelled', 'priority.already',
-  'priority.held', 'priority.heldOffice', 'priority.waitingItems', 'priority.waitingSupplier',
-  'priority.waitingNothing', 'priority.waitingOther', 'priority.failed', 'priority.failedOffice',
-  'priority.expired', 'priority.expiredOffice', 'priority.test', 'priority.off', 'priority.unknown',
-  'receive.saved',
 ]);
+
+// Mevaser 21/10, sweep reply A.5: no system or tool name in any user text
+// (David's screens and the office's). Explicit pending keys (no wording from
+// Mevaser yet, scratchpad oct21c/scanner_release.md), so a new one fails here.
+const SYSTEM_NAMES = new RegExp(
+  String.raw`(?<![A-Za-z])(?:Airtable|Railway|Make|LeonAI|Supabase|Gemini|Vercel|Cloudinary|OpenRouter|webhook)(?![A-Za-z])` +
+    String.raw`|(?<![֐-׿])[ובלמהשכ]{0,2}(?:לוגים|לוג|אדמין)(?![֐-׿])`,
+  'i',
+);
+const SYSTEM_NAMES_PENDING = new Set([
+  'errors.botWebhookNotConfigured', // "the bot's webhook is not configured"
+  'ocr.extractingData', // "… using Gemini AI" (legacy /scan page)
+  'ocr.geminiAnalyzing', // "Gemini is analysing the image…" (legacy /scan page)
+  'receipts.reason.make_crash', // owner's board: "a fault in Make"
+  'receipts.reason.make_no_ok', // owner's board: "Make did not confirm"
+  'receipts.reason.no_reply', // owner's board: "no answer from Make"
+]);
+
+// Mevaser 21/10, sweep reply A.2: the supplier's paper is a תעודה (note), never
+// a חשבונית (invoice), on the worker's screens.
+const INVOICE_WORD = /חשבונית/;
+const INVOICE_WORD_PENDING = new Set([
+  'issue.invoiceLabel', // outbound issue screen: the customer's document, not the supplier's note
+  'terminal.docsSearch', // documents archive search: "invoice OR delivery note" are two different numbers
+]);
+
+// Mevaser 21/10, sweep reply A.1: no second-person singular past or possessive
+// (ענית → עניתם, הזנת → הזנתם, שלך → שלכם).
+const SINGULAR_SECOND_PERSON = new RegExp(
+  String.raw`(?<![֐-׿])(?:` +
+    [
+      'שלך', 'לך', 'ממך', 'אצלך', 'אותך', 'עליך', 'אליך',
+      'ענית', 'הזכרת', 'שקלת', 'אמרת', 'נתת', 'סרקת', 'סיימת', 'הזנת', 'בחרת', 'הקלדת', 'צילמת',
+      'הוספת', 'מחקת', 'הדפסת', 'ספרת', 'שלחת', 'אישרת', 'שמרת', 'שינית', 'תיקנת', 'ביטלת', 'יצרת',
+    ].join('|') +
+    String.raw`)(?![֐-׿])`,
+);
+// Nouns that look like the verb (construct state), not the worker's action.
+const SINGULAR_ALLOWED: Record<string, string> = {
+  'meatManual.title': 'הזנת כמויות', // "quantity entry"
+  'terminal.barcodeMisread': 'ספרת הביקורת', // "the check digit"
+};
 
 describe('Hebrew style rules (Mevaser 21/10)', () => {
   it('no slash gender form in any Hebrew text', () => {
@@ -94,6 +129,32 @@ describe('Hebrew style rules (Mevaser 21/10)', () => {
         !OFFICE_ONLY_PREFIXES.some((p) => k.startsWith(p)) && !PRIORITY_WORDS_PENDING.has(k) && PRIORITY_WORDS.test(v),
     );
     expect(bad).toEqual([]);
+  });
+
+  it('no system or tool name in any Hebrew text', () => {
+    expect(HE.filter(([k, v]) => !SYSTEM_NAMES_PENDING.has(k) && SYSTEM_NAMES.test(v))).toEqual([]);
+    const stale = [...SYSTEM_NAMES_PENDING].filter((k) => !SYSTEM_NAMES.test((he as Record<string, string>)[k] ?? ''));
+    expect(stale).toEqual([]);
+    for (const old of ['בדקו ב-Airtable', 'הלוגים של Railway', 'לבדיקת אדמין', 'בדקו את הלוגים', 'תקלה ב-Make']) {
+      expect(SYSTEM_NAMES.test(old), old).toBe(true);
+    }
+    for (const ok of ['מדבקת משטח', 'המשרד יבדוק', 'הזמנת רכש']) expect(SYSTEM_NAMES.test(ok), ok).toBe(false);
+  });
+
+  it('no חשבונית on a worker screen', () => {
+    expect(HE.filter(([k, v]) => !INVOICE_WORD_PENDING.has(k) && INVOICE_WORD.test(v))).toEqual([]);
+    const stale = [...INVOICE_WORD_PENDING].filter((k) => !INVOICE_WORD.test((he as Record<string, string>)[k] ?? ''));
+    expect(stale).toEqual([]);
+  });
+
+  it('no second-person singular past or possessive', () => {
+    const bad = HE.filter(([k, v]) => {
+      const allowed = SINGULAR_ALLOWED[k];
+      return SINGULAR_SECOND_PERSON.test(allowed ? v.split(allowed).join('') : v);
+    });
+    expect(bad).toEqual([]);
+    for (const old of ['כבר ענית', 'הספירה שלך', 'הזנת 40.']) expect(SINGULAR_SECOND_PERSON.test(old), old).toBe(true);
+    for (const ok of ['כבר עניתם', 'הספירה שלכם', 'הזנתם 40.', 'תודה לכם']) expect(SINGULAR_SECOND_PERSON.test(ok), ok).toBe(false);
   });
 
   it('the pending list holds only keys that still need it', () => {
