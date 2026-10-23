@@ -5412,6 +5412,9 @@ export default function PalletVerifyPage({
             key={box.barcode}
             onViewImage={box.image_data ? () => setViewingImage(box.image_data!) : undefined}
             onRetry={() => retryLooseOcr(box.barcode)}
+            // A failed read can be typed in by hand, as on the newest card —
+            // Retry is not the only way out (S01, 23/10).
+            onEdit={() => openEdit(box, true)}
             onDelete={onDelete}
           />
         );
@@ -5740,6 +5743,9 @@ export default function PalletVerifyPage({
           key={box.barcode}
           onViewImage={box.image_data ? () => setViewingImage(box.image_data!) : undefined}
           onRetry={() => retryPalletOcr(box.barcode)}
+          // A failed read can be typed in by hand, as on the newest card —
+          // Retry is not the only way out (S01, 23/10).
+          onEdit={() => openEdit(box)}
           onDelete={onDelete}
         />
       );
