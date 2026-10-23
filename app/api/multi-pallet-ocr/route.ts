@@ -14,7 +14,7 @@ import { touchSession } from '@/lib/redis';
  *   prompt can pick a known canonical Hebrew name (closed set).
  * Returns: { success: boolean, ocr_data?: { product_name_hebrew, product_name_english, weight_kg, expiry_date, ... } }
  */
-const OCR_TIMEOUT_MS = 45000;
+const OCR_TIMEOUT_MS = 55000;
 
 export async function POST(request: NextRequest) {
   let traceToken = '';
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image, barcode: barcode || 'multi-pallet', candidates: candidates || undefined }),
-      // Longer than the bot's whole box-OCR budget (OCR_BUDGET_S = 24 s in
+      // Longer than the bot's whole box-OCR budget (OCR_BUDGET_S = 40 s in
       // box_sticker_ocr_service.py) plus a cold start: at 30 s, with the bot
       // allowed 30 s per model, one stalled model turned readable stickers red
       // a moment before the next model answered (S01, 23/10).
