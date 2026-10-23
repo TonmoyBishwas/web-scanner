@@ -27,6 +27,7 @@ import {
   applyBarcodeReadings, keepBarcodeFilled, reconcileWithBarcode, typicalWeightFor,
   type BarcodeEvent, type BarcodeFilled,
 } from '@/lib/barcode-reconcile';
+import { blocksConfirm, failedReadPrefill, heldAfterReads, takesLateRead, waitForReads } from '@/lib/failed-read';
 import { DoneOverlay } from '@/components/terminal/DoneOverlay';
 import { Toast, useLockToast } from '@/components/terminal/Toast';
 import { PriorityPushStatus } from '@/components/terminal/PriorityPushStatus';
@@ -2058,6 +2059,82 @@ export default function PalletVerifyPage({
     for (const e of events) trace('ui', 'barcode_reading', { carton: code, where, at, ...e });
   }
 
+  /**
+   * A scanned carton whose label read failed keeps what the scanner already
+   * knows (lib/failed-read.ts): its 31-digit barcode's weight and expiry, and
+   * the name of the invoice line its own code is. It stays 'failed', so the
+   * gate still has the worker look; one Save settles it. Computed out of the
+   * state updater, like barcodeReading, so the trace is not doubled.
+   */
+  function failedReadPatch(lookupKey: string, list: BoxScan[], where: 'pallet' | 'loose'): Partial<BoxScan> {
+    const row = list.find((b) => b.barcode === lookupKey);
+    if (!row) return {};
+    const { patch, events } = failedReadPrefill(row, invoiceItemsRef.current, {
+      receivedIso: localIsoDate(),
+      typicalKg: typicalWeightFor(row.barcode, list),
+    });
+    traceBarcodeEvents(row.barcode, events, where, 'ocr');
+    if (Object.keys(patch).length) {
+      trace('ui', 'failed_read_prefill', {
+        carton: row.barcode, where, weight: patch.weight, expiry: patch.expiry, item: patch.item_name_hebrew ?? patch.item_name,
+      });
+    }
+    return patch;
+  }
+
+  /**
+   * A read answering after the worker already saved its row (lib/failed-read.ts
+   * takesLateRead): the confirm failed it at 30 s, he opened it and saved, and
+   * the fetch only now comes back. Dropped — his Save stands. Read off the ref
+   * so the side effects (toast, trace) are skipped too; the updaters repeat
+   * the check on `prev`, which the ref may trail.
+   */
+  function lateReadDropped(lookupKey: string, where: 'pallet' | 'loose', ok: boolean): boolean {
+    const list = where === 'loose' ? looseBoxesRef.current : scannedBoxesRef.current;
+    const row = list.find((b) => b.barcode === lookupKey);
+    if (!row || takesLateRead(row)) return false;
+    trace('ui', 'late_read_dropped', { carton: lookupKey, where, ok, status: row.ocr_status });
+    return true;
+  }
+
+  /**
+   * Before a list is booked: label reads still in flight are waited for,
+   * bounded (S03, 23/10 — a 40 s stall; a swipe in that window booked a
+   * carton with no name and 0 kg). A read still out after the wait is failed
+   * here. False sends the worker back to the list — a read that came back
+   * failed or flagged, or (where warnings block) any failed read at all:
+   * the gate there holds it and the amber footer opens it.
+   */
+  async function settleReadsBeforeBook(where: 'pallet' | 'loose'): Promise<boolean> {
+    const ref = where === 'loose' ? looseBoxesRef : scannedBoxesRef;
+    const waitedFor = new Set(ref.current.filter((b) => b.ocr_status === 'processing').map((b) => b.barcode));
+    if (waitedFor.size) {
+      const started = Date.now();
+      const inFlight = () => ref.current.filter((b) => waitedFor.has(b.barcode) && b.ocr_status === 'processing');
+      const settled = await waitForReads(() => inFlight().length > 0);
+      trace('ui', 'confirm_waited_reads', { where, n: waitedFor.size, ms: Date.now() - started, settled });
+      if (!settled) {
+        const patches = new Map(inFlight().map((b) => [b.barcode, failedReadPatch(b.barcode, ref.current, where)]));
+        const fail = (prev: BoxScan[]) => prev.map((b) => (
+          patches.has(b.barcode) && b.ocr_status === 'processing'
+            ? { ...b, ...patches.get(b.barcode), ocr_status: 'failed' as OcrStatus }
+            : b
+        ));
+        if (where === 'loose') setLooseBoxes(fail); else setScannedBoxes(fail);
+        trace('ui', 'confirm_read_timeout', { where, cartons: Array.from(patches.keys()) });
+        return false;
+      }
+    }
+    const held = heldAfterReads(ref.current, waitedFor, {
+      soft: where === 'pallet' && !!sessionRef.current?.meat_discrepancy,
+    });
+    if (held.length) {
+      trace('ui', 'confirm_held_reads', { where, cartons: held });
+      return false;
+    }
+    return true;
+  }
+
   function runOcr(lookupKey: string, imageData: string, capturedIndex: number, manual = false): Promise<void> {
     // Pass the invoice catalog so the bot's OCR prompt picks a known canonical
     // Hebrew name (closed set) instead of free-form reading.
@@ -2073,6 +2150,7 @@ export default function PalletVerifyPage({
     })
       .then((r) => r.json())
       .then((data) => {
+        if (lateReadDropped(lookupKey, 'pallet', !!(data?.success && data.ocr_data))) return;
         // A manual capture whose printed digits are a carton already on the
         // list: drop the provisional row and SAY so, naming the carton the
         // photo actually shows. Decided out here, not in the updater below (a
@@ -2119,14 +2197,18 @@ export default function PalletVerifyPage({
               invoiceItemsRef.current, codesRead,
             )
           : null;
+        // A failed read keeps what the barcode and the invoice already say
+        // (lib/failed-read.ts) — out here for the same reason as `reading`.
+        const failPatch = data?.success && data.ocr_data ? null : failedReadPatch(lookupKey, scannedBoxesRef.current, 'pallet');
 
         setScannedBoxes((prev) => {
           // find the box by its (provisional, for manual) barcode key
           const idx = prev.findIndex((b) => b.barcode === lookupKey);
           if (idx === -1) return prev;
+          if (!takesLateRead(prev[idx])) return prev; // saved by the worker meanwhile
 
           if (!(data.success && data.ocr_data)) {
-            return prev.map((b, i) => (i === idx ? { ...b, ocr_status: 'failed' as OcrStatus } : b));
+            return prev.map((b, i) => (i === idx ? { ...b, ...failPatch, ocr_status: 'failed' as OcrStatus } : b));
           }
 
           const rawHe = data.ocr_data.product_name_hebrew || '';
@@ -2282,10 +2364,13 @@ export default function PalletVerifyPage({
         }
       })
       .catch(() => {
+        if (lateReadDropped(lookupKey, 'pallet', false)) return;
+        const failPatch = failedReadPatch(lookupKey, scannedBoxesRef.current, 'pallet');
         setScannedBoxes((prev) => {
           const idx = prev.findIndex((b) => b.barcode === lookupKey);
           if (idx === -1) return prev;
-          return prev.map((b, i) => (i === idx ? { ...b, ocr_status: 'failed' } : b));
+          if (!takesLateRead(prev[idx])) return prev;
+          return prev.map((b, i) => (i === idx ? { ...b, ...failPatch, ocr_status: 'failed' } : b));
         });
       });
   }
@@ -4306,6 +4391,7 @@ export default function PalletVerifyPage({
     })
       .then((r) => r.json())
       .then((data) => {
+        if (lateReadDropped(lookupKey, 'loose', !!(data?.success && data.ocr_data))) return;
         // A capture of a carton already on the loose list — see runOcr.
         if (manual && data?.success && data.ocr_data) {
           const digits = digitsOnly(data.ocr_data.barcode_digits);
@@ -4325,13 +4411,16 @@ export default function PalletVerifyPage({
 
         // Barcode wins — see the pallet-phase note; hoisted for the same reason.
         const reading = data?.success && data.ocr_data ? barcodeReading(data.ocr_data, manual, lookupKey, looseBoxesRef.current, 'loose') : null;
+        // A failed read keeps what the barcode and the invoice already say.
+        const failPatch = data?.success && data.ocr_data ? null : failedReadPatch(lookupKey, looseBoxesRef.current, 'loose');
 
         setLooseBoxes((prev) => {
           const idx = prev.findIndex((b) => b.barcode === lookupKey);
           if (idx === -1) return prev;
+          if (!takesLateRead(prev[idx])) return prev; // saved by the worker meanwhile
 
           if (!(data.success && data.ocr_data)) {
-            return prev.map((b, i) => (i === idx ? { ...b, ocr_status: 'failed' as OcrStatus } : b));
+            return prev.map((b, i) => (i === idx ? { ...b, ...failPatch, ocr_status: 'failed' as OcrStatus } : b));
           }
 
           let resolvedBarcode = prev[idx].barcode;
@@ -4413,10 +4502,13 @@ export default function PalletVerifyPage({
         });
       })
       .catch(() => {
+        if (lateReadDropped(lookupKey, 'loose', false)) return;
+        const failPatch = failedReadPatch(lookupKey, looseBoxesRef.current, 'loose');
         setLooseBoxes((prev) => {
           const idx = prev.findIndex((b) => b.barcode === lookupKey);
           if (idx === -1) return prev;
-          return prev.map((b, i) => (i === idx ? { ...b, ocr_status: 'failed' } : b));
+          if (!takesLateRead(prev[idx])) return prev;
+          return prev.map((b, i) => (i === idx ? { ...b, ...failPatch, ocr_status: 'failed' } : b));
         });
       });
   }
@@ -4470,6 +4562,12 @@ export default function PalletVerifyPage({
     if (await reconcileBeforeConfirm(0)) {
       setPhase('loose_scanning');
       showToast(tr('palletVerify.listUpdatedFromServer'), 'cloud_sync', '#13a4ec');
+      return;
+    }
+    // Reads still in flight first; a failed one goes back to the list.
+    if (!(await settleReadsBeforeBook('loose'))) {
+      setSwipeKey((k) => k + 1);
+      setPhase('loose_scanning');
       return;
     }
     const looseToBook = bookWithBarcode(looseBoxesRef.current, 'loose');
@@ -4869,6 +4967,14 @@ export default function PalletVerifyPage({
       showToast(tr('palletVerify.listUpdatedFromServer'), 'cloud_sync', '#13a4ec');
       return;
     }
+    // Label reads still in flight are waited for (bounded); a carton whose
+    // read failed goes back to the list, where the gate holds it — S03 booked
+    // one with no name and 0 kg (settleReadsBeforeBook).
+    if (!(await settleReadsBeforeBook('pallet'))) {
+      setSwipeKey((k) => k + 1);
+      setPhase('scanning');
+      return;
+    }
     // The list as it is now (the reconcile above awaited): book exactly this —
     // with every carton's weight and expiry following its barcode, the last
     // pass of the client's barcode-wins rule (lib/barcode-reconcile.ts).
@@ -4978,12 +5084,13 @@ export default function PalletVerifyPage({
   //  - no uniform prompt is awaiting an answer, and
   //  - the committed count (non-uniform individuals + locked group totals)
   //    reaches the declared box count for this pallet, AND
-  //  - every scanned box has resolved data (no `needs_review` flag).
+  //  - every scanned box has resolved data (no `needs_review` flag, and no
+  //    failed label read — lib/failed-read.ts blocksConfirm, S03 23/10).
   //    Worker must tap each warning, see the captured sticker, and fix
   //    the name/weight before the pallet can advance.
   // A list ABOVE the declared total asks before it books (confirmPalletChecked).
   const committed = committedCount();
-  const unresolvedWarnings = scannedBoxes.filter((b) => b.needs_review).length;
+  const unresolvedWarnings = scannedBoxes.filter(blocksConfirm).length;
   const hasUnresolvedWarnings = unresolvedWarnings > 0;
   // Meat short-shipment feature: unreadable boxes NO LONGER hard-block. They
   // become a soft warning routed to "Create LPN anyway" so a worker is never
@@ -5378,7 +5485,7 @@ export default function PalletVerifyPage({
     // Block loose-finish on unresolved warnings, same gate as the pallet phase.
     // Loose boxes go straight to Box Inventory with no further OCR pass, so
     // bad data here is just as harmful as on a pallet.
-    const unresolvedLooseWarnings = looseBoxes.filter((b) => b.needs_review).length;
+    const unresolvedLooseWarnings = looseBoxes.filter(blocksConfirm).length;
     const hasUnresolvedLooseWarnings = unresolvedLooseWarnings > 0;
     const canConfirmLoose =
       scanned >= Math.min(2, declared) &&
@@ -5449,7 +5556,8 @@ export default function PalletVerifyPage({
           hasUnresolvedLooseWarnings ? (
           <button
             onClick={() => {
-              const bad = looseBoxes.find((b) => b.needs_review);
+              // The gate's own predicate: the carton it counts is the one opened.
+              const bad = looseBoxes.find(blocksConfirm);
               if (bad) openEdit(bad, true);
             }}
             className="flex items-center justify-center gap-[6px] w-full py-3 rounded-[13px] font-black text-[14px] bg-warn text-canvas"
@@ -5980,7 +6088,8 @@ export default function PalletVerifyPage({
             // directly, which is the only thing they could have done anyway.
             <button
               onClick={() => {
-                const bad = scannedBoxes.find((b) => b.needs_review);
+                // The gate's own predicate: the carton it counts is the one opened.
+                const bad = scannedBoxes.find(blocksConfirm);
                 if (bad) openEdit(bad);
               }}
               className="flex items-center justify-center gap-[6px] w-full py-3 rounded-[13px] font-black text-[14px] bg-warn text-canvas"

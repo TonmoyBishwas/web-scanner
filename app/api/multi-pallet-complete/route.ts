@@ -14,6 +14,7 @@ import { printGate, barcodesBeingBooked, labelGateError, unprintedOnList } from 
 import { pendingLabelsUrl } from '@/lib/label-link';
 import { sessionBookedBarcodes } from '@/lib/label-batches';
 import { isEmptySummaryLine } from '@/lib/pallet-lines';
+import { snapNamelessByCode } from '@/lib/failed-read';
 
 const SESSION_TTL = 7200;
 // "Same weight" means the printed weights are EXACTLY equal — a fixed-weight
@@ -174,7 +175,7 @@ export async function POST(request: NextRequest) {
     // Every expiry goes to the bot as ISO. A row from an older client, or one
     // restored from a browser cache written before the fix, can still carry
     // DD/MM/YYYY — which the bot stored as box_expiry NULL (lib/expiry.ts).
-    const scanned_boxes = Array.isArray(rawScannedBoxes)
+    let scanned_boxes = Array.isArray(rawScannedBoxes)
       ? normalizeBoxExpiries(rawScannedBoxes)
       : rawScannedBoxes;
 
@@ -559,6 +560,18 @@ export async function POST(request: NextRequest) {
     }
 
     const lpn = generateLPN(session.document_number, palletNumber, session.category);
+
+    // A row with no name whose own code is exactly one invoice line's item
+    // code takes that line's names before anything is grouped (S03, 23/10:
+    // a carton whose label read failed was booked nameless, SCN-11 dropped
+    // its group, and the bot attached it to no line — lib/failed-read.ts).
+    // The page now holds such a row; this covers any path that still sends
+    // one (the soft force-confirm, a page cached before the fix).
+    const snap = snapNamelessByCode(scanned_boxes, session.ocr_data);
+    if (snap.snapped.length) {
+      console.warn(`[multi-pallet-complete] named ${snap.snapped.length} nameless box(es) by code on ${session.document_number} P${palletNumber}: ${snap.snapped.join(', ')}`);
+      scanned_boxes = snap.boxes;
+    }
 
     // Worker-accepted AI merges (originalKey → canonicalKey).
     const mergeMap = new Map<string, string>(Object.entries(merge_map ?? {}));
