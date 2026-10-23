@@ -27,7 +27,7 @@ import {
   applyBarcodeReadings, keepBarcodeFilled, reconcileWithBarcode, typicalWeightFor,
   type BarcodeEvent, type BarcodeFilled,
 } from '@/lib/barcode-reconcile';
-import { blocksConfirm, failedReadPrefill, heldAfterReads, waitForReads } from '@/lib/failed-read';
+import { blocksConfirm, failedReadPrefill, heldAfterReads, takesLateRead, waitForReads } from '@/lib/failed-read';
 import { DoneOverlay } from '@/components/terminal/DoneOverlay';
 import { Toast, useLockToast } from '@/components/terminal/Toast';
 import { PriorityPushStatus } from '@/components/terminal/PriorityPushStatus';
@@ -2083,6 +2083,21 @@ export default function PalletVerifyPage({
   }
 
   /**
+   * A read answering after the worker already saved its row (lib/failed-read.ts
+   * takesLateRead): the confirm failed it at 30 s, he opened it and saved, and
+   * the fetch only now comes back. Dropped — his Save stands. Read off the ref
+   * so the side effects (toast, trace) are skipped too; the updaters repeat
+   * the check on `prev`, which the ref may trail.
+   */
+  function lateReadDropped(lookupKey: string, where: 'pallet' | 'loose', ok: boolean): boolean {
+    const list = where === 'loose' ? looseBoxesRef.current : scannedBoxesRef.current;
+    const row = list.find((b) => b.barcode === lookupKey);
+    if (!row || takesLateRead(row)) return false;
+    trace('ui', 'late_read_dropped', { carton: lookupKey, where, ok, status: row.ocr_status });
+    return true;
+  }
+
+  /**
    * Before a list is booked: label reads still in flight are waited for,
    * bounded (S03, 23/10 — a 40 s stall; a swipe in that window booked a
    * carton with no name and 0 kg). A read still out after the wait is failed
@@ -2135,6 +2150,7 @@ export default function PalletVerifyPage({
     })
       .then((r) => r.json())
       .then((data) => {
+        if (lateReadDropped(lookupKey, 'pallet', !!(data?.success && data.ocr_data))) return;
         // A manual capture whose printed digits are a carton already on the
         // list: drop the provisional row and SAY so, naming the carton the
         // photo actually shows. Decided out here, not in the updater below (a
@@ -2189,6 +2205,7 @@ export default function PalletVerifyPage({
           // find the box by its (provisional, for manual) barcode key
           const idx = prev.findIndex((b) => b.barcode === lookupKey);
           if (idx === -1) return prev;
+          if (!takesLateRead(prev[idx])) return prev; // saved by the worker meanwhile
 
           if (!(data.success && data.ocr_data)) {
             return prev.map((b, i) => (i === idx ? { ...b, ...failPatch, ocr_status: 'failed' as OcrStatus } : b));
@@ -2347,10 +2364,12 @@ export default function PalletVerifyPage({
         }
       })
       .catch(() => {
+        if (lateReadDropped(lookupKey, 'pallet', false)) return;
         const failPatch = failedReadPatch(lookupKey, scannedBoxesRef.current, 'pallet');
         setScannedBoxes((prev) => {
           const idx = prev.findIndex((b) => b.barcode === lookupKey);
           if (idx === -1) return prev;
+          if (!takesLateRead(prev[idx])) return prev;
           return prev.map((b, i) => (i === idx ? { ...b, ...failPatch, ocr_status: 'failed' } : b));
         });
       });
@@ -4372,6 +4391,7 @@ export default function PalletVerifyPage({
     })
       .then((r) => r.json())
       .then((data) => {
+        if (lateReadDropped(lookupKey, 'loose', !!(data?.success && data.ocr_data))) return;
         // A capture of a carton already on the loose list — see runOcr.
         if (manual && data?.success && data.ocr_data) {
           const digits = digitsOnly(data.ocr_data.barcode_digits);
@@ -4397,6 +4417,7 @@ export default function PalletVerifyPage({
         setLooseBoxes((prev) => {
           const idx = prev.findIndex((b) => b.barcode === lookupKey);
           if (idx === -1) return prev;
+          if (!takesLateRead(prev[idx])) return prev; // saved by the worker meanwhile
 
           if (!(data.success && data.ocr_data)) {
             return prev.map((b, i) => (i === idx ? { ...b, ...failPatch, ocr_status: 'failed' as OcrStatus } : b));
@@ -4481,10 +4502,12 @@ export default function PalletVerifyPage({
         });
       })
       .catch(() => {
+        if (lateReadDropped(lookupKey, 'loose', false)) return;
         const failPatch = failedReadPatch(lookupKey, looseBoxesRef.current, 'loose');
         setLooseBoxes((prev) => {
           const idx = prev.findIndex((b) => b.barcode === lookupKey);
           if (idx === -1) return prev;
+          if (!takesLateRead(prev[idx])) return prev;
           return prev.map((b, i) => (i === idx ? { ...b, ...failPatch, ocr_status: 'failed' } : b));
         });
       });

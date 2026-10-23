@@ -5,6 +5,7 @@ import {
   failedReadPrefill,
   heldAfterReads,
   snapNamelessByCode,
+  takesLateRead,
   waitForReads,
 } from './failed-read';
 import { groupBoxesByName } from './group-key';
@@ -109,6 +110,31 @@ describe('heldAfterReads (what the confirm does once in-flight reads are waited 
   it('soft mode: a failed row the worker already saw goes on to the force-confirm', () => {
     const rows = [{ barcode: 'a', ocr_status: 'failed' }];
     expect(heldAfterReads(rows, new Set(), { soft: true })).toEqual([]);
+  });
+});
+
+describe('takesLateRead (a read answering after the confirm gave up on it)', () => {
+  // The confirm fails a read still out after READ_WAIT_BEFORE_BOOK_MS (30 s),
+  // but its fetch runs on: the OCR route waits up to 55 s (S03's took 42.6 s).
+  it('a row still being read, or failed by the confirm and not yet looked at, takes the answer', () => {
+    expect(takesLateRead({ ocr_status: 'processing' })).toBe(true);
+    expect(takesLateRead({ ocr_status: 'failed' })).toBe(true);
+  });
+
+  it('a row the worker saved keeps his Save — a late failure or success is dropped', () => {
+    expect(takesLateRead({ ocr_status: 'done' })).toBe(false);
+  });
+
+  it('S03 timeline: swipe at 5 s, failed at 35 s, Saved at 39 s, the 502 at 42 s leaves it done', () => {
+    let row: { barcode: string; ocr_status: string; weight: number; item_name_hebrew: string } = {
+      barcode: C13, ocr_status: 'processing', weight: 0, item_name_hebrew: '',
+    };
+    row = { ...row, ocr_status: 'failed' }; // the confirm's 30 s wait ran out
+    row = { ...row, ocr_status: 'done', weight: 12.57, item_name_hebrew: CHICKEN.item_name_hebrew }; // Save
+    const late = (r: typeof row, patch: Partial<typeof row>) => (takesLateRead(r) ? { ...r, ...patch } : r);
+    expect(late(row, { ocr_status: 'failed' })).toEqual(row);
+    expect(late(row, { ocr_status: 'done', weight: 12.0, item_name_hebrew: 'סלמון' })).toEqual(row);
+    expect(blocksConfirm(late(row, { ocr_status: 'failed' }))).toBe(false);
   });
 });
 

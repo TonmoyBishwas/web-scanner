@@ -84,6 +84,17 @@ export function heldAfterReads(
     .map((r) => r.barcode);
 }
 
+/**
+ * May a label read's answer still land on this row? The confirm fails a read
+ * still out after READ_WAIT_BEFORE_BOOK_MS, but the fetch runs on (the OCR
+ * route waits up to 55 s; S03's took 42.6 s). Once the worker has opened the
+ * failed row and saved it ('done'), a late failure must not fail it again
+ * and a late success must not overwrite his name and weight.
+ */
+export function takesLateRead(b: { ocr_status?: string }): boolean {
+  return b.ocr_status === 'processing' || b.ocr_status === 'failed';
+}
+
 export interface FailedReadRow {
   barcode: string;
   source_barcode?: string;
