@@ -13,7 +13,10 @@
  *      says which product it is, whatever name the OCR read (19/10 incident
  *      below, matchInvoiceItemByCode)
  *   1. exact normalized Hebrew, then exact normalized English
- *   2. first-Hebrew-word prefix (invoice OCR sometimes captures a shorter form)
+ *   2. first Hebrew word — answers only when ONE line fits: a line whose own
+ *      first word IS that word, else a line whose name starts with it; two
+ *      or more fit → a 2+ digit number on the sticker that names exactly one
+ *      of them decides, else on to step 3 (PB1, below)
  *   3. fuzzy: normalized Levenshtein similarity ≥ FUZZY_THRESHOLD
  *   4. distinctive words: the sticker shares a product word with exactly one
  *      invoice line ("אחדות חזה עוף גדול קפוא" ↔ "חזה עוף גדול תפ לנדא" —
@@ -22,7 +25,7 @@
  * Returns the matched invoice line, or null when nothing matches confidently
  * (e.g. a loose / unlisted box) — callers then keep the raw OCR name.
  */
-import { normalizeString } from './string-utils';
+import { normalizeString, stripNiqqud } from './string-utils';
 
 export interface InvoiceItem {
   item_code: string;
@@ -177,14 +180,9 @@ function matchInvoiceItemByName(
     if (enNorm && normalizeString(line.item_name_english) === enNorm) return line;
   }
 
-  // 2. first-Hebrew-word prefix
-  const firstWord = nameHebrew?.match(/[֐-׿]{3,}/)?.[0];
-  if (firstWord) {
-    const fw = normalizeString(firstWord);
-    for (const line of invoiceItems) {
-      if (fw && normalizeString(line.item_name_hebrew).startsWith(fw)) return line;
-    }
-  }
+  // 2. first Hebrew word
+  const byFirstWord = matchByFirstWord(nameHebrew, nameEnglish, invoiceItems);
+  if (byFirstWord) return byFirstWord;
 
   // 3. fuzzy — best similarity above threshold, Hebrew preferred then English
   let best: InvoiceItem | null = null;
@@ -205,12 +203,58 @@ function matchInvoiceItemByName(
   return matchByDistinctiveWords(nameHebrew, invoiceItems);
 }
 
+const FIRST_HE_WORD = /[\u0590-\u05FF]{3,}/;
+
+function firstHebrewWord(name: string | undefined): string {
+  return normalizeString(stripNiqqud(name || '').match(FIRST_HE_WORD)?.[0]);
+}
+
+/** Numbers of 2+ digits in a name (a size / grade such as 100, 120, 275). */
+function numbersIn(...names: Array<string | undefined>): Set<string> {
+  return new Set(names.flatMap((n) => (n || '').match(/\d{2,}/g) ?? []));
+}
+
+/**
+ * Step 2: the line the sticker's first Hebrew word names — only when exactly
+ * one does. A line whose own first word IS that word comes first; failing any,
+ * a line whose (space-stripped) name starts with it, as before. Several fit →
+ * a number printed on the sticker that names exactly one of them decides;
+ * otherwise null and the later steps decide.
+ *
+ * Why (PB1, e2e harness run r2610241328-etnz, 24/10): this step used to take
+ * the FIRST line that fit. With the spaces stripped, "קוסאלאבא" fits both
+ * "קוסאלאב אנטריקוט טרי" and "קוסאלאב אסאדו בקר טרי", so asado cartons were
+ * booked as entrecote and the delivery showed a false discrepancy. The bot's
+ * port (bot/utils/invoice_match.py) already answers only on one fit, for two
+ * schnitzel lines that differ only by size (IN 261048511).
+ */
+function matchByFirstWord(
+  nameHebrew: string | undefined,
+  nameEnglish: string | undefined,
+  invoiceItems: InvoiceItem[],
+): InvoiceItem | null {
+  const fw = firstHebrewWord(nameHebrew);
+  if (!fw) return null;
+  const whole = invoiceItems.filter((l) => firstHebrewWord(l.item_name_hebrew) === fw);
+  const fits = whole.length > 0
+    ? whole
+    : invoiceItems.filter((l) => normalizeString(l.item_name_hebrew).startsWith(fw));
+  if (fits.length === 1) return fits[0];
+  if (fits.length === 0) return null;
+  const nums = numbersIn(nameHebrew, nameEnglish);
+  if (nums.size === 0) return null;
+  const byNumber = fits.filter((l) =>
+    [...numbersIn(l.item_name_hebrew, l.item_name_english)].some((n) => nums.has(n)),
+  );
+  return byNumber.length === 1 ? byNumber[0] : null;
+}
+
 // A sticker naming one species / state must not land on a line naming another.
 const SPECIES = ['עוף', 'הודו', 'בקר', 'עגל', 'כבש', 'טלה', 'אווז', 'ברווז', 'דג', 'סלמון'];
 const STATES = ['טרי', 'קפוא'];
 
 function hebrewWords(name: string | undefined): string[] {
-  return (name || '').split(/[^\u05D0-\u05EA]+/).filter((w) => w.length >= 2);
+  return stripNiqqud(name || '').split(/[^\u05D0-\u05EA]+/).filter((w) => w.length >= 2);
 }
 
 /**
