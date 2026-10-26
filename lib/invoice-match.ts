@@ -144,6 +144,12 @@ export function cartonOwnCodes(b: { barcode: string; source_barcode?: string; na
  * 19/10 meatball/kebab shape. Both lines, for a soft "which product?" (the
  * code's line is what the carton is booked as). Null when either is missing
  * or they agree.
+ *
+ * The name is judged by the Hebrew the sticker prints; the English only when
+ * no Hebrew was read. Both English names are model translations and can be
+ * wrong: IN264194413 (25/10) had the two turkey lines' English swapped, the
+ * box OCR copied the other line's English for a correctly read ירכיים
+ * carton, and the exact-English step raised 23 false popups.
  */
 export function invoiceNameConflict(
   nameHebrew: string | undefined,
@@ -153,7 +159,8 @@ export function invoiceNameConflict(
 ): { byCode: InvoiceItem; byName: InvoiceItem } | null {
   const byCode = matchInvoiceItemByCode(codes, invoiceItems);
   if (!byCode) return null;
-  const byName = matchInvoiceItemByName(nameHebrew, nameEnglish, invoiceItems ?? []);
+  const hasHebrew = /[א-ת]/.test(nameHebrew ?? '');
+  const byName = matchInvoiceItemByName(nameHebrew, hasHebrew ? '' : nameEnglish, invoiceItems ?? []);
   if (!byName || codeDigits(byName.item_code) === codeDigits(byCode.item_code)) return null;
   return { byCode, byName };
 }

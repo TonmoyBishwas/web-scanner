@@ -53,6 +53,19 @@ export function scanNoticeMs(notice: { different?: unknown; newCarton?: unknown;
 }
 
 /**
+ * Does this notice wait for an answer — and so take the device Back button?
+ *
+ * Wall Dan 25/10 13:32: the "only a short barcode" question was up, David
+ * pressed Back to dismiss it, and the page went back to the morning's Baladi
+ * session instead. Back on a question now takes it down (like "There is a
+ * long barcode"); a notice that clears itself leaves Back alone, and so does
+ * the plain scanning screen.
+ */
+export function noticeAwaitsAnswer(notice: Parameters<typeof scanNoticeMs>[0] | null): boolean {
+  return !!notice && scanNoticeMs(notice) === null;
+}
+
+/**
  * A short read (lib/carton-barcode.ts too_short, e.g. `406243` on document
  * 48429) is explained once per code per minute. It used to come back amber,
  * with a buzz, every ~3 s for as long as the camera saw the code.
@@ -238,7 +251,11 @@ export function findCountedCartonByDigits<T extends CountedRow>(
  * OCR — the form would open with no name or weight to copy — or when the hit
  * is an identical batch standing in for the code (`isBatchStandIn`): the
  * worker already declared every carton that carries it, so "one more" would
- * count a labelled carton twice.
+ * count a labelled carton twice. Nor for a short code (6–11 digits): the
+ * only short codes on the list are per-carton serials the label photo
+ * confirmed (Wall Dan `408274`, lib/carton-barcode.ts
+ * labelConfirmsShortCode), so a re-read IS that carton — on 25/10 a second
+ * photo of 408274 became a second carton.
  */
 export function canOfferDifferentCarton(
   code: string,
@@ -246,6 +263,7 @@ export function canOfferDifferentCarton(
 ): boolean {
   const c = (code || '').trim();
   if (!/^\d/.test(c) || isMintedLabelBarcode(c)) return false;
+  if (/^\d{6,11}$/.test(c)) return false;
   if (typeof row.barcode === 'string' && isBatchStandIn(c, row as CountedRow)) return false;
   return row.ocr_status !== 'processing';
 }
