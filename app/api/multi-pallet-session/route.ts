@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nanoid } from 'nanoid';
 import { getRedisClient, touchSession } from '@/lib/redis';
+import { unitsModeOn } from '@/lib/scanner-flags';
 import type { MultiPalletSession } from '@/types';
 
 const SESSION_TTL = 7200; // 2 hours
@@ -119,7 +120,10 @@ export async function GET(request: NextRequest) {
       typeof raw === 'string' ? JSON.parse(raw) : (raw as MultiPalletSession);
     // Opening / reloading the page is activity too (SCN-24).
     touchSession(token).catch((err) => console.warn('[multi-pallet-session] touch failed:', err));
-    return NextResponse.json(session);
+    // Runtime feature switches for this session's chat (lib/scanner-flags.ts).
+    // Added to the response only, never stored on the session.
+    const features = { units_mode: await unitsModeOn(session.chat_id) };
+    return NextResponse.json({ ...session, features });
   } catch (error) {
     console.error('[multi-pallet-session] GET error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

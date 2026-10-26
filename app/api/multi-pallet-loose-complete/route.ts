@@ -10,6 +10,7 @@ import { findUnprintedForSession } from '@/lib/carton-labels';
 import { printGate, barcodesBeingBooked, labelGateError, unprintedOnList } from '@/lib/label-gate';
 import { pendingLabelsUrl } from '@/lib/label-link';
 import { sessionBookedBarcodes } from '@/lib/label-batches';
+import { sanitizeUnitsBoxes } from '@/lib/units-cartons';
 
 const SESSION_TTL = 7200;
 
@@ -31,9 +32,11 @@ export async function POST(request: NextRequest) {
     traceToken = typeof token === 'string' ? token : '';
     // Every expiry goes to the bot as ISO, including rows from an older
     // client or an old browser cache still carrying DD/MM/YYYY (lib/expiry.ts).
-    const scanned_boxes: MultiPalletBoxScan[] = normalizeBoxExpiries(
+    // A carton counted in units goes as `units` + weight 0, never both
+    // (lib/units-cartons.ts).
+    const scanned_boxes: MultiPalletBoxScan[] = sanitizeUnitsBoxes(normalizeBoxExpiries(
       Array.isArray(rawScannedBoxes) ? rawScannedBoxes : [],
-    );
+    ));
 
     if (!token) {
       return NextResponse.json({ success: false, error: t(undefined, 'errors.missingToken') }, { status: 400 });

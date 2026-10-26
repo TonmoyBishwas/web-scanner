@@ -40,9 +40,9 @@ export interface DocumentCard {
 export interface DocumentLine {
   name_hebrew: string;
   name_english: string;
-  /** invoice figure: kg for meat, invoice_quantity (fallback quantity) for NM */
+  /** invoice figure: the line's unit for meat, invoice_quantity (fallback quantity) for NM */
   invoice_qty: number;
-  /** 'kg' for meat lines; the NM row's unit otherwise */
+  /** 'kg' or 'units' for meat lines; the NM row's unit otherwise */
   unit: string;
   invoice_boxes: number | null;
   /** actually-received figure, only set when the line has a discrepancy */
@@ -311,6 +311,38 @@ function toPalletRef(p: PalletRefRow): DocumentPalletRef {
   };
 }
 
+/** One delivery_items row as the meat detail reads it. */
+export interface MeatLineRow {
+  item_name_hebrew: string | null;
+  item_name_english: string | null;
+  unit?: string | null;
+  invoice_qty_kg: number | null;
+  invoice_box_count: number | null;
+  received_qty_kg: number | null;
+  received_box_count: number | null;
+  discrepancy_status: string | null;
+  discrepancy_note: string | null;
+}
+
+/**
+ * A meat line for the detail view. `invoice_qty_kg` / `received_qty_kg` hold
+ * the figure in the line's own `unit`: a units line (27/10, note 008955 —
+ * 126 portions) shows and compares in units, every other line in kg.
+ */
+export function meatDocumentLine(r: MeatLineRow): DocumentLine {
+  const flagged = r.discrepancy_status === 'Short' || r.discrepancy_status === 'Over';
+  return {
+    name_hebrew: r.item_name_hebrew ?? '',
+    name_english: r.item_name_english ?? '',
+    invoice_qty: r.invoice_qty_kg ?? 0,
+    unit: r.unit === 'units' ? 'units' : 'kg',
+    invoice_boxes: r.invoice_box_count,
+    received_qty: flagged ? r.received_qty_kg : null,
+    received_boxes: flagged ? r.received_box_count : null,
+    discrepancy: flagged ? r.discrepancy_note || r.discrepancy_status : null,
+  };
+}
+
 async function getMeatDetail(id: string): Promise<DocumentDetail | null> {
   const { data: delivery, error } = await supabase
     .from('deliveries')
@@ -324,7 +356,7 @@ async function getMeatDetail(id: string): Promise<DocumentDetail | null> {
     supabase
       .from('delivery_items')
       .select(
-        'item_name_hebrew, item_name_english, invoice_qty_kg, invoice_box_count, received_qty_kg, received_box_count, discrepancy_status, discrepancy_note'
+        'item_name_hebrew, item_name_english, unit, invoice_qty_kg, invoice_box_count, received_qty_kg, received_box_count, discrepancy_status, discrepancy_note'
       )
       .eq('receipt_id', id),
     supabase.from('pallets').select(PALLET_REF_COLUMNS).eq('receipt_id', id),
@@ -339,19 +371,7 @@ async function getMeatDetail(id: string): Promise<DocumentDetail | null> {
   if (palletsRes.error) fail('pallets read', palletsRes.error.message);
   if (ocrRes.error) fail('invoice_ocr_results read', ocrRes.error.message);
 
-  const lines: DocumentLine[] = (itemsRes.data ?? []).map(r => {
-    const flagged = r.discrepancy_status === 'Short' || r.discrepancy_status === 'Over';
-    return {
-      name_hebrew: r.item_name_hebrew ?? '',
-      name_english: r.item_name_english ?? '',
-      invoice_qty: r.invoice_qty_kg ?? 0,
-      unit: 'kg',
-      invoice_boxes: r.invoice_box_count,
-      received_qty: flagged ? r.received_qty_kg : null,
-      received_boxes: flagged ? r.received_box_count : null,
-      discrepancy: flagged ? r.discrepancy_note || r.discrepancy_status : null,
-    };
-  });
+  const lines: DocumentLine[] = ((itemsRes.data ?? []) as MeatLineRow[]).map(meatDocumentLine);
 
   const { card } = buildMeatCard(
     delivery as DeliveryRow,

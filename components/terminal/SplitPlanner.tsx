@@ -30,6 +30,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { MI } from './MI';
 import { useT } from '@/lib/i18n';
 import type { TranslationKey } from '@/lib/i18n';
+import { invoiceKgTotal } from '@/lib/units-cartons';
 import type { MultiPalletSession } from '@/types';
 
 interface Props {
@@ -176,7 +177,8 @@ export default function SplitPlanner({ session, onSent }: Props) {
     }
   }
 
-  const totalKg = items.reduce((s, i) => s + (Number(i.quantity_kg) || 0), 0);
+  // A units line (lib/units-cartons.ts) holds units, not kg: not in the kg total.
+  const totalKg = invoiceKgTotal(items);
 
   return (
     <div className="h-dvh flex flex-col bg-canvas overflow-hidden">

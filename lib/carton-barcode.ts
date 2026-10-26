@@ -14,6 +14,7 @@
  */
 
 import { belongsToCartonCode } from './frame-reads';
+import { lineUnit } from './units-cartons';
 
 export function digitsOf(s: string | null | undefined): string {
   return (s || '').replace(/\D/g, '');
@@ -184,7 +185,7 @@ export function matchInvoiceShortCode<T extends ShortCodeLine>(
  * (`lineTotal`) for the worker to count against.
  */
 export function shortCodeDefaults(
-  line: { quantity_kg?: number | null; box_count?: number | null; unit_weight_kg?: number | null },
+  line: { quantity_kg?: number | null; box_count?: number | null; unit_weight_kg?: number | null; unit?: unknown },
   counted: number,
   opts: { lineMaySpread?: boolean } = {},
 ): { weight: number | null; quantity: number; lineTotal: number | null } {
@@ -192,7 +193,10 @@ export function shortCodeDefaults(
   const kg = Number(line.quantity_kg) || 0;
   const unit = Number(line.unit_weight_kg) || 0;
   let weight: number | null = null;
-  if (unit > 0) weight = unit;
+  // A units line's quantity is units (126 portions / 7 = 18), not kg: no
+  // weight to offer — the worker weighs the carton or counts it in units.
+  if (lineUnit(line) === 'units') weight = null;
+  else if (unit > 0) weight = unit;
   else if (boxes > 0 && kg > 0) weight = Math.round((kg / boxes) * 1000) / 1000;
   const quantity = boxes > 0 && !opts.lineMaySpread ? Math.max(1, boxes - Math.max(0, counted)) : 1;
   return { weight, quantity, lineTotal: boxes > 0 ? boxes : null };

@@ -269,6 +269,10 @@ export async function POST(request: NextRequest) {
           const line = byKey.get(ni.item_key);
           const cartons = Math.max(0, Math.floor(Number(ni.box_count) || 0));
           if (!line || cartons <= 0) return null;
+          // A units line (lib/units-cartons.ts): quantity_kg holds its units,
+          // so this is units per carton and the total is in the line's own
+          // unit — what the bot credits it with. Zeroing it would book a
+          // false shortfall; pinned in multi-pallet-complete-route.test.ts.
           const unit =
             line.unit_weight_kg && line.unit_weight_kg > 0
               ? line.unit_weight_kg
@@ -412,6 +416,9 @@ export async function POST(request: NextRequest) {
           const line = byKey.get(mi.item_key);
           const cartons = Math.max(0, Math.floor(Number(mi.box_count) || 0));
           if (!line || cartons <= 0) return null;
+          // A units line: units per carton, total in the line's own unit (see
+          // the non-meat branch above). Units cartons are counted one by one
+          // only in the loose pile; this declared path keeps the note's ratio.
           const unit = line.box_count && line.quantity_kg ? line.quantity_kg / line.box_count : 0;
           const unitRounded = Math.round(unit * 1000) / 1000;
           return {

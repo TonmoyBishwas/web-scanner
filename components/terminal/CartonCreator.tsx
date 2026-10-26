@@ -22,6 +22,13 @@
  * Label printing off (LABEL_PRINTING_ENABLED, lib/label-printing.ts — the
  * default since 20/10): no "Print a barcode" toggle (the label keeps its
  * barcode), no sticker preview and no footer note that says to print.
+ *
+ * With `units` (the loose pile, `features.units_mode` on — lib/units-
+ * cartons.ts, 27/10): a kg | units toggle once an item is picked, opening on
+ * the line's own unit. Units asks cartons, units per carton and the expiry
+ * (one or more, split by carton) — no weight, no production date — and Save
+ * mints one label per carton through `units.onCreated`. Without `units` the
+ * screen is exactly what it was.
  */
 
 import { useMemo, useRef, useState } from 'react';
@@ -38,6 +45,11 @@ import { validateCartonDates } from '@/lib/date-validation';
 import { localIsoDate } from '@/lib/edit-panel-state';
 import { trace } from '@/lib/scanner-trace';
 import { cartonSaveBlock, cartonSaveTapData } from '@/lib/carton-trace';
+import {
+  addSplit, effectiveSplits, lineUnit, removeSplit, splitSum, stepperValue, unitsLabelPayload,
+  unitsPerCartonPrefill, unitsSaveBlock, UNITS_MAX_CARTONS, UNITS_MAX_PER_CARTON,
+  type LineUnit, type UnitsSplit,
+} from '@/lib/units-cartons';
 import type { CartonLabel } from '@/types';
 
 /** The subset of an invoice line this screen needs, shared by both session shapes. */
@@ -45,6 +57,26 @@ export interface CartonItemOption {
   item_code?: string;
   item_name_english?: string;
   item_name_hebrew?: string;
+  /** The note line's unit and totals — read by the units mode only. */
+  unit?: 'kg' | 'units';
+  quantity_kg?: number;
+  box_count?: number;
+}
+
+/** A units save as the page books it (lib/units-cartons.ts unitsCartonRows). */
+export interface UnitsSave {
+  item: CartonItemOption;
+  cartons: number;
+  perCarton: number;
+  splits: UnitsSplit[];
+}
+
+/** Units mode — see the file comment. */
+export interface CartonUnitsMode {
+  /** Cartons to open on for this item (lib/units-cartons.ts unitsCartonsPrefill). */
+  cartonsFor: (item: CartonItemOption) => number;
+  /** Fired after the units batch is saved — the page closes this screen. */
+  onCreated: (labels: CartonLabel[], save: UnitsSave) => void;
 }
 
 /** What the open list already holds of one item — see `CartonCreatorProps.onList`. */
@@ -117,6 +149,8 @@ interface CartonCreatorProps {
   /** Fired after the batch is saved — the page closes this screen. `labels`
    *  = the saved rows as the server returned them (may be empty). */
   onCreated?: (count: number, batchId: string | null, labels: CartonLabel[]) => void;
+  /** Units mode (loose pile, flag on). Absent: kg only, as before. */
+  units?: CartonUnitsMode;
 }
 
 type Step = 'item' | 'form';
@@ -129,7 +163,17 @@ function displayDate(iso: string): string {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
 }
 
-export function CartonCreator({ token, items, palletNumber, notCountedWarning = false, countOnSave = false, preset, onList, onBack, onCreated }: CartonCreatorProps) {
+/** The units fields an item opens on. */
+function unitsStart(units: CartonUnitsMode | undefined, item: CartonItemOption | null) {
+  const per = item ? unitsPerCartonPrefill(item) : null;
+  return {
+    mode: (units && item ? lineUnit(item) : 'kg') as LineUnit,
+    cartons: String(units && item ? units.cartonsFor(item) : 1),
+    per: per ? String(per) : '',
+  };
+}
+
+export function CartonCreator({ token, items, palletNumber, notCountedWarning = false, countOnSave = false, preset, onList, onBack, onCreated, units }: CartonCreatorProps) {
   const tr = useT();
   const { toast, showToast } = useToast();
 
@@ -145,6 +189,14 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
   const [printBarcode, setPrintBarcode] = useState(true);
   const [calendarFor, setCalendarFor] = useState<DateField | null>(null);
   const [saving, setSaving] = useState(false);
+  // Units mode (lib/units-cartons.ts): the toggle, cartons, units per carton
+  // and the expiry rows. One row = every carton.
+  const [start] = useState(() => unitsStart(units, preset?.item ?? null));
+  const [mode, setMode] = useState<LineUnit>(start.mode);
+  const [uCartons, setUCartons] = useState(start.cartons);
+  const [uPer, setUPer] = useState(start.per);
+  const [uSplits, setUSplits] = useState<UnitsSplit[]>([{ cartons: 0, expiry: '' }]);
+  const [splitCal, setSplitCal] = useState<number | null>(null);
   // One batch id per distinct save content (lib/label-batches.ts): a retry
   // of the same save after a lost response returns the batch the first
   // attempt saved instead of minting a second one — and a save for another
@@ -175,7 +227,68 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
     const ctx = onList?.(item);
     trace('ui', 'carton_item_pick', { item_code: item.item_code, listed: ctx?.total ?? 0 });
     if (ctx && ctx.total > 0) setQuantity(String(ctx.quantity));
+    if (units) {
+      // Another item opens on its own unit and numbers.
+      const u = unitsStart(units, item);
+      setMode(u.mode);
+      setUCartons(u.cartons);
+      setUPer(u.per);
+      setUSplits([{ cartons: 0, expiry: '' }]);
+    }
     setStep('form');
+  }
+
+  const unitsOn = !!units && mode === 'units';
+  const uCount = stepperValue(uCartons, UNITS_MAX_CARTONS);
+  const uPerCount = stepperValue(uPer, UNITS_MAX_PER_CARTON);
+  const splits = effectiveSplits(uCount, uSplits);
+  const receiptIso = localIsoDate();
+  const splitDateError = (iso: string) =>
+    validateCartonDates({ production: '', expiry: iso, receiptDate: receiptIso }).expiryError;
+  const unitsBlock = unitsSaveBlock({
+    selected: !!selected, saving, cartons: uCount, perCarton: uPerCount, splits, dateError: splitDateError,
+  });
+  const splitsOff = splits.length > 1 && splitSum(splits) !== uCount;
+
+  function toggleMode(to: LineUnit) {
+    if (to === mode) return;
+    trace('ui', 'units_mode_toggle', { to });
+    setMode(to);
+  }
+
+  async function handleUnitsSave() {
+    const tapped = splits.map((s) => ({ cartons: s.cartons, expiry: s.expiry || null }));
+    trace('ui', 'units_save', { item: selected?.item_code ?? null, cartons: uCount, per: uPerCount, splits: tapped, blocked: unitsBlock });
+    if (!selected || !units || unitsBlock) return;
+    setSaving(true);
+    try {
+      const payload = unitsLabelPayload({
+        palletNumber: 0, item: selected, cartons: uCount, perCarton: uPerCount, splits, printBarcode,
+      });
+      const res = await fetch('/api/carton-labels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, batch_id: batchIdForPayload(batchIdsRef.current, payload), ...payload }),
+      });
+      const data = await res.json();
+      if (res.status === 401) {
+        trace('ui', 'carton_save_fail', { status: 401, units: true });
+        showToast(tr('carton.sessionExpired'), 'error', '#ef8a8a');
+        return;
+      }
+      const labels: CartonLabel[] = Array.isArray(data?.labels) ? data.labels : [];
+      if (!data?.success || labels.length === 0) {
+        trace('ui', 'carton_save_fail', { status: res.status, units: true });
+        showToast(tr('carton.error'), 'error', '#ef8a8a');
+        return;
+      }
+      units.onCreated(labels, { item: selected, cartons: uCount, perCarton: uPerCount, splits });
+    } catch {
+      trace('ui', 'carton_save_fail', { status: 'network', units: true });
+      showToast(tr('carton.error'), 'error', '#ef8a8a');
+    } finally {
+      setSaving(false);
+    }
   }
   // Counted at this weight (countOnSave): a carton with none can't be booked
   // (the bot skips a box with no weight), so Save waits for one.
@@ -219,6 +332,7 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
   };
 
   async function handleSave() {
+    if (unitsOn) return handleUnitsSave();
     trace('ui', 'carton_save_tap', cartonSaveTapData({
       itemCode: selected?.item_code,
       quantity: count,
@@ -271,6 +385,112 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
 
   const fieldLabel = 'text-[10px] font-extrabold tracking-[1px] text-brand-weak-ink mb-[7px] mx-[2px]';
   const tile = 'bg-tile border border-line rounded-[12px]';
+
+  /** The quantity field's stepper, shared by every units number. Red frame
+   *  = a value Save refuses. */
+  const stepper = (value: string, set: (v: string) => void, max: number, bad: boolean, label: string) => {
+    const n = stepperValue(value, max);
+    return (
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => set(String(Math.max(1, n - 1)))}
+          className={`${tile} w-[52px] h-[52px] flex items-center justify-center text-ink-inverse`}
+          aria-label={`${label} -`}
+        >
+          <MI name="remove" size={22} />
+        </button>
+        <input
+          value={value}
+          onChange={e => set(e.target.value.replace(/\D/g, '').slice(0, String(max).length))}
+          inputMode="numeric"
+          aria-label={label}
+          className={`${bad ? 'bg-tile border-2 border-danger rounded-[12px]' : tile} flex-1 min-w-0 h-[52px] text-center bg-tile outline-none text-[20px] font-extrabold text-ink-inverse font-mono`}
+        />
+        <button
+          onClick={() => set(String(Math.min(max, n + 1)))}
+          className={`${tile} w-[52px] h-[52px] flex items-center justify-center text-ink-inverse`}
+          aria-label={`${label} +`}
+        >
+          <MI name="add" size={22} />
+        </button>
+      </div>
+    );
+  };
+
+  const setSplit = (i: number, patch: Partial<UnitsSplit>) =>
+    setUSplits(splits.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+
+  // Units mode: cartons, units per carton, the expiry rows. No captions —
+  // a value Save refuses turns red, a missing expiry amber.
+  const unitsFields = (
+    <>
+      <div>
+        <div className={fieldLabel}>{tr('carton.unitsCartons')}</div>
+        {stepper(uCartons, setUCartons, UNITS_MAX_CARTONS, uCount < 1, tr('carton.unitsCartons'))}
+      </div>
+      <div>
+        <div className={fieldLabel}>{tr('carton.unitsPerCarton')}</div>
+        {stepper(uPer, setUPer, UNITS_MAX_PER_CARTON, uPerCount < 1 && uPer !== '', tr('carton.unitsPerCarton'))}
+      </div>
+      <div className="flex flex-col gap-2">
+        <div className={`${fieldLabel} !mb-0`}>{tr('carton.expiry')}</div>
+        {splits.map((sp, i) => {
+          const bad = !!sp.expiry && !!splitDateError(sp.expiry);
+          return (
+            <div key={i} className="flex flex-col gap-2">
+              <div className="relative">
+                <button
+                  onClick={() => setSplitCal(i)}
+                  className={`${bad ? 'bg-tile border-2 border-danger rounded-[12px]' : !sp.expiry ? 'bg-tile border-2 border-warn/70 rounded-[12px]' : tile} w-full h-[52px] ps-3 pe-[38px] flex items-center gap-2 text-start`}
+                >
+                  <MI name="event" size={18} className={bad ? 'text-danger' : !sp.expiry ? 'text-warn' : 'text-brand-weak-ink'} />
+                  <span
+                    dir="ltr"
+                    className={`flex-1 min-w-0 truncate font-mono text-[14px] font-extrabold ${bad ? 'text-danger-weak-ink' : sp.expiry ? 'text-ink-inverse' : 'text-search-ink'}`}
+                  >
+                    {sp.expiry ? displayDate(sp.expiry) : '—'}
+                  </span>
+                </button>
+                {i > 0 && (
+                  <button
+                    onClick={() => setUSplits(removeSplit(splits, i))}
+                    aria-label={tr('terminal.clearExpiry')}
+                    className="absolute top-1/2 -translate-y-1/2 end-[6px] flex items-center justify-center w-[30px] h-[30px] rounded-full text-ink-muted"
+                  >
+                    <MI name="close" size={16} />
+                  </button>
+                )}
+              </div>
+              {splits.length > 1 && stepper(
+                String(sp.cartons),
+                v => setSplit(i, { cartons: stepperValue(v, UNITS_MAX_CARTONS) }),
+                UNITS_MAX_CARTONS,
+                splitsOff || sp.cartons < 1,
+                tr('carton.unitsCartons'),
+              )}
+            </div>
+          );
+        })}
+        {splits.length > 1 && (
+          // The rows' cartons against the total: red until they add up.
+          <div
+            role="status"
+            dir="ltr"
+            className={`flex items-center justify-center gap-[6px] font-mono text-[14px] font-extrabold ${splitsOff ? 'text-danger-weak-ink' : 'text-ok-weak-ink'}`}
+          >
+            <MI name={splitsOff ? 'error' : 'check_circle'} size={16} />
+            {splitSum(splits)} / {uCount}
+          </div>
+        )}
+        <button
+          onClick={() => setUSplits(addSplit(uCount, splits))}
+          className={`${tile} w-full h-[46px] flex items-center justify-center gap-2 text-[13px] font-extrabold text-brand-weak-ink`}
+        >
+          {tr('carton.unitsAnotherExpiry')}
+        </button>
+      </div>
+    </>
+  );
 
   return (
     <ScreenOverlay title={tr('carton.title')} onBack={onBack}>
@@ -347,6 +567,29 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
               <MI name="swap_horiz" size={20} className="text-brand-weak-ink" />
             </button>
 
+            {/* kg | units (units mode only) */}
+            {units && (
+              <div role="radiogroup" className={`${tile} p-[4px] flex gap-[4px]`}>
+                {([
+                  { to: 'kg' as LineUnit, label: tr('common.kg') },
+                  { to: 'units' as LineUnit, label: tr('carton.unitsToggle') },
+                ]).map(o => (
+                  <button
+                    key={o.to}
+                    role="radio"
+                    aria-checked={mode === o.to}
+                    onClick={() => toggleMode(o.to)}
+                    className={`flex-1 h-[44px] rounded-[9px] text-[15px] font-black transition-colors ${
+                      mode === o.to ? 'bg-brand text-white' : 'text-ink-muted'
+                    }`}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {unitsOn ? unitsFields : (<>
             {/* Cartons */}
             <div>
               <div className={fieldLabel}>{tr(onListNow ? 'carton.quantityMore' : 'carton.quantity')}</div>
@@ -518,24 +761,25 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
                 </p>
               </div>
             ) : null}
+            </>)}
           </div>
 
           <div className="flex-none px-3 py-[11px] border-t border-line bg-header safe-bottom">
             {/* The weight-filled note says "Print the label later": printing
                 on only. The missing-weight one always shows. */}
-            {countOnSave && (weightMissing || PRINTING) && (
+            {!unitsOn && countOnSave && (weightMissing || PRINTING) && (
               <p className="flex items-start gap-1.5 mb-[9px] text-[11.5px] font-bold leading-snug text-ink-muted">
                 <MI name="inventory_2" size={16} className="shrink-0 mt-px" />
                 <span className="min-w-0">{tr(weightMissing ? 'carton.countOnSaveNeedWeight' : 'carton.countOnSaveNote')}</span>
               </p>
             )}
-            {expiryMissing && (
+            {!unitsOn && expiryMissing && (
               <p className="flex items-start gap-1.5 mb-[9px] text-[11.5px] font-bold leading-snug text-warn-weak-ink">
                 <MI name="event" size={16} className="shrink-0 mt-px" />
                 <span className="min-w-0">{tr('carton.shortCodeNeedExpiry')}</span>
               </p>
             )}
-            {notCountedWarning && !countOnSave && (
+            {!unitsOn && notCountedWarning && !countOnSave && (
               <p className="flex items-start gap-1.5 mb-[9px] text-[11.5px] font-bold leading-snug text-warn-weak-ink">
                 <MI name="warning" size={16} className="shrink-0 mt-px" />
                 <span className="min-w-0">{tr('carton.notCountedWarning')}</span>
@@ -544,13 +788,15 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
             <button
               onClick={handleSave}
               disabled={saving}
-              aria-disabled={saveBlock ? true : undefined}
+              aria-disabled={(unitsOn ? unitsBlock : saveBlock) ? true : undefined}
               className="w-full h-[50px] rounded-[12px] bg-brand text-white text-[14px] font-black flex items-center justify-center gap-2 disabled:opacity-50 aria-disabled:opacity-50"
             >
               <MI name="save" size={20} />
               {saving
                 ? tr('carton.saving')
-                : count === 1
+                : unitsOn
+                  ? uCount === 1 ? tr('carton.unitsSaveOne') : tr('carton.unitsSave', { n: uCount })
+                  : count === 1
                   ? tr('carton.saveOne')
                   : tr('carton.save', { count })}
             </button>
@@ -572,6 +818,20 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
             setCalendarFor(null);
           }}
           onClose={() => setCalendarFor(null)}
+        />
+      ) : null}
+
+      {splitCal !== null ? (
+        <CalendarPicker
+          value={splits[splitCal]?.expiry ?? ''}
+          fieldTitle={tr('carton.expiry')}
+          requirePick
+          onPick={iso => {
+            trace('ui', 'carton_date_pick', { field: 'expiry', value: iso, split: splitCal });
+            setUSplits(effectiveSplits(uCount, uSplits).map((r, i) => (i === splitCal ? { ...r, expiry: iso } : r)));
+            setSplitCal(null);
+          }}
+          onClose={() => setSplitCal(null)}
         />
       ) : null}
 

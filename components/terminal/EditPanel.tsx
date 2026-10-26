@@ -89,6 +89,12 @@ interface EditPanelProps {
    */
   weightWarning?: string;
   /**
+   * A carton counted in units, not kg (lib/units-cartons.ts): `weight` holds
+   * its units, shown under `label` with `unit` in place of kg, whole numbers
+   * only.
+   */
+  units?: { label: string; unit: string };
+  /**
    * Why the last Save (or barcode mint) did not go through. Drawn INSIDE the
    * panel: the page's own error line sits under this full-screen overlay,
    * where a worker never saw "5 digits — need at least 13".
@@ -182,7 +188,7 @@ export function EditPanel({
   fromBarcode,
   barcodeEditable, barcodeInput = '', onBarcodeChange,
   onCreateBarcode, minting, onNoBarcode, showNoBarcode, onAddBarcode,
-  needsReview, weightWarning, saveError, saveErrorActions,
+  needsReview, weightWarning, units, saveError, saveErrorActions,
   onNameChange, onWeightChange, onExpiryChange, onProductionDateChange, onBatchChange, onSave, onCancel,
 }: EditPanelProps) {
   const tr = useT();
@@ -247,7 +253,7 @@ export function EditPanel({
 
   const handleKey = (k: string) => {
     if (k === 'back') { onWeightChange(weight.slice(0, -1)); return; }
-    if (k === '.' && weight.includes('.')) return;
+    if (k === '.' && (weight.includes('.') || units)) return;
     if (weight.replace('.', '').length >= 5) return;
     onWeightChange(weight + k);
   };
@@ -545,10 +551,10 @@ export function EditPanel({
           )}
           {tile(
             'weight',
-            tr('terminal.fieldWeight'),
+            units?.label ?? tr('terminal.fieldWeight'),
             <span dir="ltr" className="inline-flex items-baseline gap-[3px] max-w-full whitespace-nowrap">
               <span className="font-mono text-[13px] min-[360px]:text-[14px] font-black truncate">{weight}</span>
-              <span className="flex-none text-[10px] font-extrabold text-brand-weak-ink">{tr('common.kg')}</span>
+              <span className="flex-none text-[10px] font-extrabold text-brand-weak-ink">{units?.unit ?? tr('common.kg')}</span>
             </span>,
             'flex-[0.95]',
             !!fromBarcode?.weight,
@@ -577,7 +583,7 @@ export function EditPanel({
                 <span className="font-mono font-black text-[28px] leading-none text-ink-inverse truncate">
                   {weight || <span className="text-ink-muted">—</span>}
                 </span>
-                <span className="text-[12px] font-extrabold text-brand-weak-ink">{tr('common.kg')}</span>
+                <span className="text-[12px] font-extrabold text-brand-weak-ink">{units?.unit ?? tr('common.kg')}</span>
               </div>
               {/* One line, always there, so the keypad never jumps while typing. */}
               {states.weight === 'invalid' ? (
@@ -587,7 +593,7 @@ export function EditPanel({
                 </div>
               ) : (
                 <div className="mt-[4px] mb-[7px] h-[16px] text-[11px] font-bold text-ink-muted truncate">
-                  {fromBarcode?.weight ? tr('terminal.weightFromBarcode') : tr('terminal.weightHint')}
+                  {units ? null : fromBarcode?.weight ? tr('terminal.weightFromBarcode') : tr('terminal.weightHint')}
                 </div>
               )}
               <Keypad onKey={handleKey} />
