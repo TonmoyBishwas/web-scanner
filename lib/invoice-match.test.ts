@@ -155,6 +155,50 @@ describe('invoiceNameConflict', () => {
   });
 });
 
+// IN264194413 (Baladi, 25/10): the invoice OCR put the two turkey lines'
+// English the wrong way round (ירכיים = thighs is "Drumsticks", שוקיים =
+// drumsticks is "Thighs"). The box OCR read a ירכיים carton right and copied
+// the candidate English "Frozen Turkey Thighs…" — the שוקיים line's — so the
+// exact-English step named the other line and 23 false popups fired.
+const BALADI: InvoiceItem[] = [
+  { item_code: '03141230', item_name_hebrew: 'רולדה הודו אדום מעובד תפזורת בד"ץ העדה החרדית', item_name_english: 'Red Turkey Roulade, processed meat products, Badatz Haredit' },
+  { item_code: '7290003670321', item_name_hebrew: "ירכיים בינוני קפוא תפז' עדה החרדית", item_name_english: 'Frozen Turkey Drumsticks, Badatz Haredit' },
+  { item_code: '7290003670444', item_name_hebrew: "שוקיים עוף בינוני קפוא תפז' עדה החרדית", item_name_english: 'Frozen Turkey Thighs, Badatz Haredit' },
+];
+const THIGHS_LABEL = '7290003670321015084304406102027';
+const DRUMSTICKS_LABEL = '7290003670444014410981902082027';
+
+describe('invoiceNameConflict — the Hebrew on the sticker judges (25/10)', () => {
+  it('Hebrew agrees with the code, English names the swapped line → null', () => {
+    expect(invoiceNameConflict(
+      "ירכיים עוף בינוני קפוא תפז' עדה החרדית", 'Frozen Turkey Thighs, Badatz Haredit', BALADI, [THIGHS_LABEL],
+    )).toBeNull();
+  });
+
+  it('Hebrew names the other line → still a conflict', () => {
+    const c = invoiceNameConflict(
+      "שוקיים עוף בינוני קפוא תפז' עדה החרדית", 'Frozen Chicken Drumsticks, Badatz Haredit', BALADI, [THIGHS_LABEL],
+    );
+    expect(c?.byCode.item_code).toBe('7290003670321');
+    expect(c?.byName.item_code).toBe('7290003670444');
+  });
+
+  it('the mirror case on a drumsticks label → null', () => {
+    // The 08:12:14 read, word doubled as the model returned it.
+    expect(invoiceNameConflict(
+      "שוקיים עוף בינוני קפוא תפז' קפוא תפז' עדה החרדית", 'Frozen Turkey Drumsticks, Badatz Haredit', BALADI, [DRUMSTICKS_LABEL],
+    )).toBeNull();
+  });
+
+  it('no Hebrew read → the English still judges', () => {
+    const c = invoiceNameConflict('', 'Frozen Turkey Thighs, Badatz Haredit', BALADI, [THIGHS_LABEL]);
+    expect(c?.byName.item_code).toBe('7290003670444');
+    // Latin text in the Hebrew field is no Hebrew read either.
+    const latin = invoiceNameConflict('Turkey Thighs', 'Frozen Turkey Thighs, Badatz Haredit', BALADI, [THIGHS_LABEL]);
+    expect(latin?.byName.item_code).toBe('7290003670444');
+  });
+});
+
 describe("cartonOwnCodes — the worker's choice of product beats the code", () => {
   const GOURMET2: InvoiceItem[] = [
     { item_code: '7290004456856', item_name_hebrew: 'קבב מוסדי 8 קג - גורמה העדה החרדית', item_name_english: 'Frozen kebab 8g' },
