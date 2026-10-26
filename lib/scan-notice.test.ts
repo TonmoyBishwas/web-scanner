@@ -152,6 +152,13 @@ describe('canOfferDifferentCarton', () => {
     expect(canOfferDifferentCarton(C8, { ocr_status: 'processing' })).toBe(false);
   });
 
+  it('a short per-carton serial (Wall Dan 408274) is that carton → never offered', () => {
+    expect(canOfferDifferentCarton('408274', { ocr_status: 'done' })).toBe(false);
+    expect(canOfferDifferentCarton('15928481', { ocr_status: 'done' })).toBe(false);
+    expect(differentCartonOffer('408274', { ocr_status: 'done' })).toBeNull();
+    expect(listedNoticeKey('408274', { ocr_status: 'done' }, { photo: true, twins: 0 })).toBe('terminal.alreadyListed');
+  });
+
   it('the supplier code of an identical batch → never offered (every carton carrying it is declared)', () => {
     const minted = { barcode: '2826100100000001', source_barcode: C8, minted: true, ocr_status: 'done' };
     expect(canOfferDifferentCarton(C8, minted)).toBe(false);

@@ -238,7 +238,11 @@ export function findCountedCartonByDigits<T extends CountedRow>(
  * OCR — the form would open with no name or weight to copy — or when the hit
  * is an identical batch standing in for the code (`isBatchStandIn`): the
  * worker already declared every carton that carries it, so "one more" would
- * count a labelled carton twice.
+ * count a labelled carton twice. Nor for a short code (6–11 digits): the
+ * only short codes on the list are per-carton serials the label photo
+ * confirmed (Wall Dan `408274`, lib/carton-barcode.ts
+ * labelConfirmsShortCode), so a re-read IS that carton — on 25/10 a second
+ * photo of 408274 became a second carton.
  */
 export function canOfferDifferentCarton(
   code: string,
@@ -246,6 +250,7 @@ export function canOfferDifferentCarton(
 ): boolean {
   const c = (code || '').trim();
   if (!/^\d/.test(c) || isMintedLabelBarcode(c)) return false;
+  if (/^\d{6,11}$/.test(c)) return false;
   if (typeof row.barcode === 'string' && isBatchStandIn(c, row as CountedRow)) return false;
   return row.ocr_status !== 'processing';
 }

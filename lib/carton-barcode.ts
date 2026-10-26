@@ -13,6 +13,8 @@
  * from the barcode's shape.
  */
 
+import { belongsToCartonCode } from './frame-reads';
+
 export function digitsOf(s: string | null | undefined): string {
   return (s || '').replace(/\D/g, '');
 }
@@ -194,4 +196,57 @@ export function shortCodeDefaults(
   else if (boxes > 0 && kg > 0) weight = Math.round((kg / boxes) * 1000) / 1000;
   const quantity = boxes > 0 && !opts.lineMaySpread ? Math.max(1, boxes - Math.max(0, counted)) : 1;
   return { weight, quantity, lineTotal: boxes > 0 ? boxes : null };
+}
+
+/**
+ * A short code that IS the carton's own serial (Wall Dan, 2026-10-25,
+ * document 48534): Wall Dan prints a 6-digit running number per carton
+ * (`408274`, `399577`), and `classifyRead` refuses every one of them as a
+ * fragment. The photo was no way out either: the label read printed
+ * `408274` correctly, the capture threw it away for being under 13 digits,
+ * and the same carton was booked twice as two `NOBC-…` rows.
+ *
+ * Length alone cannot tell a serial from a fragment — `020926`, six digits
+ * off the middle of a Well Done 30-digit code, was read identically three
+ * times on 11/10 — so neither does this, and neither does a read count.
+ * Two independent readers must agree: the photo's printed number under the
+ * bars (`ocrDigits`) is exactly a short code the decoder read on this page
+ * (`decodedShort`). For a fragment the label prints the long code, never
+ * the piece. And it is still none of the things a short code already is:
+ *  * 6 to 11 digits (24755, five, stays out);
+ *  * not an invoice line's item code (`501004` keeps its New-carton route,
+ *    see matchInvoiceShortCode);
+ *  * not carried by a long code already on the list (lib/frame-reads.ts
+ *    belongsToCartonCode);
+ *  * not the supplier's shipping-pallet label.
+ * The carton is then booked under the serial itself, as any carton is under
+ * its full barcode — every photo a deliberate capture, a repeat caught as
+ * the same carton.
+ */
+export function labelConfirmsShortCode(
+  ocrDigits: string,
+  decodedShort: ReadonlySet<string>,
+  lines: readonly ShortCodeLine[] | null | undefined,
+  listedCodes: readonly string[],
+): boolean {
+  if (!/^\d{6,11}$/.test(ocrDigits)) return false;
+  if (!decodedShort.has(ocrDigits)) return false;
+  if (matchInvoiceShortCode(ocrDigits, lines) !== null) return false;
+  if (listedCodes.some((code) => belongsToCartonCode(ocrDigits, code))) return false;
+  return !isSupplierPalletLabel(ocrDigits);
+}
+
+/**
+ * Do a manual capture's printed digits identify the carton, so it is booked
+ * and deduped under them? 13+ digits, as always, or a short serial the
+ * decoder confirmed (labelConfirmsShortCode). Otherwise the capture is
+ * booked without a barcode (lib/no-barcode.ts) or sent to review.
+ */
+export function printedDigitsIdentifyCarton(
+  digits: string,
+  decodedShort: ReadonlySet<string>,
+  lines: readonly ShortCodeLine[] | null | undefined,
+  listedCodes: readonly string[],
+): boolean {
+  return digits.length >= 13 || labelConfirmsShortCode(digits, decodedShort, lines, listedCodes);
 }
