@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyRead, digitsOf, gtinCheckDigitValid, isInHouseCode, isIsraeliGtinPrefixed, matchInvoiceShortCode, noteRepeatedRead, shortCodeDefaults } from './carton-barcode';
+import { classifyRead, digitsOf, gtinCheckDigitValid, isInHouseCode, isIsraeliGtinPrefixed, labelConfirmsShortCode, matchInvoiceShortCode, noteRepeatedRead, printedDigitsIdentifyCarton, shortCodeDefaults } from './carton-barcode';
 
 describe('carton-barcode', () => {
   it('digitsOf strips everything but digits', () => {
@@ -140,5 +140,66 @@ describe('shortCodeDefaults', () => {
     expect(shortCodeDefaults({ quantity_kg: 800, box_count: 80 }, 0, { lineMaySpread: true }))
       .toEqual({ weight: 10, quantity: 1, lineTotal: 80 });
     expect(shortCodeDefaults({ quantity_kg: 800, box_count: 80 }, 0, { lineMaySpread: false }).quantity).toBe(80);
+  });
+});
+
+describe('labelConfirmsShortCode (Wall Dan 48534, 2026-10-25)', () => {
+  // Wall Dan prints a 6-digit running serial per carton; the decoder read
+  // 408274 and the label photo read 408274 under the bars.
+  const lines = [
+    { item_code: '501004' },
+    { item_code: '1200' },
+  ];
+  // Well Done 48288 (11/10): `020926` is a fragment of this 30-digit code.
+  const SOKOLOW = '388432467020926171026048702036';
+  // A 30-digit catch-weight code that carries `15928481` (IN264171048).
+  const CATCH_WEIGHT = '729000357086701592848115072027';
+
+  it('the decoder and the label agree on a 6-digit serial → confirmed', () => {
+    expect(labelConfirmsShortCode('408274', new Set(['408274']), lines, [])).toBe(true);
+    expect(labelConfirmsShortCode('399577', new Set(['408274', '399577']), lines, ['408274'])).toBe(true);
+  });
+
+  it('the decoder never read that code on this page → not confirmed', () => {
+    expect(labelConfirmsShortCode('408274', new Set(['408215']), lines, [])).toBe(false);
+    expect(labelConfirmsShortCode('408274', new Set(), lines, [])).toBe(false);
+  });
+
+  it('a fragment of a long code: the label prints the long code → not confirmed', () => {
+    expect(labelConfirmsShortCode(SOKOLOW, new Set(['020926']), lines, [])).toBe(false);
+    expect(labelConfirmsShortCode('7290003570867015928481150720277', new Set(['15928481']), lines, [])).toBe(false);
+  });
+
+  it('a short code a long code on the list carries → not confirmed', () => {
+    expect(labelConfirmsShortCode('020926', new Set(['020926']), lines, [SOKOLOW])).toBe(false);
+    expect(labelConfirmsShortCode('15928481', new Set(['15928481']), lines, [CATCH_WEIGHT])).toBe(false);
+  });
+
+  it('an invoice item code keeps its New-carton route → not confirmed', () => {
+    expect(labelConfirmsShortCode('501004', new Set(['501004']), lines, [])).toBe(false);
+  });
+
+  it('fewer than 6 or more than 11 digits, or not digits → not confirmed', () => {
+    expect(labelConfirmsShortCode('24755', new Set(['24755']), lines, [])).toBe(false);
+    expect(labelConfirmsShortCode('40827400011', new Set(['40827400011']), lines, [])).toBe(true);
+    expect(labelConfirmsShortCode('408274000112', new Set(['408274000112']), lines, [])).toBe(false);
+    expect(labelConfirmsShortCode('4082a4', new Set(['4082a4']), lines, [])).toBe(false);
+    expect(labelConfirmsShortCode('', new Set(['']), lines, [])).toBe(false);
+  });
+});
+
+describe('printedDigitsIdentifyCarton', () => {
+  it('13+ printed digits identify the carton as before', () => {
+    expect(printedDigitsIdentifyCarton('7290003570867015320158115072027', new Set(), [], [])).toBe(true);
+    expect(printedDigitsIdentifyCarton('7290004456825', new Set(), [], [])).toBe(true);
+  });
+
+  it('a short serial only when the decoder confirmed it', () => {
+    expect(printedDigitsIdentifyCarton('408274', new Set(['408274']), [], [])).toBe(true);
+    expect(printedDigitsIdentifyCarton('408274', new Set(), [], [])).toBe(false);
+  });
+
+  it('nothing read → not identified', () => {
+    expect(printedDigitsIdentifyCarton('', new Set(['']), [], [])).toBe(false);
   });
 });

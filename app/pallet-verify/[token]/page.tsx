@@ -74,7 +74,7 @@ import { cartonOwnCodes, invoiceNameConflict, matchInvoiceItem } from '@/lib/inv
 import { labelPrintsWeight, uniformCandidate } from '@/lib/uniform-candidate';
 import { isSplitSession } from '@/lib/session-mode';
 import { findDuplicateOwner } from '@/lib/duplicate-guard';
-import { classifyRead, matchInvoiceShortCode, noteRepeatedRead, shortCodeDefaults } from '@/lib/carton-barcode';
+import { classifyRead, matchInvoiceShortCode, noteRepeatedRead, printedDigitsIdentifyCarton, shortCodeDefaults } from '@/lib/carton-barcode';
 import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
 import { cartonsOnListFor, listAboveTotal, newCartonQuantity, type ListAboveTotal } from '@/lib/count-check';
 import { freeNoBarcodeId, isNoBarcodeId, unreadDigitsOutcome } from '@/lib/no-barcode';
@@ -738,6 +738,12 @@ export default function PalletVerifyPage({
   // When each short code was last explained (lib/scan-notice.ts
   // shouldExplainShortRead): once a minute, not every 3 s.
   const shortReadsRef = useRef<Map<string, number>>(new Map());
+  // Every short code the decoder read on this page (pallet or loose), noted
+  // before any throttle: a label photo whose printed number is one of them
+  // books the carton under it (lib/carton-barcode.ts labelConfirmsShortCode,
+  // Wall Dan 25/10). Not the notice throttle above — booking must not hang
+  // on when a notice was last shown.
+  const decodedShortRef = useRef<Set<string>>(new Set());
 
   // A notice belongs to the screen it was raised on: a phase change (confirm,
   // next pallet, loose phase) takes it down, and starts the re-read ticks
@@ -1625,7 +1631,14 @@ export default function PalletVerifyPage({
       // digit) is a misread: show the digits, store nothing (SCN-13).
       const verdict = classifyRead(read);
       trace('ui', 'scan_detected', { barcode: read, pallet: currentPalletRef.current, ok: verdict.ok, reason: verdict.ok ? undefined : verdict.reason, duplicate: processedRef.current.has(read), has_image: !!imageData, twin_held: twinHeld || undefined, same_held: sameHeld || undefined });
-      if (!verdict.ok) {
+      // A short serial a label photo already booked (Wall Dan 408274, 25/10)
+      // is on the list: the blue "already on the list" notice below, not the
+      // amber short-code one. Every short read is noted first, before any
+      // throttle — a later photo of the sticker is checked against it.
+      const tooShort = !verdict.ok && verdict.reason === 'too_short';
+      if (tooShort) decodedShortRef.current.add(read);
+      const bookedSerial = tooShort && processedRef.current.has(read);
+      if (!verdict.ok && !bookedSerial) {
         if (verdict.reason === 'pallet_label') {
           // The supplier's shipping-pallet label: keep it as the pallet's
           // identity, never as a carton (MEV-10 — IN264172698 booked it as
@@ -2151,6 +2164,16 @@ export default function PalletVerifyPage({
       .then((r) => r.json())
       .then((data) => {
         if (lateReadDropped(lookupKey, 'pallet', !!(data?.success && data.ocr_data))) return;
+        // Do the printed digits identify the carton? 13+, or a short serial
+        // the decoder read too (Wall Dan 408274, 25/10 — it used to become
+        // NOBC-…, and a second photo of it a second carton). Decided once,
+        // out here, so the notice and the updater below agree.
+        const ownDigits = manual && data?.success && data.ocr_data
+          ? printedDigitsIdentifyCarton(
+              digitsOnly(data.ocr_data.barcode_digits), decodedShortRef.current,
+              sessionRef.current?.ocr_data, scannedBoxesRef.current.map((b) => b.barcode),
+            )
+          : false;
         // A manual capture whose printed digits are a carton already on the
         // list: drop the provisional row and SAY so, naming the carton the
         // photo actually shows. Decided out here, not in the updater below (a
@@ -2160,7 +2183,7 @@ export default function PalletVerifyPage({
         // captures of #9 under a line blaming #8).
         if (manual && data?.success && data.ocr_data) {
           const digits = digitsOnly(data.ocr_data.barcode_digits);
-          const hit = digits.length >= 13
+          const hit = ownDigits
             ? findCountedCartonByDigits(scannedBoxesRef.current, digits, lookupKey)
             : null;
           if (hit) {
@@ -2225,7 +2248,7 @@ export default function PalletVerifyPage({
           let needsReview = false;
           if (manual) {
             const digits = digitsOnly(data.ocr_data.barcode_digits);
-            if (digits.length >= 13) {
+            if (ownDigits) {
               // Dedupe against every OTHER box (bar-scanned or manual) by the
               // FULL printed number — not the SKU, which repeats per product.
               // The notice was raised above; this only catches a row the ref
@@ -2467,7 +2490,11 @@ export default function PalletVerifyPage({
       const sameHeld = noteTwinHoldRead(sameHoldRef, read, now);
       const verdict = classifyRead(read);
       trace('ui', 'loose_scan_detected', { barcode: read, ok: verdict.ok, reason: verdict.ok ? undefined : verdict.reason, duplicate: looseProcessedRef.current.has(read), has_image: !!imageData, twin_held: twinHeld || undefined, same_held: sameHeld || undefined });
-      if (!verdict.ok) {
+      // A short serial a label photo already booked — see the pallet phase.
+      const tooShort = !verdict.ok && verdict.reason === 'too_short';
+      if (tooShort) decodedShortRef.current.add(read);
+      const bookedSerial = tooShort && looseProcessedRef.current.has(read);
+      if (!verdict.ok && !bookedSerial) {
         if (verdict.reason === 'pallet_label') {
           showToast(t(sessionRef.current?.language || 'English', 'terminal.palletLabelRead', { digits: read }), 'local_shipping');
           return;
@@ -4392,10 +4419,17 @@ export default function PalletVerifyPage({
       .then((r) => r.json())
       .then((data) => {
         if (lateReadDropped(lookupKey, 'loose', !!(data?.success && data.ocr_data))) return;
+        // Printed digits that identify the carton — see runOcr.
+        const ownDigits = manual && data?.success && data.ocr_data
+          ? printedDigitsIdentifyCarton(
+              digitsOnly(data.ocr_data.barcode_digits), decodedShortRef.current,
+              sessionRef.current?.ocr_data, looseBoxesRef.current.map((b) => b.barcode),
+            )
+          : false;
         // A capture of a carton already on the loose list — see runOcr.
         if (manual && data?.success && data.ocr_data) {
           const digits = digitsOnly(data.ocr_data.barcode_digits);
-          const hit = digits.length >= 13
+          const hit = ownDigits
             ? findCountedCartonByDigits(looseBoxesRef.current, digits, lookupKey)
             : null;
           if (hit) {
@@ -4428,7 +4462,7 @@ export default function PalletVerifyPage({
           let needsReview = false;
           if (manual) {
             const digits = digitsOnly(data.ocr_data.barcode_digits);
-            if (digits.length >= 13) {
+            if (ownDigits) {
               // The notice was raised above; this only catches a row the ref
               // had not caught up with yet.
               const dup = findCountedCartonByDigits(prev, digits, lookupKey) !== null;
