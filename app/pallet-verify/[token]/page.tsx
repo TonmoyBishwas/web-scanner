@@ -89,6 +89,7 @@ import {
   SCAN_NOTICE_ACTION_MS,
   HIGHLIGHT_ROW_MS,
   scanNoticeMs,
+  noticeAwaitsAnswer,
   shouldSoundDuplicate,
   clearDuplicateSounds,
   findCountedCarton,
@@ -1049,6 +1050,16 @@ export default function PalletVerifyPage({
   // merge) deliberately do NOT register — they need an explicit answer, and a
   // stray Back press must not silently discard the worker's input.
   useBackClose(Boolean(viewingImage), () => setViewingImage(null));
+  // The edit panel closes on Back like its X (Wall Dan 25/10 13:26: Back with
+  // the panel open closed the tab). A question notice ("short barcode — is
+  // there a long one?") goes on Back like "There is a long barcode" (13:32:
+  // Back there went to the morning's Baladi page). Back on the plain scanning
+  // screen still leaves the page.
+  useBackClose(Boolean(editForm), () => cancelEdit('back'));
+  useBackClose(noticeAwaitsAnswer(scanNotice), () => {
+    trace('ui', 'scan_notice_back', { short: !!scanNotice?.short });
+    clearScanNotice();
+  });
 
   // ── AI consolidation: debounced call after scans settle ──
   //
@@ -1158,6 +1169,7 @@ export default function PalletVerifyPage({
   // effect so the claim lands before the first write.
   const sessionClaimedRef = useRef(false);
   const [passive, setPassive] = useState(false);
+  const reloadingRef = useRef(false);
   useEffect(() => {
     if (sessionClaimedRef.current) return;
     if (phase !== 'scanning' && phase !== 'loose_scanning') return;
@@ -1175,7 +1187,10 @@ export default function PalletVerifyPage({
       }
     };
     const onFront = () => {
-      if (document.visibilityState !== 'visible' || !lost()) return;
+      if (reloadingRef.current || document.visibilityState !== 'visible' || !lost()) return;
+      // visibilitychange and focus both fire on the way back (Wall Dan 25/10
+      // traced session_reload twice): reload once.
+      reloadingRef.current = true;
       trace('lifecycle', 'session_reload', { phase });
       window.location.reload();
     };
@@ -2692,6 +2707,17 @@ export default function PalletVerifyPage({
     });
   }
 
+  // Close the edit panel without saving — its X, or the device Back.
+  function cancelEdit(via: 'x' | 'back') {
+    if (!editForm) return;
+    trace('ui', 'edit_cancel', { barcode: editForm.barcode, via });
+    // A barcode minted in this edit but never saved onto the row would
+    // be an orphan label; drop it while it is still unprinted.
+    if (editForm.forcedId) discardSavedLabel(editForm.forcedId);
+    setEditForm(null);
+    setEditError(null);
+  }
+
   // Apply the edit: update the box, then re-group exactly like rescanPalletBox —
   // changing the name moves the box's group key, so recompute detectedType and
   // drop any uniform group / pending prompt that no longer has ≥2 done samples.
@@ -3890,7 +3916,11 @@ export default function PalletVerifyPage({
           // Q5 (client 2026-10-13): counted now, at the typed weight.
           countOnSave
           onList={cartonOnList}
-          onBack={() => { setShowCartonCreator(false); setCartonPreset(null); }}
+          onBack={() => {
+            trace('ui', 'carton_creator_cancel', { preset_item: cartonPreset?.item.item_code });
+            setShowCartonCreator(false);
+            setCartonPreset(null);
+          }}
           onCreated={(count, batchId, labels) => {
             // Back to the scanner, no Labels screen (SCN-18).
             setShowCartonCreator(false);
@@ -4412,13 +4442,7 @@ export default function PalletVerifyPage({
         return f ? { weight: 'weight' in f, expiry: 'expiry' in f } : undefined;
       })()}
       onSave={handleSaveEdit}
-      onCancel={() => {
-        // A barcode minted in this edit but never saved onto the row would
-        // be an orphan label; drop it while it is still unprinted.
-        if (editForm.forcedId) discardSavedLabel(editForm.forcedId);
-        setEditForm(null);
-        setEditError(null);
-      }}
+      onCancel={() => cancelEdit('x')}
     />
   ) : null;
 
