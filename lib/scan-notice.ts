@@ -53,6 +53,19 @@ export function scanNoticeMs(notice: { different?: unknown; newCarton?: unknown;
 }
 
 /**
+ * Does this notice wait for an answer — and so take the device Back button?
+ *
+ * Wall Dan 25/10 13:32: the "only a short barcode" question was up, David
+ * pressed Back to dismiss it, and the page went back to the morning's Baladi
+ * session instead. Back on a question now takes it down (like "There is a
+ * long barcode"); a notice that clears itself leaves Back alone, and so does
+ * the plain scanning screen.
+ */
+export function noticeAwaitsAnswer(notice: Parameters<typeof scanNoticeMs>[0] | null): boolean {
+  return !!notice && scanNoticeMs(notice) === null;
+}
+
+/**
  * A short read (lib/carton-barcode.ts too_short, e.g. `406243` on document
  * 48429) is explained once per code per minute. It used to come back amber,
  * with a buzz, every ~3 s for as long as the camera saw the code.

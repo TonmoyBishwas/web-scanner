@@ -36,6 +36,8 @@ import { labelPrintingEnabled } from '@/lib/label-printing';
 import { batchIdForPayload } from '@/lib/label-batches';
 import { validateCartonDates } from '@/lib/date-validation';
 import { localIsoDate } from '@/lib/edit-panel-state';
+import { trace } from '@/lib/scanner-trace';
+import { cartonSaveBlock, cartonSaveTapData } from '@/lib/carton-trace';
 import type { CartonLabel } from '@/types';
 
 /** The subset of an invoice line this screen needs, shared by both session shapes. */
@@ -171,6 +173,7 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
   function pickItem(item: CartonItemOption) {
     setSelected(item);
     const ctx = onList?.(item);
+    trace('ui', 'carton_item_pick', { item_code: item.item_code, listed: ctx?.total ?? 0 });
     if (ctx && ctx.total > 0) setQuantity(String(ctx.quantity));
     setStep('form');
   }
@@ -183,6 +186,9 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
   // A preset (short item code) carton has no sticker to read the date off
   // later, so its expiry is required.
   const expiryMissing = !!preset && !expiryDate;
+  // What holds Save back. Only an in-flight save disables the button: a
+  // refused tap still reaches handleSave, which traces why (lib/carton-trace.ts).
+  const saveBlock = cartonSaveBlock({ selected: !!selected, saving, count, dateError, weightMissing, expiryMissing });
 
   // The preview is the real sticker component fed placeholder identifiers, so
   // what the worker approves is what comes out of the printer.
@@ -213,7 +219,16 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
   };
 
   async function handleSave() {
-    if (!selected || saving || count < 1 || dateError || weightMissing || expiryMissing) return;
+    trace('ui', 'carton_save_tap', cartonSaveTapData({
+      itemCode: selected?.item_code,
+      quantity: count,
+      weight,
+      production: productionDate,
+      expiry: expiryDate,
+      notes,
+      blocked: saveBlock,
+    }));
+    if (!selected || saveBlock) return;
     setSaving(true);
     try {
       const payload = {
@@ -235,16 +250,19 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
       });
       const data = await res.json();
       if (res.status === 401) {
+        trace('ui', 'carton_save_fail', { status: 401 });
         showToast(tr('carton.sessionExpired'), 'error', '#ef8a8a');
         return;
       }
       if (!data?.success) {
+        trace('ui', 'carton_save_fail', { status: res.status });
         showToast(tr('carton.error'), 'error', '#ef8a8a');
         return;
       }
       const labels: CartonLabel[] = Array.isArray(data.labels) ? data.labels : [];
       onCreated?.(labels.length || count, data.batch_id ?? null, labels);
     } catch {
+      trace('ui', 'carton_save_fail', { status: 'network' });
       showToast(tr('carton.error'), 'error', '#ef8a8a');
     } finally {
       setSaving(false);
@@ -312,7 +330,10 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
             ) : null}
             {/* Chosen item + a way back to the picker */}
             <button
-              onClick={() => setStep('item')}
+              onClick={() => {
+                trace('ui', 'carton_item_change', { item_code: selected?.item_code });
+                setStep('item');
+              }}
               className={`${tile} w-full px-3 py-[12px] flex items-center gap-3 text-start`}
             >
               <span className="flex-1 min-w-0">
@@ -522,8 +543,9 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
             )}
             <button
               onClick={handleSave}
-              disabled={saving || count < 1 || !!dateError || weightMissing || expiryMissing}
-              className="w-full h-[50px] rounded-[12px] bg-brand text-white text-[14px] font-black flex items-center justify-center gap-2 disabled:opacity-50"
+              disabled={saving}
+              aria-disabled={saveBlock ? true : undefined}
+              className="w-full h-[50px] rounded-[12px] bg-brand text-white text-[14px] font-black flex items-center justify-center gap-2 disabled:opacity-50 aria-disabled:opacity-50"
             >
               <MI name="save" size={20} />
               {saving
@@ -544,6 +566,7 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
           // and OK disabled until the worker picks one off the sticker.
           requirePick
           onPick={iso => {
+            trace('ui', 'carton_date_pick', { field: calendarFor, value: iso });
             if (calendarFor === 'production') setProductionDate(iso);
             else setExpiryDate(iso);
             setCalendarFor(null);

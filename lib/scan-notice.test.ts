@@ -9,6 +9,7 @@ import {
   isBatchStandIn,
   standInCount,
   scanNoticeMs,
+  noticeAwaitsAnswer,
   nearestScrollTop,
   twinCount,
   noteTwinHoldRead,
@@ -334,6 +335,23 @@ describe('scanNoticeMs', () => {
     // Never silent (a real twin read in that window still gets a way in),
     // never stuck on screen while the camera stays parked on the carton.
     expect(scanNoticeMs({ different: { n: 3, sameAnswered: true } })).toBe(SCAN_NOTICE_ACTION_MS);
+  });
+});
+
+describe('noticeAwaitsAnswer (Wall Dan 25/10: Back on a short-read question left the page)', () => {
+  it('a question with no timer takes the device Back button', () => {
+    expect(noticeAwaitsAnswer({ short: true, newCarton: { label: 'x' } })).toBe(true);
+    expect(noticeAwaitsAnswer({ different: { n: 3 } })).toBe(true);
+  });
+
+  it('a notice that clears itself does not', () => {
+    expect(noticeAwaitsAnswer({})).toBe(false);
+    expect(noticeAwaitsAnswer({ newCarton: { label: 'x' } })).toBe(false);
+    expect(noticeAwaitsAnswer({ different: { n: 3, sameAnswered: true } })).toBe(false);
+  });
+
+  it('no notice, no guard', () => {
+    expect(noticeAwaitsAnswer(null)).toBe(false);
   });
 });
 
