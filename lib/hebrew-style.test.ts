@@ -37,6 +37,8 @@ const IMPERATIVE_ALLOWED: Record<string, string> = {
 // or a comma instead. A bare "—" is the no-value placeholder and stays.
 const SENTENCE_DASH = /[—–]| - /;
 const PLACEHOLDER = '—';
+// Mevaser's own wording, approved verbatim with its dash (D26-9 T3, 26/10).
+const DASH_APPROVED = new Set(['terminal.barcodeTooShort']);
 
 // Mevaser 21/10, rule 4: the worker never reads קבלה / טיוטא / פריוריטי
 // (the note is תעודה, receiving is קליטה). Office screens may.
@@ -120,7 +122,7 @@ describe('Hebrew style rules (Mevaser 21/10)', () => {
   });
 
   it('no sentence dash in any Hebrew text, the bare placeholder aside', () => {
-    expect(HE.filter(([, v]) => v !== PLACEHOLDER && SENTENCE_DASH.test(v))).toEqual([]);
+    expect(HE.filter(([k, v]) => v !== PLACEHOLDER && !DASH_APPROVED.has(k) && SENTENCE_DASH.test(v))).toEqual([]);
   });
 
   it('no קבלה / טיוטא / פריוריטי on a worker screen', () => {
