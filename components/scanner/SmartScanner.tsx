@@ -11,6 +11,7 @@ import {
   ReadConfirmer,
   THICK_SMALL_SCALE,
   type DecodePass,
+  type DroppedRead,
   type FrameRead,
 } from '@/lib/barcode-frame';
 import { CartonCodeMemory } from '@/lib/frame-reads';
@@ -21,6 +22,20 @@ import { KeyThrottle, ScannerHealth } from '@/lib/scanner-health';
 
 /** Heartbeat cadence of the `scanner_health` trace event while the camera is open. */
 const HEALTH_MS = 15000;
+
+/**
+ * `read_dropped`: a value the confirmer let go without confirming — the real
+ * "the camera saw it, nothing happened" (lib/barcode-frame.ts DroppedRead).
+ * One event per value per throttle window.
+ */
+function traceDropped(throttle: KeyThrottle, dropped: DroppedRead[], now: number): void {
+  for (const d of dropped) {
+    if (!throttle.allow(d.value, now)) continue;
+    trace('ui', 'read_dropped', {
+      value: d.value, via: d.via, reads: d.reads, reason: d.reason, ms_from_first_read: now - d.first,
+    });
+  }
+}
 
 /**
  * Why the parent turned a read down — decides the colour and label of the hold.
@@ -627,7 +642,7 @@ export function SmartScanner({
     acceptValueRef.current = acceptValue;
   }, [acceptValue]);
   // Trace throttles (lib/scanner-health.ts): one event per value per window.
-  const unconfirmedThrottleRef = useRef(new KeyThrottle(5000));
+  const droppedThrottleRef = useRef(new KeyThrottle(5000));
   const cooldownThrottleRef = useRef(new KeyThrottle(5000));
   const refusedThrottleRef = useRef(new KeyThrottle(3000));
   const healthRef = useRef(new ScannerHealth());
@@ -1080,6 +1095,11 @@ export function SmartScanner({
   }, [hardwareTriggerEnabled, onManualCapture, handleManualCaptureClick]);
 
   const stopNativeScanning = () => {
+    // The scanner is going away: what it saw and never confirmed is reported
+    // now or never. A camera restart (switch, resume) keeps the counts.
+    if (!isMountedRef.current) {
+      traceDropped(droppedThrottleRef.current, confirmerRef.current.drain('camera_stop'), Date.now());
+    }
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
     }
@@ -1250,20 +1270,18 @@ export function SmartScanner({
       if (preferCartonCodesRef.current) {
         const memory = cartonCodesRef.current;
         frameReads = memory.filter(reads, now);
-        confirmerRef.current.forget((v) => memory.claims(v));
+        traceDropped(droppedThrottleRef.current, confirmerRef.current.forget((v) => memory.claims(v)), now);
       }
 
       // Multi-read validation: 2 identical reads within 3 seconds, per value.
-      const { confirmed, progress } = confirmerRef.current.add(frameReads, now);
+      // A first read is not traced on its own any more: nearly every one
+      // confirms on the next frame (25/10: all 99 cartons, 0.34 s median), so
+      // `read_unconfirmed` made every carton look refused. What is traced is
+      // the confirmation and each value that left unconfirmed.
+      const { confirmed, progress, confirmedFirstAt, dropped } = confirmerRef.current.add(frameReads, now, via);
+      traceDropped(droppedThrottleRef.current, dropped, now);
       if (!confirmed) {
         setCaptureCount(progress);
-        // A value seen but not (yet) confirmed — the "camera sees it, nothing
-        // happens" case. One event per value per 5 s.
-        for (const r of frameReads) {
-          if (unconfirmedThrottleRef.current.allow(r.value, now)) {
-            trace('ui', 'read_unconfirmed', { value: r.value, via });
-          }
-        }
         return;
       }
       const barcode = confirmed;
@@ -1272,6 +1290,14 @@ export function SmartScanner({
       console.log('[SmartScanner] Barcode confirmed:', barcode, `(${via})`);
       setCaptureCount(0);
       healthRef.current.confirm(now);
+      // The carton just taken, re-read inside its cooldown, is the normal tail
+      // of every scan — neither a confirmation nor a drop worth a trace row.
+      const sinceLastScan = now - lastScanTimeRef.current;
+      if (!(sinceLastScan < 3000 && barcode === lastScannedRef.current)) {
+        trace('ui', 'scan_confirmed', {
+          value: barcode, via, ms_from_first_read: now - (confirmedFirstAt ?? now), reads: confirmerRef.current.need,
+        });
+      }
 
       // A value the page refuses outright (a short fragment that is not a
       // known item code): tell the page, but never arm the cooldown for it —
@@ -1292,7 +1318,7 @@ export function SmartScanner({
       const timeSinceLastScan = now - lastScanTimeRef.current;
       if (timeSinceLastScan < 3000) {
         console.log('[SmartScanner] Cooldown active, ignoring confirmed scan');
-        if (cooldownThrottleRef.current.allow(barcode, now)) {
+        if (barcode !== lastScannedRef.current && cooldownThrottleRef.current.allow(barcode, now)) {
           trace('ui', 'cooldown_drop', { value: barcode, held_by: lastScannedRef.current, ms: timeSinceLastScan });
         }
         return;
@@ -1377,6 +1403,7 @@ export function SmartScanner({
         e2eBusy = false;
         if (!isMountedRef.current || pausedRef.current || e2eWorkerRef.current !== worker) return;
         const { reads } = ev.data;
+        healthRef.current.e2e(reads.length, reads.map((r) => r.value));
         if (reads.length > 0) void consume(reads, 'e2e');
       };
       worker.onerror = (err) => {
@@ -1619,14 +1646,18 @@ export function SmartScanner({
   }, [isSupported, currentCameraIndex, cameras.length]);
 
   // `scanner_health` heartbeat (trace only): every 15 s while the camera is
-  // open — frames decoded, frames with a read, values seen, time since the
-  // last confirmed read. Silent while paused or before the stream exists.
+  // open — frames decoded, frames with a read (each decoder), values seen,
+  // time since the last confirmed read and since the last read of any kind.
+  // It also reports values whose 3 s window closed since the last frame with
+  // a read. Silent while paused or before the stream exists.
   useEffect(() => {
     if (isSupported !== true) return;
     const id = setInterval(() => {
       if (!streamRef.current || pausedRef.current) return;
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      trace('ui', 'scanner_health', healthRef.current.snapshot(Date.now(), { engine: engineRef.current }));
+      const now = Date.now();
+      traceDropped(droppedThrottleRef.current, confirmerRef.current.sweep(now), now);
+      trace('ui', 'scanner_health', healthRef.current.snapshot(now, { engine: engineRef.current }));
     }, HEALTH_MS);
     return () => clearInterval(id);
   }, [isSupported]);

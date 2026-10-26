@@ -31,6 +31,9 @@
  * Label printing off (LABEL_PRINTING_ENABLED, lib/label-printing.ts — the
  * default since 20/10): the intro (it promises a printed label) and the
  * sticker preview with its "Print the labels from Labels" note are hidden.
+ *
+ * Every field change is traced (`identical_*`, 26/10): the 25/10 roulade form
+ * took 70 s from open to save and the trace could not say where.
  */
 
 import { useRef, useState } from 'react';
@@ -46,6 +49,7 @@ import { labelPrintingEnabled } from '@/lib/label-printing';
 import { validateCartonDates } from '@/lib/date-validation';
 import { localIsoDate } from '@/lib/edit-panel-state';
 import { batchIdForPayload } from '@/lib/label-batches';
+import { trace } from '@/lib/scanner-trace';
 import type { CartonLabel } from '@/types';
 
 export interface IdenticalSample {
@@ -142,6 +146,20 @@ export function IdenticalBoxesForm({
   // saved, never a second set of labels — and a save whose count, weight or
   // dates changed meanwhile is never answered with the old labels.
   const batchIdsRef = useRef(new Map<string, string>());
+  // The weight as last traced: it is traced when the field is left, not per key.
+  const tracedWeightRef = useRef(weight);
+
+  const traceField = (event: string, data: Record<string, unknown>) =>
+    trace('ui', event, { barcode: sample.barcode, ...data });
+  const changeQuantity = (value: string, how: 'minus' | 'plus' | 'typed' | 'invoice') => {
+    setQuantity(value);
+    traceField('identical_count', { how, value });
+  };
+  const changeDate = (field: DateField, value: string) => {
+    if (field === 'production') setProductionDate(value);
+    else setExpiryDate(value);
+    traceField('identical_date', { field, value });
+  };
 
   const typed = Math.min(Math.max(parseInt(quantity, 10) || 0, 0), 500);
   // What is saved: the total less what is already listed (or the count as typed).
@@ -189,6 +207,9 @@ export function IdenticalBoxesForm({
 
   async function handleSave() {
     if (!canSave) return;
+    traceField('identical_save', {
+      count, typed, listed, weight: weightKg, production_date: productionDate, expiry: expiryDate,
+    });
     setSaving(true);
     try {
       // The same save the page's one-tap "Another carton, same label" uses
@@ -206,6 +227,7 @@ export function IdenticalBoxesForm({
       });
       const result = await postIdenticalLabels(token, batchIdForPayload(batchIdsRef.current, payload), payload);
       if (!result.ok) {
+        traceField('identical_save_failed', { reason: result.reason });
         showToast(tr(result.reason === 'session' ? 'carton.sessionExpired' : 'identical.error'), 'error', '#ef8a8a');
         return;
       }
@@ -230,7 +252,13 @@ export function IdenticalBoxesForm({
   const tile = 'bg-tile border border-line rounded-[12px]';
 
   return (
-    <ScreenOverlay title={anotherOf ? tr('identical.anotherTitle') : tr('identical.title')} onBack={onBack}>
+    <ScreenOverlay
+      title={anotherOf ? tr('identical.anotherTitle') : tr('identical.title')}
+      onBack={() => {
+        traceField('identical_cancel', { typed: quantity, weight });
+        onBack();
+      }}
+    >
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 flex flex-col gap-[13px]">
         <div className={`${tile} px-3 py-[12px]`}>
           <span className="block text-[15px] font-extrabold text-ink-inverse truncate">{name}</span>
@@ -286,7 +314,7 @@ export function IdenticalBoxesForm({
           <div className={fieldLabel}>{anotherOf ? tr('identical.anotherQuantity') : tr('identical.quantity')}</div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setQuantity(String(Math.max(minTyped, typed - 1)))}
+              onClick={() => changeQuantity(String(Math.max(minTyped, typed - 1)), 'minus')}
               className={`${tile} w-[52px] h-[52px] flex items-center justify-center text-ink-inverse`}
               aria-label="-"
             >
@@ -294,14 +322,14 @@ export function IdenticalBoxesForm({
             </button>
             <input
               value={quantity}
-              onChange={(e) => setQuantity(e.target.value.replace(/\D/g, '').slice(0, 3))}
+              onChange={(e) => changeQuantity(e.target.value.replace(/\D/g, '').slice(0, 3), 'typed')}
               inputMode="numeric"
               placeholder="0"
               autoFocus
               className={`${tile} flex-1 min-w-0 h-[52px] text-center bg-tile outline-none text-[20px] font-extrabold text-ink-inverse font-mono placeholder:text-search-ink`}
             />
             <button
-              onClick={() => setQuantity(String(Math.min(500, Math.max(minTyped, typed + 1))))}
+              onClick={() => changeQuantity(String(Math.min(500, Math.max(minTyped, typed + 1))), 'plus')}
               className={`${tile} w-[52px] h-[52px] flex items-center justify-center text-ink-inverse`}
               aria-label="+"
             >
@@ -326,7 +354,7 @@ export function IdenticalBoxesForm({
             // The note's figure, one tap — never filled in for him.
             <button
               type="button"
-              onClick={() => setQuantity(String(lineBoxes))}
+              onClick={() => changeQuantity(String(lineBoxes), 'invoice')}
               className="mt-[6px] mx-[2px] inline-flex items-center gap-[4px] min-h-[34px] px-3 rounded-full border border-brand/50 bg-brand-weak text-brand-weak-ink text-[11.5px] font-extrabold"
             >
               <MI name="receipt_long" size={15} />
@@ -341,6 +369,11 @@ export function IdenticalBoxesForm({
           <input
             value={weight}
             onChange={(e) => setWeight(e.target.value.replace(/[^\d.]/g, '').slice(0, 7))}
+            onBlur={() => {
+              if (weight === tracedWeightRef.current) return;
+              tracedWeightRef.current = weight;
+              traceField('identical_weight', { value: weight });
+            }}
             inputMode="decimal"
             dir="ltr"
             placeholder="0.00"
@@ -360,8 +393,8 @@ export function IdenticalBoxesForm({
         {/* Dates */}
         <div className="flex gap-2">
           {([
-            { field: 'production' as DateField, label: tr('carton.production'), value: productionDate, clear: () => setProductionDate(''), clearLabel: tr('terminal.clearProduction') },
-            { field: 'expiry' as DateField, label: tr('carton.expiry'), value: expiryDate, clear: () => setExpiryDate(''), clearLabel: tr('terminal.clearExpiry') },
+            { field: 'production' as DateField, label: tr('carton.production'), value: productionDate, clear: () => changeDate('production', ''), clearLabel: tr('terminal.clearProduction') },
+            { field: 'expiry' as DateField, label: tr('carton.expiry'), value: expiryDate, clear: () => changeDate('expiry', ''), clearLabel: tr('terminal.clearExpiry') },
           ]).map((d) => {
             const bad = d.field === 'expiry' && !!dateError;
             return (
@@ -369,7 +402,10 @@ export function IdenticalBoxesForm({
                 <div className={fieldLabel}>{d.label}</div>
                 <div className="relative">
                   <button
-                    onClick={() => setCalendarFor(d.field)}
+                    onClick={() => {
+                      setCalendarFor(d.field);
+                      traceField('identical_date_open', { field: d.field });
+                    }}
                     className={`${bad ? 'bg-tile border-2 border-danger rounded-[12px]' : tile} w-full h-[52px] ps-3 pe-[38px] flex items-center gap-2 text-start`}
                   >
                     <MI name="event" size={18} className={bad ? 'text-danger' : 'text-brand-weak-ink'} />
@@ -436,11 +472,13 @@ export function IdenticalBoxesForm({
           // and OK disabled until the worker picks one off the sticker.
           requirePick
           onPick={(iso) => {
-            if (calendarFor === 'production') setProductionDate(iso);
-            else setExpiryDate(iso);
+            changeDate(calendarFor, iso);
             setCalendarFor(null);
           }}
-          onClose={() => setCalendarFor(null)}
+          onClose={() => {
+            traceField('identical_date_close', { field: calendarFor });
+            setCalendarFor(null);
+          }}
         />
       ) : null}
 
