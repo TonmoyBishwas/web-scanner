@@ -14,7 +14,8 @@
  *  * `blocksConfirm` — a failed read holds confirm exactly like a
  *    `needs_review` row (pallet and loose), and the amber "needs a detail"
  *    footer opens it. A row still being read is NOT counted: it is not
- *    missing a detail yet.
+ *    missing a detail yet. (25/10: so does an open ratio weight doubt —
+ *    `isOpenRatioDoubt`.)
  *  * `waitForReads` / `heldAfterReads` — the confirm waits (bounded) for
  *    reads still in flight, and anything that comes back failed or flagged
  *    sends the worker back to the list instead of being booked. Without this
@@ -37,12 +38,32 @@ import { cartonOwnCodes, matchInvoiceItemByCode, type InvoiceItem } from './invo
 export const READ_WAIT_BEFORE_BOOK_MS = 30_000;
 const READ_WAIT_POLL_MS = 250;
 
+/** The fields of a row the confirm gate reads. */
+interface GateRow {
+  needs_review?: boolean;
+  ocr_status?: string;
+  weight_suspect?: { reason: 'name_number' | 'ratio' };
+  weight_checked?: boolean;
+}
+
+/**
+ * A weight 3x off its item's median on the list (lib/weight-sanity.ts rule 2)
+ * that the worker has not settled. Unlike a number from the product name it
+ * holds the confirm — client, 25/10 (IN264194413: the pallet's paper slip,
+ * 11 cartons / 172.87 kg, captured as one carton beside ~15.7 kg ones): "a
+ * weight 3x off or more blocks the save until David confirms or fixes it".
+ * On 2,149 booked cartons it fires only on the two real errors.
+ */
+export function isOpenRatioDoubt(b: GateRow): boolean {
+  return b.weight_suspect?.reason === 'ratio' && !b.weight_checked;
+}
+
 /**
  * Does this row hold the pallet (or the loose pile) from being confirmed?
  * The one predicate the gate's count and the amber footer's "open it" share.
  */
-export function blocksConfirm(b: { needs_review?: boolean; ocr_status?: string }): boolean {
-  return !!b.needs_review || b.ocr_status === 'failed';
+export function blocksConfirm(b: GateRow): boolean {
+  return !!b.needs_review || b.ocr_status === 'failed' || isOpenRatioDoubt(b);
 }
 
 /**
@@ -70,17 +91,20 @@ export function waitForReads(
 /**
  * After the wait: the barcodes that send the confirm back to the list.
  * A row the confirm waited for that now blocks (nobody has seen it yet —
- * not even in soft mode), and, where warnings block, any failed row at all
- * (a confirm that never passed the footer's gate: the single-item
- * auto-confirm after the total is set).
+ * not even in soft mode), any open ratio doubt (soft mode included: it is
+ * not an unreadable carton to wave through), and, where warnings block, any
+ * failed row at all. The last two catch a confirm that never passed the
+ * footer's gate: the single-item auto-confirm after the total is set.
  */
 export function heldAfterReads(
-  rows: ReadonlyArray<{ barcode: string; needs_review?: boolean; ocr_status?: string }>,
+  rows: ReadonlyArray<GateRow & { barcode: string }>,
   waitedFor: ReadonlySet<string>,
   opts: { soft: boolean },
 ): string[] {
   return rows
-    .filter((r) => blocksConfirm(r) && (waitedFor.has(r.barcode) || (!opts.soft && r.ocr_status === 'failed')))
+    .filter((r) => blocksConfirm(r) && (
+      waitedFor.has(r.barcode) || isOpenRatioDoubt(r) || (!opts.soft && r.ocr_status === 'failed')
+    ))
     .map((r) => r.barcode);
 }
 
