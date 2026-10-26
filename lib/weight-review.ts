@@ -1,5 +1,5 @@
 /**
- * Reviewing doubted weights without ever blocking the pallet (2026-10-19).
+ * Reviewing doubted weights without blocking the pallet (2026-10-19).
  *
  * IN264191356: 16 correct 8 kg kebab cartons sat amber behind an orange
  * "יש לתקן 16 סריקות לפני המשך" (16 scans must be fixed before continuing)
@@ -13,6 +13,15 @@
  * item at one weight, and "review one by one" — and Confirm stays available.
  * Confirming with doubts still open books them as read — no dialog on top
  * of the slide (client rule 19/10: never stop the worker).
+ *
+ * 2026-10-25, the ratio rule only: a weight 3x off its item's median holds
+ * Confirm again (lib/failed-read.ts isOpenRatioDoubt / blocksConfirm), and
+ * the bar offers no one tap and no "continue as they are" for it — the
+ * carton is opened, and Save or Delete settles it. IN264194413: a photo of
+ * the pallet's paper slip (11 cartons, 172.87 kg) was booked as one carton
+ * with only a toast to say so. The client asked for it himself (25/10: "a
+ * weight 3x off or more blocks the save until David confirms or fixes it");
+ * the 19/10 complaint was the name-number rule, which still only asks.
  *
  * Pure helpers; the page owns the rows.
  */

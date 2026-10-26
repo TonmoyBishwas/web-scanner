@@ -27,7 +27,7 @@ import {
   applyBarcodeReadings, keepBarcodeFilled, reconcileWithBarcode, typicalWeightFor,
   type BarcodeEvent, type BarcodeFilled,
 } from '@/lib/barcode-reconcile';
-import { blocksConfirm, failedReadPrefill, heldAfterReads, takesLateRead, waitForReads } from '@/lib/failed-read';
+import { blocksConfirm, failedReadPrefill, heldAfterReads, isOpenRatioDoubt, takesLateRead, waitForReads } from '@/lib/failed-read';
 import { DoneOverlay } from '@/components/terminal/DoneOverlay';
 import { Toast, useLockToast } from '@/components/terminal/Toast';
 import { PriorityPushStatus } from '@/components/terminal/PriorityPushStatus';
@@ -200,10 +200,12 @@ interface BoxScan extends MultiPalletBoxScan {
   new_carton?: boolean;
   // lib/weight-sanity.ts: the OCR weight looks wrong (a number from the
   // product name — `name` says which — or 3x off the item's median on this
-  // list). A question for the worker, NOT folded into needs_review: it never
-  // holds the pallet (lib/weight-review.ts). The row turns amber with a
-  // reason; the review bar, the edit panel's "the weight is correct" or an
-  // edit settles it; any left at Confirm are booked as read (and traced).
+  // list). NOT folded into needs_review (lib/weight-review.ts). A name number
+  // is a question: it never holds the pallet, and any left at Confirm are
+  // booked as read (and traced). A ratio doubt holds it until settled
+  // (lib/failed-read.ts isOpenRatioDoubt — client, 25/10). The row turns
+  // amber with a reason; the review bar, the edit panel's "the weight is
+  // correct" or an edit settles it.
   weight_suspect?: { typical?: number; reason: 'name_number' | 'ratio'; name?: string };
   // The worker saved this carton in the edit panel: its weight is theirs.
   weight_checked?: boolean;
@@ -229,7 +231,8 @@ interface BoxScan extends MultiPalletBoxScan {
  * Flag every carton on the list whose weight looks wrong (lib/weight-sanity.ts)
  * — a new read can also expose an earlier one, e.g. a first carton read as
  * 120 kg once three real 12 kg ones are in. Only ever ADDS a doubt, and never
- * touches needs_review: a doubt asks, it does not block (lib/weight-review.ts).
+ * touches needs_review (lib/weight-review.ts); a ratio doubt holds through
+ * blocksConfirm instead (lib/failed-read.ts).
  */
 function flagSuspectWeights(
   list: BoxScan[],
@@ -4051,7 +4054,7 @@ export default function PalletVerifyPage({
     </div>
   );
 
-  // ── Doubted weights: a review, never a block (lib/weight-review.ts) ──
+  // ── Doubted weights: a review; only a ratio doubt holds (lib/weight-review.ts) ──
 
   /** "The weight is correct for all": the doubts shown, confirmed as read. */
   function acceptWeightDoubts(loose: boolean, barcodes: ReadonlySet<string>, weight?: number) {
@@ -4080,7 +4083,8 @@ export default function PalletVerifyPage({
    * bar above the slide was the prompt; a dialog on top of the slide was
    * one more stop on every pallet with a doubt (client rule, Mevaser 19/10:
    * "don't stop or ask David — anything left over goes to the office"). What
-   * was left open is traced, so it can be looked at afterwards.
+   * was left open is traced, so it can be looked at afterwards. Only name
+   * number doubts get here: an open ratio doubt holds the slide (25/10).
    */
   function confirmPastWeightDoubts(loose: boolean) {
     const open = weightDoubts(loose ? looseBoxes : scannedBoxes);
@@ -4096,11 +4100,17 @@ export default function PalletVerifyPage({
    * The amber review above the footer while any weight on the list is
    * doubted: what looks odd, one tap to say it is right (when the doubts are
    * one item at one weight), and one by one. Confirm below stays available.
+   * Not with a ratio doubt open (client, 25/10): it holds Confirm, so there is
+   * no "continue as they are", and no one tap either — 25/10's 172.87 kg was
+   * printed on the pallet's paper slip, so "the weight is correct (172.87)"
+   * would have passed it unseen. The carton is opened instead: the edit panel
+   * shows the photo, and Save or Delete settles it.
    */
   function weightReviewBar(loose: boolean) {
     const list = loose ? looseBoxes : scannedBoxes;
     const doubts = weightDoubts(list);
     if (doubts.length === 0) return null;
+    const ratioOpen = doubts.some(isOpenRatioDoubt);
     const shared = sharedDoubt(list);
     const ids = new Set(doubts.map((b) => b.barcode));
     const n = doubts.length;
@@ -4111,15 +4121,17 @@ export default function PalletVerifyPage({
           <span className="min-w-0">
             {n === 1 ? tr('palletVerify.weightReviewTitleOne') : tr('palletVerify.weightReviewTitle', { count: n })}
             {' '}
-            <span className="font-semibold text-ink-muted">
-              {shared
-                ? tr('palletVerify.weightReviewShared', { name: shared.name, w: shared.weight })
-                : tr('palletVerify.weightReviewMixed')}
-            </span>
+            {(shared || !ratioOpen) && (
+              <span className="font-semibold text-ink-muted">
+                {shared
+                  ? tr('palletVerify.weightReviewShared', { name: shared.name, w: shared.weight })
+                  : tr('palletVerify.weightReviewMixed')}
+              </span>
+            )}
           </span>
         </div>
         <div className="flex gap-2 mt-[8px]">
-          {shared && (
+          {shared && !ratioOpen && (
             <button
               onClick={() => acceptWeightDoubts(loose, ids, shared.weight)}
               className="flex-1 min-w-0 flex items-center justify-center gap-[5px] py-[9px] px-2 rounded-[11px] bg-warn text-canvas text-[12px] font-black leading-tight text-center"
@@ -5131,7 +5143,9 @@ export default function PalletVerifyPage({
   // stuck on a pallet. When the feature is off, the old behaviour holds
   // (warnings block until each box is fixed or deleted).
   const softWarnings = !!session?.meat_discrepancy;
-  const warningsBlock = hasUnresolvedWarnings && !softWarnings;
+  // An open ratio weight doubt is not an unreadable carton: soft mode does
+  // not wave it through "Create LPN anyway" (client, 25/10 — 3x off holds).
+  const warningsBlock = (hasUnresolvedWarnings && !softWarnings) || scannedBoxes.some(isOpenRatioDoubt);
   const canConfirm =
     !pendingUniformPrompt &&
     !pendingSingleGroup &&
@@ -6170,7 +6184,7 @@ export default function PalletVerifyPage({
               <MI name="done_all" size={18} /> {tr('palletVerify.doneScanning')}
             </button>
           )}
-          {hasUnresolvedWarnings && softWarnings && (
+          {hasUnresolvedWarnings && softWarnings && !warningsBlock && (
             // Only the soft note: when the cartons hold the pallet, the
             // orange button above already says it (and is the thing to tap)
             // — a caption repeating "— tap to open" opened nothing.
