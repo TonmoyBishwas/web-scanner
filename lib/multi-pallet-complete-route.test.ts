@@ -114,3 +114,28 @@ describe('multi-pallet-complete: a nameless carton', () => {
     expect(sent.verified_scan_count).toBe(3);
   });
 });
+
+describe('multi-pallet-complete: a units line declared on a pallet (27/10)', () => {
+  // Note 008955's KK117: 7 cartons x 18 portions = 126 UNITS in quantity_kg.
+  const KK117 = { item_code: 'KK117', item_name_hebrew: 'מנה', item_name_english: 'Meal', quantity_kg: 126, box_count: 7, unit: 'units' };
+
+  it('the declared total stays in the line\'s own unit: 7 cartons = 126 units, never 0', async () => {
+    sessions.set(`pallet:multi:${TOKEN}`, {
+      ...(sessions.get(`pallet:multi:${TOKEN}`) as Record<string, unknown>),
+      ocr_data: [KK117],
+    });
+    const res = await route.POST(new NextRequest('http://scanner.test/api/multi-pallet-complete', {
+      method: 'POST',
+      body: JSON.stringify({
+        token: TOKEN, scanned_boxes: [], box_count: 7, pallet_number: 1,
+        manual_declared: true, manual_items: [{ item_key: 'KK117', box_count: 7 }],
+      }),
+    } as never));
+    expect(res.status).toBe(200);
+    const items = botCalls[0].body.items as Array<Item & { ocr_box_weight: number }>;
+    expect(items).toHaveLength(1);
+    expect(items[0].box_count).toBe(7);
+    expect(items[0].calculated_total_weight).toBe(126);
+    expect(items[0].ocr_box_weight).toBe(18);
+  });
+});

@@ -1028,7 +1028,9 @@ export const en = {
   'carton.unitsSave': 'Add {n} cartons',
   'carton.unitsSaveOne': 'Add 1 carton',
   'carton.unitsAdded': '{n} cartons added · {m} units',
+  'carton.unitsAddedOne': '1 carton added · {m} units',
   'carton.unitsRow': '{n} cartons · exp {date}',
+  'carton.unitsRowOne': '1 carton · exp {date}',
 
   // "All boxes identical → save labels" (pallet-verify row action)
   'identical.action': 'All boxes identical',

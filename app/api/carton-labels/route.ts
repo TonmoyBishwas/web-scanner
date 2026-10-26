@@ -17,6 +17,7 @@ import { parseBatchId, parseLabelOrigin } from '@/lib/label-batches';
 import { parseClearMode } from '@/lib/pallet-clear';
 import { pendingLabelsUrl } from '@/lib/label-link';
 import { parseUnitsRequest } from '@/lib/units-cartons';
+import { unitsModeOn } from '@/lib/scanner-flags';
 import type { CartonLabelOrigin } from '@/types';
 
 const unauthorized = () =>
@@ -132,9 +133,13 @@ export async function POST(request: NextRequest) {
     }
 
     // New carton in units (lib/units-cartons.ts): no weight, the units per
-    // carton, and one expiry per split — the loose pile only.
+    // carton, and one expiry per split — the loose pile only, and only while
+    // the session's chat has units_mode on (the page never offers it off).
     const units = parseUnitsRequest(body);
     if (units) {
+      if (!(await unitsModeOn(context.chatId))) {
+        return NextResponse.json({ success: false, error: 'units_mode_off' }, { status: 403 });
+      }
       if (!units.ok || weight !== null || palletNumber !== 0) {
         return NextResponse.json({ success: false, error: units.ok ? 'invalid units save' : units.error }, { status: 400 });
       }

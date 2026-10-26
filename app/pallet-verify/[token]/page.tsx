@@ -34,7 +34,7 @@ import { PriorityPushStatus } from '@/components/terminal/PriorityPushStatus';
 import { useDrawerHost } from '@/components/terminal/DrawerHost';
 import { PalletsBrowser } from '@/components/terminal/PalletsBrowser';
 import { CartonCreator, type CartonCreatorPreset, type CartonItemOption, type CartonOnList, type UnitsSave } from '@/components/terminal/CartonCreator';
-import { groupUnitsRows, isUnitsCarton, shortExpiry, unitsBatchSummary, unitsCartonRows, unitsCartonsPrefill } from '@/lib/units-cartons';
+import { groupUnitsRows, isUnitsCarton, shortExpiry, unitsAddedKey, unitsBatchSummary, unitsCartonRows, unitsCartonsPrefill, unitsRowKey } from '@/lib/units-cartons';
 import { UnitsBatchRow } from '@/components/terminal/UnitsBatchRow';
 import { LabelsBrowser } from '@/components/terminal/LabelsBrowser';
 import { IdenticalBoxesForm } from '@/components/terminal/IdenticalBoxesForm';
@@ -3830,7 +3830,7 @@ export default function PalletVerifyPage({
       origin: 'new_carton', count: rows.length, batch_id: labels[0]?.batch_id, pallet: 0, counted: true,
       units_per_carton: save.perCarton, units,
     });
-    showToast(tr('carton.unitsAdded', { n: rows.length, m: units }), 'save');
+    showToast(tr(unitsAddedKey(rows.length), { n: rows.length, m: units }), 'save');
   }
 
   const cartonOverlays = (
@@ -5895,7 +5895,7 @@ export default function PalletVerifyPage({
                     <UnitsBatchRow
                       key={`units:${e.batch}`}
                       name={first.item_name_hebrew || first.item_name || '—'}
-                      summary={tr('carton.unitsRow', { n: sum.cartons, date: shortExpiry(sum.firstExpiry) })
+                      summary={tr(unitsRowKey(sum.cartons), { n: sum.cartons, date: shortExpiry(sum.firstExpiry) })
                         + (sum.moreExpiries > 0 ? ` +${sum.moreExpiries}` : '')}
                       units={sum.units}
                       unitLabel={tr('carton.unitsToggle')}

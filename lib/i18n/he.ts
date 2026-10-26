@@ -1030,7 +1030,9 @@ export const he: Record<TranslationKey, string> = {
   'carton.unitsSave': 'הוסיפו {n} קרטונים',
   'carton.unitsSaveOne': 'הוסיפו קרטון אחד',
   'carton.unitsAdded': "{n} קרטונים נוספו · {m} יח'",
+  'carton.unitsAddedOne': "קרטון אחד נוסף · {m} יח'",
   'carton.unitsRow': '{n} קרטונים · תוקף {date}',
+  'carton.unitsRowOne': 'קרטון אחד · תוקף {date}',
 
   // "כל הקרטונים זהים" (pallet-verify row action)
   'identical.action': 'כל הקרטונים זהים',

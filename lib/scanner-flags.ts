@@ -6,7 +6,10 @@
  *
  * A missing table, a missing row or any DB error is OFF: a feature behind a
  * flag must never switch on because the flag could not be read.
+ *
+ * Server only (the service-role client): the page sees `features` alone.
  */
+import { supabase } from './supabase';
 
 export interface ScannerFlagRow {
   enabled_all?: unknown;
@@ -44,4 +47,24 @@ export function cachedFlagRow(
     cached = { row, at: now() };
     return row;
   };
+}
+
+/**
+ * Units-carton mode (lib/units-cartons.ts). One cache for the session GET,
+ * which tells the page, and POST /api/carton-labels, which refuses a units
+ * save while the flag is off for the session's chat.
+ */
+export const unitsModeRow = cachedFlagRow(async () => {
+  const { data, error } = await supabase
+    .from('scanner_flags')
+    .select('enabled_all, chat_ids')
+    .eq('flag', 'units_mode')
+    .maybeSingle();
+  if (error) return null;
+  return (data as ScannerFlagRow | null) ?? null;
+});
+
+/** Units mode for this chat; off when the flag cannot be read. */
+export async function unitsModeOn(chatId: string | number | null | undefined): Promise<boolean> {
+  return flagEnabledFor(await unitsModeRow(), chatId);
 }

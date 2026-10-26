@@ -141,6 +141,13 @@ describe('shortCodeDefaults', () => {
       .toEqual({ weight: 10, quantity: 1, lineTotal: 80 });
     expect(shortCodeDefaults({ quantity_kg: 800, box_count: 80 }, 0, { lineMaySpread: false }).quantity).toBe(80);
   });
+  it('a units line offers no weight: 126 portions / 7 is not 18 kg (note 008955)', () => {
+    expect(shortCodeDefaults({ quantity_kg: 126, box_count: 7, unit: 'units' }, 2))
+      .toEqual({ weight: null, quantity: 5, lineTotal: 7 });
+    expect(shortCodeDefaults({ quantity_kg: 126, box_count: 7, unit_weight_kg: 4, unit: 'units' }, 0).weight).toBeNull();
+    // An explicit kg line is the kg path, unchanged.
+    expect(shortCodeDefaults({ quantity_kg: 126, box_count: 7, unit: 'kg' }, 0).weight).toBe(18);
+  });
 });
 
 describe('labelConfirmsShortCode (Wall Dan 48534, 2026-10-25)', () => {

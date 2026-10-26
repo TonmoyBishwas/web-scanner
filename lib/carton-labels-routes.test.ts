@@ -205,3 +205,19 @@ describe('GET /api/carton-labels/pending', () => {
     expect((await pendingRoute.GET(req(`/api/carton-labels/pending?doc=IN1&sig=${other}`))).status).toBe(401);
   });
 });
+
+describe('POST /api/carton-labels in units (27/10)', () => {
+  it('refused 403 while units_mode is off for the chat: nothing minted', async () => {
+    // No scanner_flags row in the fake = off (lib/scanner-flags.ts).
+    const res = await labelsRoute.POST(req('/api/carton-labels', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: 'tokA', item_name_hebrew: 'מנה', quantity: 7, pallet_number: 0, origin: 'new_carton',
+        units_per_carton: 18, splits: [{ quantity: 7, expiry_date: '2026-11-12' }],
+      }),
+    }));
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe('units_mode_off');
+    expect(ids()).toEqual(['1', '2', '3', '4', '5', '7', '9']);
+  });
+});

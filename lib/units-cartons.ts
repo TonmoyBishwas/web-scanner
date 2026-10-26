@@ -347,3 +347,21 @@ export function shortExpiry(iso: string | null | undefined): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? '');
   return m ? `${m[3]}/${m[2]}/${m[1].slice(2)}` : '';
 }
+
+/** The toast after a units save: "1 carton" reads as one, not "1 cartons". */
+export function unitsAddedKey(cartons: number): 'carton.unitsAdded' | 'carton.unitsAddedOne' {
+  return cartons === 1 ? 'carton.unitsAddedOne' : 'carton.unitsAdded';
+}
+
+/** The grouped row's summary, singular for a one-carton save. */
+export function unitsRowKey(cartons: number): 'carton.unitsRow' | 'carton.unitsRowOne' {
+  return cartons === 1 ? 'carton.unitsRowOne' : 'carton.unitsRow';
+}
+
+/**
+ * The note's kilograms: the kg lines only. A units line's `quantity_kg`
+ * holds its units (126 portions), which are not kilograms.
+ */
+export function invoiceKgTotal(lines: ReadonlyArray<{ unit?: unknown; quantity_kg?: number | null }>): number {
+  return lines.reduce((s, l) => s + (lineUnit(l) === 'kg' ? Number(l.quantity_kg) || 0 : 0), 0);
+}

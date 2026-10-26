@@ -3,6 +3,7 @@ import {
   addSplit,
   effectiveSplits,
   groupUnitsRows,
+  invoiceKgTotal,
   isUnitsCarton,
   lineUnit,
   parseUnitsRequest,
@@ -11,12 +12,14 @@ import {
   shortExpiry,
   splitExpiries,
   stepperValue,
+  unitsAddedKey,
   unitsBatchMatches,
   unitsBatchSummary,
   unitsCartonRows,
   unitsCartonsPrefill,
   unitsLabelPayload,
   unitsPerCartonPrefill,
+  unitsRowKey,
   unitsSaveBlock,
 } from './units-cartons';
 
@@ -234,5 +237,19 @@ describe('sanitizeUnitsBoxes (the loose payload)', () => {
   it('a bad units value is dropped, the weight kept', () => {
     expect(sanitizeUnitsBoxes([{ barcode: '1', weight: 5, units: 0 }])).toEqual([{ barcode: '1', weight: 5 }]);
     expect(sanitizeUnitsBoxes([{ barcode: '1', weight: 5, units: 2.5 }])).toEqual([{ barcode: '1', weight: 5 }]);
+  });
+});
+
+describe('singular strings and the kg total', () => {
+  it('one carton picks the singular toast and row', () => {
+    expect(unitsAddedKey(1)).toBe('carton.unitsAddedOne');
+    expect(unitsAddedKey(7)).toBe('carton.unitsAdded');
+    expect(unitsRowKey(1)).toBe('carton.unitsRowOne');
+    expect(unitsRowKey(2)).toBe('carton.unitsRow');
+  });
+
+  it('the kg total leaves units lines out (008955: 126 + 126 units is not 252 kg)', () => {
+    expect(invoiceKgTotal([KK117, { ...KK117, item_code: 'KK100' }])).toBe(0);
+    expect(invoiceKgTotal([KK117, { quantity_kg: 40.5 }, { unit: 'kg', quantity_kg: 9.5 }, { quantity_kg: null }])).toBe(50);
   });
 });
