@@ -213,4 +213,13 @@ describe('ReadConfirmer.forget', () => {
     expect(c.add([r('A')], 10).confirmed).toBeNull();
     expect(c.add([r('B')], 20).confirmed).toBe('B');
   });
+
+  it('returns what it dropped, as claimed by a carton code', () => {
+    const c = new ReadConfirmer(2, 3000);
+    c.add([r(WELL_DONE_EAN, 0.1)], 0, 'raw pass');
+    expect(c.forget((v) => v === WELL_DONE_EAN)).toEqual([
+      { value: WELL_DONE_EAN, via: 'raw pass', reads: 1, first: 0, reason: 'claimed_by_carton_code' },
+    ]);
+    expect(c.forget((v) => v === WELL_DONE_EAN)).toEqual([]);
+  });
 });

@@ -146,11 +146,14 @@ describe('orderReads', () => {
   });
 });
 
+// The decision part of add()'s result — what the scanner books on.
+const decision = (r: { confirmed: string | null; progress: number }) => ({ confirmed: r.confirmed, progress: r.progress });
+
 describe('ReadConfirmer', () => {
   it('confirms on the second identical read within the window', () => {
     const c = new ReadConfirmer();
-    expect(c.add([{ value: 'A', dist: 0 }], 0)).toEqual({ confirmed: null, progress: 1 });
-    expect(c.add([{ value: 'A', dist: 0 }], 500)).toEqual({ confirmed: 'A', progress: 0 });
+    expect(decision(c.add([{ value: 'A', dist: 0 }], 0))).toEqual({ confirmed: null, progress: 1 });
+    expect(decision(c.add([{ value: 'A', dist: 0 }], 500))).toEqual({ confirmed: 'A', progress: 0 });
   });
 
   it('does not let an interleaved second label reset the first (floor regression)', () => {
@@ -171,16 +174,160 @@ describe('ReadConfirmer', () => {
   it('a read after the window starts that value over', () => {
     const c = new ReadConfirmer(2, 3000);
     c.add([{ value: 'A', dist: 0 }], 0);
-    expect(c.add([{ value: 'A', dist: 0 }], 3500)).toEqual({ confirmed: null, progress: 1 });
+    expect(decision(c.add([{ value: 'A', dist: 0 }], 3500))).toEqual({ confirmed: null, progress: 1 });
     expect(c.add([{ value: 'A', dist: 0 }], 3600).confirmed).toBe('A');
   });
 
   it('empty frames keep progress; a confirmation clears everything', () => {
     const c = new ReadConfirmer();
     c.add([{ value: 'A', dist: 0 }, { value: 'B', dist: 0.3 }], 0);
-    expect(c.add([], 50)).toEqual({ confirmed: null, progress: 1 });
+    expect(decision(c.add([], 50))).toEqual({ confirmed: null, progress: 1 });
     expect(c.add([{ value: 'A', dist: 0 }], 100).confirmed).toBe('A');
-    expect(c.add([{ value: 'B', dist: 0.3 }], 150)).toEqual({ confirmed: null, progress: 1 });
+    expect(decision(c.add([{ value: 'B', dist: 0.3 }], 150))).toEqual({ confirmed: null, progress: 1 });
+  });
+});
+
+
+// The confirmer as it stood before the trace fields (5af2a32), kept verbatim
+// so the decision can be proven unchanged.
+class ReadConfirmerBefore {
+  private pending = new Map<string, { count: number; first: number }>();
+  constructor(private readonly need = 2, private readonly windowMs = 3000) {}
+  add(reads: { value: string; dist: number }[], now: number): { confirmed: string | null; progress: number } {
+    for (const [v, p] of this.pending) {
+      if (now - p.first > this.windowMs) this.pending.delete(v);
+    }
+    let confirmed: string | null = null;
+    for (const r of orderReads(reads)) {
+      const p = this.pending.get(r.value);
+      const count = p ? p.count + 1 : 1;
+      this.pending.set(r.value, { count, first: p ? p.first : now });
+      if (confirmed === null && count >= this.need) confirmed = r.value;
+    }
+    if (confirmed !== null) {
+      this.pending.clear();
+      return { confirmed, progress: 0 };
+    }
+    let progress = 0;
+    for (const p of this.pending.values()) progress = Math.max(progress, p.count);
+    return { confirmed: null, progress };
+  }
+  forget(test: (value: string) => boolean): void {
+    for (const v of [...this.pending.keys()]) {
+      if (test(v)) this.pending.delete(v);
+    }
+  }
+}
+
+describe('ReadConfirmer — trace fields (2026-10-26, read_unconfirmed on every carton)', () => {
+  const r = (value: string, dist = 0) => ({ value, dist });
+
+  it('the decision is unchanged: 20 000 random frames, with forget() and heartbeat sweeps between them', () => {
+    // Small deterministic PRNG (mulberry32) so a failure replays.
+    let seed = 0x25_10_2026;
+    const rand = () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = seed;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const values = ['A', 'B', 'C', 'D', '7290003670444014790729829072027'];
+    for (const [need, windowMs] of [[2, 3000], [3, 1500], [2, 500]] as const) {
+      const before = new ReadConfirmerBefore(need, windowMs);
+      const now = new ReadConfirmer(need, windowMs);
+      let t = 0;
+      for (let i = 0; i < 20_000; i++) {
+        t += Math.floor(rand() * 1200);
+        const roll = rand();
+        if (roll < 0.05) {
+          const v = values[Math.floor(rand() * values.length)];
+          before.forget((x) => x === v);
+          now.forget((x) => x === v);
+          continue;
+        }
+        if (roll < 0.15) {
+          // The 15 s heartbeat sweeps between frames.
+          now.sweep(t);
+          continue;
+        }
+        const frame = Array.from({ length: Math.floor(rand() * 3) }, () =>
+          r(values[Math.floor(rand() * values.length)], rand()),
+        );
+        expect(decision(now.add(frame, t, 'raw pass'))).toEqual(before.add(frame, t));
+      }
+    }
+  });
+
+  it('a confirmation says when its first read was', () => {
+    const c = new ReadConfirmer(2, 3000);
+    expect(c.add([r('A')], 1000).confirmedFirstAt).toBeNull();
+    expect(c.add([r('A')], 1340).confirmedFirstAt).toBe(1000);
+  });
+
+  it('a normal carton drops nothing', () => {
+    const c = new ReadConfirmer(2, 3000);
+    expect(c.add([r('A')], 0, 'raw pass').dropped).toEqual([]);
+    expect(c.add([r('A')], 300, 'e2e').dropped).toEqual([]);
+  });
+
+  it('sweep() returns a value whose window closed unconfirmed, once, with what read it first', () => {
+    const c = new ReadConfirmer(2, 3000);
+    c.add([r('MISREAD')], 1000, 'e2e');
+    expect(c.sweep(4000)).toEqual([]); // still inside its window
+    expect(c.sweep(4001)).toEqual([{ value: 'MISREAD', via: 'e2e', reads: 1, first: 1000, reason: 'expired' }]);
+    expect(c.sweep(20_000)).toEqual([]);
+  });
+
+  it('a value expiring on the next decoding frame comes back from add() as expired', () => {
+    const c = new ReadConfirmer(2, 3000);
+    c.add([r('MISREAD')], 0, 'thick pass');
+    const out = c.add([r('REAL')], 5000, 'raw pass');
+    expect(out.dropped).toEqual([{ value: 'MISREAD', via: 'thick pass', reads: 1, first: 0, reason: 'expired' }]);
+  });
+
+  it('a read after the window reports the old window expired and starts a new one', () => {
+    const c = new ReadConfirmer(2, 3000);
+    c.add([r('A')], 0, 'raw pass');
+    const out = c.add([r('A')], 3500, 'e2e');
+    expect(out.dropped).toEqual([{ value: 'A', via: 'raw pass', reads: 1, first: 0, reason: 'expired' }]);
+    expect(c.add([r('A')], 3600).confirmedFirstAt).toBe(3500);
+  });
+
+  it('values still pending when another confirms come back as superseded (the e2e misread at 09:55:24)', () => {
+    const c = new ReadConfirmer(2, 3000);
+    const REAL = '7290003670444014790729829072027';
+    const MISREAD = '7290003670444014790729899066027';
+    c.add([r(REAL)], 0, 'raw pass');
+    c.add([r(MISREAD, 0.2)], 100, 'e2e');
+    const out = c.add([r(REAL)], 200, 'raw pass');
+    expect(out.confirmed).toBe(REAL);
+    expect(out.dropped).toEqual([{ value: MISREAD, via: 'e2e', reads: 1, first: 100, reason: 'superseded' }]);
+  });
+
+  it('a label that also confirmed on the frame but lost the centre tie is superseded, with its reads', () => {
+    const c = new ReadConfirmer(2, 3000);
+    c.add([r('EDGE', 0.6), r('AIMED', 0.05)], 0, 'raw pass');
+    const out = c.add([r('EDGE', 0.6), r('AIMED', 0.05)], 100, 'raw pass');
+    expect(out.confirmed).toBe('AIMED');
+    expect(out.dropped).toEqual([{ value: 'EDGE', via: 'raw pass', reads: 2, first: 0, reason: 'superseded' }]);
+  });
+
+  it('drain() hands back everything pending and empties the confirmer', () => {
+    const c = new ReadConfirmer(2, 3000);
+    c.add([r('A'), r('B', 0.4)], 0, 'raw pass');
+    expect(c.drain('camera_stop')).toEqual([
+      { value: 'A', via: 'raw pass', reads: 1, first: 0, reason: 'camera_stop' },
+      { value: 'B', via: 'raw pass', reads: 1, first: 0, reason: 'camera_stop' },
+    ]);
+    expect(c.drain('camera_stop')).toEqual([]);
+    expect(decision(c.add([r('A')], 100))).toEqual({ confirmed: null, progress: 1 });
+  });
+
+  it('via defaults to empty for callers that do not say', () => {
+    const c = new ReadConfirmer(2, 3000);
+    c.add([r('A')], 0);
+    expect(c.sweep(5000)[0].via).toBe('');
   });
 });
 

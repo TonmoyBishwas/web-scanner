@@ -100,6 +100,18 @@ export function orderReads(reads: FrameRead[]): FrameRead[] {
   return [...seen.values()].sort((a, b) => a.dist - b.dist);
 }
 
+/** Why a value left the confirmer without confirming (trace `read_dropped`). */
+export type ReadDropReason = 'expired' | 'superseded' | 'claimed_by_carton_code' | 'camera_stop';
+
+/** A value the confirmer let go unconfirmed: seen `reads` times, first at `first` by `via`. */
+export interface DroppedRead {
+  value: string;
+  via: string;
+  reads: number;
+  first: number;
+  reason: ReadDropReason;
+}
+
 /**
  * "Two identical reads within 3 s" — counted per value, so a second label in
  * the frame (or a stray misread) no longer resets the one being aimed at.
@@ -108,35 +120,69 @@ export function orderReads(reads: FrameRead[]): FrameRead[] {
  * starts that value over at 1 (the old single-slot rule, per value). When
  * several values confirm on the same frame, the one nearest the centre wins.
  * A confirmation clears everything, like the old slot did.
+ *
+ * Every value that leaves without confirming is handed back as a DroppedRead
+ * (2026-10-26): the trace used to log each value's first frame as
+ * `read_unconfirmed`, so all 99 of David's cartons on 25/10 looked like
+ * "seen, not accepted". The decision itself is untouched.
  */
 export class ReadConfirmer {
-  private pending = new Map<string, { count: number; first: number }>();
+  private pending = new Map<string, { count: number; first: number; via: string }>();
 
   constructor(
-    private readonly need = 2,
+    readonly need = 2,
     private readonly windowMs = 3000,
   ) {}
 
-  /** Feed one frame's reads. Returns the confirmed value (if any) and the best progress count for the UI. */
-  add(reads: FrameRead[], now: number): { confirmed: string | null; progress: number } {
-    for (const [v, p] of this.pending) {
-      if (now - p.first > this.windowMs) this.pending.delete(v);
-    }
+  /**
+   * Feed one frame's reads (`via` = the decoder that made them). Returns the
+   * confirmed value (if any) with its first read's time, the best progress
+   * count for the UI, and the values that left unconfirmed on this frame.
+   */
+  add(
+    reads: FrameRead[],
+    now: number,
+    via = '',
+  ): { confirmed: string | null; progress: number; confirmedFirstAt: number | null; dropped: DroppedRead[] } {
+    const dropped = this.sweep(now);
     let confirmed: string | null = null;
+    let confirmedFirstAt: number | null = null;
     for (const r of orderReads(reads)) {
       const p = this.pending.get(r.value);
       const count = p ? p.count + 1 : 1;
-      this.pending.set(r.value, { count, first: p ? p.first : now });
+      const first = p ? p.first : now;
+      this.pending.set(r.value, { count, first, via: p ? p.via : via });
       // orderReads sorted by centre distance, so the first to confirm is the nearest.
-      if (confirmed === null && count >= this.need) confirmed = r.value;
+      if (confirmed === null && count >= this.need) {
+        confirmed = r.value;
+        confirmedFirstAt = first;
+      }
     }
     if (confirmed !== null) {
-      this.pending.clear();
-      return { confirmed, progress: 0 };
+      this.pending.delete(confirmed);
+      dropped.push(...this.drain('superseded'));
+      return { confirmed, progress: 0, confirmedFirstAt, dropped };
     }
     let progress = 0;
     for (const p of this.pending.values()) progress = Math.max(progress, p.count);
-    return { confirmed: null, progress };
+    return { confirmed: null, progress, confirmedFirstAt: null, dropped };
+  }
+
+  /**
+   * Drop (and return) the values whose window has closed unconfirmed. `add()`
+   * does this first on every frame; the scanner also calls it from its
+   * heartbeat, so a value read once while the camera then sees nothing is
+   * reported within seconds, not at the next carton.
+   */
+  sweep(now: number): DroppedRead[] {
+    const out: DroppedRead[] = [];
+    for (const [v, p] of this.pending) {
+      if (now - p.first > this.windowMs) {
+        this.pending.delete(v);
+        out.push({ value: v, via: p.via, reads: p.count, first: p.first, reason: 'expired' });
+      }
+    }
+    return out;
   }
 
   /**
@@ -144,10 +190,21 @@ export class ReadConfirmer {
    * been the wrong sticker (a product code whose carton code another decoder
    * has just read), so their earlier frames cannot confirm them later.
    */
-  forget(test: (value: string) => boolean): void {
-    for (const v of [...this.pending.keys()]) {
-      if (test(v)) this.pending.delete(v);
+  forget(test: (value: string) => boolean): DroppedRead[] {
+    const out: DroppedRead[] = [];
+    for (const [v, p] of [...this.pending]) {
+      if (!test(v)) continue;
+      this.pending.delete(v);
+      out.push({ value: v, via: p.via, reads: p.count, first: p.first, reason: 'claimed_by_carton_code' });
     }
+    return out;
+  }
+
+  /** Empty the confirmer, returning what was still pending. */
+  drain(reason: ReadDropReason): DroppedRead[] {
+    const out = [...this.pending].map(([v, p]) => ({ value: v, via: p.via, reads: p.count, first: p.first, reason }));
+    this.pending.clear();
+    return out;
   }
 
   reset(): void {
