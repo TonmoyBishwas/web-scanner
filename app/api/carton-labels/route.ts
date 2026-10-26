@@ -6,6 +6,7 @@ import {
   batchSessionTokens,
   clearSessionLabels,
   createCartonBatch,
+  createUnitsCartonBatch,
   deleteCartonBatch,
   deleteUnprintedLabelByBarcode,
   listCartonLabels,
@@ -15,6 +16,7 @@ import {
 import { parseBatchId, parseLabelOrigin } from '@/lib/label-batches';
 import { parseClearMode } from '@/lib/pallet-clear';
 import { pendingLabelsUrl } from '@/lib/label-link';
+import { parseUnitsRequest } from '@/lib/units-cartons';
 import type { CartonLabelOrigin } from '@/types';
 
 const unauthorized = () =>
@@ -127,6 +129,32 @@ export async function POST(request: NextRequest) {
       rawPallet === null || rawPallet === undefined || rawPallet === '' ? null : Number(rawPallet);
     if (palletNumber !== null && (!Number.isInteger(palletNumber) || palletNumber < 0)) {
       return NextResponse.json({ success: false, error: 'invalid pallet_number' }, { status: 400 });
+    }
+
+    // New carton in units (lib/units-cartons.ts): no weight, the units per
+    // carton, and one expiry per split — the loose pile only.
+    const units = parseUnitsRequest(body);
+    if (units) {
+      if (!units.ok || weight !== null || palletNumber !== 0) {
+        return NextResponse.json({ success: false, error: units.ok ? 'invalid units save' : units.error }, { status: 400 });
+      }
+      const unitLabels = await createUnitsCartonBatch({
+        sessionToken: token,
+        documentNumber: context.documentNumber,
+        itemCode: typeof body.item_code === 'string' ? body.item_code : null,
+        itemNameHebrew: nameHe || null,
+        itemNameEnglish: nameEn || null,
+        perCarton: units.perCarton,
+        splits: units.splits,
+        notes: typeof body.notes === 'string' ? body.notes.slice(0, 500) : null,
+        printBarcode: body.print_barcode !== false,
+        labelSize,
+        createdByChatId: context.chatId,
+        origin,
+        palletNumber,
+        batchId: parseBatchId(body.batch_id),
+      });
+      return NextResponse.json({ success: true, labels: unitLabels, batch_id: unitLabels[0]?.batch_id ?? null });
     }
 
     const labels = await createCartonBatch({

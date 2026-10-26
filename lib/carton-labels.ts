@@ -22,6 +22,7 @@ import {
   type UnprintedLabel,
 } from './label-batches';
 import { planLabelClear, type ClearableLabel, type LabelClearMode } from './pallet-clear';
+import { splitExpiries, unitsBatchMatches } from './units-cartons';
 import type { CartonLabel, CartonLabelOrigin, LabelSize } from '@/types';
 
 export type { CartonLabel, LabelSize };
@@ -165,6 +166,81 @@ export async function createCartonBatch(input: CreateCartonBatchInput): Promise<
     }));
 
     const { data, error } = await supabase.from('carton_labels').insert(rows).select(COLUMNS);
+    if (!error) return (data ?? []) as unknown as CartonLabel[];
+    if (error.code !== '23505' || attempt === 1) {
+      throw new Error(`carton_labels insert failed: ${error.message}`);
+    }
+  }
+  return [];
+}
+
+/** Columns of a units save: every usual one plus the units per carton. */
+const UNITS_COLUMNS = `${COLUMNS}, units_per_carton`;
+
+/**
+ * A units save (lib/units-cartons.ts): one label per carton, no weight, the
+ * units per carton on each, and each split's expiry on its share of the
+ * labels — all in ONE batch, so the list shows one row for the save. A retry
+ * of the same save returns the batch the first attempt made.
+ *
+ * `units_per_carton` is selected here only: the other reads must keep
+ * working on a database where the column does not exist yet.
+ */
+export async function createUnitsCartonBatch(
+  input: Omit<CreateCartonBatchInput, 'weightKg' | 'quantity' | 'expiryDate' | 'productionDate'> & {
+    perCarton: number;
+    splits: Array<{ quantity: number; expiry: string }>;
+  },
+): Promise<CartonLabel[]> {
+  const expiries = splitExpiries(input.splits);
+  const quantity = expiries.length;
+  let batchId = input.batchId || crypto.randomUUID();
+  if (input.batchId) {
+    const { data, error } = await supabase.from('carton_labels').select(UNITS_COLUMNS).eq('batch_id', input.batchId);
+    if (error) throw new Error(`carton_labels read failed: ${error.message}`);
+    const existing = (data ?? []) as unknown as CartonLabel[];
+    if (existing.length) {
+      const sameSession = existing.every(l => l.session_token === input.sessionToken);
+      if (sameSession && unitsBatchMatches(existing, {
+        itemCode: input.itemCode,
+        itemNameHebrew: input.itemNameHebrew,
+        itemNameEnglish: input.itemNameEnglish,
+        perCarton: input.perCarton,
+        expiries,
+        palletNumber: input.palletNumber,
+      })) {
+        return existing;
+      }
+      batchId = crypto.randomUUID();
+    }
+  }
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const now = new Date();
+    const rows = expiries.map((expiry) => ({
+      batch_id: batchId,
+      barcode: mintCartonBarcode(now),
+      serial: mintCartonSerial(now),
+      session_token: input.sessionToken,
+      document_number: input.documentNumber ?? null,
+      item_code: input.itemCode ?? null,
+      item_name_hebrew: input.itemNameHebrew ?? null,
+      item_name_english: input.itemNameEnglish ?? null,
+      weight_kg: null,
+      units_per_carton: input.perCarton,
+      quantity,
+      production_date: null,
+      expiry_date: expiry,
+      notes: input.notes || null,
+      print_barcode: input.printBarcode,
+      label_size: input.labelSize,
+      created_by_chat_id: input.createdByChatId ?? null,
+      origin: input.origin ?? 'new_carton',
+      source_barcode: null,
+      pallet_number: input.palletNumber ?? null,
+    }));
+
+    const { data, error } = await supabase.from('carton_labels').insert(rows).select(UNITS_COLUMNS);
     if (!error) return (data ?? []) as unknown as CartonLabel[];
     if (error.code !== '23505' || attempt === 1) {
       throw new Error(`carton_labels insert failed: ${error.message}`);

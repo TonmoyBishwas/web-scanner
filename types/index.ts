@@ -299,6 +299,14 @@ export interface MultiPalletBoxScan {
    * has not landed yet — the box is stored either way.
    */
   image_url?: string;
+  /**
+   * A carton counted in units, not kg (New carton's units mode, loose pile
+   * only — lib/units-cartons.ts): the units in it, a whole number above 0.
+   * `weight` is then 0, and the bot credits the note line with the units.
+   */
+  units?: number;
+  /** The units save this carton came from — one list row per save. */
+  units_batch?: string;
 }
 
 export interface MultiPalletSession {
@@ -324,7 +332,19 @@ export interface MultiPalletSession {
      *  physical pallet); equals `document_number` for a normal delivery. Lets
      *  the pallet-complete webhook stamp each box with its true invoice number. */
     document_number?: string;
+    /** The note line's unit, set by the bot. Absent = 'kg'. 'units' = the
+     *  line's quantity_kg holds a count of units, not kilograms. */
+    unit?: 'kg' | 'units';
   }>;
+  /**
+   * Runtime feature switches for this session's chat — added by the session
+   * GET from `public.scanner_flags` (lib/scanner-flags.ts), never stored on
+   * the session. Absent = everything off.
+   */
+  features?: {
+    /** New carton's units mode in the loose pile (lib/units-cartons.ts). */
+    units_mode?: boolean;
+  };
   receipt_id?: string;
   completed_pallets: Array<{
     pallet_number: number;
@@ -476,6 +496,12 @@ export interface CartonLabel {
   source_barcode: string | null;
   /** Pallet the batch was minted on; 0 = the loose pile. */
   pallet_number: number | null;
+  /**
+   * A carton counted in units, not kg (lib/units-cartons.ts): how many units
+   * it holds (`weight_kg` is then null). Read only by the units save — the
+   * other label reads do not select it.
+   */
+  units_per_carton?: number | null;
 }
 
 export type CartonLabelOrigin = 'new_carton' | 'identical' | 'receiving';

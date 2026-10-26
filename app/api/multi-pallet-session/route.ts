@@ -1,9 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nanoid } from 'nanoid';
 import { getRedisClient, touchSession } from '@/lib/redis';
+import { supabase } from '@/lib/supabase';
+import { cachedFlagRow, flagEnabledFor, type ScannerFlagRow } from '@/lib/scanner-flags';
 import type { MultiPalletSession } from '@/types';
 
 const SESSION_TTL = 7200; // 2 hours
+
+/** Units-carton mode (lib/units-cartons.ts). Any error reads as off. */
+const unitsModeRow = cachedFlagRow(async () => {
+  const { data, error } = await supabase
+    .from('scanner_flags')
+    .select('enabled_all, chat_ids')
+    .eq('flag', 'units_mode')
+    .maybeSingle();
+  if (error) return null;
+  return (data as ScannerFlagRow | null) ?? null;
+});
 
 function sessionKey(token: string) {
   return `pallet:multi:${token}`;
@@ -119,7 +132,10 @@ export async function GET(request: NextRequest) {
       typeof raw === 'string' ? JSON.parse(raw) : (raw as MultiPalletSession);
     // Opening / reloading the page is activity too (SCN-24).
     touchSession(token).catch((err) => console.warn('[multi-pallet-session] touch failed:', err));
-    return NextResponse.json(session);
+    // Runtime feature switches for this session's chat (lib/scanner-flags.ts).
+    // Added to the response only, never stored on the session.
+    const features = { units_mode: flagEnabledFor(await unitsModeRow(), session.chat_id) };
+    return NextResponse.json({ ...session, features });
   } catch (error) {
     console.error('[multi-pallet-session] GET error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

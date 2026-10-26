@@ -1022,6 +1022,15 @@ export const he: Record<TranslationKey, string> = {
   'carton.error': 'שמירת המדבקות נכשלה. נסו שוב.',
   'carton.sessionExpired': 'הפעילות פגה. בקשו קישור חדש.',
   'carton.printedNote': 'המדבקות נשמרות במסך "מדבקות". הדפיסו אותן משם, הדביקו אחת על כל קרטון, ואז סרקו אותו כמו כל קרטון אחר.',
+  // New carton in units, not kg (lib/units-cartons.ts; loose pile, flag-gated). DRAFT 27/10.
+  'carton.unitsToggle': "יח'",
+  'carton.unitsCartons': 'קרטונים',
+  'carton.unitsPerCarton': 'בקרטון',
+  'carton.unitsAnotherExpiry': '+ תוקף נוסף',
+  'carton.unitsSave': 'הוסיפו {n} קרטונים',
+  'carton.unitsSaveOne': 'הוסיפו קרטון אחד',
+  'carton.unitsAdded': "{n} קרטונים נוספו · {m} יח'",
+  'carton.unitsRow': '{n} קרטונים · תוקף {date}',
 
   // "כל הקרטונים זהים" (pallet-verify row action)
   'identical.action': 'כל הקרטונים זהים',

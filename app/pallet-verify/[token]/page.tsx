@@ -33,7 +33,9 @@ import { Toast, useLockToast } from '@/components/terminal/Toast';
 import { PriorityPushStatus } from '@/components/terminal/PriorityPushStatus';
 import { useDrawerHost } from '@/components/terminal/DrawerHost';
 import { PalletsBrowser } from '@/components/terminal/PalletsBrowser';
-import { CartonCreator, type CartonCreatorPreset, type CartonItemOption, type CartonOnList } from '@/components/terminal/CartonCreator';
+import { CartonCreator, type CartonCreatorPreset, type CartonItemOption, type CartonOnList, type UnitsSave } from '@/components/terminal/CartonCreator';
+import { groupUnitsRows, isUnitsCarton, shortExpiry, unitsBatchSummary, unitsCartonRows, unitsCartonsPrefill } from '@/lib/units-cartons';
+import { UnitsBatchRow } from '@/components/terminal/UnitsBatchRow';
 import { LabelsBrowser } from '@/components/terminal/LabelsBrowser';
 import { IdenticalBoxesForm } from '@/components/terminal/IdenticalBoxesForm';
 import { DeleteAllSheet, type DeleteAllAction } from '@/components/terminal/DeleteAllSheet';
@@ -285,7 +287,8 @@ function barcodeMarks(b: Pick<BoxScan, 'barcode_filled'>): { weight?: boolean; e
  */
 function heldForDetails(b: BoxScan): boolean {
   if (b.ocr_status === 'processing' || b.ocr_status === 'failed') return true;
-  if (!(b.weight > 0)) return true;
+  // A carton counted in units has no weight by design (lib/units-cartons.ts).
+  if (!(b.weight > 0) && !isUnitsCarton(b)) return true;
   if (!(b.item_name_hebrew || b.item_name || '').trim()) return true;
   if (isProvisional(b.barcode)) return true;
   return !!validateCartonDates({ production: b.production_date, expiry: b.expiry, receiptDate: localIsoDate() }).expiryError;
@@ -298,7 +301,7 @@ function heldForDetails(b: BoxScan): boolean {
 function cardNote(b: BoxScan, tr: Tr): string | undefined {
   if (b.ocr_status === 'processing' || b.ocr_status === 'failed') return undefined;
   if (b.needs_review) {
-    if (!(b.weight > 0)) return tr('palletVerify.reviewNoWeight');
+    if (!(b.weight > 0) && !isUnitsCarton(b)) return tr('palletVerify.reviewNoWeight');
     if (!(b.item_name_hebrew || b.item_name || '').trim()) return tr('palletVerify.reviewNoName');
     if (isProvisional(b.barcode)) return tr('palletVerify.reviewNoBarcode');
     if (validateCartonDates({ production: b.production_date, expiry: b.expiry, receiptDate: localIsoDate() }).expiryError) {
@@ -964,6 +967,8 @@ export default function PalletVerifyPage({
   const [showCartonCreator, setShowCartonCreator] = useState(false);
   // New carton opened from a short item-code read: the line it is prefilled with.
   const [cartonPreset, setCartonPreset] = useState<CartonCreatorPreset | null>(null);
+  // The units save (lib/units-cartons.ts) whose cartons are open on the loose list.
+  const [openUnitsBatch, setOpenUnitsBatch] = useState<string | null>(null);
   // "All boxes identical" — the captured row the worker tapped it on, and
   // which phase's list it belongs to. See IdenticalBoxesForm. `anotherOf` is
   // the "Different carton?" link on an already-counted notice: the form then
@@ -2695,7 +2700,8 @@ export default function PalletVerifyPage({
       barcode: box.barcode,
       name_he: box.item_name_hebrew || '',
       name_en: box.item_name || '',
-      weight: box.weight > 0 ? String(box.weight) : '',
+      // A units carton edits its units in the weight's place (lib/units-cartons.ts).
+      weight: isUnitsCarton(box) ? String(box.units) : box.weight > 0 ? String(box.weight) : '',
       // Always ISO in the editor, whatever an older row carries — see lib/expiry.ts.
       expiry: normalizeExpiry(box.expiry),
       production_date: normalizeExpiry(box.production_date),
@@ -2875,11 +2881,14 @@ export default function PalletVerifyPage({
     // weight — otherwise leave the flag as-is so the gate still holds.
     function patch(b: BoxScan): BoxScan {
       if (b.barcode !== barcode) return b;
-      const newWeight = Number.isFinite(w) && w > 0 ? w : b.weight;
+      // A units carton keeps weight 0; the panel's number is its units.
+      const units = isUnitsCarton(b);
+      const newWeight = units ? b.weight : Number.isFinite(w) && w > 0 ? w : b.weight;
       const hasName = !!(name_he.trim() || name_en.trim());
-      const hasWeight = newWeight > 0;
+      const hasWeight = units || newWeight > 0;
       return {
         ...b,
+        ...(units && Number.isInteger(w) && w > 0 ? { units: w } : {}),
         barcode: resolvedId,
         // The SKU is the item prefix. Only re-derive it from a real typed
         // barcode — a NOBC- marker carries no item information, and
@@ -3510,7 +3519,8 @@ export default function PalletVerifyPage({
   function groupCountAction(box: BoxScan, loose: boolean): { onChangeCount?: () => void; groupCount?: number } {
     if (phase !== (loose ? 'loose_scanning' : 'scanning')) return {};
     const group = countGroupOf(box);
-    if (!group || box.twin) return {};
+    // A units save is changed carton by carton (lib/units-cartons.ts).
+    if (!group || box.twin || isUnitsCarton(box)) return {};
     const n = groupRows(loose ? looseBoxes : scannedBoxes, group).length;
     return {
       groupCount: n,
@@ -3781,6 +3791,48 @@ export default function PalletVerifyPage({
     };
   }
 
+  /**
+   * New carton in units (lib/units-cartons.ts): the loose pile only, and only
+   * while the session's chat has `units_mode` on. Off, the creator is the kg
+   * one it always was.
+   */
+  const cartonUnits = session?.features?.units_mode && looseCartonPhase
+    ? {
+        // What the line still lacks — only when the loose pile is the whole
+        // delivery; else the usual New carton count.
+        cartonsFor: (item: CartonItemOption) => unitsCartonsPrefill({
+          lineBoxes: item.box_count,
+          onList: cartonOnList(item)?.total ?? 0,
+          looseOnly: (session?.pallet_count || 0) === 0 && !shortCodeSavedItemsRef.current.has(String(item.item_code ?? '')),
+          fallback: cartonOnList(item)?.quantity ?? 1,
+        }),
+        onCreated: handleUnitsCreated,
+      }
+    : undefined;
+
+  /**
+   * A units save: one loose row per saved label, weight 0 with its units, all
+   * sharing the save's batch id as `units_batch` (one grouped row on the
+   * list). Counted at once, like any New carton (Q5).
+   */
+  function handleUnitsCreated(labels: CartonLabel[], save: UnitsSave) {
+    setShowCartonCreator(false);
+    if (cartonPreset) shortCodeSavedItemsRef.current.add(String(cartonPreset.item.item_code ?? ''));
+    setCartonPreset(null);
+    const rows: BoxScan[] = unitsCartonRows(labels, { perCarton: save.perCarton, unitsBatch: labels[0]?.batch_id ?? newBatchId() })
+      .map((r) => ({ ...r, ocr_status: 'done' as OcrStatus }));
+    for (const r of rows) looseProcessedRef.current.add(r.barcode);
+    setLooseBoxes((prev) => [...prev, ...rows]);
+    setSelectedBarcode(null);
+    unprinted.refresh();
+    const units = rows.reduce((n, r) => n + (r.units ?? 0), 0);
+    trace('ui', 'labels_saved', {
+      origin: 'new_carton', count: rows.length, batch_id: labels[0]?.batch_id, pallet: 0, counted: true,
+      units_per_carton: save.perCarton, units,
+    });
+    showToast(tr('carton.unitsAdded', { n: rows.length, m: units }), 'save');
+  }
+
   const cartonOverlays = (
     <>
       {overTotal && phase === 'scanning' && (() => {
@@ -3916,6 +3968,7 @@ export default function PalletVerifyPage({
           // Q5 (client 2026-10-13): counted now, at the typed weight.
           countOnSave
           onList={cartonOnList}
+          units={cartonUnits}
           onBack={() => {
             trace('ui', 'carton_creator_cancel', { preset_item: cartonPreset?.item.item_code });
             setShowCartonCreator(false);
@@ -4393,6 +4446,7 @@ export default function PalletVerifyPage({
       // An English-only OCR name is still a name — don't show it as missing.
       name={editForm.name_he || editForm.name_en}
       weight={editForm.weight}
+      units={editRow && isUnitsCarton(editRow) ? { label: tr('carton.unitsPerCarton'), unit: tr('carton.unitsToggle') } : undefined}
       expiry={editForm.expiry}
       barcode={editForm.forcedId || editForm.barcode}
       barcodeEditable={editForm.unidentified}
@@ -5574,7 +5628,15 @@ export default function PalletVerifyPage({
     // Terminal layout: newest scan becomes the active card, the rest are
     // history rows (flat, newest first — the design's list shape).
     const looseNewestFirst = [...looseBoxes].reverse();
-    const looseActive = looseNewestFirst[0];
+    // Units saves (lib/units-cartons.ts) draw as one row each — not in the
+    // Delete chip's selection, which ticks cartons one by one. A list with
+    // none is drawn exactly as before.
+    const looseEntries = !selectMode && looseBoxes.some(isUnitsCarton)
+      ? groupUnitsRows(looseNewestFirst, (_, i) => looseBoxes.length - i)
+      : null;
+    const looseActive = looseEntries
+      ? (looseEntries[0]?.kind === 'box' ? looseEntries[0].box : undefined)
+      : looseNewestFirst[0];
     const looseRest = looseNewestFirst.slice(1);
 
     // Two-step row actions (tap row → tap action). The shared ScanActions bar
@@ -5608,6 +5670,37 @@ export default function PalletVerifyPage({
         />
       );
     };
+
+    // One loose carton's history row (also a units save's cartons, opened).
+    const looseHistoryRow = (box: BoxScan, index: number, key: string) => (
+      <HistoryRow
+        key={key}
+        index={index}
+        name={box.item_name_hebrew || box.item_name || '—'}
+        barcode={isNoBarcodeId(box.barcode) ? undefined : box.barcode}
+        weight={isUnitsCarton(box) ? String(box.units) : box.weight > 0 ? box.weight.toFixed(2) : undefined}
+        weightFromBarcode={barcodeMarks(box)?.weight ? tr('terminal.fromBarcode') : undefined}
+        unitLabel={isUnitsCarton(box) ? tr('carton.unitsToggle') : tr('common.kg')}
+        status={
+          box.ocr_status === 'processing'
+            ? 'pending'
+            : box.ocr_status === 'failed'
+            ? 'failed'
+            : cardNote(box, tr)
+            ? 'pending'
+            : 'done'
+        }
+        note={cardNote(box, tr)}
+        onClick={selectMode
+          ? () => toggleSelectCarton(box.barcode)
+          : () => setSelectedBarcode(selectedBarcode === box.barcode ? null : box.barcode)}
+        actions={selectMode ? undefined : looseRowActions(box)}
+        select={selectMode ? { checked: selectPicked.has(box.barcode), locked: bookedInSession.has(box.barcode) } : undefined}
+        unprinted={unprintedShown.has(box.barcode)}
+        unprintedLabel={tr('terminal.labelNotPrinted')}
+        highlight={box.barcode === flashBarcode}
+      />
+    );
 
     const looseFooter = (
       <>
@@ -5761,8 +5854,8 @@ export default function PalletVerifyPage({
                     tone="warn"
                     index={looseBoxes.length}
                     name={looseActive.item_name_hebrew || looseActive.item_name || '—'}
-                    value={looseActive.weight > 0 ? looseActive.weight.toFixed(2) : '—'}
-                    unit={tr('common.kg')}
+                    value={isUnitsCarton(looseActive) ? String(looseActive.units) : looseActive.weight > 0 ? looseActive.weight.toFixed(2) : '—'}
+                    unit={isUnitsCarton(looseActive) ? tr('carton.unitsToggle') : tr('common.kg')}
                     barcode={looseActive.barcode}
                     expiry={looseActive.expiry || undefined}
                     fromBarcode={barcodeMarks(looseActive)}
@@ -5791,35 +5884,31 @@ export default function PalletVerifyPage({
                     } : undefined}
                   />
                 )}
-                {looseRest.map((box, i) => looseItemFilter.matches(box) && (
-                  <HistoryRow
-                    key={box.barcode + i}
-                    index={looseBoxes.length - 1 - i}
-                    name={box.item_name_hebrew || box.item_name || '—'}
-                    barcode={isNoBarcodeId(box.barcode) ? undefined : box.barcode}
-                    weight={box.weight > 0 ? box.weight.toFixed(2) : undefined}
-                    weightFromBarcode={barcodeMarks(box)?.weight ? tr('terminal.fromBarcode') : undefined}
-                    unitLabel={tr('common.kg')}
-                    status={
-                      box.ocr_status === 'processing'
-                        ? 'pending'
-                        : box.ocr_status === 'failed'
-                        ? 'failed'
-                        : cardNote(box, tr)
-                        ? 'pending'
-                        : 'done'
-                    }
-                    note={cardNote(box, tr)}
-                    onClick={selectMode
-                      ? () => toggleSelectCarton(box.barcode)
-                      : () => setSelectedBarcode(selectedBarcode === box.barcode ? null : box.barcode)}
-                    actions={selectMode ? undefined : looseRowActions(box)}
-                    select={selectMode ? { checked: selectPicked.has(box.barcode), locked: bookedInSession.has(box.barcode) } : undefined}
-                    unprinted={unprintedShown.has(box.barcode)}
-                    unprintedLabel={tr('terminal.labelNotPrinted')}
-                    highlight={box.barcode === flashBarcode}
-                  />
-                ))}
+                {looseEntries ? looseEntries.slice(looseActive ? 1 : 0).map((e, i) => {
+                  if (e.kind === 'box') return looseItemFilter.matches(e.box) && looseHistoryRow(e.box, e.index, e.box.barcode + i);
+                  const shown = e.rows.filter((r) => looseItemFilter.matches(r.box));
+                  if (shown.length === 0) return null;
+                  const first = e.rows[0].box;
+                  const sum = unitsBatchSummary(e.rows.map((r) => r.box));
+                  const open = openUnitsBatch === e.batch;
+                  return (
+                    <UnitsBatchRow
+                      key={`units:${e.batch}`}
+                      name={first.item_name_hebrew || first.item_name || '—'}
+                      summary={tr('carton.unitsRow', { n: sum.cartons, date: shortExpiry(sum.firstExpiry) })
+                        + (sum.moreExpiries > 0 ? ` +${sum.moreExpiries}` : '')}
+                      units={sum.units}
+                      unitLabel={tr('carton.unitsToggle')}
+                      expanded={open}
+                      onToggle={() => {
+                        trace('ui', 'units_batch_toggle', { batch: e.batch, open: !open, cartons: sum.cartons });
+                        setOpenUnitsBatch(open ? null : e.batch);
+                      }}
+                    >
+                      {shown.map((r, j) => looseHistoryRow(r.box, r.index, r.box.barcode + j))}
+                    </UnitsBatchRow>
+                  );
+                }) : looseRest.map((box, i) => looseItemFilter.matches(box) && looseHistoryRow(box, looseBoxes.length - 1 - i, box.barcode + i))}
               </>
             )}
           </BottomSheet>
