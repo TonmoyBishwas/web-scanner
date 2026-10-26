@@ -1292,8 +1292,13 @@ export function SmartScanner({
       healthRef.current.confirm(now);
       // The carton just taken, re-read inside its cooldown, is the normal tail
       // of every scan — neither a confirmation nor a drop worth a trace row.
+      // A refused value has no cooldown, so a camera resting on it confirms
+      // every pair of frames: its trace rides the refused throttle instead.
       const sinceLastScan = now - lastScanTimeRef.current;
-      if (!(sinceLastScan < 3000 && barcode === lastScannedRef.current)) {
+      const accept = acceptValueRef.current;
+      const refused = !!accept && !accept(barcode);
+      const refusedAllowed = refused && refusedThrottleRef.current.allow(barcode, now);
+      if (refused ? refusedAllowed : !(sinceLastScan < 3000 && barcode === lastScannedRef.current)) {
         trace('ui', 'scan_confirmed', {
           value: barcode, via, ms_from_first_read: now - (confirmedFirstAt ?? now), reads: confirmerRef.current.need,
         });
@@ -1302,9 +1307,8 @@ export function SmartScanner({
       // A value the page refuses outright (a short fragment that is not a
       // known item code): tell the page, but never arm the cooldown for it —
       // that cooldown discarded the carton's real code (2026-10-15).
-      const accept = acceptValueRef.current;
-      if (accept && !accept(barcode)) {
-        if (refusedThrottleRef.current.allow(barcode, now)) {
+      if (refused) {
+        if (refusedAllowed) {
           const parsedRefused = parseIsraeliBarcode(barcode) || {
             type: 'unknown', sku: barcode, weight: 0, expiry: '', raw_barcode: barcode,
             expiry_source: 'ocr_required' as const,
