@@ -3,6 +3,7 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { MI } from './MI';
 import { LanguageContext, useT } from '@/lib/i18n';
+import { trace } from '@/lib/scanner-trace';
 import type { Language } from '@/types';
 import type { GroupableBox } from '@/lib/group-key';
 import {
@@ -24,21 +25,48 @@ export function useItemFilter(
   boxes: GroupableBox[],
   language: Language,
   mergeMap?: Map<string, string>,
+  /** Names this list in the trace (filter_open / filter_pick / filter_clear); 26/10. */
+  traceList = 'list',
 ) {
   const lang = language === 'Hebrew' ? 'he' : 'en';
   const chips = useMemo(() => buildItemChips(boxes, lang, mergeMap), [boxes, lang, mergeMap]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
+  const [open, setOpenState] = useState(false);
   const active = effectiveItemFilter(selected, chips);
   // Adjusting state while rendering (React's documented alternative to an
   // effect): the chosen item has no cartons left, or the list emptied.
   if (selected !== null && active === null) setSelected(null);
-  if (open && chips.length === 0) setOpen(false);
+  if (open && chips.length === 0) setOpenState(false);
+
+  // 26/10 (client: filtering by item is hard for David): every open, pick and
+  // clear, so the trace shows how long a pick takes and how often it is undone.
+  const openedAt = useRef<number | null>(null);
+  const setOpen = useCallback((next: boolean) => {
+    setOpenState(next);
+    if (next) {
+      openedAt.current = Date.now();
+      trace('ui', 'filter_open', { list: traceList, items: chips.length, cartons: boxes.length, active: !!active });
+    } else if (openedAt.current !== null) {
+      trace('ui', 'filter_close', { list: traceList, ms: Date.now() - openedAt.current });
+      openedAt.current = null;
+    }
+  }, [traceList, chips.length, boxes.length, active]);
 
   const select = useCallback((key: string | null) => {
+    const ms = openedAt.current !== null ? Date.now() - openedAt.current : null;
+    openedAt.current = null;
+    if (key === null) {
+      trace('ui', 'filter_clear', { list: traceList, was: active, ms });
+    } else {
+      const chip = chips.find((c) => c.key === key);
+      trace('ui', 'filter_pick', {
+        list: traceList, item: chip?.name ?? key, cartons: chip?.count, of: boxes.length,
+        index: chips.findIndex((c) => c.key === key), items: chips.length, ms,
+      });
+    }
     setSelected(key);
-    setOpen(false);
-  }, []);
+    setOpenState(false);
+  }, [traceList, active, chips, boxes.length]);
   const matches = useCallback(
     (box: GroupableBox) => matchesItemFilter(box, active, mergeMap),
     [active, mergeMap],
@@ -190,6 +218,7 @@ function ChipStrip({ children }: { children: ReactNode }) {
   const step = (dir: 1 | -1) => {
     const el = ref.current;
     if (!el) return;
+    trace('ui', 'filter_arrow', { dir: dir === 1 ? 'more' : 'back' });
     const rtl = getComputedStyle(el).direction === 'rtl';
     const amount = Math.max(80, el.clientWidth * 0.7) * dir;
     el.scrollBy({ left: rtl ? -amount : amount, behavior: 'smooth' });

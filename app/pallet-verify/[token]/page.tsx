@@ -5272,8 +5272,8 @@ export default function PalletVerifyPage({
   // "By item" — a VIEW filter over each scan list (lib/by-item-filter.ts).
   // It only decides which rows render; booking, counting, Delete all and
   // confirm keep acting on the whole list.
-  const palletItemFilter = useItemFilter(scannedBoxes, language, acceptedMerges);
-  const looseItemFilter = useItemFilter(looseBoxes, language);
+  const palletItemFilter = useItemFilter(scannedBoxes, language, acceptedMerges, 'pallet');
+  const looseItemFilter = useItemFilter(looseBoxes, language, undefined, 'loose');
 
   // ── Type badge ──
 
@@ -5734,6 +5734,7 @@ export default function PalletVerifyPage({
 
           <BottomSheet
             ref={looseSheetRef}
+            traceName="loose"
             toolbar={
               <ToolDock
                 chips={buildDockChips({
@@ -6320,6 +6321,7 @@ export default function PalletVerifyPage({
 
         <BottomSheet
           ref={sheetRef}
+          traceName="pallet"
           toolbar={
             <ToolDock
               chips={buildDockChips({

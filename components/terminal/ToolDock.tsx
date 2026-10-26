@@ -1,7 +1,8 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode, type UIEvent } from 'react';
 import { MI } from './MI';
+import { trace } from '@/lib/scanner-trace';
 
 export type ToolTint = 'blue' | 'neutral' | 'red' | 'green' | 'amber';
 
@@ -49,15 +50,39 @@ interface ToolDockProps {
 // faded. Locked chips keep the design look but carry a small amber lock badge
 // and route taps to the lock toast.
 export function ToolDock({ chips, onLockedPress }: ToolDockProps) {
+  // 26/10 (client: the action row scrolls sideways and cuts the last action):
+  // a sideways scroll is recorded when it comes to rest, and each tap names
+  // its action, so the trace shows who has to scroll to reach one.
+  const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (scrollTimer.current) clearTimeout(scrollTimer.current); }, []);
+  const onScroll = (e: UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (scrollTimer.current) clearTimeout(scrollTimer.current);
+    scrollTimer.current = setTimeout(() => {
+      scrollTimer.current = null;
+      trace('ui', 'dock_scroll', {
+        pos: Math.round(Math.abs(el.scrollLeft)), max: Math.max(0, el.scrollWidth - el.clientWidth),
+        width: el.clientWidth,
+      });
+    }, 600);
+  };
   return (
     <div
+      onScroll={onScroll}
       className="flex items-start gap-[6px] overflow-x-auto overflow-y-hidden no-scrollbar px-3 pt-[2px] pb-[10px] [mask-image:linear-gradient(to_right,#000_calc(100%-20px),transparent)] rtl:[mask-image:linear-gradient(to_left,#000_calc(100%-20px),transparent)]"
       style={{ touchAction: 'pan-x', WebkitOverflowScrolling: 'touch' }}
     >
       {chips.map(chip => (
         <button
           key={chip.id}
-          onClick={chip.locked ? onLockedPress : chip.onPress}
+          onClick={(e) => {
+            const dock = e.currentTarget.parentElement;
+            trace('ui', 'dock_tap', {
+              id: chip.id, locked: !!chip.locked,
+              scrolled: dock ? Math.round(Math.abs(dock.scrollLeft)) : undefined,
+            });
+            (chip.locked ? onLockedPress : chip.onPress)?.();
+          }}
           className="flex-none flex flex-col items-center gap-1 w-[60px] text-ink-inverse py-[2px]"
         >
           <span
