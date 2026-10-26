@@ -759,7 +759,7 @@ export const he: Record<TranslationKey, string> = {
   'terminal.coveredByLabelOne': 'כבר ברשימה. המדבקה שנשמרה למוצר הזה כוללת את הקרטון הזה. אין צורך לסרוק אותו.',
   'terminal.barcodeAcceptedAsPrinted': 'נקרא זהה שלוש פעמים. התקבל כפי שמודפס ({digits}).',
   'terminal.palletLabelRead': 'תווית משטח השילוח {digits} נרשמה כמספר המשטח, לא נספרת כקרטון.',
-  'terminal.barcodeTooShort': 'נקרא רק ברקוד קצר ({digits}), והוא לא מזהה קרטון. יש על המדבקה ברקוד ארוך? כוונו אליו. אין? הקישו על המצלמה כדי לצלם את המדבקה, או הוסיפו את הקרטונים ידנית.',
+  'terminal.barcodeTooShort': 'נקרא ברקוד קצר. צלמו את המדבקה – הקרטון יירשם לפי המספר שעליה. אם לא נקרא, הוסיפו ידנית.',
   'terminal.shortItemCode': 'הברקוד הקצר {code} הוא קוד הפריט, והוא לא מזהה קרטון בודד. יש ברקוד ארוך? כוונו אליו. אין? הוסיפו את הקרטונים של הפריט הזה.',
   'terminal.shortItemCodeAction': 'אין? הוסיפו קרטונים של הפריט',
   'terminal.tooShortNewCarton': 'אין? הוסיפו קרטונים',
