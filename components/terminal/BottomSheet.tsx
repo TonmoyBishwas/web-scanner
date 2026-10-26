@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useT } from '@/lib/i18n';
+import { trace } from '@/lib/scanner-trace';
 
 export interface BottomSheetHandle {
   /** Animate to a snap index (0 = peek, 1 = mid, 2 = tall) */
@@ -30,7 +31,14 @@ interface BottomSheetProps {
    *  at mid/tall snaps regardless of list scroll. */
   footer?: ReactNode;
   children: ReactNode;
+  /** Names this sheet in the trace (drawer_drag / list_scroll); 26/10. */
+  traceName?: string;
 }
+
+/** list_scroll is recorded once the list rests this long… */
+const SCROLL_TRACE_IDLE_MS = 700;
+/** …and only when it moved at least about one carton row since the last one. */
+const SCROLL_TRACE_MIN_PX = 64;
 
 const DEFAULT_SNAPS: [number, number, number] = [0.106, 0.419, 0.87];
 
@@ -84,7 +92,7 @@ const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : use
 // drags (pointer capture) and a clean tap cycles mid → tall → peek.
 // Mount inside a `relative` container that fills the camera region.
 export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(function BottomSheet(
-  { snapFractions = DEFAULT_SNAPS, initialSnap = 1, toolbar, footer, children },
+  { snapFractions = DEFAULT_SNAPS, initialSnap = 1, toolbar, footer, children, traceName = 'sheet' },
   ref,
 ) {
   const tr = useT();
@@ -340,6 +348,37 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
   // sheet lands where the page asked), but a side panel has no height to move.
   useImperativeHandle(ref, () => ({ snapTo: settle, snapIndex: () => snapIndexRef.current }), [settle]);
 
+  // 26/10 (client: "all the scrolling is hard for him"): how deep the worker
+  // scrolls the list, recorded when it comes to rest.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let last = 0;
+    let moves = 0;
+    const onScroll = () => {
+      moves += 1;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        const depth = Math.round(el.scrollTop);
+        if (Math.abs(depth - last) < SCROLL_TRACE_MIN_PX) return;
+        const max = Math.max(0, el.scrollHeight - el.clientHeight);
+        trace('ui', 'list_scroll', {
+          sheet: traceName, depth, from: last, max,
+          pct: max ? Math.round((depth / max) * 100) : 0, snap: snapIndexRef.current, moves,
+        });
+        last = depth;
+        moves = 0;
+      }, SCROLL_TRACE_IDLE_MS);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      if (timer) clearTimeout(timer);
+    };
+  }, [traceName]);
+
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -390,10 +429,19 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
         e.currentTarget.releasePointerCapture(e.pointerId);
       }
 
+      const from = snapIndexRef.current;
+      // 26/10 (client: does the drawer fight the list?): every handle gesture.
+      const traceDrag = (kind: 'tap' | 'flick' | 'drag') =>
+        trace('ui', 'drawer_drag', {
+          sheet: traceName, kind, from, to: snapIndexRef.current,
+          dy: Math.round(d.startY - e.clientY),
+        });
+
       if (!d.moved) {
         // Tap: cycle mid → tall → peek (design cycleSheet)
         const next = snapIndexRef.current === 1 ? 2 : snapIndexRef.current === 2 ? 0 : 1;
         settle(next);
+        traceDrag('tap');
         return;
       }
 
@@ -401,13 +449,15 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
       // snapping alone sent a fast, short flick straight back where it came
       // from, which read as the sheet ignoring the gesture.
       if (Math.abs(d.velocity) > FLICK_VELOCITY) {
-        const from = nearestSnap(d.startH);
-        settle(d.velocity > 0 ? from + 1 : from - 1);
+        const start = nearestSnap(d.startH);
+        settle(d.velocity > 0 ? start + 1 : start - 1);
+        traceDrag('flick');
         return;
       }
       settle(nearestSnap(rootRef.current?.offsetHeight || 0));
+      traceDrag('drag');
     },
-    [settle, nearestSnap],
+    [settle, nearestSnap, traceName],
   );
 
   // Keyboard equivalent of the drag, for accessibility and BT keypads.
