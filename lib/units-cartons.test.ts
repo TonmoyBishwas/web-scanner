@@ -12,7 +12,6 @@ import {
   shortExpiry,
   splitExpiries,
   stepperValue,
-  unitsAddedKey,
   unitsBatchMatches,
   unitsBatchSummary,
   unitsCartonRows,
@@ -241,9 +240,7 @@ describe('sanitizeUnitsBoxes (the loose payload)', () => {
 });
 
 describe('singular strings and the kg total', () => {
-  it('one carton picks the singular toast and row', () => {
-    expect(unitsAddedKey(1)).toBe('carton.unitsAddedOne');
-    expect(unitsAddedKey(7)).toBe('carton.unitsAdded');
+  it('one carton picks the singular row', () => {
     expect(unitsRowKey(1)).toBe('carton.unitsRowOne');
     expect(unitsRowKey(2)).toBe('carton.unitsRow');
   });

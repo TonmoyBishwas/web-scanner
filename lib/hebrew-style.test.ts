@@ -31,6 +31,9 @@ const IMPERATIVE_ALLOWED: Record<string, string> = {
   'scanner.noCamerasDesc': 'פתח בדפדפן',
   // A first-person button ("Fix the number I entered"): the plural reads wrong; left for Mevaser.
   'palletVerify.overTotalFix': 'תקן',
+  // Units-carton save button: Mevaser chose the singular "הוסף" himself (27/10).
+  'carton.unitsSave': 'הוסף',
+  'carton.unitsSaveOne': 'הוסף',
 };
 
 // Mevaser 21/10, rule 3: no sentence dash (— / –, or a spaced " - "); a period
