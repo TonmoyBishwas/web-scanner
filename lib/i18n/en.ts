@@ -1023,12 +1023,10 @@ export const en = {
   // New carton in units, not kg (lib/units-cartons.ts; loose pile, flag-gated). DRAFT 27/10.
   'carton.unitsToggle': 'units',
   'carton.unitsCartons': 'Cartons',
-  'carton.unitsPerCarton': 'Per carton',
-  'carton.unitsAnotherExpiry': '+ Another expiry',
+  'carton.unitsPerCarton': 'Portions per carton',
+  'carton.unitsAnotherExpiry': 'Split by expiry',
   'carton.unitsSave': 'Add {n} cartons',
   'carton.unitsSaveOne': 'Add 1 carton',
-  'carton.unitsAdded': '{n} cartons added · {m} units',
-  'carton.unitsAddedOne': '1 carton added · {m} units',
   'carton.unitsRow': '{n} cartons · exp {date}',
   'carton.unitsRowOne': '1 carton · exp {date}',
 

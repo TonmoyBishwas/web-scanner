@@ -348,11 +348,6 @@ export function shortExpiry(iso: string | null | undefined): string {
   return m ? `${m[3]}/${m[2]}/${m[1].slice(2)}` : '';
 }
 
-/** The toast after a units save: "1 carton" reads as one, not "1 cartons". */
-export function unitsAddedKey(cartons: number): 'carton.unitsAdded' | 'carton.unitsAddedOne' {
-  return cartons === 1 ? 'carton.unitsAddedOne' : 'carton.unitsAdded';
-}
-
 /** The grouped row's summary, singular for a one-carton save. */
 export function unitsRowKey(cartons: number): 'carton.unitsRow' | 'carton.unitsRowOne' {
   return cartons === 1 ? 'carton.unitsRowOne' : 'carton.unitsRow';
