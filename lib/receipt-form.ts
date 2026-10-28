@@ -140,7 +140,23 @@ export interface FormLine {
   /** How one unit inside is packed, set with `per_pack`; null otherwise or on an old row. */
   inner: InnerPackaging | null;
   needs_expiry: boolean;
+  // ── 28/10 (bot 96e26c3), each present only when the bot wrote it ──
+  /** The Priority item's name when the code maps (the bot also puts it in `name_he`). */
+  priority_name?: string;
+  /** The name as printed on the note (the bot's `name_he` became the Priority name). */
+  name_printed?: string;
+  /** quantity × unit price ≠ line total on the note: 'corrected' = qty replaced the figure read (`qty_read`); 'failed' = kept as read. */
+  qty_check?: QtyCheck;
+  /** The quantity as first read, when `qty_check` replaced it. */
+  qty_read?: number;
+  /** Unit price on the note. */
+  price?: number;
+  /** Line total on the note. */
+  line_total?: number;
 }
+
+export const QTY_CHECKS = ['corrected', 'failed'] as const;
+export type QtyCheck = (typeof QTY_CHECKS)[number];
 
 export interface LineAnswer {
   index: number;
@@ -469,8 +485,35 @@ export function normalizeFormLines(raw: unknown): FormLine[] {
       per_pack: perPack,
       inner: perPack === null ? null : inner,
       needs_expiry: o.needs_expiry === true,
+      ...lineExtras(o),
     });
   });
+  return out;
+}
+
+const finiteNum = (v: unknown): number | null => {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * The 28/10 fields (Priority name, printed name, the qty × price = total
+ * check), each set only when the row has a usable value — a line from an
+ * older row comes out exactly as before.
+ */
+function lineExtras(o: Record<string, unknown>): Partial<FormLine> {
+  const out: Partial<FormLine> = {};
+  const pn = str(o.priority_name).trim();
+  if (pn) out.priority_name = pn;
+  const np = str(o.name_printed).trim();
+  if (np) out.name_printed = np;
+  if ((QTY_CHECKS as readonly string[]).includes(o.qty_check as string)) out.qty_check = o.qty_check as QtyCheck;
+  const qr = finiteNum(o.qty_read);
+  if (qr !== null) out.qty_read = qr;
+  const price = finiteNum(o.price);
+  if (price !== null) out.price = price;
+  const total = finiteNum(o.line_total);
+  if (total !== null) out.line_total = total;
   return out;
 }
 

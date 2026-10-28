@@ -1247,6 +1247,16 @@ export const en = {
   'receive.searchCount': '{n} of {total} lines',
   // Mevaser 21/10: his wording
   'receive.searchFuzzy': 'Did you mean:',
+  // ── Receive form redesign (28/10), behind the receive_redesign flag ─────
+  // DRAFT: every receive.v2.* text below awaits Mevaser's approval (text freeze 20/10).
+  'receive.v2.edit': 'Edit',
+  'receive.v2.qtyCheck': 'Check quantity',
+  'receive.v2.walkStart': 'Expiry, item by item',
+  'receive.v2.walkProgress': '{n} of {m} dated',
+  'receive.v2.walkPick': 'Which item is in front of you?',
+  'receive.v2.walkNext': 'Next',
+  'receive.v2.walkBack': 'Back',
+  'receive.v2.walkExit': 'Back to the list',
   // ── Delete sheet, group count, print-later link (2026-10-15) ─────
   'terminal.deleteAllTitle': 'Delete — pallet {n}',
   'terminal.deleteAllTitleLoose': 'Delete — loose cartons',

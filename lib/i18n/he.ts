@@ -1249,6 +1249,21 @@ export const he: Record<TranslationKey, string> = {
   'receive.searchCount': '{n} מתוך {total} שורות',
   // Mevaser 21/10: his wording
   'receive.searchFuzzy': 'אולי התכוונתם ל:',
+  // ── Receive form redesign (28/10), behind the receive_redesign flag ─────
+  // DRAFT: every receive.v2.* text below awaits Mevaser's approval (text freeze 20/10).
+  // Compact card: the edit chip that opens quantity, cartons and package.
+  'receive.v2.edit': 'עריכה',
+  // Compact card: quantity × unit price ≠ line total on the note.
+  'receive.v2.qtyCheck': 'כמות לבדיקה',
+  // List: the button that opens the expiry walk.
+  'receive.v2.walkStart': 'תוקף פריט אחר פריט',
+  // Walk: progress, "n of m dated".
+  'receive.v2.walkProgress': '{n} מתוך {m} עם תוקף',
+  // Walk: the picker button and its title.
+  'receive.v2.walkPick': 'איזה פריט מולכם?',
+  'receive.v2.walkNext': 'הבא',
+  'receive.v2.walkBack': 'הקודם',
+  'receive.v2.walkExit': 'חזרה לרשימה',
   // ── Delete sheet, group count, print-later link (2026-10-15) ─────
   'terminal.deleteAllTitle': 'מחיקה · משטח {n}',
   'terminal.deleteAllTitleLoose': 'מחיקה · קרטונים בודדים',

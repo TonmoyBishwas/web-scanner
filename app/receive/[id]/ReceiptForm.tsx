@@ -50,8 +50,27 @@ import { isFinalStatus, isInFlightStatus } from '@/lib/receipt-form-submit';
 import { SEARCH_MIN_LINES, nextIncompleteLine, searchLines } from '@/lib/receipt-form-search';
 import { errorCounts } from '@/lib/receive-trace';
 import { useReceiveTrace } from './useReceiveTrace';
-
-type Tr = (key: TranslationKey, vars?: Record<string, string | number>) => string;
+import {
+  BAD_BORDER,
+  CALENDAR_BTN,
+  Chip,
+  DATE_ROW,
+  DONE_BORDER,
+  FieldError,
+  FieldLabel,
+  INPUT,
+  Icon,
+  LINE_ERROR_KEY,
+  OK_BORDER,
+  STATUS_STYLE,
+  TODO_BORDER,
+  TODO_ERRORS,
+  lineStatus,
+  type Tr,
+} from '@/components/receive/ui';
+import { CompactLineCard } from '@/components/receive/CompactLineCard';
+import { ExpiryWalk } from '@/components/receive/ExpiryWalk';
+import { walkOrder, walkProgress, walkStart, isDated } from '@/lib/receive-walk';
 
 type Phase =
   | { kind: 'editing' }
@@ -67,138 +86,11 @@ type Phase =
 /** How often the open page asks whether the bot added a page (only while the tab is visible). */
 const POLL_MS = 15_000;
 
-const LINE_ERROR_KEY: Record<LineError, TranslationKey> = {
-  qty_invalid: 'receive.err.qty',
-  cartons_invalid: 'receive.err.cartons',
-  packaging_invalid: 'receive.err.packaging',
-  expiry_missing: 'receive.err.expiryMissing',
-  expiry_invalid: 'receive.err.expiryInvalid',
-  expiry_not_future: 'receive.err.expiryNotFuture',
-  expiry_too_far: 'receive.err.expiryTooFar',
-  expiry_conflict: 'receive.err.expiryConflict',
-  gap_missing: 'receive.err.gapMissing',
-  gap_invalid: 'receive.err.gapMissing',
-  gap_note_missing: 'receive.err.gapNoteMissing',
-  gap_note_too_long: 'receive.err.gapNoteTooLong',
-};
-
 const EXTRA_ERROR_KEY: Record<ExtraError, TranslationKey> = {
   extra_name_missing: 'receive.err.extraName',
   extra_name_too_long: 'receive.err.gapNoteTooLong',
   extra_qty_invalid: 'receive.err.extraQty',
   extra_unit_invalid: 'receive.err.extraQty',
-};
-
-/**
- * "Still to fill in" (amber) vs "this value is wrong" (red). A fresh form
- * has every food line missing its expiry — that is the job, not a mistake,
- * so it must not open as a wall of red.
- */
-const TODO_ERRORS: ReadonlySet<LineError> = new Set(['expiry_missing', 'gap_missing', 'gap_note_missing']);
-
-type LineStatus = 'ready' | 'todo' | 'fix';
-
-function lineStatus(errors: LineError[]): LineStatus {
-  if (!errors.length) return 'ready';
-  return errors.every((e) => TODO_ERRORS.has(e)) ? 'todo' : 'fix';
-}
-
-const INPUT =
-  'w-full min-w-0 min-h-12 rounded-xl border-2 bg-sunken px-3 text-base text-ink placeholder:text-ink-muted ' +
-  'transition-colors focus:outline-none focus:border-brand focus:ring-4 focus:ring-brand-ring [color-scheme:dark]';
-const OK_BORDER = 'border-line-strong';
-const DONE_BORDER = 'border-ok/70';
-const TODO_BORDER = 'border-warn';
-const BAD_BORDER = 'border-danger';
-/** A date field + its calendar button: grows, but never so narrow that "dd.mm.yyyy" is cut — the row's next control wraps instead. */
-const DATE_ROW = 'min-w-[13rem] flex-1';
-const CALENDAR_BTN =
-  'grid h-12 w-12 shrink-0 place-items-center rounded-xl border-2 border-line-strong bg-tile text-ink active:scale-95 disabled:opacity-35';
-
-function Icon({ name, size = 20, className = '' }: { name: string; size?: number; className?: string }) {
-  return (
-    <span aria-hidden className={`mi shrink-0 ${className}`} style={{ fontSize: size }}>
-      {name}
-    </span>
-  );
-}
-
-function FieldError({ text, tone = 'danger' }: { text: string | null; tone?: 'danger' | 'warn' }) {
-  if (!text) return null;
-  return (
-    <p
-      className={`mt-1.5 flex items-start gap-1 text-sm font-bold ${
-        tone === 'warn' ? 'text-warn-weak-ink' : 'text-danger-weak-ink'
-      }`}
-    >
-      <Icon name={tone === 'warn' ? 'edit' : 'error'} size={17} className="mt-px" />
-      <span>{text}</span>
-    </p>
-  );
-}
-
-function FieldLabel({ htmlFor, icon, children }: { htmlFor?: string; icon: string; children: React.ReactNode }) {
-  return (
-    <label className="mb-1.5 flex items-center gap-1.5 text-sm font-bold text-ink-body" htmlFor={htmlFor}>
-      <Icon name={icon} size={18} className="text-brand-weak-ink" />
-      {children}
-    </label>
-  );
-}
-
-function Chip({
-  active,
-  onClick,
-  children,
-  icon,
-  tone = 'brand',
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-  icon?: string;
-  tone?: 'brand' | 'warn' | 'ok' | 'danger';
-}) {
-  const on = {
-    brand: 'bg-brand border-brand text-white shadow-[0_0_0_3px_var(--brand-ring)]',
-    warn: 'bg-warn border-warn text-[#1a1100] shadow-[0_0_0_3px_rgba(245,158,11,0.3)]',
-    ok: 'bg-ok border-ok text-[#04210f] shadow-[0_0_0_3px_rgba(34,197,94,0.3)]',
-    danger: 'bg-danger border-danger text-white shadow-[0_0_0_3px_rgba(239,68,68,0.3)]',
-  }[tone];
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      className={`inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full border-2 px-4 text-sm font-extrabold whitespace-nowrap transition-all active:scale-95 ${
-        active ? on : 'border-line-strong bg-tile text-ink-body hover:border-ink-muted'
-      }`}
-    >
-      {icon && <Icon name={active ? 'check' : icon} size={18} />}
-      {children}
-    </button>
-  );
-}
-
-const STATUS_STYLE: Record<LineStatus, { card: string; badge: string; pill: string; icon: string }> = {
-  ready: {
-    card: 'border-ok/45 border-s-ok bg-[linear-gradient(180deg,rgba(34,197,94,0.10),rgba(16,28,34,1)_55%)]',
-    badge: 'bg-ok text-[#04210f]',
-    pill: 'bg-ok-weak text-ok-weak-ink border-ok/40',
-    icon: 'check_circle',
-  },
-  todo: {
-    card: 'border-warn/60 border-s-warn bg-[linear-gradient(180deg,rgba(245,158,11,0.12),rgba(16,28,34,1)_55%)]',
-    badge: 'bg-warn text-[#1a1100]',
-    pill: 'bg-warn-weak text-warn-weak-ink border-warn/50',
-    icon: 'edit_calendar',
-  },
-  fix: {
-    card: 'border-danger/70 border-s-danger bg-[linear-gradient(180deg,rgba(239,68,68,0.13),rgba(16,28,34,1)_55%)]',
-    badge: 'bg-danger text-white',
-    pill: 'bg-danger-weak text-danger-weak-ink border-danger/50',
-    icon: 'error',
-  },
 };
 
 // ── One delivery-note line ───────────────────────────────────────────────
@@ -687,6 +579,7 @@ export function ReceiptForm({
   header,
   lines: initialLines,
   previousFormIds = [],
+  redesign = false,
 }: {
   formId: string;
   exp: string;
@@ -696,6 +589,11 @@ export function ReceiptForm({
   lines: FormLine[];
   /** Forms this one replaced, newest first (page.tsx): their stored draft is restored when this form has none yet. */
   previousFormIds?: string[];
+  /**
+   * The redesign (28/10, public.scanner_flags 'receive_redesign' for this
+   * chat): compact cards + the expiry walk. Off = the form exactly as before.
+   */
+  redesign?: boolean;
 }) {
   useLangDir(language);
   const tr: Tr = useCallback((k, v) => t(language, k, v), [language]);
@@ -719,6 +617,10 @@ export function ReceiptForm({
   const [touched, setTouched] = useState<Set<number>>(() => new Set());
   const [sameDate, setSameDate] = useState('');
   const [phase, setPhase] = useState<Phase>({ kind: 'editing' });
+  /** The redesign flag, live: the poll carries `features.receive_redesign`. */
+  const [redesignOn, setRedesignOn] = useState(redesign);
+  /** The expiry walk is open, on this line (redesign only). */
+  const [walk, setWalk] = useState<{ start: number | null } | null>(null);
   const [flashLine, setFlashLine] = useState<number | null>(null);
   /** Item search (client 20/10) — a view filter only; validation, counts and submit see every line. */
   const [query, setQuery] = useState('');
@@ -737,6 +639,8 @@ export function ReceiptForm({
   revRef.current = rev;
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
+  const redesignRef = useRef(redesignOn);
+  redesignRef.current = redesignOn;
 
   const today = todayInJerusalem();
 
@@ -831,6 +735,12 @@ export function ReceiptForm({
       const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
       if (!data || data.ok !== true || sending.current) return;
       const status = String(data.status ?? '');
+      const features = data.features as Record<string, unknown> | null | undefined;
+      if (features && typeof features.receive_redesign === 'boolean' && features.receive_redesign !== redesignRef.current) {
+        rt.event('receive_step', { step: 'redesign', on: features.receive_redesign, at: 'poll' });
+        setRedesignOn(features.receive_redesign);
+        if (!features.receive_redesign) setWalk(null);
+      }
       if (status === 'open') {
         const nextRev = Number(data.rev);
         if (Number.isInteger(nextRev) && nextRev > revRef.current) applyLines(normalizeFormLines(data.lines), nextRev);
@@ -977,7 +887,8 @@ export function ReceiptForm({
   };
 
   // A non-empty search shows matching lines from the whole note, whichever tab is on.
-  const search = useMemo(() => searchLines(lines, query), [lines, query]);
+  // The printed / Priority names are searched only with the redesign on (off = today's search).
+  const search = useMemo(() => searchLines(lines, query, { allNames: redesignOn }), [lines, query, redesignOn]);
   const shownBySearch = useMemo(
     () => (search.active ? new Set(search.lines.map((l) => l.index)) : null),
     [search],
@@ -1023,6 +934,34 @@ export function ReceiptForm({
     }
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
+
+  // ── Redesign (28/10): the expiry walk, one line at a time ──
+  const walkStat = redesignOn ? walkProgress(lines, draft.lines, today) : { dated: 0, total: 0 };
+  const openWalk = () => {
+    const order = walkOrder(lines, draft.lines);
+    const byIndex = new Map(draft.lines.map((d) => [d.index, d]));
+    const start = walkStart(order, (i) => {
+      const d = byIndex.get(i);
+      return !!d && !isDated(d, today);
+    });
+    rt.event('receive_step', { step: 'walk', from: 'list', line: start, dated: walkStat.dated, total: walkStat.total });
+    setQuery('');
+    setWalk({ start });
+  };
+  const exitWalk = (line: number | null) => {
+    rt.event('receive_step', { step: 'list', from: 'walk', line, dated: walkStat.dated, total: walkStat.total });
+    setWalk(null);
+    setPendingScroll({ id: 'walk-entry' });
+  };
+  const onWalkStep = useCallback((step: string, data: Record<string, unknown>) => {
+    rt.event('receive_step', { step, ...data });
+    // rt (the trace) never changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const onCardEdit = useCallback((index: number, open: boolean) => {
+    rt.event('receive_step', { step: 'card_edit', line: index, open });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const visible = shownBySearch
     ? draft.lines.filter((d) => shownBySearch.has(d.index))
@@ -1173,6 +1112,22 @@ export function ReceiptForm({
     );
   }
 
+  if (redesignOn && walk) {
+    return (
+      <ExpiryWalk
+        lines={lines}
+        drafts={draft.lines}
+        lineErrors={check.lines}
+        language={language}
+        today={today}
+        start={walk.start}
+        onChange={onLineChange}
+        onStep={onWalkStep}
+        onExit={exitWalk}
+      />
+    );
+  }
+
   const submitting = phase.kind === 'submitting';
   const palletsBad = check.form.includes('pallets_invalid');
   const allReady = remaining === 0;
@@ -1317,6 +1272,27 @@ export function ReceiptForm({
           </div>
         </div>
         <FieldError text={palletsBad ? tr('receive.err.pallets') : null} />
+
+        {/* Redesign: the expiry walk, one item at a time in the order the goods stand */}
+        {redesignOn && walkStat.total > 0 && (
+          <button
+            id="walk-entry"
+            type="button"
+            onClick={openWalk}
+            className="flex w-full items-center gap-3 rounded-3xl border-2 border-warn bg-[linear-gradient(135deg,rgba(253,224,71,0.16),rgba(245,158,11,0.22))] p-4 text-start shadow-[0_8px_24px_rgba(245,158,11,0.2)] active:scale-[0.99]"
+          >
+            <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-warn text-[#1a1100]">
+              <Icon name="edit_calendar" size={28} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-base font-extrabold">{tr('receive.v2.walkStart')}</span>
+              <span className="block text-sm font-bold text-warn-weak-ink">
+                {tr('receive.v2.walkProgress', { n: walkStat.dated, m: walkStat.total })}
+              </span>
+            </span>
+            <Icon name="arrow_forward" size={24} className="rtl:-scale-x-100" />
+          </button>
+        )}
 
         {/* Expiry shortcuts */}
         {anyNeedsExpiry && (
@@ -1477,6 +1453,22 @@ export function ReceiptForm({
         {visible.map((d) => {
           const line = lineByIndex.get(d.index);
           if (!line) return null;
+          if (redesignOn) {
+            return (
+              <CompactLineCard
+                key={d.index}
+                line={line}
+                d={d}
+                errKey={(check.lines[d.index] ?? []).join(',')}
+                language={language}
+                today={today}
+                flash={flashLine === d.index}
+                isNew={newLines.has(d.index)}
+                onChange={onLineChange}
+                onEdit={onCardEdit}
+              />
+            );
+          }
           return (
             <LineCard
               key={d.index}

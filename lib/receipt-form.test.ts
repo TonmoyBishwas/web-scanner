@@ -315,6 +315,31 @@ describe('row normalisation', () => {
     expect(normalizeFormLines('nope')).toEqual([]);
   });
 
+  it('normalizeFormLines keeps the 28/10 fields (Priority name, printed name, qty check) when given', () => {
+    const [a, b] = normalizeFormLines([
+      {
+        index: 1, code: '150020', name_he: 'סוכר לבן', name_printed: 'סוכר', priority_name: 'סוכר לבן 1 ק"ג',
+        qty: 100, qty_check: 'corrected', qty_read: 10, price: '3.30', line_total: 330,
+      },
+      { index: 2, name_he: 'מלח', qty: 15, qty_check: 'maybe', qty_read: 'x', price: null, name_printed: '  ' },
+    ]);
+    expect(a).toMatchObject({
+      name_he: 'סוכר לבן', name_printed: 'סוכר', priority_name: 'סוכר לבן 1 ק"ג',
+      qty_check: 'corrected', qty_read: 10, price: 3.3, line_total: 330,
+    });
+    // Junk is dropped, not guessed.
+    for (const k of ['qty_check', 'qty_read', 'price', 'line_total', 'name_printed', 'priority_name']) {
+      expect(b).not.toHaveProperty(k);
+    }
+  });
+
+  it('a row from before 28/10 normalizes exactly as before (no new keys)', () => {
+    const [l] = normalizeFormLines([{ index: 1, code: '1', name_he: 'טחינה', qty: 2, needs_expiry: true }]);
+    expect(Object.keys(l).sort()).toEqual(
+      ['cartons', 'code', 'index', 'inner', 'name_en', 'name_he', 'needs_expiry', 'packaging', 'per_pack', 'qty', 'unit', 'unit_label', 'weighed'],
+    );
+  });
+
   it('normalizeFormHeader', () => {
     expect(normalizeFormHeader({ supplier: 'בני דרום', invoice_number: 123, invoice_date: '2026-10-12' }, 26)).toEqual({
       supplier: 'בני דרום',
