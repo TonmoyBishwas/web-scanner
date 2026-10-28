@@ -48,6 +48,8 @@ import {
 } from '@/lib/receipt-form';
 import { isFinalStatus, isInFlightStatus } from '@/lib/receipt-form-submit';
 import { SEARCH_MIN_LINES, nextIncompleteLine, searchLines } from '@/lib/receipt-form-search';
+import { errorCounts } from '@/lib/receive-trace';
+import { useReceiveTrace } from './useReceiveTrace';
 
 type Tr = (key: TranslationKey, vars?: Record<string, string | number>) => string;
 
@@ -803,7 +805,10 @@ export function ReceiptForm({
       setPageAdded(fresh.length);
       setFlashLine(fresh[0]);
     }
+    rt.event('receive_lines_added', { new_lines: fresh.length, rev: nextRev, lines: next.length });
     return fresh.length;
+    // rt (the trace) is created further down and never changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /** Leave for the form that replaced this one, taking the draft along (its restore merges by index). */
@@ -832,8 +837,11 @@ export function ReceiptForm({
         return;
       }
       if (isInFlightStatus(status)) return; // another phone is saving it; the submit would say so
-      if (status === 'failed') return setPhase({ kind: 'failed' });
-      onNotOpen(status, data);
+      if (status === 'failed') {
+        rt.event('receive_outcome', { status, at: 'poll' });
+        return setPhase({ kind: 'failed' });
+      }
+      onNotOpen(status, data, 'poll');
     } catch {
       /* offline — try again next time */
     }
@@ -910,33 +918,47 @@ export function ReceiptForm({
   const pct = lines.length ? Math.round((readyLines / lines.length) * 100) : 100;
 
   const onLineChange = useCallback((index: number, patch: Partial<LineDraft>) => {
+    rt.lineEdit(index, patch);
     setDraft((d) => ({ ...d, lines: d.lines.map((l) => (l.index === index ? { ...l, ...patch } : l)) }));
     setTouched((s) => (s.has(index) ? s : new Set(s).add(index)));
     setPhase((p) => (p.kind === 'error' ? { kind: 'editing' } : p));
+    // rt (the trace) is created further down and never changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const onExtraChange = useCallback((key: string, patch: Partial<ExtraDraft>) => {
+    rt.extraEdit(key, patch);
     setDraft((d) => ({ ...d, extras: d.extras.map((x) => (x.key === key ? { ...x, ...patch } : x)) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const onExtraRemove = useCallback((key: string) => {
+    rt.event('receive_extra', { action: 'remove' });
     setDraft((d) => ({ ...d, extras: d.extras.filter((x) => x.key !== key) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   /** `name` pre-fills the item (the search text, from the no-results card). */
-  const addExtra = (name = '') =>
+  const addExtra = (name = '') => {
+    rt.event('receive_extra', { action: 'add', from_search: name !== '', extras: draft.extras.length });
     setDraft((d) =>
       d.extras.length >= MAX_EXTRAS
         ? d
         : { ...d, extras: [...d.extras, { key: newExtraKey(), name: name.slice(0, 200), quantity: '', unit: 'units' }] },
     );
+  };
 
   const sameDateErr = sameDate ? expiryError(sameDate, today) : null;
   const applySameDate = () => {
     if (!sameDate || sameDateErr) return;
+    rt.event('receive_bulk', { tool: 'same_date', date: sameDate, lines: wantingExpiry });
     setDraft((d) => ({ ...d, lines: applySameDateToAll(lines, d.lines, sameDate) }));
   };
-  const restNoExpiry = () => setDraft((d) => ({ ...d, lines: markRestNoExpiry(lines, d.lines) }));
+  const restNoExpiry = () => {
+    rt.event('receive_bulk', { tool: 'rest_no_expiry', lines: wantingExpiry });
+    setDraft((d) => ({ ...d, lines: markRestNoExpiry(lines, d.lines) }));
+  };
 
   const showOnlyMissing = (v: boolean) => {
+    rt.event('receive_tab', { tab: v ? 'need' : 'all', need: linesWithIssues, from_search: query.trim() !== '' });
     setOnlyMissing(v);
     setTouched(new Set());
     setQuery('');
@@ -944,12 +966,15 @@ export function ReceiptForm({
 
   const pallets = draft.pallets.trim();
   const palletsN = /^\d{1,3}$/.test(pallets) ? Number(pallets) : null;
-  const stepPallets = (delta: number) =>
+  const stepPallets = (delta: number) => {
+    const cur = palletsN ?? 0;
+    rt.palletsEdit(delta < 0 && cur === 0 ? draft.pallets : String(Math.min(999, Math.max(0, cur + delta))));
     setDraft((d) => {
       const cur = /^\d{1,3}$/.test(d.pallets.trim()) ? Number(d.pallets.trim()) : 0;
       const next = Math.min(999, Math.max(0, cur + delta));
       return { ...d, pallets: delta < 0 && cur === 0 ? d.pallets : String(next) };
     });
+  };
 
   // A non-empty search shows matching lines from the whole note, whichever tab is on.
   const search = useMemo(() => searchLines(lines, query), [lines, query]);
@@ -957,6 +982,11 @@ export function ReceiptForm({
     () => (search.active ? new Set(search.lines.map((l) => l.index)) : null),
     [search],
   );
+
+  /** The trail of what the worker does here (scanner_events, page 'receive') — nothing visible. */
+  const rt = useReceiveTrace({
+    formId, exp, sig, lines, draft, lineErrors: check.lines, formErrors: check.form, restored, query, search,
+  });
 
   /**
    * The first thing that still blocks approval, in page order. During a
@@ -969,6 +999,13 @@ export function ReceiptForm({
       (i) => !!check.lines[i],
       shownBySearch,
     );
+    rt.event('receive_next', {
+      to: next ? next.index : check.form.includes('pallets_invalid') ? 'pallets' : 'extras',
+      clear_search: Boolean(next?.clearSearch),
+      remaining,
+      by_code: errorCounts(check.lines),
+      form: check.form,
+    });
     if (next) {
       if (next.clearSearch) {
         setQuery('');
@@ -995,8 +1032,9 @@ export function ReceiptForm({
    * The row is done / closed (seen by the poll or the submit): say why
    * (closed_reason, 20/10). Only a really saved note drops the stored draft.
    */
-  function onNotOpen(status: unknown, data: Record<string, unknown> | null) {
+  function onNotOpen(status: unknown, data: Record<string, unknown> | null, at: 'poll' | 'save' = 'save') {
     const view = closedView(String(status ?? ''), closedReasonOf(data));
+    rt.event('receive_outcome', { status: String(status ?? ''), view, at });
     const newer = data?.newer as { id?: unknown; href?: unknown } | null | undefined;
     if (view === 'replaced' && newer && typeof newer.href === 'string' && newer.href.startsWith('/receive/') && typeof newer.id === 'string') {
       goToNewer(newer.href, newer.id);
@@ -1017,6 +1055,7 @@ export function ReceiptForm({
     let again: number | null = null;
     sending.current = true;
     setPhase({ kind: 'submitting' });
+    const started = rt.saveAttempt({ rev: pageRev, auto_resend: !retry });
     try {
       const res = await fetch(`/api/receipt-form/${encodeURIComponent(formId)}`, {
         method: 'POST',
@@ -1026,6 +1065,7 @@ export function ReceiptForm({
       });
       const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
       if (res.ok && data?.ok === true) {
+        rt.saveDone(started, true, { http: res.status, saved_lines: data.saved_lines ?? null });
         clearStoredDraft();
         const n = Number(data.saved_lines);
         setPhase({ kind: 'saved', savedLines: Number.isFinite(n) ? n : null });
@@ -1036,6 +1076,7 @@ export function ReceiptForm({
         const nextRev = Number(data.rev);
         const okRev = Number.isInteger(nextRev) && nextRev >= 1;
         const n = applyLines(normalizeFormLines(data.lines), okRev ? nextRev : pageRev);
+        rt.saveDone(started, false, { http: res.status, error: 'lines_changed', new_lines: n, rev: okRev ? nextRev : null });
         // Only the header moved (the bot's append with no new line, e.g. the
         // note's date from page 2): nothing to fill — send again on the new
         // revision instead of "Saving failed" (review 20/10).
@@ -1047,6 +1088,9 @@ export function ReceiptForm({
         return;
       }
       const status = data?.status;
+      if (isFinalStatus(status) || isInFlightStatus(status) || status === 'failed') {
+        rt.saveDone(started, false, { http: res.status, error: data?.error ?? null, status });
+      }
       if (isFinalStatus(status)) {
         onNotOpen(status, data);
         return;
@@ -1061,6 +1105,7 @@ export function ReceiptForm({
       }
       const err = typeof data?.error === 'string' ? data.error : '';
       const botMessage = typeof data?.message === 'string' && data.message ? data.message : null;
+      rt.saveDone(started, false, { http: res.status, error: err || null, status: status ?? null, bot_message: botMessage !== null });
       const key: TranslationKey =
         err === 'link_invalid' || err === 'expired' || err === 'not_found'
           ? 'receive.linkInvalidTitle'
@@ -1071,6 +1116,7 @@ export function ReceiptForm({
               : 'receive.errorGeneric';
       setPhase({ kind: 'error', message: botMessage ?? tr(key) });
     } catch {
+      rt.saveDone(started, false, { error: 'network' });
       setPhase({ kind: 'error', message: tr('receive.errorNetwork') });
     } finally {
       sending.current = false;
@@ -1252,7 +1298,10 @@ export function ReceiptForm({
               autoComplete="off"
               value={draft.pallets}
               placeholder="0"
-              onChange={(e) => setDraft((d) => ({ ...d, pallets: e.target.value }))}
+              onChange={(e) => {
+                rt.palletsEdit(e.target.value);
+                setDraft((d) => ({ ...d, pallets: e.target.value }));
+              }}
               className={`${INPUT.replace('w-full ', '')} w-16 flex-none px-1 text-center font-mono text-xl font-black ${
                 palletsBad ? BAD_BORDER : palletsN ? DONE_BORDER : OK_BORDER
               }`}
@@ -1271,7 +1320,7 @@ export function ReceiptForm({
 
         {/* Expiry shortcuts */}
         {anyNeedsExpiry && (
-          <div className="relative overflow-hidden rounded-3xl border-2 border-warn/45 bg-[linear-gradient(160deg,rgba(245,158,11,0.16),rgba(16,28,34,1)_65%)] p-4 space-y-3">
+          <div id="expiry-tools" className="relative overflow-hidden rounded-3xl border-2 border-warn/45 bg-[linear-gradient(160deg,rgba(245,158,11,0.16),rgba(16,28,34,1)_65%)] p-4 space-y-3">
             <div className="flex items-center gap-2">
               <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-warn text-[#1a1100]">
                 <Icon name="event_available" size={22} />
@@ -1359,7 +1408,10 @@ export function ReceiptForm({
                     // The keyboard's search key: close the keyboard; one result → go to it.
                     e.preventDefault();
                     e.currentTarget.blur();
-                    if (search.lines.length === 1 && search.active) scrollToLine(search.lines[0].index);
+                    if (search.lines.length === 1 && search.active) {
+                      rt.event('receive_search_go', { line: search.lines[0].index });
+                      scrollToLine(search.lines[0].index);
+                    }
                   }
                 }}
                 className="min-w-0 flex-1 bg-transparent py-2 pe-3 text-base font-bold text-ink placeholder:text-ink-muted outline-none [&::-webkit-search-cancel-button]:hidden"
