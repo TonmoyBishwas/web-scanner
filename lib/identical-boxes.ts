@@ -18,6 +18,35 @@
 
 import type { CartonLabel, MultiPalletBoxScan } from '@/types';
 import { isMintedLabelBarcode } from './label-batches';
+import { isNoBarcodeId } from './no-barcode';
+import { barcodeCarriesWeight } from './barcode-weight';
+
+/**
+ * May "All boxes identical" be offered on this row (its row actions, the
+ * Scanning-now card, the single-item question's "print a label for each
+ * carton")? Only on a captured row with a real supplier barcode that is not
+ * itself minted and not still in OCR (`provisionalPrefix`: the page's
+ * `MANUAL-` placeholder).
+ *
+ * A doubted weight does not hide it (2026-10-19: that pushed David onto 20
+ * one-carton "Different carton?" saves) — the form shows the doubt.
+ *
+ * A barcode that carries the carton's own weight (Glatt 25-digit, 31-digit
+ * catch-weight — lib/barcode-weight.ts) does: such a carton is never
+ * identical to another, and copying it books its weight on cartons that weigh
+ * something else (28/10: a Glatt fillet carton whose code did not read got
+ * another carton's 13.59 kg). An unreadable one goes through the label photo /
+ * manual capture instead.
+ */
+export function identicalAllowed(
+  box: { barcode: string; ocr_status?: string; minted?: boolean },
+  provisionalPrefix = 'MANUAL-',
+): boolean {
+  const code = box.barcode || '';
+  return box.ocr_status !== 'processing' && !box.minted
+    && !code.startsWith(provisionalPrefix) && !isNoBarcodeId(code)
+    && !barcodeCarriesWeight(code);
+}
 
 /** What the confirmation form settles for the whole batch. */
 export interface IdenticalForm {

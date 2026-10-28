@@ -27,7 +27,8 @@ import {
   applyBarcodeReadings, keepBarcodeFilled, reconcileWithBarcode, typicalWeightFor,
   type BarcodeEvent, type BarcodeFilled,
 } from '@/lib/barcode-reconcile';
-import { blocksConfirm, failedReadPrefill, heldAfterReads, isOpenRatioDoubt, takesLateRead, waitForReads } from '@/lib/failed-read';
+import { barcodeWeight, weightsDisagree } from '@/lib/barcode-weight';
+import { blocksConfirm, failedReadCovered, failedReadPrefill, fillBarcodeWeights, heldAfterReads, isOpenRatioDoubt, takesLateRead, waitForReads } from '@/lib/failed-read';
 import { DoneOverlay } from '@/components/terminal/DoneOverlay';
 import { Toast, useLockToast } from '@/components/terminal/Toast';
 import { PriorityPushStatus } from '@/components/terminal/PriorityPushStatus';
@@ -46,6 +47,7 @@ import { countGroupOf, groupRows, growGroupRows, rowsToShrink } from '@/lib/pall
 import {
   dedupCodes,
   expandIdenticalBoxes,
+  identicalAllowed,
   releasedSources,
   sourceStillListed,
   identicalLabelPayload,
@@ -286,9 +288,13 @@ function barcodeMarks(b: Pick<BoxScan, 'barcode_filled'>): { weight?: boolean; e
  * expiry. A doubt alone never holds (lib/weight-review.ts).
  */
 function heldForDetails(b: BoxScan): boolean {
-  if (b.ocr_status === 'processing' || b.ocr_status === 'failed') return true;
-  // A carton counted in units has no weight by design (lib/units-cartons.ts).
-  if (!(b.weight > 0) && !isUnitsCarton(b)) return true;
+  if (b.ocr_status === 'processing') return true;
+  // A failed read whose barcode carries the weight is not missing it
+  // (lib/failed-read.ts failedReadCovered); the name still has to be there.
+  if (b.ocr_status === 'failed' && !failedReadCovered(b)) return true;
+  // A carton counted in units has no weight by design (lib/units-cartons.ts),
+  // and one whose barcode carries its weight is not missing it.
+  if (!(b.weight > 0) && !isUnitsCarton(b) && !barcodeWeight(b.barcode)) return true;
   if (!(b.item_name_hebrew || b.item_name || '').trim()) return true;
   if (isProvisional(b.barcode)) return true;
   return !!validateCartonDates({ production: b.production_date, expiry: b.expiry, receiptDate: localIsoDate() }).expiryError;
@@ -2088,7 +2094,11 @@ export default function PalletVerifyPage({
   function bookWithBarcode(rows: BoxScan[], where: 'pallet' | 'loose'): BoxScan[] {
     const { rows: out, events } = applyBarcodeReadings(rows, localIsoDate());
     for (const { barcode_digits, ...e } of events) traceBarcodeEvents(barcode_digits, [e], where, 'confirm');
-    return out;
+    // A carton the gate let through on its barcode's weight (a failed read
+    // it covers — lib/failed-read.ts) is booked at that weight, never 0.
+    const { rows: weighed, filled } = fillBarcodeWeights(out);
+    for (const f of filled) trace('ui', 'weight_barcode_fill', { carton: f.barcode, where, at: 'confirm', barcode_kg: f.barcode_kg });
+    return weighed;
   }
 
   function traceBarcodeEvents(code: string, events: BarcodeEvent[], where: 'pallet' | 'loose', at: 'ocr' | 'confirm') {
@@ -2876,6 +2886,18 @@ export default function PalletVerifyPage({
     }
     const stillUnidentified = isProvisional(resolvedId);
 
+    // A weight he typed over the one his carton's barcode carries
+    // (lib/barcode-weight.ts): saved as typed, as always — but traced, so a
+    // booked weight that is not the barcode's can be found.
+    const codeWeight = barcodeWeight(resolvedId);
+    const editedRow = (isLoose ? looseBoxes : scannedBoxes).find((b) => b.barcode === barcode);
+    if (codeWeight && !(editedRow && isUnitsCarton(editedRow))
+      && Number.isFinite(w) && w > 0 && weightsDisagree(w, codeWeight.kg)) {
+      trace('ui', 'weight_typed_vs_barcode', {
+        barcode: resolvedId, isLoose, typed_kg: w, barcode_kg: codeWeight.kg, source: codeWeight.source,
+      });
+    }
+
     // Same patch shape for both collections. Crucially: clear needs_review
     // when the worker's edit gives us BOTH a non-empty name AND a positive
     // weight — otherwise leave the flag as-is so the gate still holds.
@@ -3634,14 +3656,9 @@ export default function PalletVerifyPage({
     showToast(tr('terminal.groupCountSaved', { from, to: next }), 'edit_note');
   }
 
-  /** The action is offered on a captured row with a real supplier barcode
-   *  that is not itself minted and not still in OCR. */
+  /** "All boxes identical" on this row? lib/identical-boxes.ts identicalAllowed. */
   function canDeclareIdentical(box: BoxScan): boolean {
-    // A doubted weight no longer hides this (2026-10-19: it pushed David onto
-    // 20 one-carton "Different carton?" saves). The form shows the doubt by
-    // the weight, and saving it confirms the weight for every label.
-    return box.ocr_status !== 'processing' && !box.minted
-      && !isProvisional(box.barcode) && !isNoBarcodeId(box.barcode);
+    return identicalAllowed(box, PROVISIONAL_PREFIX);
   }
 
   function buildDockChips(opts: { gap: () => void }): ToolChip[] {

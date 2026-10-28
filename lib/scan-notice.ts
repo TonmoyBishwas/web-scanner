@@ -22,6 +22,7 @@
 
 import { isMintedLabelBarcode } from './label-batches';
 import { parseCartonBarcode } from './barcode-parser';
+import { barcodeWeight } from './barcode-weight';
 
 /** How long a notice stays in the footer. */
 export const SCAN_NOTICE_MS = 4000;
@@ -255,7 +256,10 @@ export function findCountedCartonByDigits<T extends CountedRow>(
  * only short codes on the list are per-carton serials the label photo
  * confirmed (Wall Dan `408274`, lib/carton-barcode.ts
  * labelConfirmsShortCode), so a re-read IS that carton — on 25/10 a second
- * photo of 408274 became a second carton.
+ * photo of 408274 became a second carton. Nor for a Glatt 25-digit code
+ * (lib/barcode-weight.ts): its 9-digit serial is unique per carton, so a
+ * re-read IS that carton, and the form would copy that carton's weight onto
+ * another one (28/10: a fillet carton booked at another carton's 13.59 kg).
  */
 export function canOfferDifferentCarton(
   code: string,
@@ -264,6 +268,7 @@ export function canOfferDifferentCarton(
   const c = (code || '').trim();
   if (!/^\d/.test(c) || isMintedLabelBarcode(c)) return false;
   if (/^\d{6,11}$/.test(c)) return false;
+  if (barcodeWeight(c)?.source === 'glatt25') return false;
   if (typeof row.barcode === 'string' && isBatchStandIn(c, row as CountedRow)) return false;
   return row.ocr_status !== 'processing';
 }

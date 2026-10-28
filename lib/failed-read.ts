@@ -32,6 +32,7 @@
  */
 
 import { reconcileWithBarcode, type BarcodeEvent, type BarcodeFilled } from './barcode-reconcile';
+import { barcodeWeight } from './barcode-weight';
 import { cartonOwnCodes, matchInvoiceItemByCode, type InvoiceItem } from './invoice-match';
 
 /** How long a confirm waits for label reads still in flight before it books. */
@@ -40,10 +41,28 @@ const READ_WAIT_POLL_MS = 250;
 
 /** The fields of a row the confirm gate reads. */
 interface GateRow {
+  barcode?: string;
+  item_name?: string;
+  item_name_hebrew?: string;
   needs_review?: boolean;
   ocr_status?: string;
   weight_suspect?: { reason: 'name_number' | 'ratio' };
   weight_checked?: boolean;
+}
+
+/**
+ * A failed label read the carton's own barcode makes up for (28/10): the
+ * code carries the carton's weight (Glatt 25-digit, 31-digit —
+ * lib/barcode-weight.ts), so a stalled or timed-out read is our failure, not
+ * a detail the carton lacks. Its weight is the barcode's (failedReadPrefill,
+ * fillBarcodeWeights), so it does not hold the confirm for a re-photograph.
+ * The name has no such source: a carton still nameless after the invoice
+ * code match keeps the hold. A code with no weight keeps it as before.
+ */
+export function failedReadCovered(b: GateRow): boolean {
+  return b.ocr_status === 'failed'
+    && barcodeWeight(b.barcode) !== null
+    && !!(b.item_name_hebrew || b.item_name || '').trim();
 }
 
 /**
@@ -63,7 +82,7 @@ export function isOpenRatioDoubt(b: GateRow): boolean {
  * The one predicate the gate's count and the amber footer's "open it" share.
  */
 export function blocksConfirm(b: GateRow): boolean {
-  return !!b.needs_review || b.ocr_status === 'failed' || isOpenRatioDoubt(b);
+  return !!b.needs_review || (b.ocr_status === 'failed' && !failedReadCovered(b)) || isOpenRatioDoubt(b);
 }
 
 /**
@@ -176,6 +195,15 @@ export function failedReadPrefill(
   }
   if ('weight' in filled || 'expiry' in filled) patch.barcode_filled = { ...row.barcode_filled, ...filled };
 
+  // A Glatt 25-digit code is not one reconcileWithBarcode reads (it carries
+  // no expiry, and is never a twin): its weight is the carton's, as the OCR
+  // route books it for a read that worked (lib/barcode-weight.ts).
+  const own = barcodeWeight(row.barcode);
+  if (patch.weight === undefined && own?.source === 'glatt25' && !row.weight_checked && !(row.weight > 0)) {
+    patch.weight = own.kg;
+    events.push({ field: 'weight', action: 'filled', ocr: null, barcode: own.kg });
+  }
+
   if (blank(row.item_name) && blank(row.item_name_hebrew)) {
     const line = matchInvoiceItemByCode(cartonOwnCodes(row), invoiceItems);
     if (line) {
@@ -184,6 +212,25 @@ export function failedReadPrefill(
     }
   }
   return { patch, events };
+}
+
+/**
+ * The confirm payload's guard for the rule above: a row with no weight whose
+ * barcode carries one is booked at the barcode's weight, never at 0. Rows
+ * that change are new objects; the rest pass through as the same object.
+ */
+export function fillBarcodeWeights<T extends { barcode: string; weight: number; units?: number }>(
+  rows: ReadonlyArray<T>,
+): { rows: T[]; filled: Array<{ barcode: string; barcode_kg: number }> } {
+  const filled: Array<{ barcode: string; barcode_kg: number }> = [];
+  const out = rows.map((r) => {
+    if (r.weight > 0 || (r.units ?? 0) > 0) return r;
+    const own = barcodeWeight(r.barcode);
+    if (!own) return r;
+    filled.push({ barcode: r.barcode, barcode_kg: own.kg });
+    return { ...r, weight: own.kg };
+  });
+  return { rows: out, filled };
 }
 
 /**
