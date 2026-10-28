@@ -14,10 +14,11 @@
  * so multiplying one sample's weight books a made-up weight for every other
  * carton (19/10 — two catch-weight cartons with different expiry digits raised
  * "is this the only product?"). Each of those is scanned, or given a label of
- * its own.
+ * its own. Same for a Glatt 25-digit code (lib/barcode-weight.ts, 28/10):
+ * it prints the carton's own net weight too.
  */
 
-import { parseCartonBarcode } from './barcode-parser';
+import { barcodeCarriesWeight } from './barcode-weight';
 
 export interface UniformSampleRow {
   barcode: string;
@@ -38,7 +39,7 @@ export interface UniformCandidate {
 
 /** Does this carton's own barcode print its weight? */
 export function labelPrintsWeight(barcode: string): boolean {
-  return (parseCartonBarcode(barcode)?.weight ?? null) !== null;
+  return barcodeCarriesWeight(barcode);
 }
 
 export function uniformCandidate<T extends UniformSampleRow>(

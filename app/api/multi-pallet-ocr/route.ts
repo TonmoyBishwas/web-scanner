@@ -1,6 +1,7 @@
 import { logServerEvent, errorData } from '@/lib/server-events';
 import { NextRequest, NextResponse } from 'next/server';
 import { touchSession } from '@/lib/redis';
+import { ocrWeightFromBarcode } from '@/lib/barcode-weight';
 
 /**
  * POST /api/multi-pallet-ocr
@@ -63,6 +64,19 @@ export async function POST(request: NextRequest) {
     const result = await res.json();
 
     if (result.status === 'success' && result.ocr_data) {
+      // A Glatt 25-digit carton code carries the carton's net weight, and on
+      // 747 past cartons it was right wherever the label OCR disagreed with
+      // it (lib/barcode-weight.ts). Its weight is what the carton is booked
+      // at; the OCR's reading only fills in when there is no such code.
+      // Server-side so every page (and a phone on an older bundle) gets it.
+      // Nothing changes on the worker's screen.
+      const fromBarcode = ocrWeightFromBarcode(traceBarcode, result.ocr_data.weight_kg);
+      if (fromBarcode) {
+        if (fromBarcode.event) {
+          await logServerEvent(traceToken, 'weight_barcode_override', fromBarcode.event);
+        }
+        return NextResponse.json({ success: true, ocr_data: { ...result.ocr_data, weight_kg: fromBarcode.weight_kg } });
+      }
       return NextResponse.json({ success: true, ocr_data: result.ocr_data });
     }
 
