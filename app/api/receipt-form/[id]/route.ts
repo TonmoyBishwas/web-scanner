@@ -4,13 +4,16 @@ import { verifyReceiptFormLink } from '@/lib/receipt-form-link';
 import { formRev, normalizeFormLines, parseAnswers, todayInJerusalem, validateAnswers } from '@/lib/receipt-form';
 import { readBotReply } from '@/lib/receipt-form-submit';
 import { formState, loadFormRow, logFormEvent, type FormRow } from '@/lib/receipt-form-server';
+import { receiveRedesignOn } from '@/lib/scanner-flags';
 
 /**
  * GET /api/receipt-form/{id}?exp&sig[&rev]
  *
  * The open page's poll (every 15 s while visible, and on focus — two-page
  * notes, 20/10): {ok, status, rev, line_count, lines, header, closed_reason,
- * newer, expired}. `newer` = {id, href}, a signed link to the form that
+ * newer, expired, features}. `features.receive_redesign` = the form's
+ * redesign flag for the form's chat (public.scanner_flags, 28/10; any error
+ * is false). `newer` = {id, href}, a signed link to the form that
  * replaced this one (lib/receipt-form-server.ts). `rev` = what the page has;
  * a poll that finds the row moved on (new lines, closed, saved elsewhere) is
  * recorded in scanner_events — an unchanged poll is not. 401 link_invalid;
@@ -94,7 +97,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         closed_reason: st.closed_reason, newer: st.newer?.id ?? null,
       });
     }
-    return reply(200, { ok: true, ...st });
+    const features = { receive_redesign: await receiveRedesignOn(row.chat_id).catch(() => false) };
+    return reply(200, { ok: true, ...st, features });
   } catch (error) {
     console.error('[api/receipt-form] GET error:', id, error);
     return reply(500, { ok: false, error: 'server_error' });

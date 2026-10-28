@@ -9,7 +9,13 @@ import { signReceiptFormLink } from './receipt-form-link';
  * link, and the scanner_events rows. Nothing here reaches a database or the bot.
  */
 type Row = Record<string, unknown>;
-const tables: Record<string, Row[]> = { receipt_forms: [], scanner_events: [] };
+const tables: Record<string, Row[]> = {
+  receipt_forms: [],
+  scanner_events: [],
+  // The redesign flag (28/10), on for one harness chat only. Read once per
+  // 30 s per server instance (lib/scanner-flags.ts), so it is set up here.
+  scanner_flags: [{ flag: 'receive_redesign', enabled_all: false, chat_ids: ['999000000001'] }],
+};
 
 /** `header->>rev` / plain columns. */
 function col(row: Row, path: string): unknown {
@@ -131,6 +137,16 @@ describe('GET /api/receipt-form/{id} (the poll)', () => {
     expect(j).toMatchObject({ ok: true, status: 'open', rev: 1, line_count: 2, closed_reason: null, newer: null, expired: false });
     expect(j.lines).toHaveLength(2);
     expect(j.lines[0]).toMatchObject({ per_pack: null, inner: null });
+    expect(tables.scanner_events).toHaveLength(0);
+  });
+
+  it('features.receive_redesign: on only for a chat the flag lists (28/10)', async () => {
+    tables.receipt_forms.push(form());
+    const off = await (await get(`exp=${EXP}&sig=${SIG}&rev=1`)).json();
+    expect(off.features).toEqual({ receive_redesign: false });
+    tables.receipt_forms = [form({ chat_id: '999000000001' })];
+    const on = await (await get(`exp=${EXP}&sig=${SIG}&rev=1`)).json();
+    expect(on.features).toEqual({ receive_redesign: true });
     expect(tables.scanner_events).toHaveLength(0);
   });
 

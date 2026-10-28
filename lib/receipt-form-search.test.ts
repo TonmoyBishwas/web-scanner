@@ -104,3 +104,32 @@ describe('nextIncompleteLine', () => {
     expect(nextIncompleteLine(order, () => false, new Set([1]))).toBeNull();
   });
 });
+
+describe('printed and Priority names (28/10)', () => {
+  // Bot 96e26c3: name_he = the Priority name, name_printed = the note's wording.
+  const LINES: SearchableLine[] = [
+    { index: 1, code: '340113', name_he: 'מיונז 5 ק"ג תלמה', name_en: '', name_printed: 'מיזן 5 ק"ג תלמה בד"ץ' },
+    { index: 2, code: '150209', name_he: 'מלח שולחן', name_en: '', priority_name: 'מלח שולחן דק 1 ק"ג' },
+    { index: 3, code: '150020', name_he: 'סוכר לבן', name_en: '' },
+  ];
+  const at = (q: string, allNames?: boolean) =>
+    searchLines(LINES, q, allNames === undefined ? undefined : { allNames }).lines.map((l) => l.index);
+
+  it('finds a line by its printed name and by its Priority name', () => {
+    expect(at('מיזן')).toEqual([1]);
+    expect(at('מיונז')).toEqual([1]);
+    expect(at('דק')).toEqual([2]);
+  });
+
+  it('the typo fallback reads the printed name too', () => {
+    expect(searchLines(LINES, 'מיזנ בדצ').lines.map((l) => l.index)).toEqual([1]);
+  });
+
+  it('allNames: false = the search before 28/10 (the live form while its flag is off)', () => {
+    expect(at('בד"ץ')).toEqual([1]); // only the printed name has it
+    expect(at('בד"ץ', false)).toEqual([]);
+    expect(at('דק', false)).toEqual([]);
+    expect(at('מיונז', false)).toEqual([1]);
+    expect(at('סוכר', false)).toEqual([3]);
+  });
+});

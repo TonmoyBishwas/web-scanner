@@ -6,9 +6,10 @@
  * stays in the draft and in validateAnswers whether it is on screen or not.
  *
  * Matching, in order:
- *   1. strict: every query word is a substring of the line's name (he/en)
- *      or supplier code, after searchKey() folding; a whole-number word also
- *      matches the line number (#4).
+ *   1. strict: every query word is a substring of the line's name (he/en,
+ *      and since 28/10 the printed and Priority names) or supplier code,
+ *      after searchKey() folding; a whole-number word also matches the
+ *      line number (#4).
  *   2. typo fallback (only when strict finds nothing anywhere): every query
  *      word of ≥ 3 letters is within one edit of the start of some word of
  *      the line (OCR'd names drift: פרינר / פריניר).
@@ -20,6 +21,19 @@ export interface SearchableLine {
   code: string;
   name_he: string;
   name_en: string;
+  /** 28/10: the name as printed on the note, when the title shows the Priority name. */
+  name_printed?: string;
+  /** 28/10: the Priority item's name, when the code maps. */
+  priority_name?: string;
+}
+
+export interface SearchOptions {
+  /**
+   * Also match `name_printed` and `priority_name` (28/10). On by default;
+   * the live form passes false while its redesign flag is off, so it finds
+   * exactly what it found before.
+   */
+  allNames?: boolean;
 }
 
 /** Show the search box from this many lines on (median note = 5 lines). */
@@ -52,26 +66,33 @@ export function queryWords(query: string): string[] {
     .filter(Boolean);
 }
 
-function lineFields(line: SearchableLine): string[] {
-  return [searchKey(line.name_he), searchKey(line.name_en), searchKey(line.code)].filter(Boolean);
+/** The names searched: the note's he/en, plus the printed and Priority names when asked. */
+function names(line: SearchableLine, allNames: boolean): string[] {
+  const out = [line.name_he, line.name_en];
+  if (allNames) out.push(line.name_printed ?? '', line.priority_name ?? '');
+  return out;
 }
 
-function strictHit(line: SearchableLine, words: string[]): boolean {
-  const fields = lineFields(line);
+function lineFields(line: SearchableLine, allNames: boolean): string[] {
+  return [...names(line, allNames).map(searchKey), searchKey(line.code)].filter(Boolean);
+}
+
+function strictHit(line: SearchableLine, words: string[], allNames: boolean): boolean {
+  const fields = lineFields(line, allNames);
   return words.every(
     (w) => fields.some((f) => f.includes(w)) || (/^\d{1,3}$/.test(w) && Number(w) === line.index),
   );
 }
 
 /** The line's words (split BEFORE folding, so word starts survive). */
-function lineWords(line: SearchableLine): string[] {
-  return `${line.name_he} ${line.name_en}`.split(/[\s,;/|\-–—]+/).map(searchKey).filter(Boolean);
+function lineWords(line: SearchableLine, allNames: boolean): string[] {
+  return names(line, allNames).join(' ').split(/[\s,;/|\-–—]+/).map(searchKey).filter(Boolean);
 }
 
-function fuzzyHit(line: SearchableLine, words: string[]): boolean {
-  const lw = lineWords(line);
+function fuzzyHit(line: SearchableLine, words: string[], allNames: boolean): boolean {
+  const lw = lineWords(line, allNames);
   return words.every((w) => {
-    if (w.length < 3 || /^\d+$/.test(w)) return lineFields(line).some((f) => f.includes(w));
+    if (w.length < 3 || /^\d+$/.test(w)) return lineFields(line, allNames).some((f) => f.includes(w));
     return lw.some(
       (x) =>
         levenshtein(w, x.slice(0, w.length)) <= 1 ||
@@ -90,12 +111,16 @@ export interface LineSearchResult<T> {
   fuzzy: boolean;
 }
 
-export function searchLines<T extends SearchableLine>(lines: T[], query: string): LineSearchResult<T> {
+export function searchLines<T extends SearchableLine>(
+  lines: T[],
+  query: string,
+  { allNames = true }: SearchOptions = {},
+): LineSearchResult<T> {
   const words = queryWords(query);
   if (!words.length) return { lines, active: false, fuzzy: false };
-  const strict = lines.filter((l) => strictHit(l, words));
+  const strict = lines.filter((l) => strictHit(l, words, allNames));
   if (strict.length) return { lines: strict, active: true, fuzzy: false };
-  const loose = lines.filter((l) => fuzzyHit(l, words));
+  const loose = lines.filter((l) => fuzzyHit(l, words, allNames));
   return { lines: loose, active: true, fuzzy: loose.length > 0 };
 }
 

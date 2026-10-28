@@ -68,3 +68,32 @@ export const unitsModeRow = cachedFlagRow(async () => {
 export async function unitsModeOn(chatId: string | number | null | undefined): Promise<boolean> {
   return flagEnabledFor(await unitsModeRow(), chatId);
 }
+
+/** One flag's row by name, cached like `unitsModeRow`; a DB error is no row (off). */
+function flagRow(flag: string) {
+  return cachedFlagRow(async () => {
+    const { data, error } = await supabase
+      .from('scanner_flags')
+      .select('enabled_all, chat_ids')
+      .eq('flag', flag)
+      .maybeSingle();
+    if (error) return null;
+    return (data as ScannerFlagRow | null) ?? null;
+  });
+}
+
+/**
+ * The receive form's redesign (28/10): compact line cards and the
+ * one-item-at-a-time expiry walk. Read by the form page (first render) and
+ * its poll (GET /api/receipt-form/{id} → `features.receive_redesign`).
+ */
+export const receiveRedesignRow = flagRow('receive_redesign');
+
+/** The receive redesign for this chat; off when the flag cannot be read, never a throw. */
+export async function receiveRedesignOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await receiveRedesignRow(), chatId);
+  } catch {
+    return false;
+  }
+}
