@@ -186,24 +186,25 @@ export const CompactLineCard = memo(function CompactLineCard({
               {enSub}
             </p>
           )}
-          <span
-            className={`mt-1.5 inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-extrabold ${st.pill}`}
-          >
-            <Icon name={status === 'todo' && !errors.includes('expiry_missing') ? 'help' : st.icon} size={14} />
-            {statusText}
-          </span>
-          {qtyCheck && (
-            <span className="ms-1.5 mt-1.5 inline-flex items-center gap-1 rounded-full border border-warn/50 bg-warn-weak px-2.5 py-0.5 text-xs font-extrabold text-warn-weak-ink">
-              <Icon name="calculate" size={14} />
-              {tr('receive.v2.qtyCheck')}
+          {/* The pills wrap as a row: a second one never sits indented under the first. */}
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-extrabold ${st.pill}`}>
+              <Icon name={status === 'todo' && !errors.includes('expiry_missing') ? 'help' : st.icon} size={14} />
+              {statusText}
             </span>
-          )}
-          {isNew && (
-            <span className="ms-1.5 mt-1.5 inline-flex items-center gap-1 rounded-full bg-info px-2.5 py-0.5 text-xs font-extrabold text-[#160a33]">
-              <Icon name="fiber_new" size={14} />
-              {tr('receive.newLineTag')}
-            </span>
-          )}
+            {qtyCheck && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-warn/50 bg-warn-weak px-2.5 py-0.5 text-xs font-extrabold text-warn-weak-ink">
+                <Icon name="calculate" size={14} />
+                {tr('receive.v2.qtyCheck')}
+              </span>
+            )}
+            {isNew && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-info px-2.5 py-0.5 text-xs font-extrabold text-[#160a33]">
+                <Icon name="fiber_new" size={14} />
+                {tr('receive.newLineTag')}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -216,26 +217,27 @@ export const CompactLineCard = memo(function CompactLineCard({
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
           <Icon name={line.weighed ? 'scale' : 'tag'} size={18} className="text-brand-weak-ink" />
           <span className="font-extrabold text-ink">{sumQty}</span>
+          {/* Each dot travels with the item after it: a wrap never leaves a dot at a line end. */}
           {sumPacks && (
-            <>
+            <span className="inline-flex items-center gap-2">
               <span className="text-ink-muted">·</span>
               <span className="font-extrabold text-ink">{sumPacks}</span>
-            </>
+            </span>
           )}
           {sumPerPack && (
-            <>
+            <span className="inline-flex items-center gap-2">
               <span className="text-ink-muted">·</span>
               <span className="font-bold text-ink-body">{sumPerPack}</span>
-            </>
+            </span>
           )}
           {line.needs_expiry && expiryDone && !showExpiry && (
-            <>
+            <span className="inline-flex items-center gap-2">
               <span className="text-ink-muted">·</span>
               <span className="inline-flex items-center gap-1 font-bold text-ok-weak-ink">
                 <Icon name={d.noExpiry ? 'event_busy' : 'event_available'} size={16} />
                 {d.noExpiry ? tr('receive.noExpiry') : <span className="font-mono">{formatDdMmYyyy(d.expiry)}</span>}
               </span>
-            </>
+            </span>
           )}
         </div>
         {!forced && (
