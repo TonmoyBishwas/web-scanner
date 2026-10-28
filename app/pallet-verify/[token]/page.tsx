@@ -27,7 +27,7 @@ import {
   applyBarcodeReadings, keepBarcodeFilled, reconcileWithBarcode, typicalWeightFor,
   type BarcodeEvent, type BarcodeFilled,
 } from '@/lib/barcode-reconcile';
-import { barcodeWeight, weightsDisagree } from '@/lib/barcode-weight';
+import { barcodeWeight, rawOcrWeightKg, weightsDisagree } from '@/lib/barcode-weight';
 import { blocksConfirm, failedReadCovered, failedReadPrefill, fillBarcodeWeights, heldAfterReads, isOpenRatioDoubt, takesLateRead, waitForReads } from '@/lib/failed-read';
 import { DoneOverlay } from '@/components/terminal/DoneOverlay';
 import { Toast, useLockToast } from '@/components/terminal/Toast';
@@ -2378,6 +2378,10 @@ export default function PalletVerifyPage({
               supplier_batch: data.ocr_data.supplier_batch || '',
               needs_review: needsReview || undefined,
               barcode_filled: reading && Object.keys(reading.filled).length ? reading.filled : undefined,
+              // What the sticker OCR itself read, before any barcode override
+              // (the route's ocr_weight_kg) — the barcode-vs-OCR weight check
+              // (Mevaser, 28/10). Set here only; nothing later changes it.
+              ocr_weight: rawOcrWeightKg(data.ocr_data.ocr_weight_kg),
               name_conflict: nameConflict
                 ? {
                     ocr: rawHe || rawEn,
@@ -4638,6 +4642,8 @@ export default function PalletVerifyPage({
               supplier_batch: data.ocr_data.supplier_batch || '',
               needs_review: needsReview || undefined,
               barcode_filled: reading && Object.keys(reading.filled).length ? reading.filled : undefined,
+              // See the pallet phase: the OCR's own weight, set here only.
+              ocr_weight: rawOcrWeightKg(data.ocr_data.ocr_weight_kg),
             };
           }), { [resolvedBarcode]: [data.ocr_data.product_name_hebrew, data.ocr_data.product_name_english] });
         });

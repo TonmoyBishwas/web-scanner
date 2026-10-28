@@ -44,6 +44,8 @@ describe('/api/multi-pallet-ocr — barcode weight', () => {
     const data = await ocr('1050861100101012067935140', 10.15);
     expect(data.success).toBe(true);
     expect(data.ocr_data.weight_kg).toBe(10.12);
+    // The OCR's own reading goes back beside it, for the weight check.
+    expect(data.ocr_data.ocr_weight_kg).toBe(10.15);
     // Everything else the OCR read is passed through.
     expect(data.ocr_data.product_name_hebrew).toBe('פילה עוף');
     expect(data.ocr_data.expiry_date).toBe('2026-11-20');
@@ -56,27 +58,37 @@ describe('/api/multi-pallet-ocr — barcode weight', () => {
     expect(botBodies[0].barcode).toBe('1050861100101012067935140');
   });
 
-  it('Glatt code, OCR agrees → barcode weight, no trace', async () => {
-    const data = await ocr('1015781100101359065737237', 13.59);
-    expect(data.ocr_data.weight_kg).toBe(13.59);
+  it('Glatt code, OCR agrees → the OCR weight stays, no trace', async () => {
+    const data = await ocr('1015781100101359065737237', 13.595);
+    expect(data.ocr_data.weight_kg).toBe(13.595);
+    expect(data.ocr_data.ocr_weight_kg).toBe(13.595);
     expect(events).toEqual([]);
   });
 
-  it('Glatt code, OCR read no weight → filled from the barcode', async () => {
+  it('Glatt code, OCR read no weight → filled from the barcode, ocr_weight_kg null', async () => {
     const data = await ocr('1015781100101495074263576', null);
     expect(data.ocr_data.weight_kg).toBe(14.95);
+    expect(data.ocr_data.ocr_weight_kg).toBeNull();
     expect(events.map((e) => e.event)).toEqual(['weight_barcode_override']);
   });
 
   it('per-product code → the OCR weight, untouched', async () => {
     const data = await ocr('7290020497000', 0.9);
     expect(data.ocr_data.weight_kg).toBe(0.9);
+    expect(data.ocr_data.ocr_weight_kg).toBe(0.9);
     expect(events).toEqual([]);
   });
 
   it('31-digit code → untouched here (the page reconciles it with its guards)', async () => {
     const data = await ocr('7290002195832' + '012570' + '1306' + '22102027', 14.34);
     expect(data.ocr_data.weight_kg).toBe(14.34);
+    expect(data.ocr_data.ocr_weight_kg).toBe(14.34);
+    expect(events).toEqual([]);
+  });
+
+  it('a units Glatt code (mid 140010) → the OCR weight, untouched', async () => {
+    const data = await ocr('1043041400100001178251135', 6.6);
+    expect(data.ocr_data.weight_kg).toBe(6.6);
     expect(events).toEqual([]);
   });
 

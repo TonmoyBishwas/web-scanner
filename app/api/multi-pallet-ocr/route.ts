@@ -1,7 +1,7 @@
 import { logServerEvent, errorData } from '@/lib/server-events';
 import { NextRequest, NextResponse } from 'next/server';
 import { touchSession } from '@/lib/redis';
-import { ocrWeightFromBarcode } from '@/lib/barcode-weight';
+import { ocrWeightFromBarcode, rawOcrWeightKg } from '@/lib/barcode-weight';
 
 /**
  * POST /api/multi-pallet-ocr
@@ -14,6 +14,9 @@ import { ocrWeightFromBarcode } from '@/lib/barcode-weight';
  *   `candidates` = the delivery's invoice items, forwarded so the bot's OCR
  *   prompt can pick a known canonical Hebrew name (closed set).
  * Returns: { success: boolean, ocr_data?: { product_name_hebrew, product_name_english, weight_kg, expiry_date, ... } }
+ *   `ocr_data.ocr_weight_kg` = the OCR's own weight reading before any
+ *   barcode override (null = it read none), for the barcode-vs-OCR weight
+ *   check; `weight_kg` is the weight to book.
  */
 const OCR_TIMEOUT_MS = 55000;
 
@@ -70,14 +73,18 @@ export async function POST(request: NextRequest) {
       // at; the OCR's reading only fills in when there is no such code.
       // Server-side so every page (and a phone on an older bundle) gets it.
       // Nothing changes on the worker's screen.
+      const ocrWeightKg = rawOcrWeightKg(result.ocr_data.weight_kg);
       const fromBarcode = ocrWeightFromBarcode(traceBarcode, result.ocr_data.weight_kg);
       if (fromBarcode) {
         if (fromBarcode.event) {
           await logServerEvent(traceToken, 'weight_barcode_override', fromBarcode.event);
         }
-        return NextResponse.json({ success: true, ocr_data: { ...result.ocr_data, weight_kg: fromBarcode.weight_kg } });
+        return NextResponse.json({
+          success: true,
+          ocr_data: { ...result.ocr_data, weight_kg: fromBarcode.weight_kg, ocr_weight_kg: ocrWeightKg },
+        });
       }
-      return NextResponse.json({ success: true, ocr_data: result.ocr_data });
+      return NextResponse.json({ success: true, ocr_data: { ...result.ocr_data, ocr_weight_kg: ocrWeightKg } });
     }
 
     return NextResponse.json({ success: false, error: result.error || 'OCR returned no data' });
