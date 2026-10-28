@@ -95,6 +95,7 @@ export function ExpiryWalk({
   const dated = order.filter((i) => !undated(i)).length;
 
   const [current, setCurrent] = useState<number | null>(start ?? order[0] ?? null);
+  /** "Next" found nothing left to date. Use `isDone`: a page added since (poll) brings new undated lines. */
   const [done, setDone] = useState(false);
   const [picker, setPicker] = useState(false);
   const [query, setQuery] = useState('');
@@ -104,14 +105,17 @@ export function ExpiryWalk({
   // The line left the walk (marked "did not arrive" in the list, or the
   // lines changed): fall back to the next one still to date.
   const cur = current !== null && order.includes(current) ? current : (order.find(undated) ?? order[0] ?? null);
+  // "All dated" holds only while it is true: a line added (or cleared) after
+  // "Next" said so reopens the card instead of a false "every line has an expiry".
+  const isDone = done && dated === order.length;
 
   // A new line on screen: back to the top, the date field ready for the keypad.
   useEffect(() => {
-    if (cur === null || done) return;
+    if (cur === null || isDone) return;
     top.current?.scrollIntoView({ block: 'start' });
     const el = document.getElementById(`e-${cur}`) as HTMLInputElement | null;
     if (el && !el.disabled) el.focus({ preventScroll: true });
-  }, [cur, done]);
+  }, [cur, isDone]);
 
   useEffect(() => {
     if (!nudge) return;
@@ -136,7 +140,7 @@ export function ExpiryWalk({
     setDone(true);
   };
   const back = () => {
-    if (done) {
+    if (isDone) {
       setDone(false);
       return;
     }
@@ -192,7 +196,7 @@ export function ExpiryWalk({
           </div>
         </div>
 
-        {done || !line || !d ? (
+        {isDone || !line || !d ? (
           <div className="rounded-3xl border-2 border-ok/50 bg-[linear-gradient(180deg,rgba(34,197,94,0.14),rgba(16,28,34,1))] p-6 text-center space-y-4">
             <span className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-ok text-[#04210f] shadow-[0_0_30px_rgba(34,197,94,0.45)]">
               <Icon name="done_all" size={36} />
@@ -237,7 +241,7 @@ export function ExpiryWalk({
             <button
               type="button"
               onClick={back}
-              disabled={!done && prevInWalk(order, cur) === null}
+              disabled={!isDone && prevInWalk(order, cur) === null}
               className="inline-flex min-h-14 items-center justify-center gap-1 rounded-2xl border-2 border-line-strong bg-tile px-3 text-base font-extrabold text-ink active:scale-[0.98] disabled:opacity-35"
             >
               <Icon name="arrow_forward" size={20} className="ltr:-scale-x-100" />
@@ -246,7 +250,7 @@ export function ExpiryWalk({
             <button
               type="button"
               onClick={next}
-              disabled={done}
+              disabled={isDone}
               className="inline-flex min-h-14 items-center justify-center gap-2 rounded-2xl px-4 text-lg font-black text-[#1a1100] bg-[linear-gradient(135deg,#fde047,#f59e0b)] shadow-[0_8px_28px_rgba(245,158,11,0.35)] active:scale-[0.98] disabled:opacity-35"
             >
               {tr('receive.v2.walkNext')}

@@ -736,7 +736,19 @@ export function ReceiptForm({
       if (!data || data.ok !== true || sending.current) return;
       const status = String(data.status ?? '');
       const features = data.features as Record<string, unknown> | null | undefined;
-      if (features && typeof features.receive_redesign === 'boolean' && features.receive_redesign !== redesignRef.current) {
+      // A flip swaps every card for the other design, so it waits while the
+      // worker is typing (a half-typed date lives only in the field); the
+      // next poll applies it.
+      const typing = (() => {
+        const el = typeof document === 'undefined' ? null : document.activeElement;
+        return !!el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA');
+      })();
+      if (
+        !typing &&
+        features &&
+        typeof features.receive_redesign === 'boolean' &&
+        features.receive_redesign !== redesignRef.current
+      ) {
         rt.event('receive_step', { step: 'redesign', on: features.receive_redesign, at: 'poll' });
         setRedesignOn(features.receive_redesign);
         if (!features.receive_redesign) setWalk(null);
