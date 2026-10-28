@@ -3,17 +3,21 @@
  * (client rule, Mevaser 19/10).
  *
  * lib/barcode-parser.ts parseCartonBarcode reads the one format that encodes
- * them — EAN13 (1-13) · grams (14-19) · serial (20-23) · DDMMYYYY (24-31),
- * the same offsets as the database's wb_barcode_weight_kg / wb_barcode_expiry
- * behind box_inventory.barcode_weight_kg / .barcode_expiry. Until now it only
+ * them — EAN13 (1-13) · 10 g units (14-18) · batch digit (19) · serial
+ * (20-23) · DDMMYYYY (24-31); the expiry offsets are wb_barcode_expiry's,
+ * behind box_inventory.barcode_expiry (the weight window was one digit too
+ * long until 28/10 — lib/barcode-parser.ts). Until now it only
  * raised a yellow "barcode says…" toast, and the booked row kept the OCR. On
  * 19/10 that booked IN264189933's carton …012460129514072027 at 4.38 kg with
  * no expiry (the barcode says 12.460 kg, 14/07/2027) and rounded
  * …013369660304072027 to 13.000 (barcode 13.369), and Priority got the OCR.
  *
  * So: when the barcode carries a plausible value it is the booked value —
- * whether the OCR read nothing, a different number, or the label's 10 g
- * rounding. Nobody is asked; the screen marks the field "from barcode" and a
+ * whether the OCR read nothing or a different number. Except when the two
+ * agree (less than 0.01 kg apart, lib/barcode-weight.ts weightsAgree): then
+ * the OCR's reading stays, since labels print 5 g / 1 g steps and the code
+ * only 10 g (28/10: a 12.385 label under a code of 12.39 is booked 12.385).
+ * Nobody is asked; the screen marks the field "from barcode" and a
  * real disagreement is traced to scanner_events. Two guards keep a bad
  * barcode from booking nonsense, both seen in the data:
  *
@@ -29,6 +33,7 @@
  */
 
 import { parseCartonBarcode } from './barcode-parser';
+import { weightsAgree } from './barcode-weight';
 import { normalizeExpiry } from './expiry';
 
 /** A barcode expiry this long before the receipt date is not plausible. */
@@ -117,7 +122,7 @@ export function reconcileWithBarcode(
     const agree = ocrWeight !== null && Math.abs(bw - ocrWeight) / ocrWeight <= BARCODE_AGREE_RATIO;
     if (ocrWeight !== null && !agree && typical !== null && !near(bw) && near(ocrWeight)) {
       out.events.push({ field: 'weight', action: 'kept_ocr', ocr: ocrWeight, barcode: bw, reason: 'weight_outlier' });
-    } else if (ocrWeight === null || round3(ocrWeight) !== bw) {
+    } else if (ocrWeight === null || !weightsAgree(ocrWeight, bw)) {
       out.weight = bw;
       out.filled.weight = ocrWeight;
       if (ocrWeight === null) {

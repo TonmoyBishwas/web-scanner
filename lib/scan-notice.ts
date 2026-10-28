@@ -278,7 +278,7 @@ export function canOfferDifferentCarton(
  * label (S1, David 2026-10-11).
  *
  * - `{ quick: true, weight }` — the code is a 31-digit catch-weight label
- *   with a parseable net weight (`parseCartonBarcode`, chars 14–19 ÷ 1000).
+ *   with a parseable net weight (`parseCartonBarcode`, chars 14–18 ÷ 100).
  *   Two cartons print the same code exactly when they weigh the same to the
  *   10 g, so the twin's weight is the one its own barcode prints: the notice
  *   shows a full-width "Another carton, same label · {kg} kg" button and ONE

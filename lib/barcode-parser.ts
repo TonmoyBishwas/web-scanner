@@ -161,19 +161,34 @@ export function needsOcrForWeight(parsedBarcode: ParsedBarcode | null): boolean 
 // 2026-09-04, and reproduced independently by the Priority side:
 //
 //   1-13   EAN13
-//   14-19  weight in grams    → 65/67 within 20 g of the OCR weight
+//   14-18  weight in 10 g     → see the 28/10 correction below
+//   19     per-batch digit    → the same on every carton of a batch; NOT grams
 //   20-23  per-carton serial  → unique per carton; NOT a supplier batch
 //   24-31  expiry DDMMYYYY    → 67/67 valid, 64 agree with the OCR
+//
+// 28/10 correction: the weight was read as grams at chars 14–19 until now,
+// one digit too long. Char 19 is constant per batch on every batch with 5+
+// cartons (Landa 09092027: `5` on all 41; 7290003670444 27062027: `9` on all
+// 21), and a label photo prints 14.080 over `7290115351484|01408|5|4563|…`.
+// Chars 14–18 ÷ 100 match 295/354 pre-19/10 cartons exactly; the old window
+// matched 132 and booked 15.674 for labels printing 15.67 (25/10). Same
+// window in the bot (bot/utils/carton_barcode.py) and in SQL
+// (carton_barcode_weight_kg); test/fixtures/barcode_weight_fixture.json is
+// the shared case list.
+//
+// A leading `]C1` is a scanner's AIM symbology identifier (GS1-128), not part
+// of the code: it is stripped first (one July carton was stored with it).
 //
 // In all three expiry disagreements the barcode was right and the OCR had
 // misread a digit; by 19/10 (424 cartons, 16 products) that held, bar two odd
 // ones the guards cover. The
 // client's rule since 19/10: the barcode WINS — when the OCR read nothing or
 // something else, the booked value is the barcode's (lib/barcode-reconcile.ts,
-// with its plausibility guards). Same offsets as wb_barcode_expiry /
-// wb_barcode_weight_kg, which feed the generated columns
-// box_inventory.barcode_expiry / .barcode_weight_kg; this side also refuses a
-// year outside 2020-2099 (IN264184055's `…23082007`), the database does not.
+// with its plausibility guards). Same expiry offsets as wb_barcode_expiry,
+// which feeds the generated column box_inventory.barcode_expiry; this side
+// also refuses a year outside 2020-2099 (IN264184055's `…23082007`), the
+// database does not. (wb_barcode_weight_kg behind .barcode_weight_kg still
+// reads the old 14–19 grams window and is left as it is.)
 
 export interface CartonBarcodeData {
   /** kg, or null when this barcode format carries no weight. */
@@ -182,15 +197,28 @@ export interface CartonBarcodeData {
   expiry: string | null;
 }
 
-export function parseCartonBarcode(barcodeString: string): CartonBarcodeData | null {
-  const digits = (barcodeString || '').replace(/\D/g, '');
-  if (digits.length !== 31) return null;   // only the one format we measured
+/** The AIM symbology identifier a scanner may prefix to a GS1-128 read. */
+const AIM_GS1_128 = ']C1';
 
-  let weight: number | null = Number(digits.slice(13, 19)) / 1000;
+/** The code without a leading `]C1` (AIM identifier), trimmed. */
+export function stripAimPrefix(code: string | null | undefined): string {
+  const c = (code || '').trim();
+  return c.startsWith(AIM_GS1_128) ? c.slice(AIM_GS1_128.length) : c;
+}
+
+/** Outside this band (kg, lower bound exclusive) a 31-digit weight is not one we trust. */
+export const GS31_MIN_KG = 0.5;
+export const GS31_MAX_KG = 100;
+
+export function parseCartonBarcode(barcodeString: string): CartonBarcodeData | null {
+  const digits = stripAimPrefix(barcodeString);
+  if (!/^\d{31}$/.test(digits)) return null;   // only the one format we measured
+
+  let weight: number | null = Number(digits.slice(13, 18)) / 100;
   // Outside this band the offset does not hold for that supplier's stock —
   // say nothing rather than something wrong.
-  if (!Number.isFinite(weight) || weight <= 0.5 || weight > 100) weight = null;
-  else weight = Math.round(weight * 1000) / 1000;
+  if (!Number.isFinite(weight) || weight <= GS31_MIN_KG || weight > GS31_MAX_KG) weight = null;
+  else weight = Math.round(weight * 100) / 100;
 
   let expiry: string | null = null;
   const tail = digits.slice(23, 31);

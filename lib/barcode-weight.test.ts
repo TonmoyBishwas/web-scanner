@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { barcodeCarriesWeight, barcodeWeight, ocrWeightFromBarcode, weightsDisagree } from './barcode-weight';
+import { barcodeCarriesWeight, barcodeWeight, ocrWeightFromBarcode, rawOcrWeightKg, weightsAgree, weightsDisagree } from './barcode-weight';
 import { identicalAllowed } from './identical-boxes';
 import { labelPrintsWeight, uniformCandidate } from './uniform-candidate';
 import { canOfferDifferentCarton, differentCartonOffer, listedNoticeKey } from './scan-notice';
@@ -10,8 +10,8 @@ const GLATT_1012 = '1050861100101012067935140';
 const GLATT_1009 = '1050861100101009067935132';
 const GLATT_1359 = '1015781100101359065737237';
 const GLATT_1495 = '1015781100101495074263576';
-// A 31-digit catch-weight code (S03 carton C13): 12.570 kg, 22/10/2027.
-const GS31 = '7290002195832' + '012570' + '1306' + '22102027';
+// A 31-digit catch-weight code (S03 carton C13): 12.57 kg, batch digit 0, 22/10/2027.
+const GS31 = '7290002195832' + '01257' + '0' + '1306' + '22102027';
 
 describe('barcodeWeight — Glatt 25-digit', () => {
   it.each([
@@ -38,9 +38,10 @@ describe('barcodeWeight — Glatt 25-digit', () => {
     expect(barcodeCarriesWeight(code)).toBe(false);
   });
 
-  it('weight outside 0.5–60 kg → no weight', () => {
+  it('weight outside 0.5 (exclusive) – 60 kg → no weight', () => {
     expect(barcodeWeight('1050861100100049067935140')).toBeNull(); // 0.49 kg
-    expect(barcodeWeight('1050861100100050067935140')?.kg).toBe(0.5);
+    expect(barcodeWeight('1050861100100050067935140')).toBeNull(); // 0.50 kg, as the bot
+    expect(barcodeWeight('1050861100100051067935140')?.kg).toBe(0.51);
     expect(barcodeWeight('1050861100106000067935140')?.kg).toBe(60);
     expect(barcodeWeight('1050861100106001067935140')).toBeNull(); // 60.01 kg
   });
@@ -49,22 +50,56 @@ describe('barcodeWeight — Glatt 25-digit', () => {
     expect(barcodeWeight('1050861200101012067935140')).toBeNull();
     expect(barcodeWeight('7290000001234567890123456')).toBeNull();
   });
+
+  it('mids 010010 and 110610 carry the weight too', () => {
+    expect(barcodeWeight('1023530100101319071320494')).toEqual({ kg: 13.19, itemCode: '02353', source: 'glatt25' });
+    expect(barcodeWeight('1002721106101527069546340')).toEqual({ kg: 15.27, itemCode: '00272', source: 'glatt25' });
+  });
+
+  it('mid 140010 is a units item (04304, "11 יחידות") → no weight', () => {
+    expect(barcodeWeight('1043041400100001178251135')).toBeNull();
+  });
+
+  it('a misread mid → no weight (printed …110010 1012… / …110010 1733…)', () => {
+    expect(barcodeWeight('1050861153020312067935192')).toBeNull();
+    expect(barcodeWeight('1014821100022433074260935')).toBeNull();
+  });
 });
 
 describe('barcodeWeight — 31-digit (reuses parseCartonBarcode)', () => {
-  it('grams at chars 14–19', () => {
+  it('10 g units at chars 14–18; char 19 is a batch digit', () => {
     expect(barcodeWeight(GS31)).toEqual({ kg: 12.57, source: 'gs31' });
+    expect(barcodeWeight('7290115351484014085456309092027')).toEqual({ kg: 14.08, source: 'gs31' });
+  });
+  it('a leading ]C1 is stripped', () => {
+    expect(barcodeWeight(']C17290001918951015000160530112027')).toEqual({ kg: 15, source: 'gs31' });
   });
   it('an out-of-band weight field → no weight', () => {
-    expect(barcodeWeight('7290002195832' + '000100' + '1306' + '22102027')).toBeNull();
+    expect(barcodeWeight('7290002195832' + '00010' + '0' + '1306' + '22102027')).toBeNull();
   });
 });
 
-describe('weightsDisagree', () => {
-  it('more than 0.01 kg apart', () => {
+describe('weightsAgree / weightsDisagree (less than 0.01 kg apart = the same reading)', () => {
+  it('under 0.01 kg agrees; 0.01 kg or more is a difference', () => {
+    expect(weightsAgree(10.12, 10.12)).toBe(true);
+    expect(weightsAgree(12.385, 12.39)).toBe(true);
+    expect(weightsAgree(10.12, 10.13)).toBe(false);
+    expect(weightsAgree(10.11, 10.1)).toBe(false); // 0.00999… in floats is still 10 g
     expect(weightsDisagree(10.12, 10.15)).toBe(true);
-    expect(weightsDisagree(10.12, 10.13)).toBe(false); // 0.01 + float noise
-    expect(weightsDisagree(10.12, 10.12)).toBe(false);
+    expect(weightsDisagree(10.12, 10.13)).toBe(true);
+    expect(weightsDisagree(10.12, 10.125)).toBe(false);
+  });
+});
+
+describe('rawOcrWeightKg', () => {
+  it('a positive number, else null', () => {
+    expect(rawOcrWeightKg(10.15)).toBe(10.15);
+    expect(rawOcrWeightKg('10.15')).toBe(10.15);
+    expect(rawOcrWeightKg(0)).toBeNull();
+    expect(rawOcrWeightKg(null)).toBeNull();
+    expect(rawOcrWeightKg(undefined)).toBeNull();
+    expect(rawOcrWeightKg('abc')).toBeNull();
+    expect(rawOcrWeightKg(-1)).toBeNull();
   });
 });
 
@@ -80,9 +115,13 @@ describe('ocrWeightFromBarcode (the /api/multi-pallet-ocr rule)', () => {
     expect(ocrWeightFromBarcode(GLATT_1009, 10.93)?.weight_kg).toBe(10.09);
   });
 
-  it('Glatt code + an agreeing OCR → the barcode weight, no trace', () => {
+  it('Glatt code + an agreeing OCR → the OCR weight stays, no trace', () => {
     expect(ocrWeightFromBarcode(GLATT_1359, 13.59)).toEqual({ weight_kg: 13.59, event: null });
-    expect(ocrWeightFromBarcode(GLATT_1359, 13.595)).toEqual({ weight_kg: 13.59, event: null });
+    expect(ocrWeightFromBarcode(GLATT_1359, 13.595)).toEqual({ weight_kg: 13.595, event: null });
+  });
+
+  it('Glatt code + an OCR exactly 0.01 kg off → the barcode weight, traced', () => {
+    expect(ocrWeightFromBarcode(GLATT_1359, 13.6)).toMatchObject({ weight_kg: 13.59, event: { ocr_kg: 13.6, barcode_kg: 13.59 } });
   });
 
   it('Glatt code + no OCR weight → filled from the barcode, traced', () => {
