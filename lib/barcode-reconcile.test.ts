@@ -14,14 +14,31 @@ const MISREAD = '7290002195832' + '01246' + '01295' + '14072027';
 const ROUNDED = '7290003670444' + '01336' + '96603' + '04072027';
 // IN264184055, 07/10: the barcode's year is 2007; the OCR's 2027 was right.
 const YEAR_2007 = '7290003670383015170140623082007';
-// IN264184063, 07/10: barcode 9.771 kg, OCR 14.34, the item's others ≈14.5.
+// IN264184063, 07/10: barcode 9.77 kg (read 9.771 before 28/10), OCR 14.34, the item's others ≈14.5.
 const LIGHT = '7290003670444009771470503082027';
 const RECEIVED = '2026-10-19';
 
-describe('parseCartonBarcode (same offsets as wb_barcode_weight_kg / wb_barcode_expiry)', () => {
-  it('reads grams at 14-19 and DDMMYYYY at 24-31', () => {
+describe('parseCartonBarcode (expiry offsets as wb_barcode_expiry)', () => {
+  it('reads 10 g units at 14-18 and DDMMYYYY at 24-31', () => {
     expect(parseCartonBarcode(MISREAD)).toEqual({ weight: 12.46, expiry: '2027-07-14' });
-    expect(parseCartonBarcode(ROUNDED)).toEqual({ weight: 13.369, expiry: '2027-07-04' });
+    expect(parseCartonBarcode(ROUNDED)).toEqual({ weight: 13.36, expiry: '2027-07-04' });
+  });
+  it('char 19 is a per-batch digit, not grams (28/10)', () => {
+    // Label photo: 14.080 over 7290115351484|01408|5|4563|09092027.
+    expect(parseCartonBarcode('7290115351484014085456309092027')?.weight).toBe(14.08);
+    // 7290003670444 batch 27062027: `9` on every carton.
+    expect(parseCartonBarcode('7290003670444014919401127062027')?.weight).toBe(14.91);
+  });
+  it('strips a leading ]C1 (AIM identifier) and wants exactly 31 digits', () => {
+    expect(parseCartonBarcode(']C17290001918951015000160530112027')).toEqual({ weight: 15, expiry: '2027-11-30' });
+    expect(parseCartonBarcode('7290001918951 015000160530112027')).toBeNull();
+    expect(parseCartonBarcode('729011535148401502521600802027')).toBeNull(); // 30 digits
+  });
+  it('weight band: above 0.5 kg, up to 100 kg', () => {
+    expect(parseCartonBarcode('7290002195832' + '00050' + '01295' + '14072027')?.weight).toBeNull();
+    expect(parseCartonBarcode('7290002195832' + '00051' + '01295' + '14072027')?.weight).toBe(0.51);
+    expect(parseCartonBarcode('7290002195832' + '10000' + '01295' + '14072027')?.weight).toBe(100);
+    expect(parseCartonBarcode('7290002195832' + '10001' + '01295' + '14072027')?.weight).toBeNull();
   });
   it('says nothing for the formats that carry neither', () => {
     expect(parseCartonBarcode('7290115351484')).toBeNull();                  // EAN-13
@@ -42,20 +59,32 @@ describe('reconcileWithBarcode', () => {
     ]);
   });
 
-  it('takes the barcode grams over a rounded label (13.000 → 13.369)', () => {
+  it('takes the barcode weight over a rounded label (13.000 → 13.36)', () => {
     const r = reconcileWithBarcode(ROUNDED, { weight: 13, expiry: '2027-07-04' }, { receivedIso: RECEIVED });
-    expect(r.weight).toBe(13.369);
+    expect(r.weight).toBe(13.36);
     expect(r.expiry).toBe('2027-07-04');
     expect(r.filled).toEqual({ weight: 13 });
     // 2.8 %: under the 5 % misread line, still over 50 g — traced, not major.
-    expect(r.events).toEqual([{ field: 'weight', action: 'replaced', ocr: 13, barcode: 13.369, major: false }]);
+    expect(r.events).toEqual([{ field: 'weight', action: 'replaced', ocr: 13, barcode: 13.36, major: false }]);
   });
 
-  it('replaces a 5 g rounding silently', () => {
+  it('keeps the OCR when the two agree: a 5 g label under a 10 g code (28/10)', () => {
     const r = reconcileWithBarcode('7290002195832012400128912072027', { weight: 12.395, expiry: '2027-07-12' }, { receivedIso: RECEIVED });
-    expect(r.weight).toBe(12.4);
-    expect(r.filled).toEqual({ weight: 12.395 });
+    expect(r.weight).toBe(12.395);
+    expect(r.filled).toEqual({});
     expect(r.events).toEqual([]);
+  });
+
+  it('exactly 0.01 kg apart is a difference: the barcode wins, silently', () => {
+    const r = reconcileWithBarcode('7290002195832012400128912072027', { weight: 12.41, expiry: '2027-07-12' }, { receivedIso: RECEIVED });
+    expect(r.weight).toBe(12.4);
+    expect(r.filled).toEqual({ weight: 12.41 });
+    expect(r.events).toEqual([]);
+  });
+
+  it('25/10 drumsticks: label 15.67, code 01567|4 → 15.67 booked, not 15.674', () => {
+    const r = reconcileWithBarcode('7290003670321015674845516062027', { weight: 15.67, expiry: '2027-06-16' }, { receivedIso: '2026-10-25' });
+    expect(r).toEqual({ weight: 15.67, expiry: '2027-06-16', filled: {}, events: [] });
   });
 
   it('leaves an agreeing carton exactly as read, with no marker', () => {
@@ -93,7 +122,7 @@ describe('reconcileWithBarcode', () => {
   it('keeps the OCR when the barcode weight is the outlier and the OCR is typical', () => {
     const r = reconcileWithBarcode(LIGHT, { weight: 14.34, expiry: '2027-08-03' }, { receivedIso: '2026-10-07', typicalKg: 14.54 });
     expect(r.weight).toBe(14.34);
-    expect(r.events).toEqual([{ field: 'weight', action: 'kept_ocr', ocr: 14.34, barcode: 9.771, reason: 'weight_outlier' }]);
+    expect(r.events).toEqual([{ field: 'weight', action: 'kept_ocr', ocr: 14.34, barcode: 9.77, reason: 'weight_outlier' }]);
   });
 
   it('the barcode wins when the OCR is the outlier', () => {
@@ -103,7 +132,7 @@ describe('reconcileWithBarcode', () => {
 
   it('with no typical weight known the barcode wins', () => {
     const r = reconcileWithBarcode(LIGHT, { weight: 14.34, expiry: null }, { receivedIso: '2026-10-07' });
-    expect(r.weight).toBe(9.771);
+    expect(r.weight).toBe(9.77);
   });
 
   it('a photo capture (untrusted digits) only fills blanks', () => {
@@ -157,7 +186,7 @@ describe('applyBarcodeReadings (the last pass before booking)', () => {
     ];
     const { rows: out, events } = applyBarcodeReadings(rows, RECEIVED);
     expect(out[0]).toMatchObject({ weight: 12.46, expiry: '2027-07-14', barcode_filled: { weight: 4.38, expiry: null } });
-    expect(out[1]).toMatchObject({ weight: 13.369, expiry: '2027-07-04', barcode_filled: { weight: 13 } });
+    expect(out[1]).toMatchObject({ weight: 13.36, expiry: '2027-07-04', barcode_filled: { weight: 13 } });
     expect(out[2]).toBe(other);
     expect(events.map((e) => [e.barcode_digits, e.field, e.action])).toEqual([
       [MISREAD, 'weight', 'replaced'],
@@ -186,9 +215,9 @@ describe('applyBarcodeReadings (the last pass before booking)', () => {
   });
 
   it('the outlier guard runs again at confirm: a first carton booked at its barcode goes back to the OCR (IN264184063 shape)', () => {
-    // Read first: no other carton of the product yet, so the hand-off booked 9.771.
+    // Read first: no other carton of the product yet, so the hand-off booked 9.77.
     const first = reconcileWithBarcode(LIGHT, { weight: 14.34, expiry: '2027-08-03' }, { receivedIso: '2026-10-07' });
-    expect(first.weight).toBe(9.771);
+    expect(first.weight).toBe(9.77);
     const light = { barcode: LIGHT, weight: first.weight!, expiry: '2027-08-03', ocr_status: 'done', barcode_filled: first.filled };
     const others = [
       { barcode: '7290003670444014571470303082027', weight: 14.571, expiry: '2027-08-03', ocr_status: 'done' },
@@ -197,7 +226,7 @@ describe('applyBarcodeReadings (the last pass before booking)', () => {
     ];
     const { rows: out, events } = applyBarcodeReadings([light, ...others], '2026-10-07');
     expect(out[0]).toMatchObject({ weight: 14.34, barcode_filled: undefined });
-    expect(events).toEqual([{ field: 'weight', action: 'kept_ocr', ocr: 14.34, barcode: 9.771, reason: 'weight_outlier', barcode_digits: LIGHT }]);
+    expect(events).toEqual([{ field: 'weight', action: 'kept_ocr', ocr: 14.34, barcode: 9.77, reason: 'weight_outlier', barcode_digits: LIGHT }]);
     expect(out.slice(1)).toEqual(others);
   });
 

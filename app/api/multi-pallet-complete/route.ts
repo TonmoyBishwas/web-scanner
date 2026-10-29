@@ -15,6 +15,7 @@ import { pendingLabelsUrl } from '@/lib/label-link';
 import { sessionBookedBarcodes } from '@/lib/label-batches';
 import { isEmptySummaryLine } from '@/lib/pallet-lines';
 import { snapNamelessByCode } from '@/lib/failed-read';
+import { rawOcrWeightKg } from '@/lib/barcode-weight';
 
 const SESSION_TTL = 7200;
 // "Same weight" means the printed weights are EXACTLY equal — a fixed-weight
@@ -697,6 +698,11 @@ export async function POST(request: NextRequest) {
           // own lot code for traceability/recall.
           production_date: b.production_date || null,
           supplier_batch: b.supplier_batch || null,
+          // The sticker OCR's own weight, before any barcode override — the
+          // bot stores it in box_inventory.ocr_weight_kg for the
+          // barcode-vs-OCR weight check. Not `ocr_weight`: the bot's
+          // reconcile already uses that key for the weight it was sent.
+          ocr_weight_kg: rawOcrWeightKg(b.ocr_weight),
           ...labelPrintedFlag(b.barcode),
         })),
         unprinted_labels: unprintedBooked.size,
@@ -754,6 +760,7 @@ export async function POST(request: NextRequest) {
           image_url: b.image_url ?? null,
           production_date: b.production_date || null,
           supplier_batch: b.supplier_batch || null,
+          ocr_weight_kg: rawOcrWeightKg(b.ocr_weight),
           ...labelPrintedFlag(b.barcode),
         })),
         unprinted_labels: unprintedBooked.size,

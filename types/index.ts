@@ -307,6 +307,15 @@ export interface MultiPalletBoxScan {
   units?: number;
   /** The units save this carton came from — one list row per save. */
   units_batch?: string;
+  /**
+   * The weight the sticker OCR read, before any barcode override
+   * (/api/multi-pallet-ocr `ocr_weight_kg`; null = it read none). Set once
+   * from the OCR response and never changed after — not by an edit, an
+   * identical copy, the barcode reconcile or the confirm pass. Sent to the
+   * bot as `ocr_weight_kg` for box_inventory.ocr_weight_kg, the
+   * barcode-vs-OCR weight check (Mevaser, 28/10).
+   */
+  ocr_weight?: number | null;
 }
 
 export interface MultiPalletSession {

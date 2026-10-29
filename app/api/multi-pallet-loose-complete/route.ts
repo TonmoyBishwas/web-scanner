@@ -11,6 +11,7 @@ import { printGate, barcodesBeingBooked, labelGateError, unprintedOnList } from 
 import { pendingLabelsUrl } from '@/lib/label-link';
 import { sessionBookedBarcodes } from '@/lib/label-batches';
 import { sanitizeUnitsBoxes } from '@/lib/units-cartons';
+import { rawOcrWeightKg } from '@/lib/barcode-weight';
 
 const SESSION_TTL = 7200;
 
@@ -141,9 +142,15 @@ export async function POST(request: NextRequest) {
         chat_id: session.chat_id,
         document_number: session.document_number,
         receipt_id: session.receipt_id,
-        scanned_boxes: boxes.map((b) =>
-          unprintedBooked.has((b.barcode || '').trim()) ? { ...b, label_printed: false } : b,
-        ),
+        // `ocr_weight` (the sticker OCR's own weight, before any barcode
+        // override) goes as `ocr_weight_kg`, the key the bot stores in
+        // box_inventory.ocr_weight_kg — never as `ocr_weight`, which the
+        // bot's reconcile uses for the weight it was sent.
+        scanned_boxes: boxes.map(({ ocr_weight, ...b }) => ({
+          ...b,
+          ocr_weight_kg: rawOcrWeightKg(ocr_weight),
+          ...(unprintedBooked.has((b.barcode || '').trim()) ? { label_printed: false } : {}),
+        })),
         unprinted_labels: unprintedBooked.size,
         labels_url: unprintedBooked.size > 0 ? labelsUrl : undefined,
         worker_chat_id: workerChatId,

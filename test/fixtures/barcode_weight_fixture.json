@@ -1,0 +1,466 @@
+{
+  "about": "Shared barcode-weight cases (Mevaser 28/10 barcode-vs-OCR weight check). The same file lives in the bot repo (tests/fixtures/barcode_weight_fixture.json) and the scanner repo (test/fixtures/barcode_weight_fixture.json); every implementation (bot/utils/carton_barcode.py, lib/barcode-weight.ts, SQL carton_barcode_weight_kg) must return family/kg exactly as listed. family = gs31 | glatt25 | null (no barcode weight); kg = weight in kg or null. class is descriptive only. source: db = a real box_inventory barcode, synthetic = a bound or shape case.",
+  "spec": {
+    "gs31": "strip a leading \"]C1\", then ^\\d{31}$; kg = int(chars 14-18, 1-based)/100; valid 0.5 < kg <= 100; char 19 is a per-batch digit",
+    "glatt25": "^1(\\d{5})(110010|010010|110610)(\\d{4})(\\d{9})$; kg = int(group 3)/100; valid 0.5 < kg <= 60; mid 140010 = units, any other mid = no weight",
+    "agree": "|ocr_kg - barcode_kg| < 0.01 kg (exactly 0.01 is a difference)"
+  },
+  "cases": [
+    {
+      "barcode": "7290115351484014085456309092027",
+      "family": "gs31",
+      "kg": 14.08,
+      "class": "gs31",
+      "source": "db",
+      "note": "Landa 7290115351484, batch 09092027: label photo prints 14.080 over |01408|5|4563|; char 19 = 5 on all 41 cartons"
+    },
+    {
+      "barcode": "7290003670444014919401127062027",
+      "family": "gs31",
+      "kg": 14.91,
+      "class": "gs31",
+      "source": "db",
+      "note": "batch 27062027: char 19 = 9 on all 21 cartons; old 14-19 window read 14.919"
+    },
+    {
+      "barcode": "7290003670321015674306706102027",
+      "family": "gs31",
+      "kg": 15.67,
+      "class": "gs31",
+      "source": "db",
+      "note": "25/10 turkey drumsticks: label 15.67, stored 15.674 by the old window"
+    },
+    {
+      "barcode": "7290002195832012270127630052027",
+      "family": "gs31",
+      "kg": 12.27,
+      "class": "gs31",
+      "source": "db"
+    },
+    {
+      "barcode": "7290003570867015250157415072027",
+      "family": "gs31",
+      "kg": 15.25,
+      "class": "gs31",
+      "source": "db"
+    },
+    {
+      "barcode": "7290003670291014570117312072027",
+      "family": "gs31",
+      "kg": 14.57,
+      "class": "gs31",
+      "source": "db"
+    },
+    {
+      "barcode": "7290003670314013289766604072027",
+      "family": "gs31",
+      "kg": 13.28,
+      "class": "gs31",
+      "source": "db",
+      "note": "old window 13.289"
+    },
+    {
+      "barcode": "7290003670383015190156808082027",
+      "family": "gs31",
+      "kg": 15.19,
+      "class": "gs31",
+      "source": "db"
+    },
+    {
+      "barcode": "7290003670437016739040423062027",
+      "family": "gs31",
+      "kg": 16.73,
+      "class": "gs31",
+      "source": "db",
+      "note": "old window 16.739"
+    },
+    {
+      "barcode": "7290003670918011860123515062027",
+      "family": "gs31",
+      "kg": 11.86,
+      "class": "gs31",
+      "source": "db",
+      "note": "label 11.855 (5 g step) under a 10 g code: agrees"
+    },
+    {
+      "barcode": "7290003670994015100155924062027",
+      "family": "gs31",
+      "kg": 15.1,
+      "class": "gs31",
+      "source": "db",
+      "note": "label 15.095 under 15.10: agrees"
+    },
+    {
+      "barcode": "7290013580269015360159212072026",
+      "family": "gs31",
+      "kg": 15.36,
+      "class": "gs31",
+      "source": "db",
+      "note": "label 15.355 under 15.36: agrees"
+    },
+    {
+      "barcode": "7290115351231016006519616092027",
+      "family": "gs31",
+      "kg": 16.0,
+      "class": "gs31",
+      "source": "db"
+    },
+    {
+      "barcode": "7290003670444009771470503082027",
+      "family": "gs31",
+      "kg": 9.77,
+      "class": "gs31",
+      "source": "db",
+      "note": "IN264184063: OCR 14.34 right, code 9.77 the outlier (reconcile guard)"
+    },
+    {
+      "barcode": "0299900919738010020066601122027",
+      "family": "gs31",
+      "kg": 10.02,
+      "class": "gs31",
+      "source": "db",
+      "note": "leading 0 GTIN"
+    },
+    {
+      "barcode": "]C17290001918951015000160530112027",
+      "family": "gs31",
+      "kg": 15.0,
+      "class": "gs31",
+      "source": "db",
+      "note": "AIM ]C1 prefix stripped (July carton)"
+    },
+    {
+      "barcode": "7290000000550010000041220260001",
+      "family": "gs31",
+      "kg": 10.0,
+      "class": "gs31",
+      "source": "db",
+      "note": "31-digit test fixture shape; decodes to 10.00"
+    },
+    {
+      "barcode": "7290002195832000500129514072027",
+      "family": null,
+      "kg": null,
+      "class": "gs31_out_of_band",
+      "source": "synthetic",
+      "note": "0.50 kg: lower bound exclusive"
+    },
+    {
+      "barcode": "7290002195832000510129514072027",
+      "family": "gs31",
+      "kg": 0.51,
+      "class": "gs31",
+      "source": "synthetic",
+      "note": "0.51 kg"
+    },
+    {
+      "barcode": "7290002195832100000129514072027",
+      "family": "gs31",
+      "kg": 100.0,
+      "class": "gs31",
+      "source": "synthetic",
+      "note": "100.00 kg: upper bound inclusive"
+    },
+    {
+      "barcode": "7290002195832100010129514072027",
+      "family": null,
+      "kg": null,
+      "class": "gs31_out_of_band",
+      "source": "synthetic",
+      "note": "100.01 kg"
+    },
+    {
+      "barcode": "72900000022831976674301120260003",
+      "family": null,
+      "kg": null,
+      "class": "fixture",
+      "source": "db",
+      "note": "32-digit pallet test fixture (197.667 kg)"
+    },
+    {
+      "barcode": "72900000001011500004301120260001",
+      "family": null,
+      "kg": null,
+      "class": "fixture",
+      "source": "db",
+      "note": "32-digit pallet test fixture (150 kg)"
+    },
+    {
+      "barcode": "729011535148401502521600802027",
+      "family": null,
+      "kg": null,
+      "class": "truncated",
+      "source": "db",
+      "note": "30-digit Landa misread"
+    },
+    {
+      "barcode": "7290115351484012095456709027",
+      "family": null,
+      "kg": null,
+      "class": "truncated",
+      "source": "db",
+      "note": "28-digit Landa misread"
+    },
+    {
+      "barcode": "729011535108401430767802907229:",
+      "family": null,
+      "kg": null,
+      "class": "other",
+      "source": "db",
+      "note": "30 digits + junk char"
+    },
+    {
+      "barcode": "1050861100101012067935140",
+      "family": "glatt25",
+      "kg": 10.12,
+      "class": "glatt25",
+      "source": "db",
+      "note": "meatballs 05086"
+    },
+    {
+      "barcode": "1015651100101199069559412",
+      "family": "glatt25",
+      "kg": 11.99,
+      "class": "glatt25",
+      "source": "db",
+      "note": "14/10: OCR said 120 (product name), code 11.99"
+    },
+    {
+      "barcode": "1014721100101349069550203",
+      "family": "glatt25",
+      "kg": 13.49,
+      "class": "glatt25",
+      "source": "db"
+    },
+    {
+      "barcode": "1014831100101492065713964",
+      "family": "glatt25",
+      "kg": 14.92,
+      "class": "glatt25",
+      "source": "db"
+    },
+    {
+      "barcode": "1015101100100906069552773",
+      "family": "glatt25",
+      "kg": 9.06,
+      "class": "glatt25",
+      "source": "db",
+      "note": "stored 9.26 (OCR), code 9.06"
+    },
+    {
+      "barcode": "1050451100101007067879864",
+      "family": "glatt25",
+      "kg": 10.07,
+      "class": "glatt25",
+      "source": "db"
+    },
+    {
+      "barcode": "1023530100101319071320494",
+      "family": "glatt25",
+      "kg": 13.19,
+      "class": "glatt25",
+      "source": "db",
+      "note": "mid 010010 (turkey roulade 02353)"
+    },
+    {
+      "barcode": "1002721106101527069546340",
+      "family": "glatt25",
+      "kg": 15.27,
+      "class": "glatt25",
+      "source": "db",
+      "note": "mid 110610"
+    },
+    {
+      "barcode": "1043041400100001178251135",
+      "family": null,
+      "kg": null,
+      "class": "glatt_units",
+      "source": "db",
+      "note": "mid 140010: units item 04304 (\"11 units\"), no weight"
+    },
+    {
+      "barcode": "1050861153020312067935192",
+      "family": null,
+      "kg": null,
+      "class": "glatt_misread",
+      "source": "db",
+      "note": "decoder misread of printed ...110010 1012..."
+    },
+    {
+      "barcode": "1014821100022433074260935",
+      "family": null,
+      "kg": null,
+      "class": "glatt_misread",
+      "source": "db",
+      "note": "decoder misread of printed ...110010 1733..."
+    },
+    {
+      "barcode": "105045110010101606788245",
+      "family": null,
+      "kg": null,
+      "class": "glatt_misread",
+      "source": "db",
+      "note": "24 digits (one serial digit dropped)"
+    },
+    {
+      "barcode": "10508611001010140679351090",
+      "family": null,
+      "kg": null,
+      "class": "glatt_misread",
+      "source": "db",
+      "note": "26 digits"
+    },
+    {
+      "barcode": "1050861200101012067935140",
+      "family": null,
+      "kg": null,
+      "class": "glatt_misread",
+      "source": "synthetic",
+      "note": "other mid"
+    },
+    {
+      "barcode": "1050861100100050067935140",
+      "family": null,
+      "kg": null,
+      "class": "glatt_out_of_band",
+      "source": "synthetic",
+      "note": "0.50 kg: lower bound exclusive (scanner was inclusive before 28/10)"
+    },
+    {
+      "barcode": "1050861100100051067935140",
+      "family": "glatt25",
+      "kg": 0.51,
+      "class": "glatt25",
+      "source": "synthetic",
+      "note": "0.51 kg"
+    },
+    {
+      "barcode": "1050861100106000067935140",
+      "family": "glatt25",
+      "kg": 60.0,
+      "class": "glatt25",
+      "source": "synthetic",
+      "note": "60.00 kg: upper bound inclusive"
+    },
+    {
+      "barcode": "1050861100106001067935140",
+      "family": null,
+      "kg": null,
+      "class": "glatt_out_of_band",
+      "source": "synthetic",
+      "note": "60.01 kg"
+    },
+    {
+      "barcode": "2826092404954837",
+      "family": null,
+      "kg": null,
+      "class": "minted_label",
+      "source": "db",
+      "note": "our 28... label"
+    },
+    {
+      "barcode": "7290001918951",
+      "family": null,
+      "kg": null,
+      "class": "ean13",
+      "source": "db"
+    },
+    {
+      "barcode": "2000001135698",
+      "family": null,
+      "kg": null,
+      "class": "ean13",
+      "source": "db"
+    },
+    {
+      "barcode": "381325",
+      "family": null,
+      "kg": null,
+      "class": "serial6",
+      "source": "db",
+      "note": "Well Done 6-digit serial"
+    },
+    {
+      "barcode": "004010183000000010120",
+      "family": null,
+      "kg": null,
+      "class": "other",
+      "source": "db",
+      "note": "21-digit partial read"
+    },
+    {
+      "barcode": "NOBC-48534-P1-2",
+      "family": null,
+      "kg": null,
+      "class": "placeholder",
+      "source": "db"
+    },
+    {
+      "barcode": "MANUAL-1783492152791-9ti891",
+      "family": null,
+      "kg": null,
+      "class": "placeholder",
+      "source": "db"
+    },
+    {
+      "barcode": "",
+      "family": null,
+      "kg": null,
+      "class": "other",
+      "source": "synthetic",
+      "note": "empty"
+    }
+  ],
+  "agree_cases": [
+    {
+      "ocr_kg": 15.67,
+      "barcode_kg": 15.67,
+      "agree": true
+    },
+    {
+      "ocr_kg": 12.385,
+      "barcode_kg": 12.39,
+      "agree": true
+    },
+    {
+      "ocr_kg": 11.855,
+      "barcode_kg": 11.86,
+      "agree": true
+    },
+    {
+      "ocr_kg": 13.595,
+      "barcode_kg": 13.59,
+      "agree": true
+    },
+    {
+      "ocr_kg": 10.115,
+      "barcode_kg": 10.11,
+      "agree": true
+    },
+    {
+      "ocr_kg": 10.12,
+      "barcode_kg": 10.13,
+      "agree": false
+    },
+    {
+      "ocr_kg": 10.11,
+      "barcode_kg": 10.1,
+      "agree": false
+    },
+    {
+      "ocr_kg": 12.41,
+      "barcode_kg": 12.4,
+      "agree": false
+    },
+    {
+      "ocr_kg": 10.15,
+      "barcode_kg": 10.12,
+      "agree": false
+    },
+    {
+      "ocr_kg": 120,
+      "barcode_kg": 11.99,
+      "agree": false
+    }
+  ]
+}
