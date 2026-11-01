@@ -101,7 +101,29 @@ export function orderReads(reads: FrameRead[]): FrameRead[] {
 }
 
 /** Why a value left the confirmer without confirming (trace `read_dropped`). */
-export type ReadDropReason = 'expired' | 'superseded' | 'claimed_by_carton_code' | 'camera_stop';
+export type ReadDropReason = 'expired' | 'superseded' | 'claimed_by_carton_code' | 'camera_stop' | 'misread';
+
+/**
+ * What the page knows about one value before it is counted (01/11, Glatt
+ * note 261062322):
+ *  - `trust`  — a format-strict code of this note (lib/carton-barcode.ts
+ *    trustedSingleRead): confirmed on ONE read — but only when it is the
+ *    read nearest the centre of its frame (a glimpse of a carton at the
+ *    edge, or on the next pallet, must not book it). On Glatt's thin print
+ *    the valid string was often seen once among different misreads, and
+ *    expired.
+ *  - `ignore` — a read that can never be a carton (a Glatt mid Glatt never
+ *    prints): counted for the trace only, never confirmed, so it can neither
+ *    be booked nor arm the 3 s cooldown that would throw away the real code.
+ *  - undefined — the two-reads rule, as before.
+ */
+export type ReadPolicy = (value: string, ctx?: ReadPolicyContext) => 'trust' | 'ignore' | undefined;
+
+/** What the confirmer tells the policy about a read. */
+export interface ReadPolicyContext {
+  /** The other values waiting in the confirmer, and the other reads of this frame. */
+  pending: string[];
+}
 
 /** A value the confirmer let go unconfirmed: seen `reads` times, first at `first` by `via`. */
 export interface DroppedRead {
@@ -127,7 +149,7 @@ export interface DroppedRead {
  * "seen, not accepted". The decision itself is untouched.
  */
 export class ReadConfirmer {
-  private pending = new Map<string, { count: number; first: number; via: string }>();
+  private pending = new Map<string, { count: number; first: number; via: string; ignored?: boolean }>();
 
   constructor(
     readonly need = 2,
@@ -138,34 +160,54 @@ export class ReadConfirmer {
    * Feed one frame's reads (`via` = the decoder that made them). Returns the
    * confirmed value (if any) with its first read's time, the best progress
    * count for the UI, and the values that left unconfirmed on this frame.
+   * `policy` (optional) trusts or ignores a value — see ReadPolicy; without
+   * it every value needs `need` reads, as before. `confirmedReads` = the
+   * reads the confirmed value had (1 for a trusted single read).
    */
   add(
     reads: FrameRead[],
     now: number,
     via = '',
-  ): { confirmed: string | null; progress: number; confirmedFirstAt: number | null; dropped: DroppedRead[] } {
+    policy?: ReadPolicy,
+  ): {
+    confirmed: string | null;
+    progress: number;
+    confirmedFirstAt: number | null;
+    confirmedReads: number;
+    dropped: DroppedRead[];
+  } {
     const dropped = this.sweep(now);
     let confirmed: string | null = null;
     let confirmedFirstAt: number | null = null;
-    for (const r of orderReads(reads)) {
+    let confirmedReads = 0;
+    const ordered = orderReads(reads);
+    for (let i = 0; i < ordered.length; i += 1) {
+      const r = ordered[i];
       const p = this.pending.get(r.value);
       const count = p ? p.count + 1 : 1;
       const first = p ? p.first : now;
-      this.pending.set(r.value, { count, first, via: p ? p.via : via });
+      const others = new Set([...this.pending.keys(), ...ordered.map((o) => o.value)]);
+      others.delete(r.value);
+      const verdict = policy?.(r.value, { pending: [...others] });
+      const ignored = verdict === 'ignore';
+      // One read is trusted only for the read nearest the frame's centre.
+      const trusted = verdict === 'trust' && i === 0;
+      this.pending.set(r.value, { count, first, via: p ? p.via : via, ...(ignored ? { ignored } : {}) });
       // orderReads sorted by centre distance, so the first to confirm is the nearest.
-      if (confirmed === null && count >= this.need) {
+      if (confirmed === null && !ignored && (count >= this.need || trusted)) {
         confirmed = r.value;
         confirmedFirstAt = first;
+        confirmedReads = count;
       }
     }
     if (confirmed !== null) {
       this.pending.delete(confirmed);
       dropped.push(...this.drain('superseded'));
-      return { confirmed, progress: 0, confirmedFirstAt, dropped };
+      return { confirmed, progress: 0, confirmedFirstAt, confirmedReads, dropped };
     }
     let progress = 0;
-    for (const p of this.pending.values()) progress = Math.max(progress, p.count);
-    return { confirmed: null, progress, confirmedFirstAt: null, dropped };
+    for (const p of this.pending.values()) if (!p.ignored) progress = Math.max(progress, p.count);
+    return { confirmed: null, progress, confirmedFirstAt: null, confirmedReads: 0, dropped };
   }
 
   /**
@@ -179,7 +221,7 @@ export class ReadConfirmer {
     for (const [v, p] of this.pending) {
       if (now - p.first > this.windowMs) {
         this.pending.delete(v);
-        out.push({ value: v, via: p.via, reads: p.count, first: p.first, reason: 'expired' });
+        out.push({ value: v, via: p.via, reads: p.count, first: p.first, reason: p.ignored ? 'misread' : 'expired' });
       }
     }
     return out;
@@ -202,7 +244,9 @@ export class ReadConfirmer {
 
   /** Empty the confirmer, returning what was still pending. */
   drain(reason: ReadDropReason): DroppedRead[] {
-    const out = [...this.pending].map(([v, p]) => ({ value: v, via: p.via, reads: p.count, first: p.first, reason }));
+    const out = [...this.pending].map(([v, p]) => ({
+      value: v, via: p.via, reads: p.count, first: p.first, reason: p.ignored ? ('misread' as const) : reason,
+    }));
     this.pending.clear();
     return out;
   }

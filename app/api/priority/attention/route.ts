@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { requireAdmin } from '@/lib/admin-auth';
-import { groupFixLines, type GapLine } from '@/lib/priority-attention';
+import { attentionClosedEnabled, groupFixLines, type GapLine } from '@/lib/priority-attention';
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
 
@@ -26,11 +26,21 @@ const MAX_FIX_LINES = 300;
  * this page: until then, or on any read error, `fixes` is [] and
  * `fixes_available` is false; the problem list itself still loads.
  *
+ * With `?closed=1`, also the problems an office person closed for this page
+ * and the daily list (priority_push_attention_closed_v: the same columns plus
+ * closed_at, closed_by, close_note), newest close first, at most 200
+ * (`closed`, `closed_truncated`). Read-only: closing is not done here. On a
+ * read error `closed` is [] and `closed_available` false; the open list still
+ * loads. Without `?closed=1` none of these three keys is sent, and none is
+ * while NEXT_PUBLIC_ATTENTION_CLOSED_ENABLED is not 'true' (the switch is off
+ * by default: lib/priority-attention.ts attentionClosedEnabled).
+ *
  * Access: the signed link from the bot's office alert (lib/admin-link.ts)
  * AND the chat id is an active Admin in `users` (lib/admin-auth.ts).
  * 401 = bad / expired link, 403 = not an active admin.
  *
- * Answers {success, rows, truncated, fixes, fixes_available}.
+ * Answers {success, rows, truncated, fixes, fixes_available}
+ * (+ {closed, closed_truncated, closed_available} with `?closed=1`).
  */
 export async function GET(request: NextRequest) {
   try {
@@ -59,6 +69,24 @@ export async function GET(request: NextRequest) {
     if (gaps.error) console.warn('[api/priority/attention] delivery_gaps_v not readable:', gaps.error.message);
     const fixes = gaps.error ? [] : groupFixLines((gaps.data ?? []) as GapLine[]);
 
+    let closedPart = {};
+    if (attentionClosedEnabled() && p.get('closed') === '1') {
+      const closed = await supabase
+        .from('priority_push_attention_closed_v')
+        .select('*')
+        .order('closed_at', { ascending: false })
+        .limit(MAX_ROWS + 1);
+      if (closed.error) {
+        console.warn('[api/priority/attention] priority_push_attention_closed_v not readable:', closed.error.message);
+      }
+      const closedRows = closed.error ? [] : closed.data ?? [];
+      closedPart = {
+        closed: closedRows.slice(0, MAX_ROWS),
+        closed_truncated: closedRows.length > MAX_ROWS,
+        closed_available: !closed.error,
+      };
+    }
+
     return NextResponse.json(
       {
         success: true,
@@ -66,6 +94,7 @@ export async function GET(request: NextRequest) {
         truncated: rows.length > MAX_ROWS,
         fixes,
         fixes_available: !gaps.error,
+        ...closedPart,
       },
       { headers: NO_STORE },
     );

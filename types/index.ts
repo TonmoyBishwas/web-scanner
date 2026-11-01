@@ -316,6 +316,13 @@ export interface MultiPalletBoxScan {
    * barcode-vs-OCR weight check (Mevaser, 28/10).
    */
   ocr_weight?: number | null;
+  /**
+   * Where the barcode came from (lib/barcode-provenance.ts): 'scan' |
+   * 'photo_digits' | 'minted' | 'typed'. Set by the page where it knows
+   * (a manual capture's digits, a typed code); the complete routes derive
+   * the rest and send it to the bot with `barcode_format_ok` (01/11).
+   */
+  barcode_source?: 'scan' | 'photo_digits' | 'minted' | 'typed';
 }
 
 export interface MultiPalletSession {

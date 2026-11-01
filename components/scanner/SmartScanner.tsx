@@ -13,6 +13,7 @@ import {
   type DecodePass,
   type DroppedRead,
   type FrameRead,
+  type ReadPolicy,
 } from '@/lib/barcode-frame';
 import { CartonCodeMemory } from '@/lib/frame-reads';
 import { useT } from '@/lib/i18n';
@@ -122,6 +123,13 @@ interface SmartScannerProps {
    * every value is taken, as before.
    */
   acceptValue?: (value: string) => boolean;
+  /**
+   * Per-value read policy for the confirmer (01/11, Glatt note 261062322 —
+   * lib/barcode-frame.ts ReadPolicy): 'trust' confirms a format-strict code
+   * of this note on one read, 'ignore' never confirms a read that cannot be a
+   * carton. Omitted = two identical reads for every value, as before.
+   */
+  readPolicy?: ReadPolicy;
 }
 
 /**
@@ -553,6 +561,7 @@ export function SmartScanner({
   nudgeSuppressed = false,
   preferCartonCodes = false,
   acceptValue,
+  readPolicy,
 }: SmartScannerProps) {
   const tr = useT();
   // Tap anywhere on the camera = capture the label. Default ON — a torn or
@@ -637,6 +646,10 @@ export function SmartScanner({
   }, [preferCartonCodes]);
   // `detect` is a long-lived rAF closure, so the pause flag has to reach it
   // through a ref — reading the prop would pin the first render's value.
+  const readPolicyRef = useRef(readPolicy);
+  useEffect(() => {
+    readPolicyRef.current = readPolicy;
+  }, [readPolicy]);
   const acceptValueRef = useRef(acceptValue);
   useEffect(() => {
     acceptValueRef.current = acceptValue;
@@ -1278,7 +1291,9 @@ export function SmartScanner({
       // confirms on the next frame (25/10: all 99 cartons, 0.34 s median), so
       // `read_unconfirmed` made every carton look refused. What is traced is
       // the confirmation and each value that left unconfirmed.
-      const { confirmed, progress, confirmedFirstAt, dropped } = confirmerRef.current.add(frameReads, now, via);
+      const { confirmed, progress, confirmedFirstAt, confirmedReads, dropped } = confirmerRef.current.add(
+        frameReads, now, via, readPolicyRef.current,
+      );
       traceDropped(droppedThrottleRef.current, dropped, now);
       if (!confirmed) {
         setCaptureCount(progress);
@@ -1300,7 +1315,7 @@ export function SmartScanner({
       const refusedAllowed = refused && refusedThrottleRef.current.allow(barcode, now);
       if (refused ? refusedAllowed : !(sinceLastScan < 3000 && barcode === lastScannedRef.current)) {
         trace('ui', 'scan_confirmed', {
-          value: barcode, via, ms_from_first_read: now - (confirmedFirstAt ?? now), reads: confirmerRef.current.need,
+          value: barcode, via, ms_from_first_read: now - (confirmedFirstAt ?? now), reads: confirmedReads,
         });
       }
 

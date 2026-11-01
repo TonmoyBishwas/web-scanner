@@ -344,3 +344,150 @@ describe('nextPass', () => {
     expect(nextPass('thickSmall', false)).toBe('raw');
   });
 });
+
+// ── 01/11: read policy (Glatt note 261062322) ──
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { inboundReadPolicy, isGlattMisread, sameGlattCarton } from './carton-barcode';
+import { framesFromTrace, newRules, oldRules, replayFrames, type TraceRow } from './scan-replay';
+
+describe('ReadConfirmer — read policy', () => {
+  const at = (value: string) => [{ value, dist: 0 }];
+
+  it('a trusted value confirms on ONE read, and reports 1 read', () => {
+    const c = new ReadConfirmer(2, 3000);
+    const r = c.add(at('A'), 0, 'raw', (v) => (v === 'A' ? 'trust' : undefined));
+    expect(r.confirmed).toBe('A');
+    expect(r.confirmedReads).toBe(1);
+  });
+
+  it('without a policy, or for an untrusted value, two reads as before', () => {
+    const c = new ReadConfirmer(2, 3000);
+    expect(c.add(at('B'), 0).confirmed).toBeNull();
+    const r = c.add(at('B'), 100);
+    expect(r.confirmed).toBe('B');
+    expect(r.confirmedReads).toBe(2);
+    const d = new ReadConfirmer(2, 3000);
+    expect(d.add(at('C'), 0, '', () => undefined).confirmed).toBeNull();
+    expect(d.add(at('C'), 50, '', () => undefined).confirmed).toBe('C');
+  });
+
+  it('an ignored value never confirms, never shows progress, and leaves as `misread`', () => {
+    const c = new ReadConfirmer(2, 3000);
+    const ignore = () => 'ignore' as const;
+    expect(c.add(at('M'), 0, '', ignore)).toMatchObject({ confirmed: null, progress: 0 });
+    expect(c.add(at('M'), 50, '', ignore)).toMatchObject({ confirmed: null, progress: 0 });
+    expect(c.add(at('M'), 100, '', ignore).confirmed).toBeNull();
+    const swept = c.sweep(4000);
+    expect(swept).toEqual([{ value: 'M', via: '', reads: 3, first: 0, reason: 'misread' }]);
+  });
+
+  it('an ignored value superseded by a confirmation is still reported as a misread', () => {
+    const c = new ReadConfirmer(2, 3000);
+    const policy = (v: string) => (v === 'M' ? 'ignore' as const : v === 'T' ? 'trust' as const : undefined);
+    c.add(at('M'), 0, '', policy);
+    const r = c.add(at('T'), 10, '', policy);
+    expect(r.confirmed).toBe('T');
+    expect(r.dropped.map((d) => [d.value, d.reason])).toEqual([['M', 'misread']]);
+  });
+
+  it('one read is trusted only for the read nearest the frame centre', () => {
+    const policy = (v: string) => (v === 'T' ? ('trust' as const) : undefined);
+    const c = new ReadConfirmer(2, 3000);
+    // T at the edge, U in the middle: T is not booked on one glimpse.
+    expect(c.add([{ value: 'U', dist: 0.1 }, { value: 'T', dist: 0.3 }], 0, '', policy).confirmed).toBeNull();
+    // A second read of T confirms it the usual way.
+    expect(c.add([{ value: 'U', dist: 0.3 }, { value: 'T', dist: 0.5 }], 50, '', policy).confirmed).not.toBeNull();
+    const d = new ReadConfirmer(2, 3000);
+    const r = d.add([{ value: 'T', dist: 0.1 }, { value: 'U', dist: 0.3 }], 0, '', policy);
+    expect(r.confirmed).toBe('T');
+    expect(r.dropped.map((x) => x.value)).toEqual(['U']);
+  });
+
+  it('the policy sees the other waiting reads and the rest of the frame', () => {
+    const seen: string[][] = [];
+    const c = new ReadConfirmer(2, 3000);
+    const policy = (v: string, ctx?: { pending: string[] }) => {
+      if (v === 'T') seen.push([...(ctx?.pending ?? [])].sort());
+      return undefined;
+    };
+    c.add([{ value: 'M', dist: 0 }], 0, '', policy);
+    c.add([{ value: 'T', dist: 0 }, { value: 'X', dist: 0.4 }], 10, '', policy);
+    expect(seen).toEqual([['M', 'X']]);
+  });
+
+  it('a single isolated read of a serial misread (session LGUtpTw2) does not confirm', () => {
+    const lines = [{ item_code: '1578' }, { item_code: '5086' }, { item_code: '7801' }];
+    // Meatball cartons counted on that note, serials 0679351xx, ~10.1 kg.
+    const listed = new Set(['1050861100101014067935118', '1050861100101012067935119', '1050861100101011067935120']);
+    const policy = inboundReadPolicy(() => lines, () => listed);
+    const c = new ReadConfirmer(2, 3000);
+    expect(c.add([{ value: '1050861100100814067902118', dist: 0 }], 0, 'e2e', policy).confirmed).toBeNull();
+    // The real next carton, read once, is trusted.
+    expect(c.add([{ value: '1050861100101013067935121', dist: 0 }], 5000, 'e2e', policy).confirmed).toBe('1050861100101013067935121');
+  });
+});
+
+/**
+ * The real read sequence of session hceJxe4obaK2TgXOdVXfu (David, Glatt note
+ * 261062322, 01/11) from scanner_events, replayed through the confirmer and
+ * the page's read checks (lib/scan-replay.ts).
+ */
+describe('replay: session hceJxe4obaK2TgXOdVXfu (Glatt note 261062322)', () => {
+  const fx = JSON.parse(
+    readFileSync(path.resolve(__dirname, '../test/fixtures/scan_trace_hceJxe4obaK2TgXOdVXfu.json'), 'utf8'),
+  ) as { lines: Array<{ item_code: string }>; rows: TraceRow[] };
+  const frames = framesFromTrace(fx.rows);
+  const old = replayFrames(frames, oldRules());
+  const neu = replayFrames(frames, newRules(fx.lines));
+  const oldCodes = old.booked.map((b) => b.value);
+  const newCodes = neu.booked.map((b) => b.value);
+  const VALID = ['1050861100101011067936150', '1014721100101530065729703', '1014721100101409065729707'];
+  const MISREAD = '1050861115101001067936150';
+  const REGEX_VALID_MISREADS = ['1006781100101369069565401', '1120671100101720069560708'];
+
+  it('the note lines and the read sequence are the real ones', () => {
+    expect(fx.lines.map((l) => l.item_code)).toEqual(['1472', '1578', '5086']);
+    expect(frames.length).toBeGreaterThan(300);
+  });
+
+  it('before: 120 cartons from the camera, the double misread booked, the 3 valid single reads lost', () => {
+    expect(oldCodes).toHaveLength(120);
+    expect(oldCodes).toContain(MISREAD);
+    for (const v of VALID) expect(oldCodes).not.toContain(v);
+  });
+
+  it('now: each of the 3 valid single reads with a note item code is confirmed and booked', () => {
+    for (const v of VALID) {
+      const b = neu.booked.find((x) => x.value === v);
+      expect(b, v).toBeDefined();
+      expect(b!.reads).toBe(1);
+    }
+  });
+
+  it('now: the double misread is refused and never booked; the regex-valid misreads never confirm', () => {
+    expect(newCodes).not.toContain(MISREAD);
+    expect(newCodes.filter(isGlattMisread)).toEqual([]);
+    for (const v of REGEX_VALID_MISREADS) expect(newCodes).not.toContain(v);
+  });
+
+  it('now: no carton booked before is lost (by code or by Glatt serial), and no carton is booked twice', () => {
+    for (const v of oldCodes) {
+      if (v === MISREAD) continue;
+      expect(newCodes.includes(v) || newCodes.some((n) => sameGlattCarton(n, v)), v).toBe(true);
+    }
+    const serials = newCodes.filter((c) => /^1\d{24}$/.test(c)).map((c) => c.slice(-9));
+    expect(new Set(serials).size).toBe(serials.length);
+    // 120 − the misread + its valid code + the 2 thigh cartons.
+    expect(newCodes).toHaveLength(122);
+  });
+
+  it('a carton already on the list still needs two reads (one glimpse never re-arms the cooldown)', () => {
+    // A thigh carton next to VALID[1] is counted, so VALID[1] is trusted on one read.
+    const listed = new Set<string>([VALID[0], '1014721100101420065729702']);
+    const policy = inboundReadPolicy(() => fx.lines, () => listed);
+    const c = new ReadConfirmer(2, 3000);
+    expect(c.add([{ value: VALID[0], dist: 0 }], 0, '', policy).confirmed).toBeNull();
+    expect(c.add([{ value: VALID[1], dist: 0 }], 10, '', policy).confirmed).toBe(VALID[1]);
+  });
+});

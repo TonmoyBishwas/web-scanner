@@ -16,6 +16,7 @@ import { sessionBookedBarcodes } from '@/lib/label-batches';
 import { isEmptySummaryLine } from '@/lib/pallet-lines';
 import { snapNamelessByCode } from '@/lib/failed-read';
 import { rawOcrWeightKg } from '@/lib/barcode-weight';
+import { barcodeProvenance } from '@/lib/barcode-provenance';
 
 const SESSION_TTL = 7200;
 // "Same weight" means the printed weights are EXACTLY equal — a fixed-weight
@@ -703,6 +704,9 @@ export async function POST(request: NextRequest) {
           // barcode-vs-OCR weight check. Not `ocr_weight`: the bot's
           // reconcile already uses that key for the weight it was sent.
           ocr_weight_kg: rawOcrWeightKg(b.ocr_weight),
+          // Where the code came from and whether it passes its format check
+          // (lib/barcode-provenance.ts, 01/11) — for box_inventory, never shown.
+          ...barcodeProvenance(b),
           ...labelPrintedFlag(b.barcode),
         })),
         unprinted_labels: unprintedBooked.size,
@@ -761,6 +765,9 @@ export async function POST(request: NextRequest) {
           production_date: b.production_date || null,
           supplier_batch: b.supplier_batch || null,
           ocr_weight_kg: rawOcrWeightKg(b.ocr_weight),
+          // Where the code came from and whether it passes its format check
+          // (lib/barcode-provenance.ts, 01/11) — for box_inventory, never shown.
+          ...barcodeProvenance(b),
           ...labelPrintedFlag(b.barcode),
         })),
         unprinted_labels: unprintedBooked.size,

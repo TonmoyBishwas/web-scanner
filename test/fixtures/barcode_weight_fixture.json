@@ -409,6 +409,62 @@
       "class": "other",
       "source": "synthetic",
       "note": "empty"
+    },
+    {
+      "barcode": "1050861100101011067936150",
+      "family": "glatt25",
+      "kg": 10.11,
+      "class": "glatt25",
+      "source": "db",
+      "note": "01/11 note 261062322: meatballs 05086, read once by the camera and expired"
+    },
+    {
+      "barcode": "1014721100101530065729703",
+      "family": "glatt25",
+      "kg": 15.3,
+      "class": "glatt25",
+      "source": "db",
+      "note": "01/11 note 261062322: thighs 01472, read once by the camera and expired"
+    },
+    {
+      "barcode": "1014721100101409065729707",
+      "family": "glatt25",
+      "kg": 14.09,
+      "class": "glatt25",
+      "source": "db",
+      "note": "01/11 note 261062322: thighs 01472, read once by the camera and expired"
+    },
+    {
+      "barcode": "1050861115101001067936150",
+      "family": null,
+      "kg": null,
+      "class": "glatt_misread",
+      "source": "db",
+      "note": "01/11: mid 111510, the e2e decoder read it twice for printed 1050861100101011067936150 and it was booked"
+    },
+    {
+      "barcode": "10147211001409065729707",
+      "family": null,
+      "kg": null,
+      "class": "truncated",
+      "source": "db",
+      "note": "01/11: 23-digit label-photo digits of 1014721100101409065729707"
+    },
+    {
+      "barcode": "4721100101530065729703",
+      "family": null,
+      "kg": null,
+      "class": "truncated",
+      "source": "db",
+      "note": "01/11: 22-digit label-photo digits of 1014721100101530065729703"
+    },
+    {
+      "barcode": "10157811001012830565414",
+      "family": null,
+      "kg": null,
+      "class": "truncated",
+      "source": "db",
+      "note": "01/11: 23-digit label-photo digits of a fillet 01578 carton (12.83 kg)"
     }
   ],
   "agree_cases": [
