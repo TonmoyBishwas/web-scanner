@@ -29,7 +29,7 @@ import { groupKeyForBox, type GroupableBox } from './group-key';
 
 export interface DoubtedRow extends GroupableBox {
   weight: number;
-  weight_suspect?: { typical?: number; reason: 'name_number' | 'ratio' | 'barcode'; name?: string };
+  weight_suspect?: { typical?: number; reason: 'name_number' | 'ratio'; name?: string };
   weight_checked?: boolean;
 }
 

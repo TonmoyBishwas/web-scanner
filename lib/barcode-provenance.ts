@@ -52,15 +52,3 @@ export function barcodeProvenance(row: ProvenanceRow): { barcode_source: Barcode
     barcode_format_ok: source === 'minted' ? null : barcodeFormatOk(row.barcode),
   };
 }
-
-/**
- * Should a manual capture's row turn amber (the existing weight-doubt path:
- * the edit panel opens on the weight, beside the label photo)? When its
- * printed digits fail the format check and it has a weight to look at. A
- * capture with no weight from the photo or a barcode already holds as
- * "Weight not read" (needs_review) and opens the same panel — as today.
- * Never a block: a weight doubt only asks (lib/weight-review.ts).
- */
-export function photoDigitsDoubt(digits: string, weight: number): boolean {
-  return weight > 0 && barcodeFormatOk(digits) === false;
-}

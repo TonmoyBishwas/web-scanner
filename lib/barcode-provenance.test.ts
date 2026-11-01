@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { barcodeProvenance, barcodeSourceOf, photoDigitsDoubt } from './barcode-provenance';
+import { barcodeProvenance, barcodeSourceOf } from './barcode-provenance';
 
 describe('barcodeProvenance (01/11: barcode_source + barcode_format_ok to the bot)', () => {
   it('a decoded code is a scan, checked', () => {
@@ -29,14 +29,14 @@ describe('barcodeProvenance (01/11: barcode_source + barcode_format_ok to the bo
   });
 });
 
-describe('photoDigitsDoubt: amber for a manual capture whose digits fail the check', () => {
-  it('damaged digits with a weight → amber', () => {
-    expect(photoDigitsDoubt('4721100101530065729703', 15)).toBe(true);
+describe('photo digits are checked for the bot only', () => {
+  it('damaged photo digits go out as barcode_format_ok=false, nothing else', () => {
+    expect(barcodeProvenance({ barcode: '4721100101530065729703', barcode_source: 'photo_digits' })).toEqual({
+      barcode_source: 'photo_digits',
+      barcode_format_ok: false,
+    });
   });
-  it('good digits → no doubt', () => {
-    expect(photoDigitsDoubt('1014721100101409065729707', 14.09)).toBe(false);
-  });
-  it('no weight → no doubt (the "weight not read" hold already opens the panel)', () => {
-    expect(photoDigitsDoubt('4721100101530065729703', 0)).toBe(false);
+  it('good photo digits → true', () => {
+    expect(barcodeProvenance({ barcode: '1014721100101409065729707', barcode_source: 'photo_digits' }).barcode_format_ok).toBe(true);
   });
 });
