@@ -121,3 +121,32 @@ describe('ocr_weight_kg on every carton sent to the bot', () => {
     expect(sentBoxes().every((b) => !('ocr_weight' in b))).toBe(true);
   });
 });
+
+describe('barcode_source + barcode_format_ok on every carton sent to the bot (01/11)', () => {
+  const PHOTO = box('4721100101530065729703', CHICKEN, 15, { barcode_source: 'photo_digits', ocr_weight: 15 });
+  const TYPED = box('7290002195832' + '01250' + '01290' + '12072027', CHICKEN, 12.5, { barcode_source: 'typed' });
+  const LABEL = box('2826110119842666', CHICKEN, 13, { new_carton: true });
+
+  it('mix pallet', async () => {
+    expect(await completePallet([MISREAD, PHOTO, TYPED, LABEL])).toBe(200);
+    expect(byCode(MISREAD.barcode)).toMatchObject({ barcode_source: 'scan', barcode_format_ok: true });
+    expect(byCode(PHOTO.barcode)).toMatchObject({ barcode_source: 'photo_digits', barcode_format_ok: false });
+    expect(byCode(TYPED.barcode)).toMatchObject({ barcode_source: 'typed', barcode_format_ok: true });
+    expect(byCode(LABEL.barcode)).toMatchObject({ barcode_source: 'minted', barcode_format_ok: null });
+  });
+
+  it('single-item pallet', async () => {
+    const twin = { ...AGREE, weight: 12.46 };
+    expect(await completePallet([MISREAD, twin, { ...PHOTO, weight: 12.46 }])).toBe(200);
+    expect(botCalls[0].body.pallet_type).toBe('single');
+    expect(byCode(MISREAD.barcode)).toMatchObject({ barcode_source: 'scan', barcode_format_ok: true });
+    expect(byCode(PHOTO.barcode)).toMatchObject({ barcode_source: 'photo_digits', barcode_format_ok: false });
+  });
+
+  it('loose pile', async () => {
+    expect(await completeLoose([MISREAD, PHOTO, LABEL])).toBe(200);
+    expect(byCode(MISREAD.barcode)).toMatchObject({ barcode_source: 'scan', barcode_format_ok: true });
+    expect(byCode(PHOTO.barcode)).toMatchObject({ barcode_source: 'photo_digits', barcode_format_ok: false });
+    expect(byCode(LABEL.barcode)).toMatchObject({ barcode_source: 'minted', barcode_format_ok: null });
+  });
+});

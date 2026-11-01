@@ -46,7 +46,7 @@ interface GateRow {
   item_name_hebrew?: string;
   needs_review?: boolean;
   ocr_status?: string;
-  weight_suspect?: { reason: 'name_number' | 'ratio' };
+  weight_suspect?: { reason: 'name_number' | 'ratio' | 'barcode' };
   weight_checked?: boolean;
 }
 
