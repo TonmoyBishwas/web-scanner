@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   canMarkFound,
   canSendAgain,
+  closedByLabel,
+  closedLine,
   emptyStateText,
   errorClassText,
   fixLineText,
+  formatIsraelDate,
   formatIsraelTime,
   groupFixLines,
   markFoundConfirmText,
@@ -265,5 +268,41 @@ describe('lines to check in Priority (delivery_gaps_v)', () => {
     expect(fixLineText(gap({ rest_expected: 'will_come', received_qty: '19.5000' }))).toMatch(
       /received 19\.5 units · the rest will come later$/,
     );
+  });
+});
+
+// English: the close note 'טופל בפריוריטי' = "handled in Priority"
+describe('closed rows (priority_push_attention_closed_v)', () => {
+  it('one line: when (Israel date), who and why', () => {
+    expect(closedLine({ closed_at: '2026-11-01T08:00:00Z', closed_by: 'Dana', close_note: 'before 28/10, closed by Mevaser' })).toBe(
+      'Closed 01/11/2026 by Dana — before 28/10, closed by Mevaser',
+    );
+    expect(closedLine({ closed_at: '2026-11-01T08:00:00Z', closed_by: 'Dana', close_note: 'טופל בפריוריטי' })).toBe(
+      'Closed 01/11/2026 by Dana — טופל בפריוריטי', // English: … — handled in Priority
+    );
+  });
+
+  it('the date is the Israel date, not UTC (late evening UTC is already the next day)', () => {
+    expect(formatIsraelDate('2026-10-31T22:30:00Z')).toBe('01/11/2026');
+    expect(formatIsraelDate(null)).toBeNull();
+    expect(formatIsraelDate('not a date')).toBeNull();
+  });
+
+  it('a missing closer, note or time is left out, never shown as "null"', () => {
+    expect(closedLine({ closed_at: '2026-11-01T08:00:00Z', closed_by: null, close_note: null })).toBe('Closed 01/11/2026');
+    expect(closedLine({ closed_at: null, closed_by: '  ', close_note: '  ' })).toBe('Closed');
+    expect(closedLine({ closed_at: null, closed_by: 'Dana', close_note: 'old' })).toBe('Closed by Dana — old');
+  });
+
+  it('who closed it: a name as is, a chat id (a phone number) only as … and its last 4 digits', () => {
+    expect(closedByLabel('Dana')).toBe('Dana');
+    expect(closedByLabel(' tonmoy ')).toBe('tonmoy');
+    expect(closedByLabel('972528331573')).toBe('…1573');
+    expect(closedByLabel('admin:972528331573')).toBe('…1573');
+    expect(closedByLabel('+972 52-833-1573')).toBe('…1573');
+    expect(closedByLabel('tonmoy (972528331573)')).toBe('tonmoy (…1573)');
+    expect(closedByLabel(null)).toBeNull();
+    expect(closedByLabel('')).toBeNull();
+    expect(closedLine({ closed_at: null, closed_by: 'admin:972528331573', close_note: null })).not.toContain('97252');
   });
 });

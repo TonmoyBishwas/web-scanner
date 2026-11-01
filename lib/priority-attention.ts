@@ -8,6 +8,10 @@
  * Also the "lines to check in Priority" section: rows of delivery_gaps_v
  * (M5) grouped per delivery and worded in plain English.
  *
+ * And the "Closed" filter: rows of priority_push_attention_closed_v — problems
+ * an office person closed for this page and the daily list only (nothing in
+ * the delivery, the stock or Priority changes). Shown read-only.
+ *
  * Pure (no DB, no React): the page and the API routes share it.
  */
 
@@ -34,6 +38,18 @@ export interface AttentionRow {
   outbox_status?: string | null;
   /** A Priority GR already linked to this delivery (origin ≠ warehouse_bot). */
   gr_docno?: string | null;
+}
+
+/**
+ * One row of priority_push_attention_closed_v: the same columns as
+ * priority_push_attention_v plus who closed it, when and why. Closing is
+ * done outside this page; the page only shows these rows, with no action.
+ */
+export interface ClosedAttentionRow extends AttentionRow {
+  closed_at: string | null;
+  /** Free text: a name, or an "admin:<chat id>" style id (never shown in full, see closedByLabel). */
+  closed_by: string | null;
+  close_note: string | null;
 }
 
 export interface ProblemInfo {
@@ -295,6 +311,40 @@ export function formatIsraelTime(iso: string | null | undefined): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+/** "01/11/2026" (day/month/year) in Israel time; null when there is no time. */
+export function formatIsraelDate(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-GB', { timeZone: 'Asia/Jerusalem', day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+/**
+ * Who closed a row, for the card. closed_by is free text: a name is shown as
+ * is, but a chat id (a phone number, alone or as "admin:<digits>") only as
+ * "…" and its last 4 digits, like receiverLabel; a long number inside other
+ * text is cut the same way. Null when empty.
+ */
+export function closedByLabel(closedBy: string | null | undefined): string | null {
+  const by = typeof closedBy === 'string' ? closedBy.trim() : '';
+  if (!by) return null;
+  const id = /^(?:[a-z_]+:)?\s*(\+?[\d\s-]{5,})$/i.exec(by);
+  if (id) return `…${id[1].replace(/\D/g, '').slice(-4)}`;
+  return by.replace(/\+?\d[\d\s-]{5,}\d/g, (m) => `…${m.replace(/\D/g, '').slice(-4)}`);
+}
+
+/**
+ * The one line a closed card adds: "Closed 01/11/2026 by Dana — handled in
+ * Priority". The date is the Israel date; "by …" and "— …" are left out when
+ * the row has no closer or no note.
+ */
+export function closedLine(row: Pick<ClosedAttentionRow, 'closed_at' | 'closed_by' | 'close_note'>): string {
+  const date = formatIsraelDate(row.closed_at);
+  const by = closedByLabel(row.closed_by);
+  const note = typeof row.close_note === 'string' ? row.close_note.trim() : '';
+  return `Closed${date ? ` ${date}` : ''}${by ? ` by ${by}` : ''}${note ? ` — ${note}` : ''}`;
 }
 
 /**
