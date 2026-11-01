@@ -14,18 +14,29 @@
  *   npx vite-node scripts/replay-scan-sessions.ts --input export.json [--out report.md]
  *       export.json = { events: [{token, ts (ms), event, data}], lines: {token: [{item_code}]}, booked: [barcode] }
  *
- * "valid" for a new confirm: its exact code was booked in box_inventory
- * (another path got it in the end), or a booked carton carries its Glatt
- * serial (the same carton, booked under a damaged code), and it is a
- * well-formed code. Anything else is listed as UNEXPLAINED.
+ * "valid" for a new confirm: it is a well-formed code, and its exact code
+ * was booked in box_inventory (another path got it in the end) or a booked
+ * code ends in the same 13 digits (weight + serial: the same carton, booked
+ * under a damaged code). Anything else is listed as UNEXPLAINED.
+ *
+ * "would-book": a value NEW confirms on one read that the 3 s cooldown then
+ * threw away, and OLD never confirmed. The cooldown saved the replay there,
+ * not the rule — on another day it books — so it is checked like a new
+ * confirm. A would-book that is not valid is a phantom the rule lets through.
+ *
+ * Limits: the trace keeps the reads the confirmer counted, not every frame,
+ * and `read_dropped` is throttled to one event per value per 5 s
+ * (SmartScanner traceDropped), so repeated single sightings are collapsed:
+ * the replay sees fewer one-read chances than the floor does. OLD = live
+ * is a consistency check of the rebuild, not proof of the new rule.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
-import { barcodeFormatOk, isGlattMisread, sameGlattCarton } from '../lib/carton-barcode';
+import { barcodeFormatOk, isGlattMisread, sameGlattCarton, type NoteLine } from '../lib/carton-barcode';
 import { framesFromTrace, newRules, oldRules, replayFrames, type TraceRow } from '../lib/scan-replay';
 
 interface Export {
   events: Array<{ token: string; ts: number; event: string; data: Record<string, unknown> | null }>;
-  lines: Record<string, Array<{ item_code?: string | null }>>;
+  lines: Record<string, NoteLine[]>;
   booked: string[];
 }
 
@@ -61,8 +72,12 @@ async function pull(days: number): Promise<Export> {
     const { data, error } = await db.from('scan_sessions').select('token, data').in('token', tokens);
     if (error) throw new Error(`scan_sessions: ${error.message}`);
     for (const s of data ?? []) {
-      const ocr = (s.data as { ocr_data?: Array<{ item_code?: string }> } | null)?.ocr_data ?? [];
-      lines[s.token] = ocr.map((l) => ({ item_code: l.item_code ?? null }));
+      const ocr = (s.data as { ocr_data?: NoteLine[] } | null)?.ocr_data ?? [];
+      lines[s.token] = ocr.map((l) => ({
+        item_code: l.item_code ?? null,
+        quantity_kg: l.quantity_kg ?? null,
+        expected_boxes: l.expected_boxes ?? null,
+      }));
     }
   }
   const booked: string[] = [];
@@ -91,7 +106,14 @@ async function main() {
   }
 
   const out: string[] = [];
-  const totals = { sessions: 0, oldBooked: 0, newBooked: 0, newConfirms: 0, newValid: 0, lost: 0, oldMisreads: 0, newMisreads: 0, traceBooked: 0, oldMatchesTrace: 0 };
+  const totals = { sessions: 0, oldBooked: 0, newBooked: 0, newConfirms: 0, newValid: 0, wouldBook: 0, wouldBookValid: 0, lost: 0, oldMisreads: 0, newMisreads: 0, traceBooked: 0, oldMatchesTrace: 0 };
+  // The same carton: the exact code, or the same last 13 digits (weight + serial).
+  const isBooked = (v: string) => booked.has(v) || (v.length >= 13 && bookedList.some((c) => c.length >= 13 && c.slice(-13) === v.slice(-13)));
+  // The carton was booked under a misread-mid string with the same 9-digit
+  // serial (01/11: `…111510 1001 067936150` for the printed
+  // `…110010 1011 067936150` — the decoder's misread hit the weight digits
+  // too, so the 13-digit check cannot match it).
+  const misreadBooked = (v: string) => v.length === 25 && bookedList.some((c) => isGlattMisread(c) && c.slice(-9) === v.slice(-9));
   const rowsMd: string[] = [];
   const details: string[] = [];
 
@@ -113,15 +135,24 @@ async function main() {
     const oldMatches = [...traceSet].filter((v) => oldSet.has(v)).length;
 
     const added = neu.booked.filter((b) => !oldSet.has(b.value));
-    const verdicts = added.map((b) => {
+    const check = (b: { value: string; t: number; reads: number }) => {
       const exact = booked.has(b.value);
-      const sameCarton = !exact && bookedList.some((c) => sameGlattCarton(c, b.value));
+      const sameCarton = !exact && isBooked(b.value);
+      const viaMisread = !exact && !sameCarton && misreadBooked(b.value);
       const formatOk = barcodeFormatOk(b.value) === true;
-      const valid = formatOk && (exact || sameCarton);
-      return { ...b, exact, sameCarton, formatOk, valid };
-    });
+      const valid = formatOk && (exact || sameCarton || viaMisread);
+      return { ...b, exact, sameCarton, viaMisread, formatOk, valid };
+    };
+    const verdicts = added.map(check);
+    const oldSeen = new Set([...old.booked, ...old.cooldownDropped, ...old.duplicates, ...old.refused].map((b) => b.value));
+    const wouldBook = neu.cooldownDropped
+      .filter((b) => b.reads === 1 && !oldSeen.has(b.value) && !newSet.has(b.value))
+      .filter((b, i, a) => a.findIndex((x) => x.value === b.value) === i)
+      .map(check);
     // Lost: booked by OLD, not by NEW, and no NEW booking is the same carton.
-    const lost = old.booked.filter((b) => !newSet.has(b.value) && ![...newSet].some((v) => sameGlattCarton(v, b.value)));
+    // A misread-mid string OLD booked is not lost when NEW booked the valid code with its serial.
+    const lost = old.booked.filter((b) => !newSet.has(b.value) && ![...newSet].some((v) => sameGlattCarton(v, b.value)
+      || (isGlattMisread(b.value) && v.length === 25 && v.slice(-9) === b.value.slice(-9))));
     const misread = (v: string) => isGlattMisread(v) || barcodeFormatOk(v) === false;
     const oldMis = old.booked.filter((b) => misread(b.value));
     const newMis = neu.booked.filter((b) => misread(b.value));
@@ -130,6 +161,8 @@ async function main() {
     totals.newBooked += neu.booked.length;
     totals.newConfirms += added.length;
     totals.newValid += verdicts.filter((v) => v.valid).length;
+    totals.wouldBook += wouldBook.length;
+    totals.wouldBookValid += wouldBook.filter((v) => v.valid).length;
     totals.lost += lost.length;
     totals.oldMisreads += oldMis.length;
     totals.newMisreads += newMis.length;
@@ -137,12 +170,16 @@ async function main() {
     totals.oldMatchesTrace += oldMatches;
 
     const lineCodes = lines.map((l) => l.item_code).filter(Boolean).join(', ') || '(none)';
-    rowsMd.push(`| \`${token}\` | ${lineCodes} | ${traceSet.size} | ${oldMatches} | ${old.booked.length} | ${neu.booked.length} | ${added.length} (${verdicts.filter((v) => v.valid).length} valid) | ${lost.length} | ${oldMis.length} → ${newMis.length} |`);
-    if (added.length || lost.length || oldMis.length || newMis.length) {
+    rowsMd.push(`| \`${token}\` | ${lineCodes} | ${traceSet.size} | ${oldMatches} | ${old.booked.length} | ${neu.booked.length} | ${added.length} (${verdicts.filter((v) => v.valid).length} valid) | ${wouldBook.length} (${wouldBook.filter((v) => v.valid).length} valid) | ${lost.length} | ${oldMis.length} → ${newMis.length} |`);
+    if (added.length || wouldBook.length || lost.length || oldMis.length || newMis.length) {
       details.push(`### \`${token}\``);
       for (const v of verdicts) {
-        const why = v.exact ? 'booked in box_inventory under this exact code' : v.sameCarton ? 'same carton (Glatt serial) is booked under a damaged code' : 'NOT in box_inventory, no carton with its serial';
+        const why = v.exact ? 'booked in box_inventory under this exact code' : v.sameCarton ? 'same carton (weight + serial) is booked under a damaged code' : v.viaMisread ? 'same carton (serial) is booked under the refused misread-mid string' : 'NOT in box_inventory, no carton with its weight + serial';
         details.push(`- new confirm \`${v.value}\` (${v.reads} read${v.reads === 1 ? '' : 's'}): ${v.valid ? 'valid' : 'UNEXPLAINED'} — ${why}`);
+      }
+      for (const v of wouldBook) {
+        const why = v.exact ? 'booked in box_inventory under this exact code' : v.sameCarton ? 'same carton (weight + serial) is booked under a damaged code' : v.viaMisread ? 'same carton (serial) is booked under the refused misread-mid string' : 'NOT in box_inventory, no carton with its weight + serial';
+        details.push(`- would-book \`${v.value}\` (1 read, saved only by the 3 s cooldown): ${v.valid ? 'valid' : 'PHANTOM'} — ${why}`);
       }
       for (const b of lost) details.push(`- LOST \`${b.value}\` (booked before, not now)`);
       for (const b of oldMis) details.push(`- misread booked before: \`${b.value}\`${newSet.has(b.value) ? ' — STILL booked now' : ' — refused now'}`);
@@ -155,20 +192,23 @@ async function main() {
   out.push('');
   out.push(`Source: ${input ? `export \`${input}\`` : `scanner_events, last ${days} days (read-only)`}. ${totals.sessions} pallet-verify sessions with read traces.`);
   out.push('');
-  out.push('OLD = before 01/11 (two identical reads within 3 s for every value; no Glatt mid check; duplicates by exact code). NEW = a valid Glatt code of one of the note\'s lines confirms on one read; a Glatt misread mid never confirms or books; duplicates also by Glatt serial. Manual captures and edits are not replayed.');
+  out.push('OLD = before 01/11 (two identical reads within 3 s for every value; no Glatt mid check; duplicates by exact code). NEW = a valid Glatt code of one of the note\'s lines confirms on one read when a counted carton of its item is within 2000 serials (or another waiting read shares its serial) and its weight is within 15 % of the item\'s typical carton; a Glatt misread mid never confirms or books; duplicates also by Glatt serial (two valid codes) or weight + serial (valid vs damaged). Manual captures and edits are not replayed.');
+  out.push('');
+  out.push('Limits: the trace keeps the reads the confirmer counted, not every frame, and `read_dropped` is throttled to one event per value per 5 s, so repeated single sightings are collapsed — the replay sees fewer one-read chances than the floor. "OLD = live" checks the rebuild, it does not prove the new rule.');
   out.push('');
   out.push('## Totals');
   out.push('');
   out.push(`- Replay fidelity: the live page added ${totals.traceBooked} cartons from the camera; the OLD replay books ${totals.oldMatchesTrace} of those exact codes (${totals.oldBooked} in all).`);
   out.push(`- Cartons booked from the camera: OLD ${totals.oldBooked} → NEW ${totals.newBooked}.`);
   out.push(`- New confirms: ${totals.newConfirms}, of which valid: ${totals.newValid}.`);
+  out.push(`- Would-book (one-read confirms the 3 s cooldown threw away, never confirmed by OLD): ${totals.wouldBook}, of which valid: ${totals.wouldBookValid} — the rest are phantoms the rule would book on another day.`);
   out.push(`- Cartons lost (booked OLD, not NEW, no same-carton NEW booking): ${totals.lost}.`);
   out.push(`- Misreads booked: OLD ${totals.oldMisreads} → NEW ${totals.newMisreads}.`);
   out.push('');
   out.push('## Per session');
   out.push('');
-  out.push('| session | note lines | live adds | OLD = live | OLD booked | NEW booked | new confirms | lost | misreads booked OLD → NEW |');
-  out.push('|---|---|---|---|---|---|---|---|---|');
+  out.push('| session | note lines | live adds | OLD = live | OLD booked | NEW booked | new confirms | would-book | lost | misreads booked OLD → NEW |');
+  out.push('|---|---|---|---|---|---|---|---|---|---|');
   out.push(...rowsMd);
   out.push('');
   if (details.length) {
