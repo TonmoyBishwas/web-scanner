@@ -210,3 +210,136 @@ describe('printedDigitsIdentifyCarton', () => {
     expect(printedDigitsIdentifyCarton('', new Set(['']), [], [])).toBe(false);
   });
 });
+
+// ── 01/11, Glatt note 261062322 (session hceJxe4obaK2TgXOdVXfu) ──
+import {
+  barcodeFormatOk,
+  hasCartonCode,
+  inboundReadPolicy,
+  isGlattMisread,
+  looksLikeDamagedGlatt,
+  parseGlattCode,
+  sameGlattCarton,
+  trustedSingleRead,
+} from './carton-barcode';
+
+const NOTE_LINES = [{ item_code: '1472' }, { item_code: '1578' }, { item_code: '5086' }];
+const VALID_MEATBALL = '1050861100101011067936150';
+const VALID_THIGH_A = '1014721100101530065729703';
+const VALID_THIGH_B = '1014721100101409065729707';
+const DOUBLE_MISREAD = '1050861115101001067936150'; // mid 111510
+const REGEX_VALID_MISREADS = ['1006781100101369069565401', '1120671100101720069560708'];
+const PHOTO_DIGITS = ['10147211001409065729707', '4721100101530065729703', '10157811001012830565414'];
+
+describe('Glatt mid check (classifyRead)', () => {
+  it('refuses a 25-digit 1… read whose mid Glatt never prints, as a misread', () => {
+    expect(classifyRead(DOUBLE_MISREAD)).toEqual({ ok: false, reason: 'misread' });
+    expect(classifyRead('1050861153020312067935192')).toEqual({ ok: false, reason: 'misread' });
+    expect(classifyRead('1014821100022433074260935')).toEqual({ ok: false, reason: 'misread' });
+    expect(isGlattMisread(DOUBLE_MISREAD)).toBe(true);
+  });
+
+  it('accepts every Glatt mid, the units mid 140010 included', () => {
+    for (const code of [VALID_MEATBALL, VALID_THIGH_A, '1023530100101319071320494', '1002721106101527069546340', '1043041400100001178251135']) {
+      expect(classifyRead(code)).toEqual({ ok: true });
+      expect(isGlattMisread(code)).toBe(false);
+    }
+  });
+
+  it('leaves other lengths and families alone', () => {
+    expect(classifyRead('7290115351484014085456309092027')).toEqual({ ok: true }); // gs31
+    expect(classifyRead('2826110119842666')).toEqual({ ok: true }); // minted label
+    expect(classifyRead('10508611001010140679351090')).toEqual({ ok: true }); // 26 digits: not this rule
+    expect(isGlattMisread('2050861115101001067936150')).toBe(false); // does not start with 1
+  });
+});
+
+describe('parseGlattCode / sameGlattCarton / hasCartonCode', () => {
+  it('parses item, mid and serial', () => {
+    expect(parseGlattCode(VALID_MEATBALL)).toEqual({ item: '05086', mid: '110010', serial: '067936150' });
+    expect(parseGlattCode(DOUBLE_MISREAD)).toBeNull();
+  });
+
+  it('the photo digits of 01/11 look like damaged Glatt codes; valid codes and other families do not', () => {
+    for (const d of PHOTO_DIGITS) expect(looksLikeDamagedGlatt(d)).toBe(true);
+    expect(looksLikeDamagedGlatt(VALID_THIGH_A)).toBe(false);
+    expect(looksLikeDamagedGlatt('729011535148401502521600802027')).toBe(false);
+    expect(looksLikeDamagedGlatt('7290115351484014085456309092027')).toBe(false);
+  });
+
+  it('one carton under a valid code and a damaged / misread one sharing its serial', () => {
+    expect(sameGlattCarton(VALID_THIGH_A, '4721100101530065729703')).toBe(true);
+    expect(sameGlattCarton('10147211001409065729707', VALID_THIGH_B)).toBe(true);
+    expect(sameGlattCarton(VALID_MEATBALL, DOUBLE_MISREAD)).toBe(true);
+    expect(sameGlattCarton('1015781100101369069565401', REGEX_VALID_MISREADS[0])).toBe(true);
+  });
+
+  it('never matches two damaged strings, two serials, or non-Glatt codes', () => {
+    expect(sameGlattCarton(VALID_THIGH_A, VALID_THIGH_B)).toBe(false);
+    expect(sameGlattCarton('4721100101530065729703', '9994721100101530065729703')).toBe(false);
+    expect(sameGlattCarton('7290115351484014085456309092027', '1014721100101530085456309092027')).toBe(false);
+    expect(sameGlattCarton(VALID_THIGH_A, '')).toBe(false);
+  });
+
+  it('hasCartonCode: the exact code, or the same Glatt carton', () => {
+    const listed = new Set(['4721100101530065729703', '7290115351484014085456309092027']);
+    expect(hasCartonCode(listed, VALID_THIGH_A)).toBe(true);
+    expect(hasCartonCode(listed, '7290115351484014085456309092027')).toBe(true);
+    expect(hasCartonCode(listed, VALID_THIGH_B)).toBe(false);
+    expect(hasCartonCode(listed, '')).toBe(false);
+  });
+});
+
+describe('trustedSingleRead / inboundReadPolicy', () => {
+  it('trusts a valid Glatt code whose item code is a note line (zeros ignored)', () => {
+    expect(trustedSingleRead(VALID_MEATBALL, NOTE_LINES)).toBe(true);
+    expect(trustedSingleRead(VALID_THIGH_A, NOTE_LINES)).toBe(true);
+    expect(trustedSingleRead(VALID_THIGH_A, [{ item_code: '01472' }])).toBe(true);
+  });
+
+  it('does not trust the regex-valid misreads (items 00678 / 12067 are on no line)', () => {
+    for (const v of REGEX_VALID_MISREADS) expect(trustedSingleRead(v, NOTE_LINES)).toBe(false);
+  });
+
+  it('does not trust a misread mid, a 31-digit code, or anything without note lines', () => {
+    expect(trustedSingleRead(DOUBLE_MISREAD, NOTE_LINES)).toBe(false);
+    expect(trustedSingleRead('7290115351484014085456309092027', [{ item_code: '7290115351484' }])).toBe(false);
+    expect(trustedSingleRead(VALID_MEATBALL, [])).toBe(false);
+    expect(trustedSingleRead(VALID_MEATBALL, null)).toBe(false);
+  });
+
+  it('policy: ignore a misread mid; trust a note carton once; a carton already listed needs two reads', () => {
+    const listed = new Set<string>();
+    const policy = inboundReadPolicy(() => NOTE_LINES, () => listed);
+    expect(policy(DOUBLE_MISREAD)).toBe('ignore');
+    expect(policy(VALID_MEATBALL)).toBe('trust');
+    expect(policy(REGEX_VALID_MISREADS[0])).toBeUndefined();
+    expect(policy('7290115351484014085456309092027')).toBeUndefined();
+    listed.add(VALID_MEATBALL);
+    expect(policy(VALID_MEATBALL)).toBeUndefined();
+    listed.add('4721100101530065729703');
+    expect(policy(VALID_THIGH_A)).toBeUndefined(); // same carton by serial
+  });
+});
+
+describe('barcodeFormatOk (silent check, sent to the bot)', () => {
+  it('true for valid codes of every family', () => {
+    for (const c of [VALID_MEATBALL, '1043041400100001178251135', '7290115351484014085456309092027', '7290004456825', '2000090300667', '72900000001011500004301120260001']) {
+      expect(barcodeFormatOk(c)).toBe(true);
+    }
+  });
+
+  it('false for the 01/11 photo digits, misread mids and shortened 729 codes', () => {
+    for (const d of PHOTO_DIGITS) expect(barcodeFormatOk(d)).toBe(false);
+    expect(barcodeFormatOk(DOUBLE_MISREAD)).toBe(false);
+    expect(barcodeFormatOk('105045110010101606788245')).toBe(false);
+    expect(barcodeFormatOk('729011535148401502521600802027')).toBe(false);
+    expect(barcodeFormatOk('7290001456825')).toBe(false); // check digit
+  });
+
+  it('null when there is nothing to check', () => {
+    expect(barcodeFormatOk('')).toBeNull();
+    expect(barcodeFormatOk(null)).toBeNull();
+    expect(barcodeFormatOk('408274')).toBeNull(); // a photo-confirmed serial
+  });
+});

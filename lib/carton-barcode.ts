@@ -36,7 +36,7 @@ export function gtinCheckDigitValid(digits: string): boolean {
 
 export type ReadVerdict =
   | { ok: true }
-  | { ok: false; reason: 'too_short' | 'checksum' | 'pallet_label' | 'not_digits' };
+  | { ok: false; reason: 'too_short' | 'checksum' | 'pallet_label' | 'not_digits' | 'misread' };
 
 /**
  * The supplier's own SHIPPING-PALLET label (MEV-10, 2026-09-22): Baladi prints
@@ -63,7 +63,14 @@ export function isSupplierPalletLabel(digits: string): boolean {
  *  * 15+ digits → a GS1-128; the symbology has its own checksum → accept,
  *    EXCEPT an Israeli (`729…`) catch-weight code whose leading 13 digits
  *    fail the GTIN check (`729010351484015205456509092027`, a shifted read of
- *    `7290115351484…`, 2026-10-04) — see `isIsraeliGtinPrefixed`.
+ *    `7290115351484…`, 2026-10-04) — see `isIsraeliGtinPrefixed`;
+ *  * a Glatt-shaped 25-digit `1…` read whose 6-digit mid is none of Glatt's
+ *    (`110010` / `010010` / `110610` / `140010`) → a decoder misread
+ *    (`misread`): 01/11, note 261062322, the e2e decoder read
+ *    `1050861115101001067936150` (mid `111510`) twice for a printed
+ *    `1050861100101011067936150`, and it was confirmed and booked. Every
+ *    25-digit `1…` code in 120 days of box_inventory is Glatt (876 valid
+ *    mids, 3 misreads).
  */
 export function classifyRead(barcode: string): ReadVerdict {
   const raw = (barcode || '').trim();
@@ -77,7 +84,150 @@ export function classifyRead(barcode: string): ReadVerdict {
   if (d.length >= 15 && isIsraeliGtinPrefixed(d) && !gtinCheckDigitValid(d.slice(0, 13))) {
     return { ok: false, reason: 'checksum' };
   }
+  if (isGlattMisread(d)) return { ok: false, reason: 'misread' };
   return { ok: true };
+}
+
+/**
+ * Glatt (מ.ב. גלאט עוף למהדרין) carton codes, 25 digits:
+ *   1 · item code (5) · mid (6) · weight in 10 g (4) · serial (9)
+ * (lib/barcode-weight.ts reads the weight; the mids are the same list).
+ * `140010` is a units item: a valid code with no weight.
+ */
+export const GLATT_MIDS: readonly string[] = ['110010', '010010', '110610', '140010'];
+const GLATT_SHAPE = /^1(\d{5})(\d{6})(\d{4})(\d{9})$/;
+
+export interface GlattCode {
+  /** The supplier's 5-digit item code, e.g. `05086`. */
+  item: string;
+  mid: string;
+  /** The last 9 digits: unique per carton (879 of 879 in box_inventory, 01/11). */
+  serial: string;
+}
+
+/** A Glatt 25-digit code with one of Glatt's mids, else null. */
+export function parseGlattCode(code: string | null | undefined): GlattCode | null {
+  const m = GLATT_SHAPE.exec((code || '').trim());
+  if (!m || !GLATT_MIDS.includes(m[2])) return null;
+  return { item: m[1], mid: m[2], serial: m[4] };
+}
+
+/** Glatt-shaped (25 digits, leading `1`) but with a mid Glatt never prints. */
+export function isGlattMisread(code: string | null | undefined): boolean {
+  const m = GLATT_SHAPE.exec((code || '').trim());
+  return !!m && !GLATT_MIDS.includes(m[2]);
+}
+
+/**
+ * A digit string that is a damaged Glatt code: 20–27 digits that start with
+ * `1` or carry a Glatt mid, and are not themselves a valid Glatt code. The
+ * label photo's digits on 01/11 (`10147211001409065729707`,
+ * `4721100101530065729703`, `10157811001012830565414`, 22–23 digits) and the
+ * decoder's 24/26-digit reads in box_inventory are all this. Not `729…`
+ * (a GS1 catch-weight family of its own).
+ */
+export function looksLikeDamagedGlatt(code: string | null | undefined): boolean {
+  const d = (code || '').trim();
+  if (!/^\d{20,27}$/.test(d) || d.startsWith('729') || parseGlattCode(d)) return false;
+  return d.startsWith('1') || GLATT_MIDS.some((mid) => d.includes(mid));
+}
+
+/**
+ * The same Glatt carton under two strings: one is a valid Glatt code, the
+ * other is that code or a damaged one (looksLikeDamagedGlatt / a misread
+ * mid), and both end in the same 9-digit serial. A valid read and an earlier
+ * digit-misread of one carton (01/11: `4721100101530065729703` booked from a
+ * photo, `1014721100101530065729703` read by the camera) are one carton,
+ * never two.
+ */
+export function sameGlattCarton(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = (a || '').trim();
+  const y = (b || '').trim();
+  if (!x || !y) return false;
+  const loose = (d: string) => !!parseGlattCode(d) || looksLikeDamagedGlatt(d) || isGlattMisread(d);
+  const px = parseGlattCode(x);
+  const py = parseGlattCode(y);
+  if (!px && !py) return false;
+  if (!loose(x) || !loose(y)) return false;
+  return x.slice(-9) === y.slice(-9);
+}
+
+/** Is `code` on this set of codes, as itself or as the same Glatt carton? */
+export function hasCartonCode(codes: Iterable<string>, code: string | null | undefined): boolean {
+  const c = (code || '').trim();
+  if (!c) return false;
+  if (codes instanceof Set && codes.has(c)) return true;
+  for (const k of codes) if (k === c || sameGlattCarton(k, c)) return true;
+  return false;
+}
+
+/**
+ * Does a single read of `value` identify a carton of THIS note beyond doubt?
+ * (01/11, note 261062322.) On Glatt's thin print the decoders give a
+ * different misread almost every frame, so the valid string may be seen only
+ * once — and "two identical reads in 3 s" (lib/barcode-frame.ts) let it
+ * expire. A valid Glatt code (one of Glatt's mids) whose item code is one of
+ * the note's lines is trusted on one read. The item check is what refuses
+ * the two regex-valid misreads of that session (`1006781100101369069565401`,
+ * `1120671100101720069560708`: items 00678 / 12067, on no line).
+ *
+ * The 31-digit catch-weight family is NOT trusted on one read: a note line's
+ * item code is the supplier's short code, which the code's GTIN never equals
+ * (CLAUDE.md), so the "this note's line" check cannot be made for it.
+ */
+export function trustedSingleRead(
+  value: string,
+  lines: ReadonlyArray<{ item_code?: string | number | null }> | null | undefined,
+): boolean {
+  const g = parseGlattCode(value);
+  if (!g) return false;
+  const item = g.item.replace(/^0+/, '');
+  if (!item) return false;
+  return (lines ?? []).some((l) => digitsOf(l.item_code == null ? '' : String(l.item_code)).replace(/^0+/, '') === item);
+}
+
+/**
+ * The confirmer's read policy for an inbound list (lib/barcode-frame.ts
+ * ReadPolicy): a Glatt misread mid is ignored (never confirmed); a trusted
+ * single read (trustedSingleRead) confirms on one read — unless that carton
+ * is already on the list (`listed`). A carton already counted still needs two
+ * reads: one glimpse of it while the worker moves on would otherwise re-arm
+ * the scanner's 3 s cooldown and throw away the next carton's read (seen in
+ * the replay of session hceJxe4obaK2TgXOdVXfu, 01/11).
+ */
+export function inboundReadPolicy(
+  lines: () => ReadonlyArray<{ item_code?: string | number | null }> | null | undefined,
+  listed: () => Iterable<string>,
+): (value: string) => 'trust' | 'ignore' | undefined {
+  return (value: string) => {
+    const code = (value || '').trim();
+    if (isGlattMisread(code)) return 'ignore';
+    if (!trustedSingleRead(code, lines())) return undefined;
+    return hasCartonCode(listed(), code) ? undefined : 'trust';
+  };
+}
+
+/**
+ * Does a carton code pass its family's format check? Run silently on a
+ * photo's printed digits (manual capture) and on every booked code: the
+ * answer goes to the bot as `barcode_format_ok`, never to the worker.
+ *  * null  — no code, or a 6–11 digit serial (nothing to check);
+ *  * false — a read classifyRead refuses (short fragment, failed check
+ *    digit, a Glatt misread mid), a damaged Glatt code (looksLikeDamagedGlatt),
+ *    or a `729…` catch-weight code missing digits (26–30 long);
+ *  * true  — anything else.
+ */
+export function barcodeFormatOk(code: string | null | undefined): boolean | null {
+  const d = (code || '').trim();
+  if (!d) return null;
+  // A 6–11 digit per-carton serial (Wall Dan 408274) is booked only when the
+  // label photo confirmed it (labelConfirmsShortCode); it has no format to check.
+  if (/^\d{6,11}$/.test(d)) return null;
+  if (!classifyRead(d).ok) return false;
+  if (parseGlattCode(d)) return true;
+  if (looksLikeDamagedGlatt(d)) return false;
+  if (isIsraeliGtinPrefixed(d) && d.length >= 26 && d.length <= 30) return false;
+  return true;
 }
 
 /**
