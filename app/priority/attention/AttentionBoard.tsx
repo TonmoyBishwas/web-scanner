@@ -228,7 +228,7 @@ export function AttentionBoard() {
                 ))}
               </>
             )}
-            {load.fixes.length > 0 && (
+            {view === 'open' && load.fixes.length > 0 && (
               <section className="space-y-3 pt-2">
                 <h2 className="text-base font-extrabold">In Priority — lines to check there (last 7 days)</h2>
                 <p className="text-xs text-ink-muted">
