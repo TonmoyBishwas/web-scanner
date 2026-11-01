@@ -6,6 +6,7 @@ import { MI } from '@/components/terminal/MI';
 import {
   canMarkFound,
   canSendAgain,
+  closedLine,
   emptyStateText,
   errorClassText,
   fixLineText,
@@ -16,6 +17,7 @@ import {
   problemInfo,
   receiverLabel,
   type AttentionRow,
+  type ClosedAttentionRow,
   type FixDelivery,
 } from '@/lib/priority-attention';
 
@@ -29,7 +31,20 @@ interface Link {
 type Load =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; rows: AttentionRow[]; truncated: boolean; fixes: FixDelivery[]; fixesAvailable: boolean; at: Date };
+  | {
+      kind: 'ready';
+      rows: AttentionRow[];
+      truncated: boolean;
+      fixes: FixDelivery[];
+      fixesAvailable: boolean;
+      closed: ClosedAttentionRow[];
+      closedTruncated: boolean;
+      closedAvailable: boolean;
+      at: Date;
+    };
+
+/** Which problems the list shows: the open ones, or the ones closed for review (read-only). */
+type View = 'open' | 'closed';
 
 type Tone = 'danger' | 'warn' | 'muted';
 
@@ -65,6 +80,7 @@ export function AttentionBoard() {
     hasLink ? { kind: 'loading' } : { kind: 'error', message: 'Open this page from the link in the WhatsApp alert.' },
   );
   const [banner, setBanner] = useState<string | null>(null);
+  const [view, setView] = useState<View>('open');
   /** Bumped by Refresh and after an action; the effect below re-reads the list. */
   const [reloads, setReloads] = useState(0);
   const refresh = useCallback(() => setReloads((n) => n + 1), []);
@@ -74,7 +90,8 @@ export function AttentionBoard() {
     let cancelled = false;
     (async () => {
       try {
-        const q = new URLSearchParams({ u: link.u, exp: link.exp, sig: link.sig });
+        // closed=1: the closed rows come in the same read, so both counts are on the switch
+        const q = new URLSearchParams({ u: link.u, exp: link.exp, sig: link.sig, closed: '1' });
         const res = await fetch(`/api/priority/attention?${q.toString()}`, { cache: 'no-store' });
         const data = await res.json().catch(() => null);
         if (cancelled) return;
@@ -88,6 +105,9 @@ export function AttentionBoard() {
           truncated: data.truncated === true,
           fixes: Array.isArray(data.fixes) ? (data.fixes as FixDelivery[]) : [],
           fixesAvailable: data.fixes_available === true,
+          closed: Array.isArray(data.closed) ? (data.closed as ClosedAttentionRow[]) : [],
+          closedTruncated: data.closed_truncated === true,
+          closedAvailable: data.closed_available === true,
           at: new Date(),
         });
       } catch {
@@ -147,20 +167,67 @@ export function AttentionBoard() {
 
         {load.kind === 'ready' && (
           <>
-            <p className="text-xs text-ink-muted">
-              {load.rows.length === 0 ? emptyStateText(load.fixesAvailable) : `${load.rows.length} to look at`}
-              {' · updated '}
-              {formatIsraelTime(load.at.toISOString())}
-              {load.truncated && ' · showing the newest 200 only — tell Tonmoy'}
-            </p>
-            {load.rows.map((row, i) => (
-              <AttentionCard
-                key={`${row.problem}:${row.outbox_id ?? row.delivery_id ?? i}`}
-                row={row}
-                link={link}
-                onDone={onDone}
-              />
-            ))}
+            <div role="group" aria-label="Which problems to show" className="flex gap-2">
+              {(
+                [
+                  ['open', `Open (${load.rows.length})`],
+                  ['closed', `Closed (${load.closedAvailable ? load.closed.length : '—'})`],
+                ] as const
+              ).map(([v, label]) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  aria-pressed={view === v}
+                  className={
+                    view === v
+                      ? 'bg-brand text-ink-inverse border border-brand rounded-xl px-3 py-2 text-sm font-extrabold transition'
+                      : 'bg-tile border border-line-strong rounded-xl px-3 py-2 text-sm font-bold text-ink hover:bg-hover transition'
+                  }
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {view === 'open' ? (
+              <>
+                <p className="text-xs text-ink-muted">
+                  {load.rows.length === 0 ? emptyStateText(load.fixesAvailable) : `${load.rows.length} to look at`}
+                  {' · updated '}
+                  {formatIsraelTime(load.at.toISOString())}
+                  {load.truncated && ' · showing the newest 200 only — tell Tonmoy'}
+                </p>
+                {load.rows.map((row, i) => (
+                  <AttentionCard
+                    key={`${row.problem}:${row.outbox_id ?? row.delivery_id ?? i}`}
+                    row={row}
+                    link={link}
+                    onDone={onDone}
+                  />
+                ))}
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-ink-muted">
+                  {!load.closedAvailable
+                    ? 'The closed list cannot be read right now. Refresh; if it stays, tell Tonmoy.'
+                    : load.closed.length === 0
+                      ? 'Nothing has been closed.'
+                      : `${load.closed.length} closed — for review only. They are off this list and the daily summary; the receipts themselves were not changed.`}
+                  {' · updated '}
+                  {formatIsraelTime(load.at.toISOString())}
+                  {load.closedTruncated && ' · showing the newest 200 only'}
+                </p>
+                {load.closed.map((row, i) => (
+                  <AttentionCard
+                    key={`closed:${row.problem}:${row.outbox_id ?? row.delivery_id ?? i}`}
+                    row={row}
+                    link={link}
+                    onDone={onDone}
+                    closedText={closedLine(row)}
+                  />
+                ))}
+              </>
+            )}
             {load.fixes.length > 0 && (
               <section className="space-y-3 pt-2">
                 <h2 className="text-base font-extrabold">In Priority — lines to check there (last 7 days)</h2>
@@ -209,7 +276,25 @@ function FixCard({ fix }: { fix: FixDelivery }) {
   );
 }
 
-function AttentionCard({ row, link, onDone }: { row: AttentionRow; link: Link; onDone: (message: string) => void }) {
+/**
+ * One problem. With `closedText` (a row of the Closed view) the card is
+ * read-only: no Send again, no Mark as found, and one line saying when, by
+ * whom and why it was closed.
+ */
+function AttentionCard({
+  row,
+  link,
+  onDone,
+  closedText,
+}: {
+  row: AttentionRow;
+  link: Link;
+  onDone: (message: string) => void;
+  closedText?: string;
+}) {
+  const readOnly = closedText !== undefined;
+  const offerSendAgain = !readOnly && canSendAgain(row);
+  const offerMarkFound = !readOnly && canMarkFound(row);
   const info = problemInfo(row.problem);
   const tone = PROBLEM_TONE[row.problem] ?? 'muted';
   const gloss = errorClassText(row.error_class);
@@ -332,9 +417,15 @@ function AttentionCard({ row, link, onDone }: { row: AttentionRow; link: Link; o
         {info.check}
       </p>
 
-      {(canSendAgain(row) || canMarkFound(row)) && (
+      {readOnly && (
+        <p className={`border rounded-[11px] px-3 py-[10px] text-sm font-semibold ${TONE_CLASS.muted}`} dir="auto">
+          {closedText}
+        </p>
+      )}
+
+      {(offerSendAgain || offerMarkFound) && (
         <div className="flex flex-wrap gap-2">
-          {canSendAgain(row) && (
+          {offerSendAgain && (
             <button
               onClick={() => open('resend')}
               className="inline-flex items-center gap-1 bg-tile border border-line-strong rounded-xl px-3 py-2 text-sm font-bold text-ink hover:bg-hover transition"
@@ -342,7 +433,7 @@ function AttentionCard({ row, link, onDone }: { row: AttentionRow; link: Link; o
               <MI name="autorenew" size={16} /> Send again
             </button>
           )}
-          {canMarkFound(row) && (
+          {offerMarkFound && (
             <button
               onClick={() => open('found')}
               className="inline-flex items-center gap-1 bg-tile border border-line-strong rounded-xl px-3 py-2 text-sm font-bold text-ink hover:bg-hover transition"
