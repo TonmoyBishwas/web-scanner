@@ -14,13 +14,19 @@ const errors: Record<string, { message: string; code?: string }> = {};
 const fromCalls: string[] = [];
 /** Every .eq(column, value) a route's query made, with the table it was made on. */
 const eqCalls: { table: string; args: unknown[] }[] = [];
+/** Every .order(column, opts) a route's query made. */
+const orderCalls: { table: string; args: unknown[] }[] = [];
 
 /** supabase.from(table)…: every builder method returns the chain; awaiting it gives the table's rows. */
 function fakeFrom(table: string) {
   fromCalls.push(table);
   const result = errors[table] ? { data: null, error: errors[table] } : { data: tables[table] ?? [], error: null };
   const chain: Record<string, unknown> = {};
-  for (const m of ['select', 'gte', 'order', 'limit']) chain[m] = () => chain;
+  for (const m of ['select', 'gte', 'limit']) chain[m] = () => chain;
+  chain.order = (...args: unknown[]) => {
+    orderCalls.push({ table, args });
+    return chain;
+  };
   chain.eq = (...args: unknown[]) => {
     eqCalls.push({ table, args });
     return chain;
@@ -60,9 +66,11 @@ beforeEach(() => {
   rpc.mockReset();
   fromCalls.length = 0;
   eqCalls.length = 0;
+  orderCalls.length = 0;
   tables.users = [{ role: 'Admin', active: true }];
   tables.priority_push_attention_v = [{ outbox_id: 45, problem: 'failed' }];
   delete tables.delivery_gaps_v;
+  delete tables.priority_push_attention_closed_v;
   for (const k of Object.keys(errors)) delete errors[k];
 });
 afterEach(() => {
@@ -115,6 +123,71 @@ describe('GET /api/priority/attention', () => {
     expect(json.rows).toEqual([{ outbox_id: 45, problem: 'failed' }]);
     expect(json.fixes).toEqual([]);
     expect(json.fixes_available).toBe(false);
+  });
+
+  it('without ?closed=1 the closed view is not read and no closed keys are sent', async () => {
+    tables.priority_push_attention_closed_v = [{ outbox_id: 12, problem: 'held', closed_at: '2026-11-01T08:00:00Z' }];
+    const json = await (await get(`u=${U}&exp=${EXP}&sig=${SIG}&closed=0`)).json();
+    expect(fromCalls).not.toContain('priority_push_attention_closed_v');
+    expect(json).not.toHaveProperty('closed');
+    expect(json).not.toHaveProperty('closed_available');
+    expect(json).not.toHaveProperty('closed_truncated');
+  });
+
+  it('with ?closed=1 the closed rows come too, newest close first', async () => {
+    const closedRow = {
+      outbox_id: 12, problem: 'held', closed_at: '2026-11-01T08:00:00Z', closed_by: 'Dana', close_note: 'before 28/10',
+    };
+    tables.priority_push_attention_closed_v = [closedRow];
+    const res = await get(`u=${U}&exp=${EXP}&sig=${SIG}&closed=1`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      success: true,
+      rows: [{ outbox_id: 45, problem: 'failed' }],
+      truncated: false,
+      fixes: [],
+      fixes_available: true,
+      closed: [closedRow],
+      closed_truncated: false,
+      closed_available: true,
+    });
+    expect(fromCalls).toEqual(['users', 'priority_push_attention_v', 'delivery_gaps_v', 'priority_push_attention_closed_v']);
+    expect(orderCalls.filter((c) => c.table === 'priority_push_attention_closed_v')).toEqual([
+      { table: 'priority_push_attention_closed_v', args: ['closed_at', { ascending: false }] },
+    ]);
+  });
+
+  it('more than 200 closed rows: the newest 200, flagged', async () => {
+    tables.priority_push_attention_closed_v = Array.from({ length: 201 }, (_, i) => ({ outbox_id: i + 1, problem: 'held' }));
+    const json = await (await get(`u=${U}&exp=${EXP}&sig=${SIG}&closed=1`)).json();
+    expect(json.closed).toHaveLength(200);
+    expect(json.closed_truncated).toBe(true);
+  });
+
+  it('the closed view cannot be read: the open list still loads, closed is [] and not available', async () => {
+    const quiet = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    errors.priority_push_attention_closed_v = { message: 'relation "public.priority_push_attention_closed_v" does not exist', code: '42P01' };
+    const res = await get(`u=${U}&exp=${EXP}&sig=${SIG}&closed=1`);
+    quiet.mockRestore();
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.success).toBe(true);
+    expect(json.rows).toEqual([{ outbox_id: 45, problem: 'failed' }]);
+    expect(json.closed).toEqual([]);
+    expect(json.closed_available).toBe(false);
+  });
+
+  it('?closed=1 with a bad link → 401 and neither view is read', async () => {
+    const res = await get(`u=${U}&exp=${EXP}&sig=${'0'.repeat(64)}&closed=1`);
+    expect(res.status).toBe(401);
+    expect(fromCalls).toEqual([]);
+  });
+
+  it('?closed=1 for someone not an active Admin → 403 and the closed view is not read', async () => {
+    tables.users = [{ role: 'Manager', active: true }];
+    const res = await get(`u=${U}&exp=${EXP}&sig=${SIG}&closed=1`);
+    expect(res.status).toBe(403);
+    expect(fromCalls).toEqual(['users']);
   });
 
   it('a bad link → 401 before anything is read', async () => {
