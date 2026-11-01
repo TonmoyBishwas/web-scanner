@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { MI } from '@/components/terminal/MI';
 import {
+  attentionClosedEnabled,
   canMarkFound,
   canSendAgain,
   closedLine,
@@ -45,6 +46,9 @@ type Load =
 
 /** Which problems the list shows: the open ones, or the ones closed for review (read-only). */
 type View = 'open' | 'closed';
+
+/** The Open / Closed switch: off unless NEXT_PUBLIC_ATTENTION_CLOSED_ENABLED='true'; off = the page as on main. */
+const CLOSED_VIEW = attentionClosedEnabled();
 
 type Tone = 'danger' | 'warn' | 'muted';
 
@@ -91,7 +95,7 @@ export function AttentionBoard() {
     (async () => {
       try {
         // closed=1: the closed rows come in the same read, so both counts are on the switch
-        const q = new URLSearchParams({ u: link.u, exp: link.exp, sig: link.sig, closed: '1' });
+        const q = new URLSearchParams({ u: link.u, exp: link.exp, sig: link.sig, ...(CLOSED_VIEW ? { closed: '1' } : {}) });
         const res = await fetch(`/api/priority/attention?${q.toString()}`, { cache: 'no-store' });
         const data = await res.json().catch(() => null);
         if (cancelled) return;
@@ -167,6 +171,7 @@ export function AttentionBoard() {
 
         {load.kind === 'ready' && (
           <>
+            {CLOSED_VIEW && (
             <div role="group" aria-label="Which problems to show" className="flex gap-2">
               {(
                 [
@@ -188,7 +193,8 @@ export function AttentionBoard() {
                 </button>
               ))}
             </div>
-            {view === 'open' ? (
+            )}
+            {view === 'open' || !CLOSED_VIEW ? (
               <>
                 <p className="text-xs text-ink-muted">
                   {load.rows.length === 0 ? emptyStateText(load.fixesAvailable) : `${load.rows.length} to look at`}
@@ -228,7 +234,7 @@ export function AttentionBoard() {
                 ))}
               </>
             )}
-            {view === 'open' && load.fixes.length > 0 && (
+            {(view === 'open' || !CLOSED_VIEW) && load.fixes.length > 0 && (
               <section className="space-y-3 pt-2">
                 <h2 className="text-base font-extrabold">In Priority — lines to check there (last 7 days)</h2>
                 <p className="text-xs text-ink-muted">

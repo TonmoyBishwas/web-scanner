@@ -400,3 +400,17 @@ export function fixLineText(line: GapLine): string {
   if (line.item_not_linked) notes.push('item not linked to a Priority item');
   return [head, ...notes].join(' · ');
 }
+
+/**
+ * The Open / Closed switch on the Needs-attention page (and the API's
+ * `?closed=1`) is OFF unless NEXT_PUBLIC_ATTENTION_CLOSED_ENABLED is exactly
+ * 'true' (01/11). It waits for the client's design approval and ships
+ * together with the data close; until then the page and the API behave
+ * exactly as on main. The literal `process.env.NEXT_PUBLIC_…` read is what
+ * Next inlines into the client bundle.
+ */
+export function attentionClosedEnabled(
+  value: string | undefined = process.env.NEXT_PUBLIC_ATTENTION_CLOSED_ENABLED,
+): boolean {
+  return value === 'true';
+}

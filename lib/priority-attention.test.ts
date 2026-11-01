@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  attentionClosedEnabled,
   canMarkFound,
   canSendAgain,
   closedByLabel,
@@ -304,5 +305,15 @@ describe('closed rows (priority_push_attention_closed_v)', () => {
     expect(closedByLabel(null)).toBeNull();
     expect(closedByLabel('')).toBeNull();
     expect(closedLine({ closed_at: null, closed_by: 'admin:972528331573', close_note: null })).not.toContain('97252');
+  });
+});
+
+describe('attentionClosedEnabled (the Open / Closed switch flag)', () => {
+  it('is off unless the value is exactly "true"', () => {
+    expect(attentionClosedEnabled(undefined)).toBe(false);
+    expect(attentionClosedEnabled('')).toBe(false);
+    expect(attentionClosedEnabled('1')).toBe(false);
+    expect(attentionClosedEnabled('TRUE')).toBe(false);
+    expect(attentionClosedEnabled('true')).toBe(true);
   });
 });

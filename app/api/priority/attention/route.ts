@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { requireAdmin } from '@/lib/admin-auth';
-import { groupFixLines, type GapLine } from '@/lib/priority-attention';
+import { attentionClosedEnabled, groupFixLines, type GapLine } from '@/lib/priority-attention';
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
 
@@ -31,7 +31,9 @@ const MAX_FIX_LINES = 300;
  * closed_at, closed_by, close_note), newest close first, at most 200
  * (`closed`, `closed_truncated`). Read-only: closing is not done here. On a
  * read error `closed` is [] and `closed_available` false; the open list still
- * loads. Without `?closed=1` none of these three keys is sent.
+ * loads. Without `?closed=1` none of these three keys is sent, and none is
+ * while NEXT_PUBLIC_ATTENTION_CLOSED_ENABLED is not 'true' (the switch is off
+ * by default: lib/priority-attention.ts attentionClosedEnabled).
  *
  * Access: the signed link from the bot's office alert (lib/admin-link.ts)
  * AND the chat id is an active Admin in `users` (lib/admin-auth.ts).
@@ -68,7 +70,7 @@ export async function GET(request: NextRequest) {
     const fixes = gaps.error ? [] : groupFixLines((gaps.data ?? []) as GapLine[]);
 
     let closedPart = {};
-    if (p.get('closed') === '1') {
+    if (attentionClosedEnabled() && p.get('closed') === '1') {
       const closed = await supabase
         .from('priority_push_attention_closed_v')
         .select('*')

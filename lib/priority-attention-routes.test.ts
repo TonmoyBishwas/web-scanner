@@ -60,8 +60,11 @@ const post = (path: string, body: unknown) =>
   });
 
 let saved: string | undefined;
+let savedClosedFlag: string | undefined;
 beforeEach(() => {
   saved = process.env.ADMIN_LINK_SECRET;
+  savedClosedFlag = process.env.NEXT_PUBLIC_ATTENTION_CLOSED_ENABLED;
+  process.env.NEXT_PUBLIC_ATTENTION_CLOSED_ENABLED = 'true';
   process.env.ADMIN_LINK_SECRET = SECRET;
   rpc.mockReset();
   fromCalls.length = 0;
@@ -76,6 +79,8 @@ beforeEach(() => {
 afterEach(() => {
   if (saved === undefined) delete process.env.ADMIN_LINK_SECRET;
   else process.env.ADMIN_LINK_SECRET = saved;
+  if (savedClosedFlag === undefined) delete process.env.NEXT_PUBLIC_ATTENTION_CLOSED_ENABLED;
+  else process.env.NEXT_PUBLIC_ATTENTION_CLOSED_ENABLED = savedClosedFlag;
 });
 
 describe('GET /api/priority/attention', () => {
@@ -128,6 +133,16 @@ describe('GET /api/priority/attention', () => {
   it('without ?closed=1 the closed view is not read and no closed keys are sent', async () => {
     tables.priority_push_attention_closed_v = [{ outbox_id: 12, problem: 'held', closed_at: '2026-11-01T08:00:00Z' }];
     const json = await (await get(`u=${U}&exp=${EXP}&sig=${SIG}&closed=0`)).json();
+    expect(fromCalls).not.toContain('priority_push_attention_closed_v');
+    expect(json).not.toHaveProperty('closed');
+    expect(json).not.toHaveProperty('closed_available');
+    expect(json).not.toHaveProperty('closed_truncated');
+  });
+
+  it('with the switch off (flag unset, the default) ?closed=1 is ignored: the answer is main\'s', async () => {
+    delete process.env.NEXT_PUBLIC_ATTENTION_CLOSED_ENABLED;
+    tables.priority_push_attention_closed_v = [{ outbox_id: 12, problem: 'held', closed_at: '2026-11-01T08:00:00Z' }];
+    const json = await (await get(`u=${U}&exp=${EXP}&sig=${SIG}&closed=1`)).json();
     expect(fromCalls).not.toContain('priority_push_attention_closed_v');
     expect(json).not.toHaveProperty('closed');
     expect(json).not.toHaveProperty('closed_available');
