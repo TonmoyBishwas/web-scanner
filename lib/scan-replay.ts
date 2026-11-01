@@ -21,7 +21,7 @@
  * are not replayed.
  */
 import { ReadConfirmer, type ReadPolicy } from './barcode-frame';
-import { classifyRead, hasCartonCode, inboundReadPolicy, type ReadVerdict } from './carton-barcode';
+import { classifyRead, hasCartonCode, inboundReadPolicy, type NoteLine, type ReadVerdict } from './carton-barcode';
 
 export interface TraceRow {
   /** Event time, ms since epoch. */
@@ -90,8 +90,12 @@ export function oldRules(): ReplayRules {
   };
 }
 
-/** The rules from 01/11, with the note's lines for the one-read trust. */
-export function newRules(lines: ReadonlyArray<{ item_code?: string | number | null }>): ReplayRules {
+/**
+ * The rules from 01/11, with the note's lines for the one-read trust. The
+ * replay's list is the whole session (never cleared per pallet), which is
+ * the page's session anchors (sessionCodesRef).
+ */
+export function newRules(lines: ReadonlyArray<NoteLine>): ReplayRules {
   return {
     policy: (listed) => inboundReadPolicy(() => lines, () => listed),
     classify: classifyRead,
@@ -104,7 +108,8 @@ export interface ReplayOutcome {
   booked: Array<{ value: string; t: number; reads: number }>;
   refused: Array<{ value: string; t: number; reason: string }>;
   duplicates: Array<{ value: string; t: number }>;
-  cooldownDropped: Array<{ value: string; t: number }>;
+  /** Confirmed, then thrown away by the 3 s cooldown (`reads` = reads it had: 1 = a one-read trust). */
+  cooldownDropped: Array<{ value: string; t: number; reads: number }>;
 }
 
 export function replayFrames(frames: ReadonlyArray<ReplayFrame>, rules: ReplayRules): ReplayOutcome {
@@ -124,7 +129,7 @@ export function replayFrames(frames: ReadonlyArray<ReplayFrame>, rules: ReplayRu
       continue;
     }
     if (f.t - lastScanAt < WINDOW_MS) {
-      if (confirmed !== lastScanned) out.cooldownDropped.push({ value: confirmed, t: f.t });
+      if (confirmed !== lastScanned) out.cooldownDropped.push({ value: confirmed, t: f.t, reads: confirmedReads });
       continue;
     }
     lastScanAt = f.t;

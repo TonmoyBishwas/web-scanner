@@ -391,11 +391,40 @@ describe('ReadConfirmer — read policy', () => {
     expect(r.dropped.map((d) => [d.value, d.reason])).toEqual([['M', 'misread']]);
   });
 
-  it('the nearest trusted value wins a frame; an untrusted nearer value at 1 read does not', () => {
+  it('one read is trusted only for the read nearest the frame centre', () => {
+    const policy = (v: string) => (v === 'T' ? ('trust' as const) : undefined);
     const c = new ReadConfirmer(2, 3000);
-    const r = c.add([{ value: 'U', dist: 0.1 }, { value: 'T', dist: 0.3 }], 0, '', (v) => (v === 'T' ? 'trust' : undefined));
+    // T at the edge, U in the middle: T is not booked on one glimpse.
+    expect(c.add([{ value: 'U', dist: 0.1 }, { value: 'T', dist: 0.3 }], 0, '', policy).confirmed).toBeNull();
+    // A second read of T confirms it the usual way.
+    expect(c.add([{ value: 'U', dist: 0.3 }, { value: 'T', dist: 0.5 }], 50, '', policy).confirmed).not.toBeNull();
+    const d = new ReadConfirmer(2, 3000);
+    const r = d.add([{ value: 'T', dist: 0.1 }, { value: 'U', dist: 0.3 }], 0, '', policy);
     expect(r.confirmed).toBe('T');
-    expect(r.dropped.map((d) => d.value)).toEqual(['U']);
+    expect(r.dropped.map((x) => x.value)).toEqual(['U']);
+  });
+
+  it('the policy sees the other waiting reads and the rest of the frame', () => {
+    const seen: string[][] = [];
+    const c = new ReadConfirmer(2, 3000);
+    const policy = (v: string, ctx?: { pending: string[] }) => {
+      if (v === 'T') seen.push([...(ctx?.pending ?? [])].sort());
+      return undefined;
+    };
+    c.add([{ value: 'M', dist: 0 }], 0, '', policy);
+    c.add([{ value: 'T', dist: 0 }, { value: 'X', dist: 0.4 }], 10, '', policy);
+    expect(seen).toEqual([['M', 'X']]);
+  });
+
+  it('a single isolated read of a serial misread (session LGUtpTw2) does not confirm', () => {
+    const lines = [{ item_code: '1578' }, { item_code: '5086' }, { item_code: '7801' }];
+    // Meatball cartons counted on that note, serials 0679351xx, ~10.1 kg.
+    const listed = new Set(['1050861100101014067935118', '1050861100101012067935119', '1050861100101011067935120']);
+    const policy = inboundReadPolicy(() => lines, () => listed);
+    const c = new ReadConfirmer(2, 3000);
+    expect(c.add([{ value: '1050861100100814067902118', dist: 0 }], 0, 'e2e', policy).confirmed).toBeNull();
+    // The real next carton, read once, is trusted.
+    expect(c.add([{ value: '1050861100101013067935121', dist: 0 }], 5000, 'e2e', policy).confirmed).toBe('1050861100101013067935121');
   });
 });
 
@@ -454,7 +483,8 @@ describe('replay: session hceJxe4obaK2TgXOdVXfu (Glatt note 261062322)', () => {
   });
 
   it('a carton already on the list still needs two reads (one glimpse never re-arms the cooldown)', () => {
-    const listed = new Set<string>([VALID[0]]);
+    // A thigh carton next to VALID[1] is counted, so VALID[1] is trusted on one read.
+    const listed = new Set<string>([VALID[0], '1014721100101420065729702']);
     const policy = inboundReadPolicy(() => fx.lines, () => listed);
     const c = new ReadConfirmer(2, 3000);
     expect(c.add([{ value: VALID[0], dist: 0 }], 0, '', policy).confirmed).toBeNull();

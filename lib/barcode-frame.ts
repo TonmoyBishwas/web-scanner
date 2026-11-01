@@ -107,14 +107,23 @@ export type ReadDropReason = 'expired' | 'superseded' | 'claimed_by_carton_code'
  * What the page knows about one value before it is counted (01/11, Glatt
  * note 261062322):
  *  - `trust`  — a format-strict code of this note (lib/carton-barcode.ts
- *    trustedSingleRead): confirmed on ONE read. On Glatt's thin print the
- *    valid string was often seen once among different misreads, and expired.
+ *    trustedSingleRead): confirmed on ONE read — but only when it is the
+ *    read nearest the centre of its frame (a glimpse of a carton at the
+ *    edge, or on the next pallet, must not book it). On Glatt's thin print
+ *    the valid string was often seen once among different misreads, and
+ *    expired.
  *  - `ignore` — a read that can never be a carton (a Glatt mid Glatt never
  *    prints): counted for the trace only, never confirmed, so it can neither
  *    be booked nor arm the 3 s cooldown that would throw away the real code.
  *  - undefined — the two-reads rule, as before.
  */
-export type ReadPolicy = (value: string) => 'trust' | 'ignore' | undefined;
+export type ReadPolicy = (value: string, ctx?: ReadPolicyContext) => 'trust' | 'ignore' | undefined;
+
+/** What the confirmer tells the policy about a read. */
+export interface ReadPolicyContext {
+  /** The other values waiting in the confirmer, and the other reads of this frame. */
+  pending: string[];
+}
 
 /** A value the confirmer let go unconfirmed: seen `reads` times, first at `first` by `via`. */
 export interface DroppedRead {
@@ -171,15 +180,21 @@ export class ReadConfirmer {
     let confirmed: string | null = null;
     let confirmedFirstAt: number | null = null;
     let confirmedReads = 0;
-    for (const r of orderReads(reads)) {
+    const ordered = orderReads(reads);
+    for (let i = 0; i < ordered.length; i += 1) {
+      const r = ordered[i];
       const p = this.pending.get(r.value);
       const count = p ? p.count + 1 : 1;
       const first = p ? p.first : now;
-      const verdict = policy?.(r.value);
+      const others = new Set([...this.pending.keys(), ...ordered.map((o) => o.value)]);
+      others.delete(r.value);
+      const verdict = policy?.(r.value, { pending: [...others] });
       const ignored = verdict === 'ignore';
+      // One read is trusted only for the read nearest the frame's centre.
+      const trusted = verdict === 'trust' && i === 0;
       this.pending.set(r.value, { count, first, via: p ? p.via : via, ...(ignored ? { ignored } : {}) });
       // orderReads sorted by centre distance, so the first to confirm is the nearest.
-      if (confirmed === null && !ignored && (count >= this.need || verdict === 'trust')) {
+      if (confirmed === null && !ignored && (count >= this.need || trusted)) {
         confirmed = r.value;
         confirmedFirstAt = first;
         confirmedReads = count;
