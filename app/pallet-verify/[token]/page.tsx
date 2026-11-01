@@ -78,8 +78,7 @@ import { cartonOwnCodes, invoiceNameConflict, matchInvoiceItem } from '@/lib/inv
 import { labelPrintsWeight, uniformCandidate } from '@/lib/uniform-candidate';
 import { isSplitSession } from '@/lib/session-mode';
 import { findDuplicateOwner } from '@/lib/duplicate-guard';
-import { classifyRead, hasCartonCode, inboundReadPolicy, matchInvoiceShortCode, noteRepeatedRead, printedDigitsIdentifyCarton, shortCodeDefaults } from '@/lib/carton-barcode';
-import { photoDigitsDoubt } from '@/lib/barcode-provenance';
+import { classifyRead, hasCartonCode, inboundReadPolicy, matchInvoiceShortCode, parseGlattCode, noteRepeatedRead, printedDigitsIdentifyCarton, shortCodeDefaults } from '@/lib/carton-barcode';
 import type { ReadPolicy } from '@/lib/barcode-frame';
 import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
 import { cartonsOnListFor, listAboveTotal, newCartonQuantity, type ListAboveTotal } from '@/lib/count-check';
@@ -213,10 +212,7 @@ interface BoxScan extends MultiPalletBoxScan {
   // (lib/failed-read.ts isOpenRatioDoubt — client, 25/10). The row turns
   // amber with a reason; the review bar, the edit panel's "the weight is
   // correct" or an edit settles it.
-  // reason 'barcode' (01/11): a manual capture whose printed digits fail the
-  // format check (lib/barcode-provenance.ts photoDigitsDoubt) — the weight
-  // beside them is worth a look on the photo. A question, never a hold.
-  weight_suspect?: { typical?: number; reason: 'name_number' | 'ratio' | 'barcode'; name?: string };
+  weight_suspect?: { typical?: number; reason: 'name_number' | 'ratio'; name?: string };
   // The worker saved this carton in the edit panel: its weight is theirs.
   weight_checked?: boolean;
   // The carton's own code is one invoice line and its OCR'd name another
@@ -275,9 +271,6 @@ function weightWarningText(
   tr: Tr,
 ): string {
   const item = (b.item_name_hebrew || b.item_name || '').trim();
-  // The code under the photo did not check out: the existing "couldn't read
-  // the code — check the name/weight" line (no new text — freeze 20/10).
-  if (b.weight_suspect?.reason === 'barcode') return tr('palletVerify.needsReview');
   return b.weight_suspect?.typical
     ? tr('palletVerify.weightSuspectRatio', { item, w: b.weight, typical: b.weight_suspect.typical.toFixed(2) })
     : tr('palletVerify.weightSuspectName', { name: b.weight_suspect?.name || item, w: b.weight });
@@ -324,7 +317,6 @@ function cardNote(b: BoxScan, tr: Tr): string | undefined {
     return tr('palletVerify.reviewGeneric');
   }
   if (b.weight_suspect && !b.weight_checked) {
-    if (b.weight_suspect.reason === 'barcode') return tr('palletVerify.needsReview');
     return b.weight_suspect.typical
       ? tr('palletVerify.weightDoubtShortRatio', { typical: b.weight_suspect.typical.toFixed(2) })
       : tr('palletVerify.weightDoubtShortName', { w: b.weight });
@@ -585,6 +577,14 @@ export default function PalletVerifyPage({
   const looseBoxesRef = useRef<BoxScan[]>([]);
   useEffect(() => { scannedBoxesRef.current = scannedBoxes; }, [scannedBoxes]);
   useEffect(() => { looseBoxesRef.current = looseBoxes; }, [looseBoxes]);
+  // Every Glatt carton code counted in this session, any pallet (01/11): the
+  // one-read trust (lib/carton-barcode.ts trustedSingleRead) needs a carton of
+  // the same item nearby in serial and weight. Only grows; never shown.
+  const sessionCodesRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const b of scannedBoxes) if (parseGlattCode(b.barcode)) sessionCodesRef.current.add(b.barcode);
+    for (const b of looseBoxes) if (parseGlattCode(b.barcode)) sessionCodesRef.current.add(b.barcode);
+  }, [scannedBoxes, looseBoxes]);
   // The supplier's own shipping-pallet number, when its label was scanned on
   // this pallet. Pallet identity — never a carton (MEV-10).
   const [supplierPalletRef, setSupplierPalletRef] = useState<string>('');
@@ -1800,13 +1800,24 @@ export default function PalletVerifyPage({
   // valid string was often seen once among misreads, and expired); a Glatt
   // misread mid never confirms (it was booked once, and its cooldown would
   // throw the real code away).
-  // A carton already on the list still needs two reads (inboundReadPolicy).
+  // One read is trusted only next to a carton of the same item already
+  // counted (serial ±2000, weight ±15%) or beside another read of the same
+  // serial; a carton already on the list still needs two reads
+  // (inboundReadPolicy).
   const scannerReadPolicy = useMemo<ReadPolicy>(
-    () => inboundReadPolicy(() => invoiceItemsRef.current, () => processedRef.current),
+    () => inboundReadPolicy(
+      () => invoiceItemsRef.current,
+      () => processedRef.current,
+      () => [...sessionCodesRef.current, ...processedRef.current],
+    ),
     [],
   );
   const looseReadPolicy = useMemo<ReadPolicy>(
-    () => inboundReadPolicy(() => invoiceItemsRef.current, () => looseProcessedRef.current),
+    () => inboundReadPolicy(
+      () => invoiceItemsRef.current,
+      () => looseProcessedRef.current,
+      () => [...sessionCodesRef.current, ...looseProcessedRef.current],
+    ),
     [],
   );
 
@@ -2406,13 +2417,11 @@ export default function PalletVerifyPage({
               supplier_batch: data.ocr_data.supplier_batch || '',
               needs_review: needsReview || undefined,
               barcode_filled: reading && Object.keys(reading.filled).length ? reading.filled : undefined,
-              // Saved from the photo as always; its digits are checked
-              // silently (01/11). A failed check only turns the row amber
-              // (the edit panel opens on the weight beside the photo).
+              // Saved from the photo as always. Its digits are checked
+              // silently (01/11): the result goes to the bot only, as
+              // barcode_format_ok — never to the worker ("never through
+              // David", client).
               ...(fromPhotoDigits ? { barcode_source: 'photo_digits' as const } : {}),
-              ...(fromPhotoDigits && photoDigitsDoubt(resolvedBarcode, weight) && !b.weight_suspect
-                ? { weight_suspect: { reason: 'barcode' as const } }
-                : {}),
               // What the sticker OCR itself read, before any barcode override
               // (the route's ocr_weight_kg) — the barcode-vs-OCR weight check
               // (Mevaser, 28/10). Set here only; nothing later changes it.
@@ -4684,11 +4693,8 @@ export default function PalletVerifyPage({
               supplier_batch: data.ocr_data.supplier_batch || '',
               needs_review: needsReview || undefined,
               barcode_filled: reading && Object.keys(reading.filled).length ? reading.filled : undefined,
-              // See the pallet phase: photo digits checked silently.
+              // See the pallet phase: photo digits checked silently, for the bot only.
               ...(fromPhotoDigits ? { barcode_source: 'photo_digits' as const } : {}),
-              ...(fromPhotoDigits && photoDigitsDoubt(resolvedBarcode, weight) && !b.weight_suspect
-                ? { weight_suspect: { reason: 'barcode' as const } }
-                : {}),
               // See the pallet phase: the OCR's own weight, set here only.
               ocr_weight: rawOcrWeightKg(data.ocr_data.ocr_weight_kg),
             };
