@@ -1,0 +1,2665 @@
+{
+ "about": "Session hceJxe4obaK2TgXOdVXfu (Glatt note 261062322, 01/11): its scanner_events reads \u2014 scan_confirmed, read_dropped, cooldown_drop (value, reads, ms_from_first_read, reason, held_by, ms). Replayed by lib/barcode-frame.test.ts through lib/scan-replay.ts.",
+ "lines": [
+  {
+   "item_code": "1472"
+  },
+  {
+   "item_code": "1578"
+  },
+  {
+   "item_code": "5086"
+  }
+ ],
+ "rows": [
+  {
+   "ts": 1793528020322,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101014067936198",
+    "ms_from_first_read": 52
+   }
+  },
+  {
+   "ts": 1793528023318,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1050861100101014067936198",
+    "reason": "superseded",
+    "ms_from_first_read": 0
+   }
+  },
+  {
+   "ts": 1793528023318,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101420065729638",
+    "ms_from_first_read": 72
+   }
+  },
+  {
+   "ts": 1793528023319,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2996,
+    "value": "1014721100101420065729638",
+    "held_by": "1050861100101014067936198"
+   }
+  },
+  {
+   "ts": 1793528023666,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101420065729638",
+    "ms_from_first_read": 88
+   }
+  },
+  {
+   "ts": 1793528028148,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101420065729638",
+    "reason": "superseded",
+    "ms_from_first_read": 2059
+   }
+  },
+  {
+   "ts": 1793528028149,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101414069560743",
+    "ms_from_first_read": 36
+   }
+  },
+  {
+   "ts": 1793528031626,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101425069560703",
+    "ms_from_first_read": 324
+   }
+  },
+  {
+   "ts": 1793528042146,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101425069560703",
+    "reason": "expired",
+    "ms_from_first_read": 9630
+   }
+  },
+  {
+   "ts": 1793528042469,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101470065720247",
+    "ms_from_first_read": 322
+   }
+  },
+  {
+   "ts": 1793528046631,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101470065720247",
+    "reason": "expired",
+    "ms_from_first_read": 3391
+   }
+  },
+  {
+   "ts": 1793528052686,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101561065720698",
+    "ms_from_first_read": 1215
+   }
+  },
+  {
+   "ts": 1793528056263,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101561065720698",
+    "reason": "superseded",
+    "ms_from_first_read": 2970
+   }
+  },
+  {
+   "ts": 1793528056264,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101518065720245",
+    "ms_from_first_read": 43
+   }
+  },
+  {
+   "ts": 1793528058843,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101532065720700",
+    "ms_from_first_read": 40
+   }
+  },
+  {
+   "ts": 1793528058843,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2579,
+    "value": "1014721100101532065720700",
+    "held_by": "1014721100101518065720245"
+   }
+  },
+  {
+   "ts": 1793528059127,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101532065720700",
+    "ms_from_first_read": 40
+   }
+  },
+  {
+   "ts": 1793528059393,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101532065720700",
+    "ms_from_first_read": 33
+   }
+  },
+  {
+   "ts": 1793528062578,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101477069554526",
+    "ms_from_first_read": 46
+   }
+  },
+  {
+   "ts": 1793528065583,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101421065720190",
+    "ms_from_first_read": 52
+   }
+  },
+  {
+   "ts": 1793528068567,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101382069554163",
+    "ms_from_first_read": 247
+   }
+  },
+  {
+   "ts": 1793528068567,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2984,
+    "value": "1014721100101382069554163",
+    "held_by": "1014721100101421065720190"
+   }
+  },
+  {
+   "ts": 1793528068859,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101382069554163",
+    "ms_from_first_read": 248
+   }
+  },
+  {
+   "ts": 1793528072563,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101382069554163",
+    "reason": "expired",
+    "ms_from_first_read": 3003
+   }
+  },
+  {
+   "ts": 1793528072563,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101414069554484",
+    "ms_from_first_read": 254
+   }
+  },
+  {
+   "ts": 1793528076604,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101414069554484",
+    "reason": "expired",
+    "ms_from_first_read": 3675
+   }
+  },
+  {
+   "ts": 1793528076923,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101414069554484",
+    "ms_from_first_read": 316
+   }
+  },
+  {
+   "ts": 1793528086158,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101570069560730",
+    "ms_from_first_read": 41
+   }
+  },
+  {
+   "ts": 1793528089232,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101553069560725",
+    "ms_from_first_read": 36
+   }
+  },
+  {
+   "ts": 1793528092185,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101553069560725",
+    "reason": "superseded",
+    "ms_from_first_read": 2344
+   }
+  },
+  {
+   "ts": 1793528092185,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101529065729713",
+    "ms_from_first_read": 45
+   }
+  },
+  {
+   "ts": 1793528092185,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2952,
+    "value": "1014721100101529065729713",
+    "held_by": "1014721100101553069560725"
+   }
+  },
+  {
+   "ts": 1793528092477,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101529065729713",
+    "ms_from_first_read": 44
+   }
+  },
+  {
+   "ts": 1793528097188,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101416065720243",
+    "ms_from_first_read": 328
+   }
+  },
+  {
+   "ts": 1793528100341,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101439069560744",
+    "ms_from_first_read": 256
+   }
+  },
+  {
+   "ts": 1793528103324,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101439069560744",
+    "reason": "superseded",
+    "ms_from_first_read": 2550
+   }
+  },
+  {
+   "ts": 1793528103325,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101543069560704",
+    "ms_from_first_read": 322
+   }
+  },
+  {
+   "ts": 1793528103325,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2984,
+    "value": "1014721100101543069560704",
+    "held_by": "1014721100101439069560744"
+   }
+  },
+  {
+   "ts": 1793528103624,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101543069560704",
+    "ms_from_first_read": 256
+   }
+  },
+  {
+   "ts": 1793528108208,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101543069560704",
+    "reason": "expired",
+    "ms_from_first_read": 4210
+   }
+  },
+  {
+   "ts": 1793528108502,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "12024534",
+    "reason": "superseded",
+    "ms_from_first_read": 1767
+   }
+  },
+  {
+   "ts": 1793528108503,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101443065720715",
+    "ms_from_first_read": 294
+   }
+  },
+  {
+   "ts": 1793528111066,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101443065720715",
+    "reason": "superseded",
+    "ms_from_first_read": 1935
+   }
+  },
+  {
+   "ts": 1793528111067,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101550065720704",
+    "ms_from_first_read": 43
+   }
+  },
+  {
+   "ts": 1793528111067,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2564,
+    "value": "1014721100101550065720704",
+    "held_by": "1014721100101443065720715"
+   }
+  },
+  {
+   "ts": 1793528111356,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101550065720704",
+    "ms_from_first_read": 44
+   }
+  },
+  {
+   "ts": 1793528111640,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101550065720704",
+    "ms_from_first_read": 36
+   }
+  },
+  {
+   "ts": 1793528114063,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101550065720704",
+    "reason": "superseded",
+    "ms_from_first_read": 1827
+   }
+  },
+  {
+   "ts": 1793528114063,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101560065720707",
+    "ms_from_first_read": 248
+   }
+  },
+  {
+   "ts": 1793528114063,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2423,
+    "value": "1014721100101560065720707",
+    "held_by": "1014721100101550065720704"
+   }
+  },
+  {
+   "ts": 1793528114368,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101560065720707",
+    "ms_from_first_read": 263
+   }
+  },
+  {
+   "ts": 1793528114666,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101560065720707",
+    "ms_from_first_read": 250
+   }
+  },
+  {
+   "ts": 1793528119204,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101493069554525",
+    "ms_from_first_read": 253
+   }
+  },
+  {
+   "ts": 1793528122463,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101493069554525",
+    "reason": "superseded",
+    "ms_from_first_read": 2099
+   }
+  },
+  {
+   "ts": 1793528122463,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101540065720703",
+    "ms_from_first_read": 362
+   }
+  },
+  {
+   "ts": 1793528125703,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101540065720703",
+    "reason": "superseded",
+    "ms_from_first_read": 2569
+   }
+  },
+  {
+   "ts": 1793528125704,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101531065720702",
+    "ms_from_first_read": 271
+   }
+  },
+  {
+   "ts": 1793528130155,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101448069554482",
+    "ms_from_first_read": 292
+   }
+  },
+  {
+   "ts": 1793528132522,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101421069554483",
+    "ms_from_first_read": 251
+   }
+  },
+  {
+   "ts": 1793528132522,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2368,
+    "value": "1014721100101421069554483",
+    "held_by": "1014721100101448069554482"
+   }
+  },
+  {
+   "ts": 1793528132816,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101421069554483",
+    "ms_from_first_read": 260
+   }
+  },
+  {
+   "ts": 1793528133094,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101421069554483",
+    "ms_from_first_read": 239
+   }
+  },
+  {
+   "ts": 1793528133377,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101421069554483",
+    "ms_from_first_read": 238
+   }
+  },
+  {
+   "ts": 1793528136204,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101421069554483",
+    "reason": "superseded",
+    "ms_from_first_read": 2091
+   }
+  },
+  {
+   "ts": 1793528136205,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101499065720186",
+    "ms_from_first_read": 29
+   }
+  },
+  {
+   "ts": 1793528136205,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2828,
+    "value": "1014721100101499065720186",
+    "held_by": "1014721100101421069554483"
+   }
+  },
+  {
+   "ts": 1793528136779,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101499065720186",
+    "ms_from_first_read": 308
+   }
+  },
+  {
+   "ts": 1793528140027,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101499065720186",
+    "reason": "superseded",
+    "ms_from_first_read": 2454
+   }
+  },
+  {
+   "ts": 1793528140027,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101395069554165",
+    "ms_from_first_read": 35
+   }
+  },
+  {
+   "ts": 1793528143044,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": ",*.h+**-\u007f&\u007fV0/&",
+    "reason": "superseded",
+    "ms_from_first_read": 1787
+   }
+  },
+  {
+   "ts": 1793528143044,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101395069554165",
+    "reason": "superseded",
+    "ms_from_first_read": 1461
+   }
+  },
+  {
+   "ts": 1793528143044,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101382069554168",
+    "ms_from_first_read": 296
+   }
+  },
+  {
+   "ts": 1793528146158,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101382069554168",
+    "ms_from_first_read": 39
+   }
+  },
+  {
+   "ts": 1793528149241,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101382069554168",
+    "ms_from_first_read": 250
+   }
+  },
+  {
+   "ts": 1793528156169,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101391069554164",
+    "ms_from_first_read": 844
+   }
+  },
+  {
+   "ts": 1793528166854,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1120671100101720069560708",
+    "reason": "superseded",
+    "ms_from_first_read": 324
+   }
+  },
+  {
+   "ts": 1793528166854,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101720069560708",
+    "ms_from_first_read": 35
+   }
+  },
+  {
+   "ts": 1793528172572,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101527065729710",
+    "ms_from_first_read": 578
+   }
+  },
+  {
+   "ts": 1793528175461,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101527065729710",
+    "reason": "superseded",
+    "ms_from_first_read": 2524
+   }
+  },
+  {
+   "ts": 1793528175462,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101437065720241",
+    "ms_from_first_read": 33
+   }
+  },
+  {
+   "ts": 1793528175462,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2890,
+    "value": "1014721100101437065720241",
+    "held_by": "1014721100101527065729710"
+   }
+  },
+  {
+   "ts": 1793528175804,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101437065720241",
+    "ms_from_first_read": 47
+   }
+  },
+  {
+   "ts": 1793528181136,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101437065720241",
+    "reason": "expired",
+    "ms_from_first_read": 4070
+   }
+  },
+  {
+   "ts": 1793528181403,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101511065720714",
+    "ms_from_first_read": 267
+   }
+  },
+  {
+   "ts": 1793528185229,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101511065720714",
+    "reason": "expired",
+    "ms_from_first_read": 3097
+   }
+  },
+  {
+   "ts": 1793528185229,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101539065720705",
+    "ms_from_first_read": 422
+   }
+  },
+  {
+   "ts": 1793528187558,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101539065720705",
+    "reason": "superseded",
+    "ms_from_first_read": 1697
+   }
+  },
+  {
+   "ts": 1793528187559,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101513069554529",
+    "ms_from_first_read": 35
+   }
+  },
+  {
+   "ts": 1793528187559,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2329,
+    "value": "1014721100101513069554529",
+    "held_by": "1014721100101539065720705"
+   }
+  },
+  {
+   "ts": 1793528188139,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101513069554529",
+    "ms_from_first_read": 286
+   }
+  },
+  {
+   "ts": 1793528188473,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101513069554529",
+    "ms_from_first_read": 282
+   }
+  },
+  {
+   "ts": 1793528191167,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101509065720188",
+    "ms_from_first_read": 285
+   }
+  },
+  {
+   "ts": 1793528191167,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2694,
+    "value": "1014721100101509065720188",
+    "held_by": "1014721100101513069554529"
+   }
+  },
+  {
+   "ts": 1793528191489,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101509065720188",
+    "ms_from_first_read": 273
+   }
+  },
+  {
+   "ts": 1793528196485,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101509065720188",
+    "ms_from_first_read": 2505
+   }
+  },
+  {
+   "ts": 1793528200707,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101509065720188",
+    "ms_from_first_read": 35
+   }
+  },
+  {
+   "ts": 1793528205223,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101509065720188",
+    "reason": "expired",
+    "ms_from_first_read": 3379
+   }
+  },
+  {
+   "ts": 1793528205481,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101430065720187",
+    "ms_from_first_read": 257
+   }
+  },
+  {
+   "ts": 1793528208014,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101430065720187",
+    "reason": "superseded",
+    "ms_from_first_read": 1811
+   }
+  },
+  {
+   "ts": 1793528208014,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101392069554147",
+    "ms_from_first_read": 252
+   }
+  },
+  {
+   "ts": 1793528208014,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2533,
+    "value": "1014721100101392069554147",
+    "held_by": "1014721100101430065720187"
+   }
+  },
+  {
+   "ts": 1793528208685,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101392069554147",
+    "ms_from_first_read": 358
+   }
+  },
+  {
+   "ts": 1793528226202,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101514065729716",
+    "ms_from_first_read": 39
+   }
+  },
+  {
+   "ts": 1793528229021,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101514065729716",
+    "reason": "superseded",
+    "ms_from_first_read": 1886
+   }
+  },
+  {
+   "ts": 1793528229021,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101586065729724",
+    "ms_from_first_read": 237
+   }
+  },
+  {
+   "ts": 1793528229021,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2819,
+    "value": "1014721100101586065729724",
+    "held_by": "1014721100101514065729716"
+   }
+  },
+  {
+   "ts": 1793528229307,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101586065729724",
+    "ms_from_first_read": 255
+   }
+  },
+  {
+   "ts": 1793528232153,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101725069560724",
+    "ms_from_first_read": 309
+   }
+  },
+  {
+   "ts": 1793528232153,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2846,
+    "value": "1014721100101725069560724",
+    "held_by": "1014721100101586065729724"
+   }
+  },
+  {
+   "ts": 1793528232478,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101725069560724",
+    "ms_from_first_read": 41
+   }
+  },
+  {
+   "ts": 1793528236871,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101725069560724",
+    "reason": "expired",
+    "ms_from_first_read": 3619
+   }
+  },
+  {
+   "ts": 1793528236920,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101510065720250",
+    "ms_from_first_read": 47
+   }
+  },
+  {
+   "ts": 1793528240681,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101562065720706",
+    "ms_from_first_read": 932
+   }
+  },
+  {
+   "ts": 1793528244555,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101562065720706",
+    "reason": "expired",
+    "ms_from_first_read": 3155
+   }
+  },
+  {
+   "ts": 1793528244555,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101494065720716",
+    "ms_from_first_read": 285
+   }
+  },
+  {
+   "ts": 1793528249353,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101562065720701",
+    "ms_from_first_read": 248
+   }
+  },
+  {
+   "ts": 1793528252103,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101562065720701",
+    "reason": "superseded",
+    "ms_from_first_read": 2052
+   }
+  },
+  {
+   "ts": 1793528252103,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101525065720699",
+    "ms_from_first_read": 382
+   }
+  },
+  {
+   "ts": 1793528252104,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2750,
+    "value": "1014721100101525065720699",
+    "held_by": "1014721100101562065720701"
+   }
+  },
+  {
+   "ts": 1793528252418,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101525065720699",
+    "ms_from_first_read": 38
+   }
+  },
+  {
+   "ts": 1793528256081,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101539069554523",
+    "ms_from_first_read": 414
+   }
+  },
+  {
+   "ts": 1793528261123,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101477069554524",
+    "ms_from_first_read": 46
+   }
+  },
+  {
+   "ts": 1793528264369,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101477069554524",
+    "reason": "superseded",
+    "ms_from_first_read": 2654
+   }
+  },
+  {
+   "ts": 1793528264369,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101422069554527",
+    "ms_from_first_read": 274
+   }
+  },
+  {
+   "ts": 1793528268418,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101422069554527",
+    "reason": "expired",
+    "ms_from_first_read": 3260
+   }
+  },
+  {
+   "ts": 1793528268418,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101522069554528",
+    "ms_from_first_read": 270
+   }
+  },
+  {
+   "ts": 1793528272907,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101522069554528",
+    "reason": "expired",
+    "ms_from_first_read": 3803
+   }
+  },
+  {
+   "ts": 1793528273227,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101368065720189",
+    "ms_from_first_read": 319
+   }
+  },
+  {
+   "ts": 1793528276721,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101368065720189",
+    "reason": "expired",
+    "ms_from_first_read": 3057
+   }
+  },
+  {
+   "ts": 1793528276721,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101390069554148",
+    "ms_from_first_read": 267
+   }
+  },
+  {
+   "ts": 1793528280171,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101390069554148",
+    "reason": "superseded",
+    "ms_from_first_read": 2755
+   }
+  },
+  {
+   "ts": 1793528280171,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101399069554150",
+    "ms_from_first_read": 244
+   }
+  },
+  {
+   "ts": 1793528286583,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101399069554150",
+    "reason": "expired",
+    "ms_from_first_read": 5730
+   }
+  },
+  {
+   "ts": 1793528331587,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101439069560744",
+    "reason": "expired",
+    "ms_from_first_read": 6841
+   }
+  },
+  {
+   "ts": 1793528346568,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101439069560744",
+    "reason": "expired",
+    "ms_from_first_read": 13257
+   }
+  },
+  {
+   "ts": 1793528498125,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "4212941124141",
+    "reason": "expired",
+    "ms_from_first_read": 3904
+   }
+  },
+  {
+   "ts": 1793528498454,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101015067936191",
+    "ms_from_first_read": 329
+   }
+  },
+  {
+   "ts": 1793528505746,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101012067936205",
+    "ms_from_first_read": 367
+   }
+  },
+  {
+   "ts": 1793528508912,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101012067936164",
+    "ms_from_first_read": 317
+   }
+  },
+  {
+   "ts": 1793528511840,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1050861100101012067936164",
+    "reason": "superseded",
+    "ms_from_first_read": 2287
+   }
+  },
+  {
+   "ts": 1793528511840,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101014067936168",
+    "ms_from_first_read": 278
+   }
+  },
+  {
+   "ts": 1793528511841,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2929,
+    "value": "1050861100101014067936168",
+    "held_by": "1050861100101012067936164"
+   }
+  },
+  {
+   "ts": 1793528512173,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101014067936168",
+    "ms_from_first_read": 284
+   }
+  },
+  {
+   "ts": 1793528520373,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1050861100101014067936168",
+    "reason": "expired",
+    "ms_from_first_read": 7456
+   }
+  },
+  {
+   "ts": 1793528520687,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861115101001067936150",
+    "ms_from_first_read": 313
+   }
+  },
+  {
+   "ts": 1793528523975,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1050861100101011067936150",
+    "reason": "expired",
+    "ms_from_first_read": 3231
+   }
+  },
+  {
+   "ts": 1793528524015,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101014067936153",
+    "ms_from_first_read": 41
+   }
+  },
+  {
+   "ts": 1793528526917,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101369069565401",
+    "ms_from_first_read": 719
+   }
+  },
+  {
+   "ts": 1793528526917,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2901,
+    "value": "1015781100101369069565401",
+    "held_by": "1050861100101014067936153"
+   }
+  },
+  {
+   "ts": 1793528527579,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1006781100101369069565401",
+    "reason": "superseded",
+    "ms_from_first_read": 348
+   }
+  },
+  {
+   "ts": 1793528527580,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101369069565401",
+    "ms_from_first_read": 42
+   }
+  },
+  {
+   "ts": 1793528553384,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "101578110010128357956541y",
+    "reason": "expired",
+    "ms_from_first_read": 8118
+   }
+  },
+  {
+   "ts": 1793528559919,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101308069565998",
+    "ms_from_first_read": 267
+   }
+  },
+  {
+   "ts": 1793528565539,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1015781100101308069565998",
+    "reason": "expired",
+    "ms_from_first_read": 5215
+   }
+  },
+  {
+   "ts": 1793528565841,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101563065729701",
+    "ms_from_first_read": 303
+   }
+  },
+  {
+   "ts": 1793528570546,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101563065729701",
+    "reason": "expired",
+    "ms_from_first_read": 4284
+   }
+  },
+  {
+   "ts": 1793528570826,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101541065729704",
+    "ms_from_first_read": 279
+   }
+  },
+  {
+   "ts": 1793528578595,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101541065729704",
+    "reason": "expired",
+    "ms_from_first_read": 7033
+   }
+  },
+  {
+   "ts": 1793528578643,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101426069560126",
+    "ms_from_first_read": 47
+   }
+  },
+  {
+   "ts": 1793528586736,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101417069560059",
+    "ms_from_first_read": 329
+   }
+  },
+  {
+   "ts": 1793528594379,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101417069560059",
+    "reason": "expired",
+    "ms_from_first_read": 6989
+   }
+  },
+  {
+   "ts": 1793528594418,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101414069560131",
+    "ms_from_first_read": 38
+   }
+  },
+  {
+   "ts": 1793528601445,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101012067936197",
+    "ms_from_first_read": 377
+   }
+  },
+  {
+   "ts": 1793528604308,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101015067936190",
+    "ms_from_first_read": 290
+   }
+  },
+  {
+   "ts": 1793528604308,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2863,
+    "value": "1050861100101015067936190",
+    "held_by": "1050861100101012067936197"
+   }
+  },
+  {
+   "ts": 1793528604644,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101015067936190",
+    "ms_from_first_read": 299
+   }
+  },
+  {
+   "ts": 1793528608125,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101016067936221",
+    "ms_from_first_read": 408
+   }
+  },
+  {
+   "ts": 1793528611442,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101012067936140",
+    "ms_from_first_read": 305
+   }
+  },
+  {
+   "ts": 1793528614900,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101012067936161",
+    "ms_from_first_read": 373
+   }
+  },
+  {
+   "ts": 1793528621118,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101399074264120",
+    "ms_from_first_read": 48
+   }
+  },
+  {
+   "ts": 1793528624353,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101391074264123",
+    "ms_from_first_read": 266
+   }
+  },
+  {
+   "ts": 1793528626975,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1015781100101391074264123",
+    "reason": "superseded",
+    "ms_from_first_read": 1569
+   }
+  },
+  {
+   "ts": 1793528626975,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101013067936141",
+    "ms_from_first_read": 40
+   }
+  },
+  {
+   "ts": 1793528626976,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2622,
+    "value": "1050861100101013067936141",
+    "held_by": "1015781100101391074264123"
+   }
+  },
+  {
+   "ts": 1793528627866,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101013067936141",
+    "ms_from_first_read": 275
+   }
+  },
+  {
+   "ts": 1793528630295,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101359069565413",
+    "ms_from_first_read": 50
+   }
+  },
+  {
+   "ts": 1793528630295,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2429,
+    "value": "1015781100101359069565413",
+    "held_by": "1050861100101013067936141"
+   }
+  },
+  {
+   "ts": 1793528630646,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101359069565413",
+    "ms_from_first_read": 50
+   }
+  },
+  {
+   "ts": 1793528630967,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101359069565413",
+    "ms_from_first_read": 34
+   }
+  },
+  {
+   "ts": 1793528633593,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1015781100101359069565413",
+    "reason": "superseded",
+    "ms_from_first_read": 1992
+   }
+  },
+  {
+   "ts": 1793528633594,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101385074264121",
+    "ms_from_first_read": 320
+   }
+  },
+  {
+   "ts": 1793528633594,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2627,
+    "value": "1015781100101385074264121",
+    "held_by": "1015781100101359069565413"
+   }
+  },
+  {
+   "ts": 1793528633924,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101385074264121",
+    "ms_from_first_read": 53
+   }
+  },
+  {
+   "ts": 1793528634298,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101385074264121",
+    "ms_from_first_read": 14
+   }
+  },
+  {
+   "ts": 1793528639211,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101297069565406",
+    "ms_from_first_read": 315
+   }
+  },
+  {
+   "ts": 1793528643384,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1015781100101297069565406",
+    "reason": "expired",
+    "ms_from_first_read": 3238
+   }
+  },
+  {
+   "ts": 1793528646138,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101313069566016",
+    "ms_from_first_read": 280
+   }
+  },
+  {
+   "ts": 1793528650336,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1015781100101313069566016",
+    "reason": "expired",
+    "ms_from_first_read": 3362
+   }
+  },
+  {
+   "ts": 1793528650615,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101023074264295",
+    "ms_from_first_read": 280
+   }
+  },
+  {
+   "ts": 1793528654190,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101689069565420",
+    "ms_from_first_read": 716
+   }
+  },
+  {
+   "ts": 1793528658645,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101426069560124",
+    "ms_from_first_read": 334
+   }
+  },
+  {
+   "ts": 1793528662723,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101426069560124",
+    "reason": "superseded",
+    "ms_from_first_read": 2946
+   }
+  },
+  {
+   "ts": 1793528662723,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101415074259647",
+    "ms_from_first_read": 347
+   }
+  },
+  {
+   "ts": 1793528667994,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101418069560130",
+    "ms_from_first_read": 271
+   }
+  },
+  {
+   "ts": 1793528671143,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101412069560119",
+    "ms_from_first_read": 289
+   }
+  },
+  {
+   "ts": 1793528674697,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101412069560119",
+    "ms_from_first_read": 2430
+   }
+  },
+  {
+   "ts": 1793528679089,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101411069560121",
+    "ms_from_first_read": 282
+   }
+  },
+  {
+   "ts": 1793528688770,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "35031100101530065729703",
+    "reason": "expired",
+    "ms_from_first_read": 3198
+   }
+  },
+  {
+   "ts": 1793528703384,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101530065729703",
+    "reason": "expired",
+    "ms_from_first_read": 14614
+   }
+  },
+  {
+   "ts": 1793528707048,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101014067936159",
+    "ms_from_first_read": 605
+   }
+  },
+  {
+   "ts": 1793528712709,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1050861100101014067936159",
+    "reason": "expired",
+    "ms_from_first_read": 5243
+   }
+  },
+  {
+   "ts": 1793528712993,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101016067936192",
+    "ms_from_first_read": 283
+   }
+  },
+  {
+   "ts": 1793528716337,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101015067936177",
+    "ms_from_first_read": 350
+   }
+  },
+  {
+   "ts": 1793528720112,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1050861100101015067936177",
+    "reason": "expired",
+    "ms_from_first_read": 3165
+   }
+  },
+  {
+   "ts": 1793528720170,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101012067936147",
+    "ms_from_first_read": 58
+   }
+  },
+  {
+   "ts": 1793528724289,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101514074264125",
+    "ms_from_first_read": 42
+   }
+  },
+  {
+   "ts": 1793528729049,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101012067936179",
+    "ms_from_first_read": 59
+   }
+  },
+  {
+   "ts": 1793528733674,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101492074264296",
+    "ms_from_first_read": 370
+   }
+  },
+  {
+   "ts": 1793528737569,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1015781100101492074264296",
+    "reason": "expired",
+    "ms_from_first_read": 3217
+   }
+  },
+  {
+   "ts": 1793528737607,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101437074264350",
+    "ms_from_first_read": 38
+   }
+  },
+  {
+   "ts": 1793528742614,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1015781100101437074264350",
+    "reason": "expired",
+    "ms_from_first_read": 4079
+   }
+  },
+  {
+   "ts": 1793528748403,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1349222118520",
+    "reason": "expired",
+    "ms_from_first_read": 5789
+   }
+  },
+  {
+   "ts": 1793528748403,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101409065729707",
+    "reason": "expired",
+    "ms_from_first_read": 3711
+   }
+  },
+  {
+   "ts": 1793528798045,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1015781100101437074264350",
+    "reason": "expired",
+    "ms_from_first_read": 4175
+   }
+  },
+  {
+   "ts": 1793528798361,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101371069566004",
+    "ms_from_first_read": 316
+   }
+  },
+  {
+   "ts": 1793528802716,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101432065729699",
+    "ms_from_first_read": 292
+   }
+  },
+  {
+   "ts": 1793528808384,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101432065729699",
+    "reason": "expired",
+    "ms_from_first_read": 4632
+   }
+  },
+  {
+   "ts": 1793528812593,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100231407699560120",
+    "reason": "superseded",
+    "ms_from_first_read": 718
+   }
+  },
+  {
+   "ts": 1793528812593,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101407069560120",
+    "ms_from_first_read": 675
+   }
+  },
+  {
+   "ts": 1793528817712,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "2107711151217",
+    "reason": "superseded",
+    "ms_from_first_read": 0
+   }
+  },
+  {
+   "ts": 1793528817713,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101407069560122",
+    "ms_from_first_read": 56
+   }
+  },
+  {
+   "ts": 1793528823385,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101407069560122",
+    "reason": "expired",
+    "ms_from_first_read": 4702
+   }
+  },
+  {
+   "ts": 1793528823854,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101393069560058",
+    "ms_from_first_read": 299
+   }
+  },
+  {
+   "ts": 1793528838395,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101393069560058",
+    "reason": "expired",
+    "ms_from_first_read": 13436
+   }
+  },
+  {
+   "ts": 1793528840857,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101014067936195",
+    "ms_from_first_read": 599
+   }
+  },
+  {
+   "ts": 1793528844195,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1050861100101014067936195",
+    "reason": "superseded",
+    "ms_from_first_read": 2535
+   }
+  },
+  {
+   "ts": 1793528844196,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101013067936207",
+    "ms_from_first_read": 302
+   }
+  },
+  {
+   "ts": 1793528846998,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1050861100101013067936207",
+    "reason": "superseded",
+    "ms_from_first_read": 2004
+   }
+  },
+  {
+   "ts": 1793528846999,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101014067936166",
+    "ms_from_first_read": 401
+   }
+  },
+  {
+   "ts": 1793528846999,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2803,
+    "value": "1050861100101014067936166",
+    "held_by": "1050861100101013067936207"
+   }
+  },
+  {
+   "ts": 1793528847309,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101014067936166",
+    "ms_from_first_read": 45
+   }
+  },
+  {
+   "ts": 1793528850433,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1050861100101014067936166",
+    "reason": "superseded",
+    "ms_from_first_read": 2163
+   }
+  },
+  {
+   "ts": 1793528850434,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101014067936149",
+    "ms_from_first_read": 282
+   }
+  },
+  {
+   "ts": 1793528853458,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1050861100101014067936149",
+    "reason": "superseded",
+    "ms_from_first_read": 1623
+   }
+  },
+  {
+   "ts": 1793528853458,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101013067936155",
+    "ms_from_first_read": 266
+   }
+  },
+  {
+   "ts": 1793528856736,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101013067936155",
+    "ms_from_first_read": 340
+   }
+  },
+  {
+   "ts": 1793528859944,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101013067936155",
+    "ms_from_first_read": 292
+   }
+  },
+  {
+   "ts": 1793528862261,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101013067936148",
+    "ms_from_first_read": 314
+   }
+  },
+  {
+   "ts": 1793528862262,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2317,
+    "value": "1050861100101013067936148",
+    "held_by": "1050861100101013067936155"
+   }
+  },
+  {
+   "ts": 1793528862590,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101013067936148",
+    "ms_from_first_read": 293
+   }
+  },
+  {
+   "ts": 1793528862908,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101013067936148",
+    "ms_from_first_read": 276
+   }
+  },
+  {
+   "ts": 1793528863246,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1050861100101013067936148",
+    "ms_from_first_read": 286
+   }
+  },
+  {
+   "ts": 1793528868384,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1050861100101013067936148",
+    "reason": "expired",
+    "ms_from_first_read": 4094
+   }
+  },
+  {
+   "ts": 1793528869190,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101361069565412",
+    "ms_from_first_read": 260
+   }
+  },
+  {
+   "ts": 1793528872437,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1015781100101361069565412",
+    "reason": "superseded",
+    "ms_from_first_read": 2172
+   }
+  },
+  {
+   "ts": 1793528872438,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101419074264354",
+    "ms_from_first_read": 415
+   }
+  },
+  {
+   "ts": 1793528875042,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101340074264146",
+    "ms_from_first_read": 48
+   }
+  },
+  {
+   "ts": 1793528875042,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2605,
+    "value": "1015781100101340074264146",
+    "held_by": "1015781100101419074264354"
+   }
+  },
+  {
+   "ts": 1793528875410,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101340074264146",
+    "ms_from_first_read": 49
+   }
+  },
+  {
+   "ts": 1793528875746,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101340074264146",
+    "ms_from_first_read": 39
+   }
+  },
+  {
+   "ts": 1793528883548,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101396074264351",
+    "ms_from_first_read": 312
+   }
+  },
+  {
+   "ts": 1793528886507,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1015781100101396074264351",
+    "reason": "superseded",
+    "ms_from_first_read": 2193
+   }
+  },
+  {
+   "ts": 1793528886508,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101251074264355",
+    "ms_from_first_read": 259
+   }
+  },
+  {
+   "ts": 1793528886508,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2959,
+    "value": "1015781100101251074264355",
+    "held_by": "1015781100101396074264351"
+   }
+  },
+  {
+   "ts": 1793528886835,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101251074264355",
+    "ms_from_first_read": 279
+   }
+  },
+  {
+   "ts": 1793528889362,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1015781100101251074264355",
+    "reason": "superseded",
+    "ms_from_first_read": 1461
+   }
+  },
+  {
+   "ts": 1793528889362,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101466074264352",
+    "ms_from_first_read": 46
+   }
+  },
+  {
+   "ts": 1793528889362,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2528,
+    "value": "1015781100101466074264352",
+    "held_by": "1015781100101251074264355"
+   }
+  },
+  {
+   "ts": 1793528889742,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101466074264352",
+    "ms_from_first_read": 49
+   }
+  },
+  {
+   "ts": 1793528890097,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1015781100101466074264352",
+    "ms_from_first_read": 51
+   }
+  },
+  {
+   "ts": 1793528892660,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1015781100101466074264352",
+    "reason": "superseded",
+    "ms_from_first_read": 1606
+   }
+  },
+  {
+   "ts": 1793528892661,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101392065729708",
+    "ms_from_first_read": 345
+   }
+  },
+  {
+   "ts": 1793528892661,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2563,
+    "value": "1014721100101392065729708",
+    "held_by": "1015781100101466074264352"
+   }
+  },
+  {
+   "ts": 1793528892976,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101392065729708",
+    "ms_from_first_read": 36
+   }
+  },
+  {
+   "ts": 1793528893306,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101392065729708",
+    "ms_from_first_read": 50
+   }
+  },
+  {
+   "ts": 1793528896082,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101353065729700",
+    "ms_from_first_read": 367
+   }
+  },
+  {
+   "ts": 1793528896082,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2776,
+    "value": "1014721100101353065729700",
+    "held_by": "1014721100101392065729708"
+   }
+  },
+  {
+   "ts": 1793528896379,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101353065729700",
+    "ms_from_first_read": 36
+   }
+  },
+  {
+   "ts": 1793528900485,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101353065729700",
+    "reason": "expired",
+    "ms_from_first_read": 3196
+   }
+  },
+  {
+   "ts": 1793528900846,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101554069560726",
+    "ms_from_first_read": 360
+   }
+  },
+  {
+   "ts": 1793528903967,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101554069560726",
+    "reason": "superseded",
+    "ms_from_first_read": 2431
+   }
+  },
+  {
+   "ts": 1793528903967,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101416069560127",
+    "ms_from_first_read": 315
+   }
+  },
+  {
+   "ts": 1793528907522,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101416069560127",
+    "reason": "superseded",
+    "ms_from_first_read": 2449
+   }
+  },
+  {
+   "ts": 1793528907523,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101413069560123",
+    "ms_from_first_read": 101
+   }
+  },
+  {
+   "ts": 1793528910251,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101413069560123",
+    "reason": "superseded",
+    "ms_from_first_read": 2057
+   }
+  },
+  {
+   "ts": 1793528910251,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721110101413069560331634",
+    "reason": "superseded",
+    "ms_from_first_read": 2057
+   }
+  },
+  {
+   "ts": 1793528910251,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101402069560125",
+    "ms_from_first_read": 391
+   }
+  },
+  {
+   "ts": 1793528910251,
+   "event": "cooldown_drop",
+   "data": {
+    "ms": 2728,
+    "value": "1014721100101402069560125",
+    "held_by": "1014721100101413069560123"
+   }
+  },
+  {
+   "ts": 1793528910567,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101402069560125",
+    "ms_from_first_read": 35
+   }
+  },
+  {
+   "ts": 1793528913872,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101420069560128",
+    "ms_from_first_read": 37
+   }
+  },
+  {
+   "ts": 1793528917378,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101420069560128",
+    "reason": "superseded",
+    "ms_from_first_read": 2550
+   }
+  },
+  {
+   "ts": 1793528917378,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101408069560129",
+    "ms_from_first_read": 277
+   }
+  },
+  {
+   "ts": 1793528921790,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101408069560129",
+    "reason": "expired",
+    "ms_from_first_read": 3667
+   }
+  },
+  {
+   "ts": 1793528927570,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "1014721100101439069560118",
+    "reason": "expired",
+    "ms_from_first_read": 5780
+   }
+  },
+  {
+   "ts": 1793528927612,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "1014721100101439069560118",
+    "ms_from_first_read": 41
+   }
+  }
+ ]
+}
