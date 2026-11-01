@@ -1,0 +1,188 @@
+/**
+ * Release check (client, 01/11): "before every release rerun it on the last
+ * week's real receipts and show that the results haven't changed."
+ *
+ * Pulls the last N days (default 7) of pallet-verify read traces from
+ * scanner_events — READ-ONLY — and replays each session through the rules
+ * before 01/11 (OLD: two reads for every value, no Glatt mid check, dedupe by
+ * the exact string) and the current ones (NEW: lib/scan-replay.ts newRules).
+ * Per session it reports the cartons each would book, the new confirms and
+ * whether each is valid, any carton lost and any misread booked.
+ *
+ *   npx vite-node scripts/replay-scan-sessions.ts [--days 7] [--out report.md]
+ *       needs SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (selects only)
+ *   npx vite-node scripts/replay-scan-sessions.ts --input export.json [--out report.md]
+ *       export.json = { events: [{token, ts (ms), event, data}], lines: {token: [{item_code}]}, booked: [barcode] }
+ *
+ * "valid" for a new confirm: its exact code was booked in box_inventory
+ * (another path got it in the end), or a booked carton carries its Glatt
+ * serial (the same carton, booked under a damaged code), and it is a
+ * well-formed code. Anything else is listed as UNEXPLAINED.
+ */
+import { readFileSync, writeFileSync } from 'node:fs';
+import { barcodeFormatOk, isGlattMisread, sameGlattCarton } from '../lib/carton-barcode';
+import { framesFromTrace, newRules, oldRules, replayFrames, type TraceRow } from '../lib/scan-replay';
+
+interface Export {
+  events: Array<{ token: string; ts: number; event: string; data: Record<string, unknown> | null }>;
+  lines: Record<string, Array<{ item_code?: string | null }>>;
+  booked: string[];
+}
+
+function arg(name: string): string | undefined {
+  const i = process.argv.indexOf(`--${name}`);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+}
+
+async function pull(days: number): Promise<Export> {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error('Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY, or pass --input export.json');
+  const { createClient } = await import('@supabase/supabase-js');
+  const db = createClient(url, key, { auth: { persistSession: false } });
+  const since = new Date(Date.now() - days * 86400_000).toISOString();
+  const events: Export['events'] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db
+      .from('scanner_events')
+      .select('token, ts, event, data')
+      .eq('page', 'pallet-verify')
+      .in('event', ['scan_confirmed', 'read_dropped', 'cooldown_drop', 'scan_detected', 'loose_scan_detected', 'manual_capture'])
+      .gte('ts', since)
+      .order('ts', { ascending: true })
+      .range(from, from + 999);
+    if (error) throw new Error(`scanner_events: ${error.message}`);
+    for (const r of data ?? []) events.push({ token: r.token, ts: Date.parse(r.ts), event: r.event, data: r.data });
+    if (!data || data.length < 1000) break;
+  }
+  const tokens = [...new Set(events.map((e) => e.token))];
+  const lines: Export['lines'] = {};
+  if (tokens.length) {
+    const { data, error } = await db.from('scan_sessions').select('token, data').in('token', tokens);
+    if (error) throw new Error(`scan_sessions: ${error.message}`);
+    for (const s of data ?? []) {
+      const ocr = (s.data as { ocr_data?: Array<{ item_code?: string }> } | null)?.ocr_data ?? [];
+      lines[s.token] = ocr.map((l) => ({ item_code: l.item_code ?? null }));
+    }
+  }
+  const booked: string[] = [];
+  const bookedSince = new Date(Date.now() - (days + 7) * 86400_000).toISOString();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db.from('box_inventory').select('barcode').gte('created_at', bookedSince).range(from, from + 999);
+    if (error) throw new Error(`box_inventory: ${error.message}`);
+    for (const r of data ?? []) if (r.barcode) booked.push(r.barcode);
+    if (!data || data.length < 1000) break;
+  }
+  return { events, lines, booked };
+}
+
+async function main() {
+  const days = Number(arg('days') ?? 7);
+  const input = arg('input');
+  const ex: Export = input ? JSON.parse(readFileSync(input, 'utf8')) : await pull(days);
+  const booked = new Set(ex.booked);
+  const bookedList = [...booked];
+
+  const byToken = new Map<string, TraceRow[]>();
+  for (const e of ex.events) {
+    const list = byToken.get(e.token) ?? [];
+    list.push({ ts: e.ts, event: e.event, data: e.data });
+    byToken.set(e.token, list);
+  }
+
+  const out: string[] = [];
+  const totals = { sessions: 0, oldBooked: 0, newBooked: 0, newConfirms: 0, newValid: 0, lost: 0, oldMisreads: 0, newMisreads: 0, traceBooked: 0, oldMatchesTrace: 0 };
+  const rowsMd: string[] = [];
+  const details: string[] = [];
+
+  for (const [token, rows] of byToken) {
+    rows.sort((a, b) => a.ts - b.ts);
+    const frames = framesFromTrace(rows);
+    if (frames.length === 0) continue;
+    totals.sessions += 1;
+    const lines = ex.lines[token] ?? [];
+    const old = replayFrames(frames, oldRules());
+    const neu = replayFrames(frames, newRules(lines));
+    const oldSet = new Set(old.booked.map((b) => b.value));
+    const newSet = new Set(neu.booked.map((b) => b.value));
+    // What the live page actually added from the camera (scan_detected ok, not a duplicate).
+    const traceSet = new Set(
+      rows.filter((r) => (r.event === 'scan_detected' || r.event === 'loose_scan_detected') && r.data?.ok === true && r.data?.duplicate === false)
+        .map((r) => String(r.data?.barcode ?? '').trim()).filter(Boolean),
+    );
+    const oldMatches = [...traceSet].filter((v) => oldSet.has(v)).length;
+
+    const added = neu.booked.filter((b) => !oldSet.has(b.value));
+    const verdicts = added.map((b) => {
+      const exact = booked.has(b.value);
+      const sameCarton = !exact && bookedList.some((c) => sameGlattCarton(c, b.value));
+      const formatOk = barcodeFormatOk(b.value) === true;
+      const valid = formatOk && (exact || sameCarton);
+      return { ...b, exact, sameCarton, formatOk, valid };
+    });
+    // Lost: booked by OLD, not by NEW, and no NEW booking is the same carton.
+    const lost = old.booked.filter((b) => !newSet.has(b.value) && ![...newSet].some((v) => sameGlattCarton(v, b.value)));
+    const misread = (v: string) => isGlattMisread(v) || barcodeFormatOk(v) === false;
+    const oldMis = old.booked.filter((b) => misread(b.value));
+    const newMis = neu.booked.filter((b) => misread(b.value));
+
+    totals.oldBooked += old.booked.length;
+    totals.newBooked += neu.booked.length;
+    totals.newConfirms += added.length;
+    totals.newValid += verdicts.filter((v) => v.valid).length;
+    totals.lost += lost.length;
+    totals.oldMisreads += oldMis.length;
+    totals.newMisreads += newMis.length;
+    totals.traceBooked += traceSet.size;
+    totals.oldMatchesTrace += oldMatches;
+
+    const lineCodes = lines.map((l) => l.item_code).filter(Boolean).join(', ') || '(none)';
+    rowsMd.push(`| \`${token}\` | ${lineCodes} | ${traceSet.size} | ${oldMatches} | ${old.booked.length} | ${neu.booked.length} | ${added.length} (${verdicts.filter((v) => v.valid).length} valid) | ${lost.length} | ${oldMis.length} → ${newMis.length} |`);
+    if (added.length || lost.length || oldMis.length || newMis.length) {
+      details.push(`### \`${token}\``);
+      for (const v of verdicts) {
+        const why = v.exact ? 'booked in box_inventory under this exact code' : v.sameCarton ? 'same carton (Glatt serial) is booked under a damaged code' : 'NOT in box_inventory, no carton with its serial';
+        details.push(`- new confirm \`${v.value}\` (${v.reads} read${v.reads === 1 ? '' : 's'}): ${v.valid ? 'valid' : 'UNEXPLAINED'} — ${why}`);
+      }
+      for (const b of lost) details.push(`- LOST \`${b.value}\` (booked before, not now)`);
+      for (const b of oldMis) details.push(`- misread booked before: \`${b.value}\`${newSet.has(b.value) ? ' — STILL booked now' : ' — refused now'}`);
+      for (const b of newMis) if (!oldSet.has(b.value)) details.push(`- misread booked NOW (new): \`${b.value}\``);
+      details.push('');
+    }
+  }
+
+  out.push(`# Scanner read replay — ${new Date().toISOString()}`);
+  out.push('');
+  out.push(`Source: ${input ? `export \`${input}\`` : `scanner_events, last ${days} days (read-only)`}. ${totals.sessions} pallet-verify sessions with read traces.`);
+  out.push('');
+  out.push('OLD = before 01/11 (two identical reads within 3 s for every value; no Glatt mid check; duplicates by exact code). NEW = a valid Glatt code of one of the note\'s lines confirms on one read; a Glatt misread mid never confirms or books; duplicates also by Glatt serial. Manual captures and edits are not replayed.');
+  out.push('');
+  out.push('## Totals');
+  out.push('');
+  out.push(`- Replay fidelity: the live page added ${totals.traceBooked} cartons from the camera; the OLD replay books ${totals.oldMatchesTrace} of those exact codes (${totals.oldBooked} in all).`);
+  out.push(`- Cartons booked from the camera: OLD ${totals.oldBooked} → NEW ${totals.newBooked}.`);
+  out.push(`- New confirms: ${totals.newConfirms}, of which valid: ${totals.newValid}.`);
+  out.push(`- Cartons lost (booked OLD, not NEW, no same-carton NEW booking): ${totals.lost}.`);
+  out.push(`- Misreads booked: OLD ${totals.oldMisreads} → NEW ${totals.newMisreads}.`);
+  out.push('');
+  out.push('## Per session');
+  out.push('');
+  out.push('| session | note lines | live adds | OLD = live | OLD booked | NEW booked | new confirms | lost | misreads booked OLD → NEW |');
+  out.push('|---|---|---|---|---|---|---|---|---|');
+  out.push(...rowsMd);
+  out.push('');
+  if (details.length) {
+    out.push('## Differences');
+    out.push('');
+    out.push(...details);
+  }
+  const md = out.join('\n') + '\n';
+  const target = arg('out');
+  if (target) writeFileSync(target, md);
+  process.stdout.write(md);
+}
+
+main().catch((e) => {
+  console.error(e instanceof Error ? e.message : e);
+  process.exit(1);
+});
