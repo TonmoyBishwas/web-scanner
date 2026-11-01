@@ -450,3 +450,22 @@ describe('listedNoticeKey (ask, never "scan the next carton", 19/10)', () => {
     expect(listedNoticeKey(C8, null, { photo: false, twins: 0 })).toBe('terminal.alreadyListed');
   });
 });
+
+describe('Glatt serial: one carton under two strings (01/11, note 261062322)', () => {
+  const VALID = '1014721100101530065729703';
+  const PHOTO = '4721100101530065729703'; // the label photo's damaged digits of VALID
+  const rows = [{ barcode: '1014721100101409065729707' }, { barcode: PHOTO }];
+
+  it('a camera read of a carton booked from its photo digits names that row', () => {
+    expect(findCountedCarton(rows, VALID)).toEqual({ n: 2, row: rows[1] });
+  });
+
+  it('photo digits of a carton the camera already read name that row', () => {
+    const scanned = [{ barcode: VALID }, { barcode: 'MANUAL-1793528552883-xqxr1y' }];
+    expect(findCountedCartonByDigits(scanned, PHOTO, 'MANUAL-1793528552883-xqxr1y')?.n).toBe(1);
+  });
+
+  it('a different serial is a different carton', () => {
+    expect(findCountedCarton(rows, '1014721100101530065729999')).toBeNull();
+  });
+});

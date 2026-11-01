@@ -23,6 +23,7 @@
 import { isMintedLabelBarcode } from './label-batches';
 import { parseCartonBarcode } from './barcode-parser';
 import { barcodeWeight } from './barcode-weight';
+import { sameGlattCarton } from './carton-barcode';
 
 /** How long a notice stays in the footer. */
 export const SCAN_NOTICE_MS = 4000;
@@ -186,6 +187,10 @@ export interface CountedCarton<T> {
 export function findCountedCarton<T extends CountedRow>(rows: ReadonlyArray<T>, code: string): CountedCarton<T> | null {
   let i = rows.findIndex((r) => r.barcode === code);
   if (i === -1) i = rows.findIndex((r) => r.source_barcode === code);
+  // A Glatt carton already on the list under another string with its serial
+  // (lib/carton-barcode.ts sameGlattCarton — 01/11: a photo's damaged digits,
+  // then the camera's valid read of the same carton).
+  if (i === -1) i = rows.findIndex((r) => sameGlattCarton(r.barcode, code));
   return i === -1 ? null : { n: i + 1, row: rows[i] };
 }
 
@@ -232,6 +237,8 @@ export function findCountedCartonByDigits<T extends CountedRow>(
   // The row that carries the digits itself first (see findCountedCarton).
   let i = rows.findIndex((r) => r.barcode !== exceptBarcode && same(r.barcode));
   if (i === -1) i = rows.findIndex((r) => r.barcode !== exceptBarcode && same(r.source_barcode));
+  // The same Glatt carton by its 9-digit serial (see findCountedCarton).
+  if (i === -1) i = rows.findIndex((r) => r.barcode !== exceptBarcode && sameGlattCarton(r.barcode, digits));
   return i === -1 ? null : { n: i + 1, row: rows[i] };
 }
 
