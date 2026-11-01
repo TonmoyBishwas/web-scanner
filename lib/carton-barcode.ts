@@ -101,6 +101,8 @@ export interface GlattCode {
   /** The supplier's 5-digit item code, e.g. `05086`. */
   item: string;
   mid: string;
+  /** The 4 weight digits, in 10 g (`1011` = 10.11 kg); not a weight for a `140010` units item. */
+  weight: string;
   /** The last 9 digits: unique per carton (879 of 879 in box_inventory, 01/11). */
   serial: string;
 }
@@ -109,7 +111,14 @@ export interface GlattCode {
 export function parseGlattCode(code: string | null | undefined): GlattCode | null {
   const m = GLATT_SHAPE.exec((code || '').trim());
   if (!m || !GLATT_MIDS.includes(m[2])) return null;
-  return { item: m[1], mid: m[2], serial: m[4] };
+  return { item: m[1], mid: m[2], weight: m[3], serial: m[4] };
+}
+
+/** The carton weight a Glatt code prints, in kg (null for a `140010` units item). */
+export function glattWeightKg(g: GlattCode): number | null {
+  if (g.mid === '140010') return null;
+  const kg = Number(g.weight) / 100;
+  return kg > 0 ? kg : null;
 }
 
 /** Glatt-shaped (25 digits, leading `1`) but with a mid Glatt never prints. */
@@ -133,23 +142,28 @@ export function looksLikeDamagedGlatt(code: string | null | undefined): boolean 
 }
 
 /**
- * The same Glatt carton under two strings: one is a valid Glatt code, the
- * other is that code or a damaged one (looksLikeDamagedGlatt / a misread
- * mid), and both end in the same 9-digit serial. A valid read and an earlier
- * digit-misread of one carton (01/11: `4721100101530065729703` booked from a
- * photo, `1014721100101530065729703` read by the camera) are one carton,
- * never two.
+ * The same Glatt carton under two strings (01/11: `4721100101530065729703`
+ * booked from a photo, `1014721100101530065729703` read by the camera — one
+ * carton, never two).
+ *  * two valid Glatt codes: the same 9-digit serial (unique per carton);
+ *  * a valid code and a damaged one (looksLikeDamagedGlatt / a misread mid):
+ *    the same last 13 digits — weight (4) + serial (9). The serial alone is
+ *    not enough there: Glatt serials run in sequence (`…065729703` and
+ *    `…065729707` were on one note), so a damaged string whose serial was
+ *    misread as a neighbour's would make the neighbour's real carton look
+ *    "already counted" and lose it.
  */
 export function sameGlattCarton(a: string | null | undefined, b: string | null | undefined): boolean {
   const x = (a || '').trim();
   const y = (b || '').trim();
   if (!x || !y) return false;
-  const loose = (d: string) => !!parseGlattCode(d) || looksLikeDamagedGlatt(d) || isGlattMisread(d);
   const px = parseGlattCode(x);
   const py = parseGlattCode(y);
+  if (px && py) return px.serial === py.serial;
   if (!px && !py) return false;
-  if (!loose(x) || !loose(y)) return false;
-  return x.slice(-9) === y.slice(-9);
+  const other = px ? y : x;
+  if (!looksLikeDamagedGlatt(other) && !isGlattMisread(other)) return false;
+  return x.length >= 13 && y.length >= 13 && x.slice(-13) === y.slice(-13);
 }
 
 /** Is `code` on this set of codes, as itself or as the same Glatt carton? */
@@ -161,15 +175,59 @@ export function hasCartonCode(codes: Iterable<string>, code: string | null | und
   return false;
 }
 
+/** How far (in serial numbers) a one-read carton may be from a carton of its item already counted. */
+export const TRUST_SERIAL_SPAN = 2000;
+/** How far (as a fraction) its printed weight may be from the item's typical carton. */
+export const TRUST_WEIGHT_TOLERANCE = 0.15;
+
+export interface NoteLine {
+  item_code?: string | number | null;
+  quantity_kg?: number | string | null;
+  expected_boxes?: number | string | null;
+}
+
+export interface TrustContext {
+  /**
+   * Codes already counted in this session (any pallet). The valid Glatt codes
+   * among them anchor the serial and the weight of their item.
+   */
+  anchors?: Iterable<string>;
+  /** The other values waiting in the confirmer right now (unconfirmed reads). */
+  pending?: Iterable<string>;
+}
+
+function median(xs: number[]): number | null {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
 /**
  * Does a single read of `value` identify a carton of THIS note beyond doubt?
  * (01/11, note 261062322.) On Glatt's thin print the decoders give a
  * different misread almost every frame, so the valid string may be seen only
  * once — and "two identical reads in 3 s" (lib/barcode-frame.ts) let it
- * expire. A valid Glatt code (one of Glatt's mids) whose item code is one of
- * the note's lines is trusted on one read. The item check is what refuses
- * the two regex-valid misreads of that session (`1006781100101369069565401`,
- * `1120671100101720069560708`: items 00678 / 12067, on no line).
+ * expire. One read is trusted only when ALL of these hold:
+ *  1. it is a valid Glatt code (one of Glatt's mids) whose item code is one
+ *     of the note's lines — refuses the regex-valid misreads of that session
+ *     (`1006781100101369069565401`, `1120671100101720069560708`: items
+ *     00678 / 12067, on no line);
+ *  2. something else vouches for its serial: a carton of the same item
+ *     already counted in this session within ±TRUST_SERIAL_SPAN serials
+ *     (serials run in sequence: the median gap to the nearest same-item,
+ *     same-day carton in 120 days of box_inventory is 1), or another read
+ *     waiting in the confirmer ends in the same 9 digits (the client's
+ *     meatball carton: its misread `…111510…067936150` was read twice beside
+ *     it). A misread inside the serial keeps the item and the mid, so the
+ *     item check alone cannot catch it — `1050861100100814067902118`, read
+ *     once in session LGUtpTw2 for the real `1050861100101014067935118`,
+ *     is 33 000 serials from any carton of its item;
+ *  3. its printed weight is within ±TRUST_WEIGHT_TOLERANCE of the item's
+ *     typical carton, when that is known: the note line's kg ÷ cartons, else
+ *     the median of ≥ 3 cartons of the item already counted (that phantom
+ *     prints 8.14 kg; meatball cartons weigh 10.07–10.21).
+ * The first carton of each item therefore still needs two reads.
  *
  * The 31-digit catch-weight family is NOT trusted on one read: a note line's
  * item code is the supplier's short code, which the code's GTIN never equals
@@ -177,33 +235,69 @@ export function hasCartonCode(codes: Iterable<string>, code: string | null | und
  */
 export function trustedSingleRead(
   value: string,
-  lines: ReadonlyArray<{ item_code?: string | number | null }> | null | undefined,
+  lines: ReadonlyArray<NoteLine> | null | undefined,
+  ctx: TrustContext = {},
 ): boolean {
-  const g = parseGlattCode(value);
+  const code = (value || '').trim();
+  const g = parseGlattCode(code);
   if (!g) return false;
-  const item = g.item.replace(/^0+/, '');
+  const item = stripZeros(g.item);
   if (!item) return false;
-  return (lines ?? []).some((l) => digitsOf(l.item_code == null ? '' : String(l.item_code)).replace(/^0+/, '') === item);
+  const line = (lines ?? []).find((l) => stripZeros(digitsOf(l.item_code == null ? '' : String(l.item_code))) === item);
+  if (!line) return false;
+
+  const sameItem: GlattCode[] = [];
+  for (const a of ctx.anchors ?? []) {
+    const p = (a || '').trim() === code ? null : parseGlattCode(a);
+    if (p && p.item === g.item) sameItem.push(p);
+  }
+  const serial = Number(g.serial);
+  const near = sameItem.some((p) => Math.abs(Number(p.serial) - serial) <= TRUST_SERIAL_SPAN);
+  let twin = false;
+  if (!near) {
+    for (const v of ctx.pending ?? []) {
+      const d = (v || '').trim();
+      if (d === code || d.slice(-9) !== g.serial) continue;
+      if (parseGlattCode(d) || looksLikeDamagedGlatt(d) || isGlattMisread(d)) { twin = true; break; }
+    }
+  }
+  if (!near && !twin) return false;
+
+  const kg = glattWeightKg(g);
+  if (kg !== null) {
+    const qty = Number(line.quantity_kg);
+    const boxes = Number(line.expected_boxes);
+    const fromLine = qty > 0 && boxes > 0 ? qty / boxes : null;
+    const listedKg = sameItem.map(glattWeightKg).filter((w): w is number => w !== null);
+    const typical = fromLine ?? (listedKg.length >= 3 ? median(listedKg) : null);
+    if (typical && Math.abs(kg / typical - 1) > TRUST_WEIGHT_TOLERANCE) return false;
+  }
+  return true;
 }
 
 /**
  * The confirmer's read policy for an inbound list (lib/barcode-frame.ts
  * ReadPolicy): a Glatt misread mid is ignored (never confirmed); a trusted
- * single read (trustedSingleRead) confirms on one read — unless that carton
- * is already on the list (`listed`). A carton already counted still needs two
- * reads: one glimpse of it while the worker moves on would otherwise re-arm
- * the scanner's 3 s cooldown and throw away the next carton's read (seen in
- * the replay of session hceJxe4obaK2TgXOdVXfu, 01/11).
+ * single read (trustedSingleRead, with the confirmer's other waiting reads)
+ * confirms on one read — unless that carton is already on the list
+ * (`listed`). A carton already counted still needs two reads: one glimpse of
+ * it while the worker moves on would otherwise re-arm the scanner's 3 s
+ * cooldown and throw away the next carton's read (seen in the replay of
+ * session hceJxe4obaK2TgXOdVXfu, 01/11). `anchors` = every code counted in
+ * this session (default: `listed`). The confirmer honours `trust` only for
+ * the read nearest the centre of its frame.
  */
 export function inboundReadPolicy(
-  lines: () => ReadonlyArray<{ item_code?: string | number | null }> | null | undefined,
+  lines: () => ReadonlyArray<NoteLine> | null | undefined,
   listed: () => Iterable<string>,
-): (value: string) => 'trust' | 'ignore' | undefined {
-  return (value: string) => {
+  anchors?: () => Iterable<string>,
+): (value: string, ctx?: { pending?: Iterable<string> }) => 'trust' | 'ignore' | undefined {
+  return (value, ctx) => {
     const code = (value || '').trim();
     if (isGlattMisread(code)) return 'ignore';
-    if (!trustedSingleRead(code, lines())) return undefined;
-    return hasCartonCode(listed(), code) ? undefined : 'trust';
+    if (hasCartonCode(listed(), code)) return undefined;
+    const anchorCodes = anchors ? anchors() : listed();
+    return trustedSingleRead(code, lines(), { anchors: anchorCodes, pending: ctx?.pending }) ? 'trust' : undefined;
   };
 }
 

@@ -256,7 +256,7 @@ describe('Glatt mid check (classifyRead)', () => {
 
 describe('parseGlattCode / sameGlattCarton / hasCartonCode', () => {
   it('parses item, mid and serial', () => {
-    expect(parseGlattCode(VALID_MEATBALL)).toEqual({ item: '05086', mid: '110010', serial: '067936150' });
+    expect(parseGlattCode(VALID_MEATBALL)).toEqual({ item: '05086', mid: '110010', weight: '1011', serial: '067936150' });
     expect(parseGlattCode(DOUBLE_MISREAD)).toBeNull();
   });
 
@@ -267,11 +267,22 @@ describe('parseGlattCode / sameGlattCarton / hasCartonCode', () => {
     expect(looksLikeDamagedGlatt('7290115351484014085456309092027')).toBe(false);
   });
 
-  it('one carton under a valid code and a damaged / misread one sharing its serial', () => {
+  it('one carton: a valid code and a damaged one sharing weight + serial (last 13), or two valid codes sharing the serial', () => {
     expect(sameGlattCarton(VALID_THIGH_A, '4721100101530065729703')).toBe(true);
     expect(sameGlattCarton('10147211001409065729707', VALID_THIGH_B)).toBe(true);
-    expect(sameGlattCarton(VALID_MEATBALL, DOUBLE_MISREAD)).toBe(true);
     expect(sameGlattCarton('1015781100101369069565401', REGEX_VALID_MISREADS[0])).toBe(true);
+  });
+
+  it('a damaged string matching only the 9-digit serial is NOT the same carton (review 01/11)', () => {
+    // The double misread hit the weight digits too: refused anyway, no match needed.
+    expect(sameGlattCarton(VALID_MEATBALL, DOUBLE_MISREAD)).toBe(false);
+    // Another item's damaged string, or an unrelated 24-digit 1… string, ending in the same serial.
+    expect(sameGlattCarton(VALID_THIGH_A, '109999110010999065729703')).toBe(false);
+    expect(sameGlattCarton(VALID_THIGH_A, '100000000000000065729703')).toBe(false);
+    // Photo digits of carton …703 whose serial was misread as its neighbour …707:
+    // the neighbour's real carton (14.09 kg) is not "already counted".
+    expect(sameGlattCarton('4721100101530065729707', VALID_THIGH_B)).toBe(false);
+    expect(hasCartonCode(new Set(['4721100101530065729707']), VALID_THIGH_B)).toBe(false);
   });
 
   it('never matches two damaged strings, two serials, or non-Glatt codes', () => {
@@ -291,34 +302,67 @@ describe('parseGlattCode / sameGlattCarton / hasCartonCode', () => {
 });
 
 describe('trustedSingleRead / inboundReadPolicy', () => {
-  it('trusts a valid Glatt code whose item code is a note line (zeros ignored)', () => {
-    expect(trustedSingleRead(VALID_MEATBALL, NOTE_LINES)).toBe(true);
-    expect(trustedSingleRead(VALID_THIGH_A, NOTE_LINES)).toBe(true);
-    expect(trustedSingleRead(VALID_THIGH_A, [{ item_code: '01472' }])).toBe(true);
+  // Cartons of this note already counted (session hceJxe4obaK2TgXOdVXfu neighbours).
+  const MEATBALLS = ['1050861100101012067936148', '1050861100101013067936149', '1050861100101010067936151'];
+  const THIGHS = ['1014721100101420065729702', '1014721100101455065729704', '1014721100101399065729705'];
+  const anchors = [...MEATBALLS, ...THIGHS];
+  // Read once in session LGUtpTw2 for the real 1050861100101014067935118:
+  // valid mid, item on the note, serial 33 000 from any meatball carton, 8.14 kg.
+  const PHANTOM = '1050861100100814067902118';
+
+  it('trusts a valid Glatt code of a note line next to a counted carton of its item (zeros ignored)', () => {
+    expect(trustedSingleRead(VALID_MEATBALL, NOTE_LINES, { anchors })).toBe(true);
+    expect(trustedSingleRead(VALID_THIGH_A, NOTE_LINES, { anchors })).toBe(true);
+    expect(trustedSingleRead(VALID_THIGH_A, [{ item_code: '01472' }], { anchors })).toBe(true);
+  });
+
+  it('the first carton of an item needs two reads, unless another waiting read shares its serial', () => {
+    expect(trustedSingleRead(VALID_MEATBALL, NOTE_LINES)).toBe(false);
+    expect(trustedSingleRead(VALID_MEATBALL, NOTE_LINES, { anchors: THIGHS })).toBe(false);
+    expect(trustedSingleRead(VALID_MEATBALL, NOTE_LINES, { pending: [DOUBLE_MISREAD] })).toBe(true);
+    expect(trustedSingleRead(VALID_MEATBALL, NOTE_LINES, { pending: ['7290115351484014085456309092027'] })).toBe(false);
+  });
+
+  it('does not trust a serial misread: far from every carton of its item, or the wrong weight', () => {
+    expect(trustedSingleRead(PHANTOM, NOTE_LINES, { anchors })).toBe(false);
+    // Even right next to a counted serial, 8.14 kg is 20 % off meatballs' ~10.12 kg.
+    const near = [...anchors, '1050861100101012067902120'];
+    expect(trustedSingleRead(PHANTOM, NOTE_LINES, { anchors: near })).toBe(false);
+    // The note line's kg per carton, when known, is the typical weight.
+    expect(trustedSingleRead(VALID_MEATBALL, [{ item_code: '5086', quantity_kg: 160, expected_boxes: 20 }], { anchors })).toBe(false);
+    expect(trustedSingleRead(VALID_MEATBALL, [{ item_code: '5086', quantity_kg: 202, expected_boxes: 20 }], { anchors })).toBe(true);
   });
 
   it('does not trust the regex-valid misreads (items 00678 / 12067 are on no line)', () => {
-    for (const v of REGEX_VALID_MISREADS) expect(trustedSingleRead(v, NOTE_LINES)).toBe(false);
+    for (const v of REGEX_VALID_MISREADS) expect(trustedSingleRead(v, NOTE_LINES, { anchors })).toBe(false);
   });
 
   it('does not trust a misread mid, a 31-digit code, or anything without note lines', () => {
-    expect(trustedSingleRead(DOUBLE_MISREAD, NOTE_LINES)).toBe(false);
-    expect(trustedSingleRead('7290115351484014085456309092027', [{ item_code: '7290115351484' }])).toBe(false);
-    expect(trustedSingleRead(VALID_MEATBALL, [])).toBe(false);
-    expect(trustedSingleRead(VALID_MEATBALL, null)).toBe(false);
+    expect(trustedSingleRead(DOUBLE_MISREAD, NOTE_LINES, { anchors })).toBe(false);
+    expect(trustedSingleRead('7290115351484014085456309092027', [{ item_code: '7290115351484' }], { anchors })).toBe(false);
+    expect(trustedSingleRead(VALID_MEATBALL, [], { anchors })).toBe(false);
+    expect(trustedSingleRead(VALID_MEATBALL, null, { anchors })).toBe(false);
   });
 
-  it('policy: ignore a misread mid; trust a note carton once; a carton already listed needs two reads', () => {
-    const listed = new Set<string>();
+  it('policy: ignore a misread mid; trust a corroborated note carton once; a carton already listed needs two reads', () => {
+    const listed = new Set<string>(anchors);
     const policy = inboundReadPolicy(() => NOTE_LINES, () => listed);
     expect(policy(DOUBLE_MISREAD)).toBe('ignore');
     expect(policy(VALID_MEATBALL)).toBe('trust');
+    expect(policy(PHANTOM)).toBeUndefined();
     expect(policy(REGEX_VALID_MISREADS[0])).toBeUndefined();
     expect(policy('7290115351484014085456309092027')).toBeUndefined();
     listed.add(VALID_MEATBALL);
     expect(policy(VALID_MEATBALL)).toBeUndefined();
     listed.add('4721100101530065729703');
-    expect(policy(VALID_THIGH_A)).toBeUndefined(); // same carton by serial
+    expect(policy(VALID_THIGH_A)).toBeUndefined(); // same carton by weight + serial
+    // Session anchors (other pallets) vouch even when this pallet's list is empty.
+    const empty = new Set<string>();
+    const p2 = inboundReadPolicy(() => NOTE_LINES, () => empty, () => anchors);
+    expect(p2(VALID_THIGH_B)).toBe('trust');
+    expect(inboundReadPolicy(() => NOTE_LINES, () => empty)(VALID_THIGH_B)).toBeUndefined();
+    // The confirmer's other waiting reads.
+    expect(inboundReadPolicy(() => NOTE_LINES, () => empty)(VALID_MEATBALL, { pending: [DOUBLE_MISREAD] })).toBe('trust');
   });
 });
 
