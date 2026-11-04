@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nanoid } from 'nanoid';
 import { getRedisClient, touchSession } from '@/lib/redis';
-import { cameraShortSerialOn, manualCaptureReviewOn, unitsModeOn } from '@/lib/scanner-flags';
+import { cameraShortSerialOn, manualCaptureReviewOn, typedNearMatchOn, uniformAfterCountOn, unitsModeOn } from '@/lib/scanner-flags';
 import type { MultiPalletSession } from '@/types';
 
 const SESSION_TTL = 7200; // 2 hours
@@ -128,6 +128,9 @@ export async function GET(request: NextRequest) {
       units_mode: await unitsModeOn(session.chat_id),
       ...((await cameraShortSerialOn(session.chat_id, session.receipt_id)) ? { camera_short_serial: true } : {}),
       ...((await manualCaptureReviewOn(session.chat_id)) ? { manual_capture_review: true } : {}),
+      // typed_near_match and uniform_after_count (04/11): same, present only when on.
+      ...((await typedNearMatchOn(session.chat_id)) ? { typed_near_match: true } : {}),
+      ...((await uniformAfterCountOn(session.chat_id)) ? { uniform_after_count: true } : {}),
     };
     return NextResponse.json({ ...session, features });
   } catch (error) {

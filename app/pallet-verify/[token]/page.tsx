@@ -76,7 +76,8 @@ import { LanguageContext, useLangDir, t } from '@/lib/i18n';
 import type { Language, MultiPalletSession, MultiPalletBoxScan, ParsedBarcode } from '@/types';
 import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
 import { cartonOwnCodes, invoiceNameConflict, matchInvoiceItem } from '@/lib/invoice-match';
-import { labelPrintsWeight, uniformCandidate } from '@/lib/uniform-candidate';
+import { labelPrintsWeight, uniformAfterEditAllowed, uniformCandidate } from '@/lib/uniform-candidate';
+import { typedNearMatch } from '@/lib/typed-near-match';
 import { isSplitSession } from '@/lib/session-mode';
 import { findDuplicateOwner } from '@/lib/duplicate-guard';
 import { cameraSerialBookable, cameraSerialOcrVerdict, CAMERA_SERIAL_RE, classifyRead, hasCartonCode, inboundReadPolicy, matchInvoiceShortCode, parseGlattCode, noteRepeatedRead, printedDigitsIdentifyCarton, shortCodeDefaults } from '@/lib/carton-barcode';
@@ -2585,6 +2586,9 @@ export default function PalletVerifyPage({
   // prompt — they fall through to the pallet-total input (mix path).
   function maybeTriggerUniformPrompt(latestBoxes: BoxScan[], _justFinishedBarcode: string) {
     if (forcedMixRef.current) return;                // worker already said it's mix
+    // uniform_after_count: "Done scanning?" no longer sets forcedMix, so the
+    // declared total is what closes the question now.
+    if (sessionRef.current?.features?.uniform_after_count && confirmedBoxCountRef.current > 0) return;
     if (uniformGroupsRef.current.size > 0) return;   // single already locked in
     const done = latestBoxes.filter(
       (b) => b.ocr_status === 'done' && b.weight > 0 && (b.item_name || b.item_name_hebrew),
@@ -2991,6 +2995,24 @@ export default function PalletVerifyPage({
         }
         resolvedId = typed;
       } else if (identity.kind === 'short') {
+        // Flag typed_near_match (04/11, Baladi 200009700258 for
+        // 2000097200258): digits one short of exactly one code on this list
+        // are that code — the carton already on the list. The existing
+        // duplicate question follows, with the full code in the box so its
+        // buttons show (lib/typed-near-match.ts). Anything else: refused as before.
+        if (session?.features?.typed_near_match && typed.length > 0) {
+          const list = isLoose ? looseBoxes : scannedBoxes;
+          const matched = typedNearMatch(typed, list, { exceptBarcode: barcode, nameHe: name_he, nameEn: name_en, minDigits: MIN_BARCODE_DIGITS });
+          const dupOf = matched ? findCountedCartonByDigits(list, matched, barcode) : null;
+          if (matched && dupOf) {
+            const twinOk = canOfferDifferentCarton(matched, dupOf.row);
+            trace('ui', 'edit_barcode_near_match', { barcode, typed, matched, of: dupOf.n, twin_ok: twinOk });
+            setEditForm({ ...editForm, barcodeInput: matched });
+            setEditError(t(session?.language || 'English', twinOk ? 'terminal.barcodeDuplicate' : 'terminal.barcodeDuplicateSame', { n: dupOf.n }));
+            setEditDup({ n: dupOf.n, row: dupOf.row, typed: matched, twinOk });
+            return;
+          }
+        }
         // Started typing but stopped short — that is a slip, not a decision.
         setEditError(
           t(session?.language || 'English', 'terminal.barcodeDigitsCount', {
@@ -3120,6 +3142,16 @@ export default function PalletVerifyPage({
       });
       return updated;
     });
+    // Flag uniform_after_count (04/11, Glatt ground turkey: the label prints
+    // no net weight, so OCR never raised the single-item question and the
+    // weights are typed here). Before a total is declared, with no minted
+    // row on the list (lib/uniform-candidate.ts uniformAfterEditAllowed).
+    if (session?.features?.uniform_after_count) {
+      const updated = scannedBoxesRef.current.map(patch);
+      if (uniformAfterEditAllowed(updated, { confirmedBoxCount: confirmedBoxCountRef.current, pendingSingle: !!pendingSingleGroup })) {
+        maybeTriggerUniformPrompt(updated, '');
+      }
+    }
     setEditForm(null);
   }
 
@@ -6219,7 +6251,9 @@ export default function PalletVerifyPage({
   function openCountInput() {
     trace('ui', 'count_open', { pallet: currentPallet, scanned: scannedBoxes.length });
     clearScanNotice(); // a question left on the camera is moot now
-    setForcedMix(true);
+    // uniform_after_count (04/11): opening the total no longer closes the
+    // single-item question — forcedMix stays for "other products too".
+    if (!session?.features?.uniform_after_count) setForcedMix(true);
     setCountAsked(true);
     setPalletCountError(null);
     setCountFocusTick((n) => n + 1);

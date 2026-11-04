@@ -34,6 +34,10 @@ where, manual, error), `manual_capture_held_no_digits` /
 `loose_manual_capture_held_no_digits` and `confirm_held_manual` (flag
 `manual_capture_review`: a no-digits capture held instead of booked NOBC-,
 and a booking sent back while a MANUAL- row was left),
+`edit_barcode_near_match` (flag `typed_near_match`, 04/11: too few digits
+typed, but exactly one code on the list is them with one digit inserted —
+barcode, typed, matched, of, twin_ok; the "already on the list" question
+follows),
 `create_barcode`, `no_barcode`, `identical_created`, `count_submit`,
 `confirm_pallet` (scanned count, declared count, override, forced mix,
 detected type), `pallet_completed` (LPN, type, box count), `next_pallet`,

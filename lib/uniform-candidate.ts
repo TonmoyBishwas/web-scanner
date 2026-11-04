@@ -19,6 +19,7 @@
  */
 
 import { barcodeCarriesWeight } from './barcode-weight';
+import { barcodeSourceOf, type ProvenanceRow } from './barcode-provenance';
 
 export interface UniformSampleRow {
   barcode: string;
@@ -65,4 +66,29 @@ export function uniformCandidate<T extends UniformSampleRow>(
     avg_weight: Math.round(avg * 1000) / 1000,
     sample_barcodes: done.map((b) => b.barcode),
   };
+}
+
+/**
+ * May an edit-panel save ask the single-item question (04/11, flag
+ * `uniform_after_count`, lib/scanner-flags.ts)?
+ *
+ * Glatt ground turkey: the label prints "16 יחידות" and no net weight, so
+ * every carton reads 0 kg and the question never came up from OCR. The
+ * weight is typed in the edit panel — and today a save never re-asks, so
+ * two cartons typed at the same 8 kg stayed on the scan-every-carton path.
+ *
+ * Only before a total is declared, never once a single-item answer is in
+ * progress, and never when any row on the list is warehouse-minted (a
+ * minted/twin/New-carton row or a NOBC- marker carries its exact count —
+ * there is nothing to multiply). The candidate rule itself (same product,
+ * same weight, no label that prints its own weight) is `uniformCandidate`,
+ * applied by the page's maybeTriggerUniformPrompt.
+ */
+export function uniformAfterEditAllowed(
+  rows: ReadonlyArray<ProvenanceRow>,
+  state: { confirmedBoxCount: number; pendingSingle: boolean },
+): boolean {
+  if (state.confirmedBoxCount !== 0) return false;
+  if (state.pendingSingle) return false;
+  return !rows.some((r) => barcodeSourceOf(r) === 'minted');
 }

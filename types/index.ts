@@ -379,6 +379,13 @@ export interface MultiPalletSession {
     /** A photo capture with no digits read is held, never booked NOBC-,
      *  and nothing books with a MANUAL- placeholder (lib/no-barcode.ts). */
     manual_capture_review?: boolean;
+    /** Edit panel: typed digits one short of a code on the list take that
+     *  code into the "already on the list" question (lib/typed-near-match.ts). */
+    typed_near_match?: boolean;
+    /** "Done scanning?" no longer closes the single-item question, and an
+     *  edit-panel save may raise it (lib/uniform-candidate.ts
+     *  uniformAfterEditAllowed). */
+    uniform_after_count?: boolean;
   };
   receipt_id?: string;
   completed_pallets: Array<{
