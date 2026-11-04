@@ -78,6 +78,7 @@ import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
 import { cartonOwnCodes, invoiceNameConflict, matchInvoiceItem } from '@/lib/invoice-match';
 import { labelPrintsWeight, uniformAfterEditAllowed, uniformCandidate, uniformListSettled } from '@/lib/uniform-candidate';
 import { typedNearMatch } from '@/lib/typed-near-match';
+import { endOcrOutage, newOcrOutageLatch, takeOcrOutageNotice } from '@/lib/ocr-network-notice';
 import { isSplitSession } from '@/lib/session-mode';
 import { findDuplicateOwner } from '@/lib/duplicate-guard';
 import { cameraSerialBookable, cameraSerialOcrVerdict, CAMERA_SERIAL_RE, classifyRead, hasCartonCode, inboundReadPolicy, matchInvoiceShortCode, parseGlattCode, noteRepeatedRead, printedDigitsIdentifyCarton, shortCodeDefaults } from '@/lib/carton-barcode';
@@ -630,6 +631,23 @@ export default function PalletVerifyPage({
   // The notice on screen, for the release handler below (a question has no
   // timer to re-arm).
   const scanNoticeRef = useRef<ScanNotice | null>(null);
+
+  // ocr_network_notice (04/11): the label-read outage the notice was shown
+  // for (lib/ocr-network-notice.ts) — once per outage, not once per carton.
+  const ocrOutageRef = useRef(newOcrOutageLatch());
+
+  /** A label read never came back (the fetch's .catch, pallet or loose):
+   *  with the flag on, palletVerify.networkError once per outage — never
+   *  over a question notice. The row's failed status is the caller's. */
+  function noteOcrNetworkFailed(where: 'pallet' | 'loose') {
+    const s = sessionRef.current;
+    if (!takeOcrOutageNotice(ocrOutageRef.current, {
+      enabled: !!s?.features?.ocr_network_notice,
+      questionUp: noticeAwaitsAnswer(scanNoticeRef.current),
+    })) return;
+    trace('ui', 'ocr_network_notice', { where });
+    showScanNotice({ text: t(s?.language || 'English', 'palletVerify.networkError'), tone: 'warn' });
+  }
 
   /** Show a notice; it replaces any current one and clears itself — unless
    *  the worker's finger is on it (see holdScanNotice), or it asks a
@@ -1383,6 +1401,7 @@ export default function PalletVerifyPage({
     }, 5000);
     const onOnline = () => {
       trace('lifecycle', 'online', {});
+      endOcrOutage(ocrOutageRef.current);
       void syncList(pallet);
       rereadFailedLabels('online');
     };
@@ -2298,6 +2317,8 @@ export default function PalletVerifyPage({
     })
       .then((r) => r.json())
       .then((data) => {
+        // A read came back: a label-read outage is over (ocr_network_notice).
+        if (data?.success) endOcrOutage(ocrOutageRef.current);
         if (lateReadDropped(lookupKey, 'pallet', !!(data?.success && data.ocr_data))) return;
         // manual_target_hint (04/11, Well Done 48745): the reader was asked
         // for one label. Its number back identifies the carton; any other
@@ -2572,6 +2593,7 @@ export default function PalletVerifyPage({
         // Log-only (04/11): a read that never came back looked, on the
         // trace, like the carton was never read at all.
         trace('ui', 'ocr_network_failed', { barcode: lookupKey, where: 'pallet', manual, error: String(err).slice(0, 200) });
+        noteOcrNetworkFailed('pallet');
         if (lateReadDropped(lookupKey, 'pallet', false)) return;
         const failPatch = failedReadPatch(lookupKey, scannedBoxesRef.current, 'pallet');
         setScannedBoxes((prev) => {
@@ -4761,6 +4783,8 @@ export default function PalletVerifyPage({
     })
       .then((r) => r.json())
       .then((data) => {
+        // A read came back — see runOcr.
+        if (data?.success) endOcrOutage(ocrOutageRef.current);
         if (lateReadDropped(lookupKey, 'loose', !!(data?.success && data.ocr_data))) return;
         // The label this capture was asked for — see runOcr.
         const targetCheck = manual && data?.success && data.ocr_data
@@ -4910,6 +4934,7 @@ export default function PalletVerifyPage({
       .catch((err) => {
         // Log-only, as in runOcr.
         trace('ui', 'ocr_network_failed', { barcode: lookupKey, where: 'loose', manual, error: String(err).slice(0, 200) });
+        noteOcrNetworkFailed('loose');
         if (lateReadDropped(lookupKey, 'loose', false)) return;
         const failPatch = failedReadPatch(lookupKey, looseBoxesRef.current, 'loose');
         setLooseBoxes((prev) => {
