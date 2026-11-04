@@ -82,7 +82,7 @@ import { classifyRead, hasCartonCode, inboundReadPolicy, matchInvoiceShortCode, 
 import type { ReadPolicy } from '@/lib/barcode-frame';
 import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
 import { cartonsOnListFor, listAboveTotal, newCartonQuantity, type ListAboveTotal } from '@/lib/count-check';
-import { freeNoBarcodeId, isNoBarcodeId, unreadDigitsOutcome } from '@/lib/no-barcode';
+import { freeNoBarcodeId, isNoBarcodeId, provisionalAtBooking, unreadDigitsOutcome } from '@/lib/no-barcode';
 import { resolveEditIdentity } from '@/lib/edit-identity';
 import { useBackClose } from '@/lib/use-back-close';
 import { findWeightSuspects } from '@/lib/weight-sanity';
@@ -2216,6 +2216,18 @@ export default function PalletVerifyPage({
       trace('ui', 'confirm_held_reads', { where, cartons: held });
       return false;
     }
+    // manual_capture_review (04/11): nothing is booked with a MANUAL-
+    // placeholder — not through the single-item auto-confirm nor "Create LPN
+    // anyway", which pass the footer's gate by. The first such carton opens
+    // in the edit panel (the same panel the amber footer opens); off, the
+    // last line of defence (stripProvisionalIds) books it NOBC- as before.
+    const manualHeld = provisionalAtBooking(ref.current, !!sessionRef.current?.features?.manual_capture_review);
+    if (manualHeld.length) {
+      trace('ui', 'confirm_held_manual', { where, cartons: manualHeld });
+      const first = ref.current.find((b) => b.barcode === manualHeld[0]);
+      if (first) openEdit(first, where === 'loose');
+      return false;
+    }
     return true;
   }
 
@@ -2294,6 +2306,21 @@ export default function PalletVerifyPage({
         // A failed read keeps what the barcode and the invoice already say
         // (lib/failed-read.ts) — out here for the same reason as `reading`.
         const failPatch = data?.success && data.ocr_data ? null : failedReadPatch(lookupKey, scannedBoxesRef.current, 'pallet');
+        // BOT-32 for a capture whose digits were not read — out here for the
+        // same reason (the trace must not double). manual_capture_review
+        // (04/11) holds it instead of booking it NOBC-.
+        const unreadOutcome = manual && !ownDigits && data?.success && data.ocr_data
+          ? unreadDigitsOutcome({
+              nameHebrew: data.ocr_data.product_name_hebrew,
+              nameEnglish: data.ocr_data.product_name_english,
+              weightKg: data.ocr_data.weight_kg,
+            }, { holdForReview: !!sessionRef.current?.features?.manual_capture_review })
+          : null;
+        if (unreadOutcome === 'held_no_digits') {
+          trace('ui', 'manual_capture_held_no_digits', {
+            provisional: lookupKey, pallet: currentPalletRef.current, weight: data.ocr_data.weight_kg,
+          });
+        }
 
         setScannedBoxes((prev) => {
           // find the box by its (provisional, for manual) barcode key
@@ -2358,11 +2385,7 @@ export default function PalletVerifyPage({
               processedRef.current.add(digits); // so a later bar-scan of this sticker is caught
               setError(null); // clear any earlier rejection banner now that this box committed
               clearScanNotice();
-            } else if (unreadDigitsOutcome({
-              nameHebrew: data.ocr_data.product_name_hebrew,
-              nameEnglish: data.ocr_data.product_name_english,
-              weightKg: data.ocr_data.weight_kg,
-            }) === 'book_without_barcode') {
+            } else if (unreadOutcome === 'book_without_barcode') {
               // BOT-32: the digits were not read, but the name and the weight
               // were — the carton is captured. Book it under a no-barcode
               // marker, no warning, no gate. "Type digits" / "Create label"
@@ -2374,7 +2397,9 @@ export default function PalletVerifyPage({
               resolvedSku = '';
               trace('ui', 'manual_capture_no_digits', { provisional: lookupKey, booked_as: resolvedBarcode });
             } else {
-              needsReview = true; // nothing usable read → the worker has to look
+              // Nothing usable read, or (manual_capture_review on) no digits:
+              // the worker has to look. The MANUAL- key holds it (heldForDetails).
+              needsReview = true;
             }
           }
           // Even when OCR "succeeded", flag the box if the model didn't return
@@ -4618,6 +4643,17 @@ export default function PalletVerifyPage({
         const reading = data?.success && data.ocr_data ? barcodeReading(data.ocr_data, manual, lookupKey, looseBoxesRef.current, 'loose') : null;
         // A failed read keeps what the barcode and the invoice already say.
         const failPatch = data?.success && data.ocr_data ? null : failedReadPatch(lookupKey, looseBoxesRef.current, 'loose');
+        // BOT-32 / manual_capture_review — see runOcr.
+        const unreadOutcome = manual && !ownDigits && data?.success && data.ocr_data
+          ? unreadDigitsOutcome({
+              nameHebrew: data.ocr_data.product_name_hebrew,
+              nameEnglish: data.ocr_data.product_name_english,
+              weightKg: data.ocr_data.weight_kg,
+            }, { holdForReview: !!sessionRef.current?.features?.manual_capture_review })
+          : null;
+        if (unreadOutcome === 'held_no_digits') {
+          trace('ui', 'loose_manual_capture_held_no_digits', { provisional: lookupKey, weight: data.ocr_data.weight_kg });
+        }
 
         setLooseBoxes((prev) => {
           const idx = prev.findIndex((b) => b.barcode === lookupKey);
@@ -4647,11 +4683,7 @@ export default function PalletVerifyPage({
               fromPhotoDigits = true;
               looseProcessedRef.current.add(digits);
               clearScanNotice();
-            } else if (unreadDigitsOutcome({
-              nameHebrew: data.ocr_data.product_name_hebrew,
-              nameEnglish: data.ocr_data.product_name_english,
-              weightKg: data.ocr_data.weight_kg,
-            }) === 'book_without_barcode') {
+            } else if (unreadOutcome === 'book_without_barcode') {
               // BOT-32, loose pile: same as the pallet phase (P0 = loose, as
               // stripProvisionalIds books it).
               resolvedBarcode = freeNoBarcodeId(
