@@ -43,13 +43,46 @@ export function freeNoBarcodeId(
  * worker can still type the digits or create a label from the edit panel, but
  * nothing stops the pallet for it. Without a name or a weight the carton has
  * nothing to book, so it is held for review as before.
+ *
+ * `holdForReview` (scanner flag `manual_capture_review`, client 04/11: "stop
+ * creating cartons with MANUAL barcodes until fixed"): a capture with a name
+ * and a weight but no digits is NOT booked as NOBC- either — it is held
+ * ('held_no_digits'), like any carton with no real barcode, until the worker
+ * types the digits, takes a twin, creates a label or picks No barcode.
  */
-export function unreadDigitsOutcome(read: {
-  nameHebrew?: string | null;
-  nameEnglish?: string | null;
-  weightKg?: number | null;
-}): 'book_without_barcode' | 'review' {
+export function unreadDigitsOutcome(
+  read: {
+    nameHebrew?: string | null;
+    nameEnglish?: string | null;
+    weightKg?: number | null;
+  },
+  opts: { holdForReview?: boolean } = {},
+): 'book_without_barcode' | 'held_no_digits' | 'review' {
   const named = !!((read.nameHebrew || '').trim() || (read.nameEnglish || '').trim());
   const weighed = Number(read.weightKg) > 0;
-  return named && weighed ? 'book_without_barcode' : 'review';
+  if (!(named && weighed)) return 'review';
+  return opts.holdForReview ? 'held_no_digits' : 'book_without_barcode';
+}
+
+/** The placeholder a photo capture carries until it has a real identity. */
+export const PROVISIONAL_PREFIX = 'MANUAL-';
+
+export function isProvisionalId(barcode: string | null | undefined): boolean {
+  return !!barcode && barcode.startsWith(PROVISIONAL_PREFIX);
+}
+
+/**
+ * Under `manual_capture_review`: the rows a booking must not go out with —
+ * every one still carrying its `MANUAL-` placeholder. The footer's gate
+ * already holds such a row (it is needs_review), but two ways into the
+ * booking pass it by: the single-item auto-confirm and, with meat
+ * discrepancy on, "Create LPN anyway". Without the flag the page's last
+ * line of defence turns them into NOBC- markers as before.
+ */
+export function provisionalAtBooking(
+  rows: ReadonlyArray<{ barcode: string }>,
+  holdForReview: boolean,
+): string[] {
+  if (!holdForReview) return [];
+  return rows.filter((r) => isProvisionalId(r.barcode)).map((r) => r.barcode);
 }

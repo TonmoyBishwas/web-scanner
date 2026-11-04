@@ -360,6 +360,9 @@ export interface MultiPalletSession {
   features?: {
     /** New carton's units mode in the loose pile (lib/units-cartons.ts). */
     units_mode?: boolean;
+    /** A photo capture with no digits read is held, never booked NOBC-,
+     *  and nothing books with a MANUAL- placeholder (lib/no-barcode.ts). */
+    manual_capture_review?: boolean;
   };
   receipt_id?: string;
   completed_pallets: Array<{

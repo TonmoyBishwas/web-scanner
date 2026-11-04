@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { cachedFlagRow, flagEnabledFor } from './scanner-flags';
+import { describe, expect, it, vi } from 'vitest';
+
+// No real database in a unit test: every flag read fails, and a failed read is off.
+vi.mock('./supabase', () => ({
+  supabase: { from: () => { throw new Error('no database in tests'); } },
+}));
+import { cachedFlagRow, flagEnabledFor, manualCaptureReviewOn } from './scanner-flags';
 
 describe('flagEnabledFor', () => {
   it('on for everyone', () => {
@@ -40,5 +45,11 @@ describe('cachedFlagRow', () => {
   it('a failed load is no row (off)', async () => {
     const get = cachedFlagRow(async () => { throw new Error('relation "scanner_flags" does not exist'); });
     expect(await get()).toBeNull();
+  });
+});
+
+describe('manualCaptureReviewOn', () => {
+  it('is off, never a throw, when the flag cannot be read', async () => {
+    await expect(manualCaptureReviewOn('972544965384')).resolves.toBe(false);
   });
 });
