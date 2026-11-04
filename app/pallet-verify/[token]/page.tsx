@@ -3875,9 +3875,10 @@ export default function PalletVerifyPage({
     showToast(tr('terminal.groupCountSaved', { from, to: next }), 'edit_note');
   }
 
-  /** "All boxes identical" on this row? lib/identical-boxes.ts identicalAllowed. */
+  /** "All boxes identical" on this row? lib/identical-boxes.ts identicalAllowed.
+   *  identical_no_serial (04/11): never on a short carton serial. */
   function canDeclareIdentical(box: BoxScan): boolean {
-    return identicalAllowed(box, PROVISIONAL_PREFIX);
+    return identicalAllowed(box, PROVISIONAL_PREFIX, { noSerial: !!session?.features?.identical_no_serial });
   }
 
   function buildDockChips(opts: { gap: () => void }): ToolChip[] {
