@@ -346,6 +346,13 @@ describe('derivePriorityStatus — priority_push_explain (queued rows)', () => {
       .toEqual({ state: 'held', office: true });
   });
 
+  it('a general-item block (04/11) is held, never "sending"', () => {
+    expect(withDecision('hold_general_item')).toEqual({ state: 'held' });
+    const alerted = row({ alerted_at: minutesAgo(1), alert_kind: 'held' });
+    expect(derivePriorityStatus(input({ config: on, outbox: alerted, explain: { decision: 'hold_general_item' } })))
+      .toEqual({ state: 'held', office: true });
+  });
+
   it('a decision this code does not know falls back to the column holds', () => {
     expect(withDecision('not_ready').state).toBe('sending');
     expect(withDecision('not_ready', { outbox: row({ category: 'non_meat' }) }).state).toBe('held');
