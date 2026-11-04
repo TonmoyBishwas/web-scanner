@@ -173,6 +173,9 @@ const EXPLAIN_STATE: Readonly<Record<string, PriorityState>> = {
   hold_pre_enable: 'held',
   hold_pre_category: 'held',
   hold_local_draft: 'held',
+  // 04/11 (client item 11): a line would reach Priority on the general item
+  // G24023; held until every line has its own Priority item (office-only).
+  hold_general_item: 'held',
   hold_not_closed: 'closing',
   already_in_priority: 'already',
   skipped_test: 'test',
