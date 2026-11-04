@@ -383,8 +383,10 @@ worker changed → `typed` unless the barcode confirms it within 0.011 kg; barco
 filled or confirming → `label_barcode`; the label reading kept as read → `label_ocr`;
 else `unknown`. Damaged-sticker samples go as `note_avg`. Row fields (optional, so
 cached rows still parse): `weight_typed` (set by the edit-panel save when the weight
-changed by 1 g or more), `weight_copied_from` (set by `expandIdenticalBoxes` from the
-sample). `barcode_source` is unchanged. Nothing is shown to the worker.
+changed by 1 g or more; on a copy, `copyWeightTyped`: the form weight 1 g or more
+off the sample's, unless it is the sample's own barcode weight within 0.011 kg, which is
+what the one-tap twin saves), `weight_copied_from` (set by `expandIdenticalBoxes` from
+the sample). `barcode_source` is unchanged. Nothing is shown to the worker.
 
 ## Table of contents
 
