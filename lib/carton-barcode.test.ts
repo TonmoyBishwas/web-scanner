@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cameraSerialAccepted, cameraSerialOcrVerdict, classifyRead, digitsOf, gtinCheckDigitValid, isInHouseCode, isIsraeliGtinPrefixed, labelConfirmsShortCode, matchInvoiceShortCode, noteRepeatedRead, printedDigitsIdentifyCarton, shortCodeDefaults, shortSerialExcluded } from './carton-barcode';
+import { cameraSerialAccepted, cameraSerialBookable, cameraSerialOcrVerdict, classifyRead, digitsOf, gtinCheckDigitValid, isInHouseCode, isIsraeliGtinPrefixed, labelConfirmsShortCode, matchInvoiceShortCode, noteRepeatedRead, printedDigitsIdentifyCarton, shortCodeDefaults, shortSerialExcluded } from './carton-barcode';
 
 describe('carton-barcode', () => {
   it('digitsOf strips everything but digits', () => {
@@ -238,6 +238,21 @@ describe('cameraSerialAccepted / shortSerialExcluded (Wall Dan item 1, 04/11)', 
   it('shortSerialExcluded: a Wall Dan serial is none of the excluded things', () => {
     expect(shortSerialExcluded('409251', WALL_DAN, ['409241'])).toBe(false);
     expect(shortSerialExcluded('409251', null, [])).toBe(false);
+  });
+});
+
+describe('cameraSerialBookable (the page: acceptScannerValue / detect handlers)', () => {
+  const LINES = [{ item_code: '7290006289360' }];
+  it('flag off (features absent or false) → never, the page refuses as before', () => {
+    expect(cameraSerialBookable(undefined, '409251', LINES, [])).toBe(false);
+    expect(cameraSerialBookable({}, '409251', LINES, [])).toBe(false);
+    expect(cameraSerialBookable({ camera_short_serial: false }, '409251', LINES, [])).toBe(false);
+  });
+  it('flag on → a Wall Dan serial is booked', () => {
+    expect(cameraSerialBookable({ camera_short_serial: true }, '409251', LINES, [])).toBe(true);
+  });
+  it('flag on, but the serial is a piece of a listed long carton code → refused', () => {
+    expect(cameraSerialBookable({ camera_short_serial: true }, '409251', LINES, ['729000628936040925112345678901'])).toBe(false);
   });
 });
 

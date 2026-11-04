@@ -78,7 +78,7 @@ import { cartonOwnCodes, invoiceNameConflict, matchInvoiceItem } from '@/lib/inv
 import { labelPrintsWeight, uniformCandidate } from '@/lib/uniform-candidate';
 import { isSplitSession } from '@/lib/session-mode';
 import { findDuplicateOwner } from '@/lib/duplicate-guard';
-import { cameraSerialAccepted, cameraSerialOcrVerdict, CAMERA_SERIAL_RE, classifyRead, hasCartonCode, inboundReadPolicy, matchInvoiceShortCode, parseGlattCode, noteRepeatedRead, printedDigitsIdentifyCarton, shortCodeDefaults } from '@/lib/carton-barcode';
+import { cameraSerialBookable, cameraSerialOcrVerdict, CAMERA_SERIAL_RE, classifyRead, hasCartonCode, inboundReadPolicy, matchInvoiceShortCode, parseGlattCode, noteRepeatedRead, printedDigitsIdentifyCarton, shortCodeDefaults } from '@/lib/carton-barcode';
 import type { ReadPolicy } from '@/lib/barcode-frame';
 import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
 import { cartonsOnListFor, listAboveTotal, newCartonQuantity, type ListAboveTotal } from '@/lib/count-check';
@@ -1847,7 +1847,7 @@ export default function PalletVerifyPage({
     const s = sessionRef.current;
     if (!s?.features?.camera_short_serial) return false;
     const listed = loose ? looseProcessedRef.current : processedRef.current;
-    return cameraSerialAccepted(read, s.ocr_data ?? [], [...sessionCodesRef.current, ...listed]);
+    return cameraSerialBookable(s.features, read, s.ocr_data ?? [], [...sessionCodesRef.current, ...listed]);
   }
 
   function refusedReadNotice(read: string, reason: string): ScanNotice {

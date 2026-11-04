@@ -541,6 +541,21 @@ export function cameraSerialAccepted(
 }
 
 /**
+ * The page's question (acceptScannerValue and the detect handlers): the
+ * session's `features.camera_short_serial` (the flag on for this chat AND a
+ * short-serial supplier's receipt) and cameraSerialAccepted. Off → false for
+ * every read, so the page refuses the short read as before.
+ */
+export function cameraSerialBookable(
+  features: { camera_short_serial?: boolean } | null | undefined,
+  read: string,
+  lines: readonly ShortCodeLine[] | null | undefined,
+  knownCodes: readonly string[],
+): boolean {
+  return !!features?.camera_short_serial && cameraSerialAccepted(read, lines, knownCodes);
+}
+
+/**
  * The label reader's printed digits against a camera-booked serial:
  *  * 'agrees' — the same number;
  *  * 'unread' — no digits, or fewer than 6 (nothing to compare);
