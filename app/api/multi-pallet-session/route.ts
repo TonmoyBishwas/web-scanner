@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nanoid } from 'nanoid';
 import { getRedisClient, touchSession } from '@/lib/redis';
-import { unitsModeOn } from '@/lib/scanner-flags';
+import { cameraShortSerialOn, unitsModeOn } from '@/lib/scanner-flags';
 import type { MultiPalletSession } from '@/types';
 
 const SESSION_TTL = 7200; // 2 hours
@@ -122,7 +122,12 @@ export async function GET(request: NextRequest) {
     touchSession(token).catch((err) => console.warn('[multi-pallet-session] touch failed:', err));
     // Runtime feature switches for this session's chat (lib/scanner-flags.ts).
     // Added to the response only, never stored on the session.
-    const features = { units_mode: await unitsModeOn(session.chat_id) };
+    // camera_short_serial (item 1, 04/11) appears only when on, so with the
+    // flag off the response is exactly as before.
+    const features = {
+      units_mode: await unitsModeOn(session.chat_id),
+      ...((await cameraShortSerialOn(session.chat_id, session.receipt_id)) ? { camera_short_serial: true } : {}),
+    };
     return NextResponse.json({ ...session, features });
   } catch (error) {
     console.error('[multi-pallet-session] GET error:', error);

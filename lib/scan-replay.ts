@@ -21,7 +21,7 @@
  * are not replayed.
  */
 import { ReadConfirmer, type ReadPolicy } from './barcode-frame';
-import { classifyRead, hasCartonCode, inboundReadPolicy, type NoteLine, type ReadVerdict } from './carton-barcode';
+import { cameraSerialAccepted, classifyRead, hasCartonCode, inboundReadPolicy, type NoteLine, type ReadVerdict, type ShortCodeLine } from './carton-barcode';
 
 export interface TraceRow {
   /** Event time, ms since epoch. */
@@ -100,6 +100,27 @@ export function newRules(lines: ReadonlyArray<NoteLine>): ReplayRules {
     policy: (listed) => inboundReadPolicy(() => lines, () => listed),
     classify: classifyRead,
     isDuplicate: hasCartonCode,
+  };
+}
+
+/**
+ * The rules from 01/11 with the camera_short_serial flag on (item 1, 04/11):
+ * a 6-digit carton serial that cameraSerialAccepted takes passes the
+ * short-read guard and goes through the cooldown and the duplicate check as
+ * the pallet page's acceptScannerValue lets SmartScanner do. Only for a
+ * short-serial supplier's session (scripts/replay-scan-sessions.ts
+ * --short-serial). The page also checks the codes already listed; the replay
+ * passes none (a Wall Dan note has no long carton codes).
+ */
+export function serialRules(lines: ReadonlyArray<NoteLine>): ReplayRules {
+  const base = newRules(lines);
+  const codes: ShortCodeLine[] = lines.map((l) => ({ item_code: l.item_code == null ? null : String(l.item_code) }));
+  return {
+    ...base,
+    classify: (v) => {
+      const r = classifyRead(v);
+      return !r.ok && r.reason === 'too_short' && cameraSerialAccepted(v, codes, []) ? { ok: true } : r;
+    },
   };
 }
 

@@ -1,0 +1,494 @@
+{
+ "about": "Session -9KcCgT1Q2nKSfVjfT6W7 (David, Wall Dan note 48651, VAT 515215705, 01/11): its scanner_events reads \u2014 scan_confirmed, read_dropped (value, reads, ms_from_first_read, reason); no cooldown_drop rows. Every value is a 6-digit carton serial the page refused as too short. Replayed by lib/barcode-frame.test.ts through lib/scan-replay.ts (serialRules, item 1 04/11).",
+ "lines": [
+  {
+   "item_code": "7290006289360"
+  }
+ ],
+ "rows": [
+  {
+   "ts": 1793520910570,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409251",
+    "ms_from_first_read": 30
+   }
+  },
+  {
+   "ts": 1793520913605,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409251",
+    "ms_from_first_read": 26
+   }
+  },
+  {
+   "ts": 1793520916829,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409251",
+    "ms_from_first_read": 22
+   }
+  },
+  {
+   "ts": 1793520921704,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "409251",
+    "ms_from_first_read": 4239,
+    "reason": "expired"
+   }
+  },
+  {
+   "ts": 1793520922222,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409251",
+    "ms_from_first_read": 518
+   }
+  },
+  {
+   "ts": 1793520927595,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409252",
+    "ms_from_first_read": 826
+   }
+  },
+  {
+   "ts": 1793520930738,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409252",
+    "ms_from_first_read": 236
+   }
+  },
+  {
+   "ts": 1793520933842,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409252",
+    "ms_from_first_read": 210
+   }
+  },
+  {
+   "ts": 1793520936135,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "409252",
+    "ms_from_first_read": 2271,
+    "reason": "superseded"
+   }
+  },
+  {
+   "ts": 1793520936135,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409254",
+    "ms_from_first_read": 21
+   }
+  },
+  {
+   "ts": 1793520939711,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409254",
+    "ms_from_first_read": 320
+   }
+  },
+  {
+   "ts": 1793520945004,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "409254",
+    "ms_from_first_read": 5248,
+    "reason": "expired"
+   }
+  },
+  {
+   "ts": 1793520945013,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409249",
+    "ms_from_first_read": 9
+   }
+  },
+  {
+   "ts": 1793520948970,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409248",
+    "ms_from_first_read": 20
+   }
+  },
+  {
+   "ts": 1793520951974,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409244",
+    "ms_from_first_read": 21
+   }
+  },
+  {
+   "ts": 1793520954566,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "409244",
+    "ms_from_first_read": 1311,
+    "reason": "superseded"
+   }
+  },
+  {
+   "ts": 1793520954567,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409243",
+    "ms_from_first_read": 33
+   }
+  },
+  {
+   "ts": 1793520957467,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409447",
+    "ms_from_first_read": 86
+   }
+  },
+  {
+   "ts": 1793520961144,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "409447",
+    "ms_from_first_read": 1116,
+    "reason": "superseded"
+   }
+  },
+  {
+   "ts": 1793520961145,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409240",
+    "ms_from_first_read": 24
+   }
+  },
+  {
+   "ts": 1793520963920,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "409240",
+    "ms_from_first_read": 1101,
+    "reason": "superseded"
+   }
+  },
+  {
+   "ts": 1793520963920,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409238",
+    "ms_from_first_read": 22
+   }
+  },
+  {
+   "ts": 1793520966760,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409449",
+    "ms_from_first_read": 303
+   }
+  },
+  {
+   "ts": 1793520969665,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409233",
+    "ms_from_first_read": 528
+   }
+  },
+  {
+   "ts": 1793520969665,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "409449",
+    "ms_from_first_read": 1432,
+    "reason": "superseded"
+   }
+  },
+  {
+   "ts": 1793520972055,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409237",
+    "ms_from_first_read": 28
+   }
+  },
+  {
+   "ts": 1793520972055,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "409233",
+    "ms_from_first_read": 1231,
+    "reason": "superseded"
+   }
+  },
+  {
+   "ts": 1793520982671,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "409237",
+    "ms_from_first_read": 8674,
+    "reason": "expired"
+   }
+  },
+  {
+   "ts": 1793520995781,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409246",
+    "ms_from_first_read": 25
+   }
+  },
+  {
+   "ts": 1793520998878,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409247",
+    "ms_from_first_read": 583
+   }
+  },
+  {
+   "ts": 1793520998878,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "409246",
+    "ms_from_first_read": 1999,
+    "reason": "superseded"
+   }
+  },
+  {
+   "ts": 1793521003060,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409246",
+    "ms_from_first_read": 247
+   }
+  },
+  {
+   "ts": 1793521003060,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "409247",
+    "ms_from_first_read": 1686,
+    "reason": "superseded"
+   }
+  },
+  {
+   "ts": 1793521006294,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409246",
+    "ms_from_first_read": 118
+   }
+  },
+  {
+   "ts": 1793521008001,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409242",
+    "ms_from_first_read": 20
+   }
+  },
+  {
+   "ts": 1793521012703,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409239",
+    "ms_from_first_read": 261
+   }
+  },
+  {
+   "ts": 1793521015058,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "409239",
+    "ms_from_first_read": 873,
+    "reason": "superseded"
+   }
+  },
+  {
+   "ts": 1793521015059,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409235",
+    "ms_from_first_read": 336
+   }
+  },
+  {
+   "ts": 1793521018425,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409235",
+    "ms_from_first_read": 30
+   }
+  },
+  {
+   "ts": 1793521022288,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409450",
+    "ms_from_first_read": 259
+   }
+  },
+  {
+   "ts": 1793521027603,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "409450",
+    "ms_from_first_read": 3999,
+    "reason": "expired"
+   }
+  },
+  {
+   "ts": 1793521029088,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409247",
+    "ms_from_first_read": 292
+   }
+  },
+  {
+   "ts": 1793521032461,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409247",
+    "ms_from_first_read": 290
+   }
+  },
+  {
+   "ts": 1793521034468,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409245",
+    "ms_from_first_read": 23
+   }
+  },
+  {
+   "ts": 1793521034468,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "409247",
+    "ms_from_first_read": 1607,
+    "reason": "superseded"
+   }
+  },
+  {
+   "ts": 1793521038085,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "409245",
+    "ms_from_first_read": 1376,
+    "reason": "superseded"
+   }
+  },
+  {
+   "ts": 1793521038085,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409241",
+    "ms_from_first_read": 20
+   }
+  },
+  {
+   "ts": 1793521041247,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409241",
+    "ms_from_first_read": 241
+   }
+  },
+  {
+   "ts": 1793521044490,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409241",
+    "ms_from_first_read": 259
+   }
+  },
+  {
+   "ts": 1793521047527,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409241",
+    "ms_from_first_read": 216
+   }
+  },
+  {
+   "ts": 1793521050164,
+   "event": "scan_confirmed",
+   "data": {
+    "reads": 2,
+    "value": "409451",
+    "ms_from_first_read": 275
+   }
+  },
+  {
+   "ts": 1793521057603,
+   "event": "read_dropped",
+   "data": {
+    "reads": 1,
+    "value": "409451",
+    "ms_from_first_read": 6418,
+    "reason": "expired"
+   }
+  }
+ ]
+}

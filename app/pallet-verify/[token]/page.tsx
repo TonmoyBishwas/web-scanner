@@ -78,7 +78,7 @@ import { cartonOwnCodes, invoiceNameConflict, matchInvoiceItem } from '@/lib/inv
 import { labelPrintsWeight, uniformCandidate } from '@/lib/uniform-candidate';
 import { isSplitSession } from '@/lib/session-mode';
 import { findDuplicateOwner } from '@/lib/duplicate-guard';
-import { classifyRead, hasCartonCode, inboundReadPolicy, matchInvoiceShortCode, parseGlattCode, noteRepeatedRead, printedDigitsIdentifyCarton, shortCodeDefaults } from '@/lib/carton-barcode';
+import { cameraSerialBookable, cameraSerialOcrVerdict, CAMERA_SERIAL_RE, classifyRead, hasCartonCode, inboundReadPolicy, matchInvoiceShortCode, parseGlattCode, noteRepeatedRead, printedDigitsIdentifyCarton, shortCodeDefaults } from '@/lib/carton-barcode';
 import type { ReadPolicy } from '@/lib/barcode-frame';
 import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
 import { cartonsOnListFor, listAboveTotal, newCartonQuantity, type ListAboveTotal } from '@/lib/count-check';
@@ -1668,7 +1668,10 @@ export default function PalletVerifyPage({
       // A read that cannot be a carton barcode (a fragment, a failed check
       // digit) is a misread: show the digits, store nothing (SCN-13).
       const verdict = classifyRead(read);
-      trace('ui', 'scan_detected', { barcode: read, pallet: currentPalletRef.current, ok: verdict.ok, reason: verdict.ok ? undefined : verdict.reason, duplicate: hasCartonCode(processedRef.current, read), has_image: !!imageData, twin_held: twinHeld || undefined, same_held: sameHeld || undefined });
+      // A Wall Dan carton serial the camera may book (item 1, 04/11 — flag
+      // camera_short_serial, Wall Dan receipts only): taken like a full code.
+      const serial = !verdict.ok && verdict.reason === 'too_short' && serialAccepted(read, false);
+      trace('ui', 'scan_detected', { barcode: read, pallet: currentPalletRef.current, ok: verdict.ok || serial, serial: serial || undefined, reason: verdict.ok ? undefined : verdict.reason, duplicate: hasCartonCode(processedRef.current, read), has_image: !!imageData, twin_held: twinHeld || undefined, same_held: sameHeld || undefined });
       // A short serial a label photo already booked (Wall Dan 408274, 25/10)
       // is on the list: the blue "already on the list" notice below, not the
       // amber short-code one. Every short read is noted first, before any
@@ -1676,7 +1679,7 @@ export default function PalletVerifyPage({
       const tooShort = !verdict.ok && verdict.reason === 'too_short';
       if (tooShort) decodedShortRef.current.add(read);
       const bookedSerial = tooShort && processedRef.current.has(read);
-      if (!verdict.ok && !bookedSerial) {
+      if (!verdict.ok && !bookedSerial && !serial) {
         if (verdict.reason === 'pallet_label') {
           // The supplier's shipping-pallet label: keep it as the pallet's
           // identity, never as a carton (MEV-10 — IN264172698 booked it as
@@ -1790,9 +1793,13 @@ export default function PalletVerifyPage({
   // the carton's real code read a moment later — 192 drops on 10-15). The
   // page still hears it (throttled) for its notice; nothing is counted from
   // a short read either way, so it never gets the "saved" hold.
+  // A Wall Dan carton serial the page books (serialAccepted, item 1 04/11)
+  // is accepted like any full code: cooldown, burst frame, box OCR.
   const acceptScannerValue = useCallback((v: string) => {
-    const verdict = classifyRead(v.trim());
-    return verdict.ok || verdict.reason !== 'too_short';
+    const r = v.trim();
+    const verdict = classifyRead(r);
+    if (verdict.ok || verdict.reason !== 'too_short') return true;
+    return serialAccepted(r, phaseRef.current === 'loose_scanning' || phaseRef.current === 'loose_confirming');
   }, []);
 
   // ── Read policy (01/11, Glatt note 261062322 — lib/barcode-frame.ts) ──
@@ -1829,6 +1836,20 @@ export default function PalletVerifyPage({
    *  barcode" (aim at it) or "None — add cartons" (New carton); the text
    *  also names the photo. A carton whose only code is short has no other
    *  way onto the list (document 48429, 406243). */
+  /** May the camera book this short read as a Wall Dan carton serial?
+   *  Only with `features.camera_short_serial` (on for this chat AND a
+   *  short-serial supplier's receipt — lib/scanner-flags.ts), and only a
+   *  read none of the exclusions claim (lib/carton-barcode.ts
+   *  cameraSerialAccepted: a line code or a piece of one, a piece of a long
+   *  code on the list or in this session, the pallet label). Refs only, so
+   *  the detect handlers frozen at first render see current data. */
+  function serialAccepted(read: string, loose: boolean): boolean {
+    const s = sessionRef.current;
+    if (!s?.features?.camera_short_serial) return false;
+    const listed = loose ? looseProcessedRef.current : processedRef.current;
+    return cameraSerialBookable(s.features, read, s.ocr_data ?? [], [...sessionCodesRef.current, ...listed]);
+  }
+
   function refusedReadNotice(read: string, reason: string): ScanNotice {
     const lang = sessionRef.current?.language || 'English';
     const tooShort = reason === 'too_short';
@@ -2293,6 +2314,14 @@ export default function PalletVerifyPage({
         // A failed read keeps what the barcode and the invoice already say
         // (lib/failed-read.ts) — out here for the same reason as `reading`.
         const failPatch = data?.success && data.ocr_data ? null : failedReadPatch(lookupKey, scannedBoxesRef.current, 'pallet');
+        // A camera-booked Wall Dan serial (item 1, 04/11): the label's printed
+        // digits must not name another code. Out here (StrictMode) like
+        // `reading`; 'other' only sends the row to the edit panel, never
+        // re-keys it (its sticker photo is filed under the serial).
+        const serialCheck = !manual && !!sessionRef.current?.features?.camera_short_serial && CAMERA_SERIAL_RE.test(lookupKey) && data?.success && data.ocr_data
+          ? cameraSerialOcrVerdict(lookupKey, digitsOnly(data.ocr_data.barcode_digits))
+          : null;
+        if (serialCheck) trace('ui', 'camera_serial_ocr', { serial: lookupKey, digits: digitsOnly(data.ocr_data.barcode_digits), verdict: serialCheck });
 
         setScannedBoxes((prev) => {
           // find the box by its (provisional, for manual) barcode key
@@ -2398,6 +2427,8 @@ export default function PalletVerifyPage({
           }).expiryError) {
             needsReview = true;
           }
+          // The label prints another number than the camera-booked serial.
+          if (serialCheck === 'other') needsReview = true;
 
           const updated = prev.map((b, i) => {
             if (i !== idx) return b;
@@ -2570,12 +2601,14 @@ export default function PalletVerifyPage({
       const twinHeld = noteTwinHoldRead(twinHoldRef, read, now);
       const sameHeld = noteTwinHoldRead(sameHoldRef, read, now);
       const verdict = classifyRead(read);
-      trace('ui', 'loose_scan_detected', { barcode: read, ok: verdict.ok, reason: verdict.ok ? undefined : verdict.reason, duplicate: hasCartonCode(looseProcessedRef.current, read), has_image: !!imageData, twin_held: twinHeld || undefined, same_held: sameHeld || undefined });
+      // A Wall Dan carton serial the camera may book — see the pallet phase.
+      const serial = !verdict.ok && verdict.reason === 'too_short' && serialAccepted(read, true);
+      trace('ui', 'loose_scan_detected', { barcode: read, ok: verdict.ok || serial, serial: serial || undefined, reason: verdict.ok ? undefined : verdict.reason, duplicate: hasCartonCode(looseProcessedRef.current, read), has_image: !!imageData, twin_held: twinHeld || undefined, same_held: sameHeld || undefined });
       // A short serial a label photo already booked — see the pallet phase.
       const tooShort = !verdict.ok && verdict.reason === 'too_short';
       if (tooShort) decodedShortRef.current.add(read);
       const bookedSerial = tooShort && looseProcessedRef.current.has(read);
-      if (!verdict.ok && !bookedSerial) {
+      if (!verdict.ok && !bookedSerial && !serial) {
         if (verdict.reason === 'pallet_label') {
           showToast(t(sessionRef.current?.language || 'English', 'terminal.palletLabelRead', { digits: read }), 'local_shipping');
           return;
@@ -4607,6 +4640,11 @@ export default function PalletVerifyPage({
         const reading = data?.success && data.ocr_data ? barcodeReading(data.ocr_data, manual, lookupKey, looseBoxesRef.current, 'loose') : null;
         // A failed read keeps what the barcode and the invoice already say.
         const failPatch = data?.success && data.ocr_data ? null : failedReadPatch(lookupKey, looseBoxesRef.current, 'loose');
+        // A camera-booked Wall Dan serial — see the pallet phase.
+        const serialCheck = !manual && !!sessionRef.current?.features?.camera_short_serial && CAMERA_SERIAL_RE.test(lookupKey) && data?.success && data.ocr_data
+          ? cameraSerialOcrVerdict(lookupKey, digitsOnly(data.ocr_data.barcode_digits))
+          : null;
+        if (serialCheck) trace('ui', 'loose_camera_serial_ocr', { serial: lookupKey, digits: digitsOnly(data.ocr_data.barcode_digits), verdict: serialCheck });
 
         setLooseBoxes((prev) => {
           const idx = prev.findIndex((b) => b.barcode === lookupKey);
@@ -4673,6 +4711,8 @@ export default function PalletVerifyPage({
           }).expiryError) {
             needsReview = true;
           }
+          // The label prints another number than the camera-booked serial.
+          if (serialCheck === 'other') needsReview = true;
 
           // See the pallet-phase note: a manual capture's real identity only
           // exists once OCR has read the printed digits.
