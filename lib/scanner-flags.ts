@@ -2,7 +2,8 @@
  * Runtime switches for scanner features (27/10): `public.scanner_flags`, one
  * row per flag — `enabled_all`, or a list of chat ids it is on for. Read by
  * the session GET (app/api/multi-pallet-session/route.ts), which hands the
- * page `features: { units_mode }`; flipping a row needs no redeploy.
+ * page `features: { units_mode, camera_short_serial }`; flipping a row needs
+ * no redeploy.
  *
  * A missing table, a missing row or any DB error is OFF: a feature behind a
  * flag must never switch on because the flag could not be read.
@@ -10,6 +11,7 @@
  * Server only (the service-role client): the page sees `features` alone.
  */
 import { supabase } from './supabase';
+import { SHORT_SERIAL_SUPPLIER_VATS } from './carton-barcode';
 
 export interface ScannerFlagRow {
   enabled_all?: unknown;
@@ -97,3 +99,67 @@ export async function receiveRedesignOn(chatId: string | number | null | undefin
     return false;
   }
 }
+
+/**
+ * The camera books a short carton serial (item 1, 04/11): Wall Dan's 6-digit
+ * running numbers, read by the camera, are booked like any full barcode —
+ * no photo tap — on a short-serial supplier's receipt only
+ * (lib/carton-barcode.ts SHORT_SERIAL_SUPPLIER_VATS, cameraSerialAccepted).
+ * A missing row is OFF; the page then refuses the read as today.
+ */
+export const cameraShortSerialRow = flagRow('camera_short_serial');
+
+/**
+ * The flag row AND the receipt's supplier VAT, with the VAT cached per
+ * receipt for `vatTtlMs`. Only a found, non-null VAT is cached: a miss, a
+ * null or a failed lookup is asked again next time, so a VAT written after
+ * the first look does not hold the feature off. Any throw is off.
+ */
+export function shortSerialGate(
+  row: () => Promise<ScannerFlagRow | null>,
+  lookupVat: (receiptId: string) => Promise<string | null>,
+  vats: readonly string[],
+  vatTtlMs = 10 * 60_000,
+  now: () => number = () => Date.now(),
+): (chatId: string | number | null | undefined, receiptId: string | null | undefined) => Promise<boolean> {
+  const cache = new Map<string, { vat: string; at: number }>();
+  return async (chatId, receiptId) => {
+    try {
+      const receipt = String(receiptId ?? '').trim();
+      if (!receipt) return false;
+      if (!flagEnabledFor(await row(), chatId)) return false;
+      const hit = cache.get(receipt);
+      let vat: string | null;
+      if (hit && now() - hit.at < vatTtlMs) {
+        vat = hit.vat;
+      } else {
+        const raw = await lookupVat(receipt);
+        vat = raw == null ? null : String(raw).trim() || null;
+        if (vat) cache.set(receipt, { vat, at: now() });
+        else cache.delete(receipt);
+      }
+      return !!vat && vats.includes(vat);
+    } catch {
+      return false;
+    }
+  };
+}
+
+/** The receipt's deliveries.supplier_vat; null on a miss or any error. */
+async function receiptSupplierVat(receiptId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('deliveries')
+    .select('supplier_vat')
+    .eq('id', receiptId)
+    .maybeSingle();
+  if (error || !data) return null;
+  const vat = (data as { supplier_vat?: unknown }).supplier_vat;
+  return vat == null ? null : String(vat);
+}
+
+/** Camera short serials for this chat on this receipt; off when anything cannot be read. */
+export const cameraShortSerialOn = shortSerialGate(
+  cameraShortSerialRow,
+  receiptSupplierVat,
+  SHORT_SERIAL_SUPPLIER_VATS,
+);

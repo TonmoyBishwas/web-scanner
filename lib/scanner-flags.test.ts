@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cachedFlagRow, flagEnabledFor } from './scanner-flags';
+import { cachedFlagRow, flagEnabledFor, shortSerialGate } from './scanner-flags';
 
 describe('flagEnabledFor', () => {
   it('on for everyone', () => {
@@ -40,5 +40,67 @@ describe('cachedFlagRow', () => {
   it('a failed load is no row (off)', async () => {
     const get = cachedFlagRow(async () => { throw new Error('relation "scanner_flags" does not exist'); });
     expect(await get()).toBeNull();
+  });
+});
+
+describe('shortSerialGate (camera_short_serial, item 1 04/11)', () => {
+  const WALL_DAN = '515215705';
+  const DAVID = '972500000001';
+  function gate(opts: { row?: unknown; vat?: () => Promise<string | null> } = {}) {
+    let t = 0;
+    const calls: string[] = [];
+    const row = 'row' in opts ? opts.row : { enabled_all: false, chat_ids: [DAVID] };
+    const g = shortSerialGate(
+      async () => row as never,
+      async (id) => { calls.push(id); return opts.vat ? opts.vat() : WALL_DAN; },
+      [WALL_DAN],
+      1000,
+      () => t,
+    );
+    return { g, calls, tick: (ms: number) => { t += ms; } };
+  }
+
+  it('on only with the row on for the chat AND the receipt a Wall Dan one', async () => {
+    expect(await gate().g(DAVID, 'r1')).toBe(true);
+  });
+
+  it('off with no row, or a row for another chat — the VAT is not even looked up', async () => {
+    const none = gate({ row: null });
+    expect(await none.g(DAVID, 'r1')).toBe(false);
+    expect(none.calls).toEqual([]);
+    const other = gate();
+    expect(await other.g('972500000099', 'r1')).toBe(false);
+    expect(other.calls).toEqual([]);
+  });
+
+  it('off with no receipt id', async () => {
+    expect(await gate().g(DAVID, undefined)).toBe(false);
+    expect(await gate().g(DAVID, '')).toBe(false);
+  });
+
+  it('off with a null VAT, another VAT, or a lookup that throws', async () => {
+    expect(await gate({ vat: async () => null }).g(DAVID, 'r1')).toBe(false);
+    expect(await gate({ vat: async () => '514000000' }).g(DAVID, 'r1')).toBe(false);
+    expect(await gate({ vat: async () => { throw new Error('boom'); } }).g(DAVID, 'r1')).toBe(false);
+  });
+
+  it('a found VAT is not asked again within the TTL', async () => {
+    const x = gate();
+    await x.g(DAVID, 'r1');
+    x.tick(999);
+    await x.g(DAVID, 'r1');
+    expect(x.calls).toEqual(['r1']);
+    x.tick(1);
+    await x.g(DAVID, 'r1');
+    expect(x.calls).toEqual(['r1', 'r1']);
+  });
+
+  it('a null VAT is asked again on the next call (never cached)', async () => {
+    let vat: string | null = null;
+    const x = gate({ vat: async () => vat });
+    expect(await x.g(DAVID, 'r1')).toBe(false);
+    vat = WALL_DAN;
+    expect(await x.g(DAVID, 'r1')).toBe(true);
+    expect(x.calls).toEqual(['r1', 'r1']);
   });
 });

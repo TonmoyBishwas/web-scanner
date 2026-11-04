@@ -104,6 +104,52 @@ describe('GET /api/multi-pallet-session features.units_mode', () => {
   });
 });
 
+describe('GET /api/multi-pallet-session features.camera_short_serial (item 1, 04/11)', () => {
+  const get = async (token: string) => (await sessionRoute.GET(req(`/api/multi-pallet-session?token=${token}`))).json();
+  let n = 0;
+  /** A fresh receipt id per call: the VAT cache is per receipt for 10 min. */
+  function wallDanSession(vat: string | null, chat = '999000000001') {
+    const rid = `rcpt-${++n}`;
+    db.deliveries = [...(db.deliveries ?? []), { id: rid, supplier_vat: vat }];
+    db.scan_sessions.push({ token: `tokW${n}`, kind: 'multi_pallet', expires_at: FUTURE, data: { token: `tokW${n}`, chat_id: chat, receipt_id: rid, document_number: '48696', ocr_data: [] } });
+    return `tokW${n}`;
+  }
+
+  it('no flag row: absent, the features exactly as before', async () => {
+    expect((await get(wallDanSession('515215705'))).features).toEqual({ units_mode: true });
+  });
+
+  it('row on for the chat and a Wall Dan receipt: present and true', async () => {
+    db.scanner_flags.push({ flag: 'camera_short_serial', enabled_all: false, chat_ids: ['999000000001'] });
+    expect((await get(wallDanSession('515215705'))).features).toEqual({ units_mode: true, camera_short_serial: true });
+  });
+
+  it('row on, but another supplier, a null VAT, another chat or no receipt: absent', async () => {
+    db.scanner_flags.push({ flag: 'camera_short_serial', enabled_all: false, chat_ids: ['999000000001'] });
+    expect((await get(wallDanSession('514000000'))).features).not.toHaveProperty('camera_short_serial');
+    expect((await get(wallDanSession(null))).features).not.toHaveProperty('camera_short_serial');
+    expect((await get(wallDanSession('515215705', '972500000000'))).features).not.toHaveProperty('camera_short_serial');
+    expect((await get('tokT')).features).not.toHaveProperty('camera_short_serial');
+  });
+
+  it('a deliveries read that fails is off, and the session still loads', async () => {
+    db.scanner_flags.push({ flag: 'camera_short_serial', enabled_all: true, chat_ids: [] });
+    const tok = wallDanSession('515215705');
+    missingTable = 'deliveries';
+    const body = await get(tok);
+    expect(body.features).toEqual({ units_mode: true });
+    expect(body.document_number).toBe('48696');
+  });
+
+  it('is never stored on the session', async () => {
+    db.scanner_flags.push({ flag: 'camera_short_serial', enabled_all: true, chat_ids: [] });
+    const tok = wallDanSession('515215705');
+    expect((await get(tok)).features.camera_short_serial).toBe(true);
+    const row = db.scan_sessions.find((r) => r.token === tok)!;
+    expect(row.data).not.toHaveProperty('features');
+  });
+});
+
 describe('POST /api/carton-labels — a units save', () => {
   const units = {
     token: 'tokT', origin: 'new_carton', pallet_number: 0, item_code: 'KK117', item_name_hebrew: 'מנה',

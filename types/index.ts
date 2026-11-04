@@ -360,6 +360,10 @@ export interface MultiPalletSession {
   features?: {
     /** New carton's units mode in the loose pile (lib/units-cartons.ts). */
     units_mode?: boolean;
+    /** The camera books a 6-digit carton serial on a short-serial supplier's
+     *  receipt (Wall Dan; lib/scanner-flags.ts cameraShortSerialOn). Present
+     *  only when on. */
+    camera_short_serial?: boolean;
   };
   receipt_id?: string;
   completed_pallets: Array<{
