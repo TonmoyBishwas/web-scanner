@@ -29,15 +29,32 @@
  * (SmartScanner traceDropped), so repeated single sightings are collapsed:
  * the replay sees fewer one-read chances than the floor does. OLD = live
  * is a consistency check of the rebuild, not proof of the new rule.
+ *
+ * --short-serial (item 1, 04/11): for sessions whose receipt's supplier VAT
+ * is in SHORT_SERIAL_SUPPLIER_VATS (Wall Dan), a third replay SERIAL =
+ * serialRules (the camera_short_serial flag on). Each serial SERIAL books is
+ * 'exact' when box_inventory holds that barcode on the session's document
+ * (a photo booking), else 'unbooked' (the receipt's minted / NOBC rows are
+ * where such a carton went). A session is flagged when its unbooked serials
+ * outnumber those rows. The export then also needs `vat`, `docs` and
+ * `bookedRows`. Without the switch the output is unchanged.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
-import { barcodeFormatOk, isGlattMisread, sameGlattCarton, type NoteLine } from '../lib/carton-barcode';
-import { framesFromTrace, newRules, oldRules, replayFrames, type TraceRow } from '../lib/scan-replay';
+import { barcodeFormatOk, isGlattMisread, sameGlattCarton, SHORT_SERIAL_SUPPLIER_VATS, type NoteLine } from '../lib/carton-barcode';
+import { isMintedLabelBarcode } from '../lib/label-batches';
+import { isNoBarcodeId } from '../lib/no-barcode';
+import { framesFromTrace, newRules, oldRules, replayFrames, serialRules, type TraceRow } from '../lib/scan-replay';
 
 interface Export {
   events: Array<{ token: string; ts: number; event: string; data: Record<string, unknown> | null }>;
   lines: Record<string, NoteLine[]>;
   booked: string[];
+  /** --short-serial only: the session's receipt supplier VAT (deliveries.supplier_vat). */
+  vat?: Record<string, string | null>;
+  /** --short-serial only: the session's document number (box_inventory.invoice_number). */
+  docs?: Record<string, string | null>;
+  /** --short-serial only: box_inventory rows of those documents. */
+  bookedRows?: Array<{ barcode: string; invoice_number: string | null; barcode_source: string | null }>;
 }
 
 function arg(name: string): string | undefined {
@@ -45,7 +62,7 @@ function arg(name: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
-async function pull(days: number): Promise<Export> {
+async function pull(days: number, shortSerial: boolean): Promise<Export> {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error('Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY, or pass --input export.json');
@@ -68,6 +85,8 @@ async function pull(days: number): Promise<Export> {
   }
   const tokens = [...new Set(events.map((e) => e.token))];
   const lines: Export['lines'] = {};
+  const receipts: Record<string, string> = {};
+  const docs: Record<string, string | null> = {};
   if (tokens.length) {
     const { data, error } = await db.from('scan_sessions').select('token, data').in('token', tokens);
     if (error) throw new Error(`scan_sessions: ${error.message}`);
@@ -78,6 +97,9 @@ async function pull(days: number): Promise<Export> {
         quantity_kg: l.quantity_kg ?? null,
         expected_boxes: l.expected_boxes ?? null,
       }));
+      const sd = s.data as { receipt_id?: string; document_number?: string } | null;
+      if (sd?.receipt_id) receipts[s.token] = sd.receipt_id;
+      docs[s.token] = sd?.document_number ?? null;
     }
   }
   const booked: string[] = [];
@@ -88,13 +110,32 @@ async function pull(days: number): Promise<Export> {
     for (const r of data ?? []) if (r.barcode) booked.push(r.barcode);
     if (!data || data.length < 1000) break;
   }
-  return { events, lines, booked };
+  if (!shortSerial) return { events, lines, booked };
+  const vat: Record<string, string | null> = {};
+  const ids = [...new Set(Object.values(receipts))];
+  if (ids.length) {
+    const { data, error } = await db.from('deliveries').select('id, supplier_vat').in('id', ids);
+    if (error) throw new Error(`deliveries: ${error.message}`);
+    const byId = new Map((data ?? []).map((d) => [String(d.id), d.supplier_vat == null ? null : String(d.supplier_vat)]));
+    for (const [token, id] of Object.entries(receipts)) vat[token] = byId.get(id) ?? null;
+  }
+  const serialDocs = Object.entries(docs)
+    .filter(([token, d]) => d && SHORT_SERIAL_SUPPLIER_VATS.includes(vat[token] ?? ''))
+    .map(([, d]) => d as string);
+  const bookedRows: NonNullable<Export['bookedRows']> = [];
+  if (serialDocs.length) {
+    const { data, error } = await db.from('box_inventory').select('barcode, invoice_number, barcode_source').in('invoice_number', [...new Set(serialDocs)]);
+    if (error) throw new Error(`box_inventory: ${error.message}`);
+    for (const r of data ?? []) if (r.barcode) bookedRows.push({ barcode: r.barcode, invoice_number: r.invoice_number, barcode_source: r.barcode_source });
+  }
+  return { events, lines, booked, vat, docs, bookedRows };
 }
 
 async function main() {
   const days = Number(arg('days') ?? 7);
   const input = arg('input');
-  const ex: Export = input ? JSON.parse(readFileSync(input, 'utf8')) : await pull(days);
+  const shortSerial = process.argv.includes('--short-serial');
+  const ex: Export = input ? JSON.parse(readFileSync(input, 'utf8')) : await pull(days, shortSerial);
   const booked = new Set(ex.booked);
   const bookedList = [...booked];
 
@@ -116,6 +157,9 @@ async function main() {
   const misreadBooked = (v: string) => v.length === 25 && bookedList.some((c) => isGlattMisread(c) && c.slice(-9) === v.slice(-9));
   const rowsMd: string[] = [];
   const details: string[] = [];
+  const serialMd: string[] = [];
+  const serialDetails: string[] = [];
+  const serialTotals = { sessions: 0, old: 0, serial: 0, exact: 0, unbooked: 0, lost: 0, flagged: 0 };
 
   for (const [token, rows] of byToken) {
     rows.sort((a, b) => a.ts - b.ts);
@@ -186,6 +230,34 @@ async function main() {
       for (const b of newMis) if (!oldSet.has(b.value)) details.push(`- misread booked NOW (new): \`${b.value}\``);
       details.push('');
     }
+
+    // --short-serial: Wall Dan's 6-digit carton serials with camera_short_serial on.
+    if (shortSerial && SHORT_SERIAL_SUPPLIER_VATS.includes(ex.vat?.[token] ?? '')) {
+      const doc = ex.docs?.[token] ?? null;
+      const docRows = (ex.bookedRows ?? []).filter((r) => doc && r.invoice_number === doc);
+      const docCodes = new Set(docRows.map((r) => r.barcode));
+      const stand = docRows.filter((r) => r.barcode_source === 'minted' || isMintedLabelBarcode(r.barcode) || isNoBarcodeId(r.barcode)).length;
+      const serial = replayFrames(frames, serialRules(lines));
+      const serialCodes = serial.booked.map((b) => b.value);
+      const exact = serialCodes.filter((v) => docCodes.has(v));
+      const unbooked = serialCodes.filter((v) => !docCodes.has(v));
+      // Lost to the cooldown: dropped and never booked later in the replay.
+      const lostSerial = [...new Set(serial.cooldownDropped.map((d) => d.value))].filter((v) => !serialCodes.includes(v));
+      const flagged = unbooked.length > stand;
+      serialTotals.sessions += 1;
+      serialTotals.old += old.booked.length;
+      serialTotals.serial += serialCodes.length;
+      serialTotals.exact += exact.length;
+      serialTotals.unbooked += unbooked.length;
+      serialTotals.lost += lostSerial.length;
+      if (flagged) serialTotals.flagged += 1;
+      serialMd.push(`| \`${token}\` | ${doc ?? '?'} | ${old.booked.length} | ${serialCodes.length} | ${exact.length} | ${unbooked.length} | ${stand} | ${lostSerial.length} | ${flagged ? 'FLAG' : 'ok'} |`);
+      serialDetails.push(`### \`${token}\` (document ${doc ?? '?'})`);
+      for (const v of exact) serialDetails.push(`- \`${v}\`: exact — booked on this receipt under the serial`);
+      for (const v of unbooked) serialDetails.push(`- \`${v}\`: unbooked — receipt has ${stand} minted/NOBC`);
+      for (const v of lostSerial) serialDetails.push(`- \`${v}\`: lost to the 3 s cooldown in the replay (re-aimed on the floor)`);
+      serialDetails.push('');
+    }
   }
 
   out.push(`# Scanner read replay — ${new Date().toISOString()}`);
@@ -215,6 +287,19 @@ async function main() {
     out.push('## Differences');
     out.push('');
     out.push(...details);
+  }
+  if (shortSerial) {
+    out.push('## Short serials (camera_short_serial, item 1)');
+    out.push('');
+    out.push(`Sessions on a short-serial supplier's receipt (VAT ${SHORT_SERIAL_SUPPLIER_VATS.join(', ')}): ${serialTotals.sessions}. SERIAL = NEW with a 6-digit carton serial (no leading zero, not a line code or a piece of one) booked from the camera. An approximation: a refused value's confirms are traced at most once per 3 s.`);
+    out.push('');
+    out.push(`- Wall Dan serial cartons booked by camera OLD ${serialTotals.old} → SERIAL ${serialTotals.serial} (exact ${serialTotals.exact}, unbooked ${serialTotals.unbooked}; lost to the cooldown ${serialTotals.lost}; sessions flagged ${serialTotals.flagged}).`);
+    out.push('');
+    out.push('| session | document | OLD booked | SERIAL booked | exact | unbooked | minted/NOBC on receipt | lost to cooldown | check |');
+    out.push('|---|---|---|---|---|---|---|---|---|');
+    out.push(...serialMd);
+    out.push('');
+    out.push(...serialDetails);
   }
   const md = out.join('\n') + '\n';
   const target = arg('out');

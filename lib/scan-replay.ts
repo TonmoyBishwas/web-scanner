@@ -112,13 +112,14 @@ export function newRules(lines: ReadonlyArray<NoteLine>): ReplayRules {
  * --short-serial). The page also checks the codes already listed; the replay
  * passes none (a Wall Dan note has no long carton codes).
  */
-export function serialRules(lines: ReadonlyArray<NoteLine & ShortCodeLine>): ReplayRules {
+export function serialRules(lines: ReadonlyArray<NoteLine>): ReplayRules {
   const base = newRules(lines);
+  const codes: ShortCodeLine[] = lines.map((l) => ({ item_code: l.item_code == null ? null : String(l.item_code) }));
   return {
     ...base,
     classify: (v) => {
       const r = classifyRead(v);
-      return !r.ok && r.reason === 'too_short' && cameraSerialAccepted(v, lines as ReadonlyArray<ShortCodeLine>, []) ? { ok: true } : r;
+      return !r.ok && r.reason === 'too_short' && cameraSerialAccepted(v, codes, []) ? { ok: true } : r;
     },
   };
 }
