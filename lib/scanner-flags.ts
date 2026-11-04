@@ -163,3 +163,21 @@ export const cameraShortSerialOn = shortSerialGate(
   receiptSupplierVat,
   SHORT_SERIAL_SUPPLIER_VATS,
 );
+
+/**
+ * Manual capture review (04/11, client: "stop creating cartons with MANUAL
+ * barcodes until fixed"): a photo capture whose printed digits were not read
+ * stays held for review instead of being booked as NOBC- (lib/no-barcode.ts
+ * unreadDigitsOutcome), and no booking goes out with a MANUAL- placeholder
+ * (provisionalAtBooking). A missing row is OFF.
+ */
+export const manualCaptureReviewRow = flagRow('manual_capture_review');
+
+/** Manual capture review for this chat; off when the flag cannot be read, never a throw. */
+export async function manualCaptureReviewOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await manualCaptureReviewRow(), chatId);
+  } catch {
+    return false;
+  }
+}

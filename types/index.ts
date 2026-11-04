@@ -376,6 +376,9 @@ export interface MultiPalletSession {
      *  receipt (Wall Dan; lib/scanner-flags.ts cameraShortSerialOn). Present
      *  only when on. */
     camera_short_serial?: boolean;
+    /** A photo capture with no digits read is held, never booked NOBC-,
+     *  and nothing books with a MANUAL- placeholder (lib/no-barcode.ts). */
+    manual_capture_review?: boolean;
   };
   receipt_id?: string;
   completed_pallets: Array<{

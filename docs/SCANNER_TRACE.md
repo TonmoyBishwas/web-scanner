@@ -26,7 +26,14 @@ view, Israel local time). Every event carries the user (`chat_id`,
 refusal `reason`, `duplicate`), `manual_capture`, `retry_ocr`, `delete_box`,
 `loose_scan_detected`, `loose_manual_capture`, `loose_retry_ocr`,
 `loose_delete_box`, `complete_as_single`, `cancel_single_confirm`,
-`continue_as_mix`, `edit_open`, `edit_save` (every field the worker saved),
+`continue_as_mix`, `edit_open`, `edit_save` (every field the worker saved,
+plus `resolved` — the barcode the row is saved under, null when refused for
+too few digits — and `identity`: forced / typed / short / kept, 04/11),
+`ocr_network_failed` (a label read whose request itself failed: barcode,
+where, manual, error), `manual_capture_held_no_digits` /
+`loose_manual_capture_held_no_digits` and `confirm_held_manual` (flag
+`manual_capture_review`: a no-digits capture held instead of booked NOBC-,
+and a booking sent back while a MANUAL- row was left),
 `create_barcode`, `no_barcode`, `identical_created`, `count_submit`,
 `confirm_pallet` (scanned count, declared count, override, forced mix,
 detected type), `pallet_completed` (LPN, type, box count), `next_pallet`,

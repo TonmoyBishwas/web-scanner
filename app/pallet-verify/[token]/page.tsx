@@ -83,7 +83,8 @@ import { cameraSerialBookable, cameraSerialOcrVerdict, CAMERA_SERIAL_RE, classif
 import type { ReadPolicy } from '@/lib/barcode-frame';
 import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
 import { cartonsOnListFor, listAboveTotal, newCartonQuantity, type ListAboveTotal } from '@/lib/count-check';
-import { freeNoBarcodeId, isNoBarcodeId, unreadDigitsOutcome } from '@/lib/no-barcode';
+import { freeNoBarcodeId, isNoBarcodeId, provisionalAtBooking, unreadDigitsOutcome } from '@/lib/no-barcode';
+import { resolveEditIdentity } from '@/lib/edit-identity';
 import { useBackClose } from '@/lib/use-back-close';
 import { findWeightSuspects } from '@/lib/weight-sanity';
 import { acceptDoubts, releaseDoubtHold, sharedDoubt, weightDoubts } from '@/lib/weight-review';
@@ -2237,6 +2238,18 @@ export default function PalletVerifyPage({
       trace('ui', 'confirm_held_reads', { where, cartons: held });
       return false;
     }
+    // manual_capture_review (04/11): nothing is booked with a MANUAL-
+    // placeholder — not through the single-item auto-confirm nor "Create LPN
+    // anyway", which pass the footer's gate by. The first such carton opens
+    // in the edit panel (the same panel the amber footer opens); off, the
+    // last line of defence (stripProvisionalIds) books it NOBC- as before.
+    const manualHeld = provisionalAtBooking(ref.current, !!sessionRef.current?.features?.manual_capture_review);
+    if (manualHeld.length) {
+      trace('ui', 'confirm_held_manual', { where, cartons: manualHeld });
+      const first = ref.current.find((b) => b.barcode === manualHeld[0]);
+      if (first) openEdit(first, where === 'loose');
+      return false;
+    }
     return true;
   }
 
@@ -2323,6 +2336,21 @@ export default function PalletVerifyPage({
           ? cameraSerialOcrVerdict(lookupKey, digitsOnly(data.ocr_data.barcode_digits))
           : null;
         if (serialCheck) trace('ui', 'camera_serial_ocr', { serial: lookupKey, digits: digitsOnly(data.ocr_data.barcode_digits), verdict: serialCheck });
+        // BOT-32 for a capture whose digits were not read — out here for the
+        // same reason (the trace must not double). manual_capture_review
+        // (04/11) holds it instead of booking it NOBC-.
+        const unreadOutcome = manual && !ownDigits && data?.success && data.ocr_data
+          ? unreadDigitsOutcome({
+              nameHebrew: data.ocr_data.product_name_hebrew,
+              nameEnglish: data.ocr_data.product_name_english,
+              weightKg: data.ocr_data.weight_kg,
+            }, { holdForReview: !!sessionRef.current?.features?.manual_capture_review })
+          : null;
+        if (unreadOutcome === 'held_no_digits') {
+          trace('ui', 'manual_capture_held_no_digits', {
+            provisional: lookupKey, pallet: currentPalletRef.current, weight: data.ocr_data.weight_kg,
+          });
+        }
 
         setScannedBoxes((prev) => {
           // find the box by its (provisional, for manual) barcode key
@@ -2387,11 +2415,7 @@ export default function PalletVerifyPage({
               processedRef.current.add(digits); // so a later bar-scan of this sticker is caught
               setError(null); // clear any earlier rejection banner now that this box committed
               clearScanNotice();
-            } else if (unreadDigitsOutcome({
-              nameHebrew: data.ocr_data.product_name_hebrew,
-              nameEnglish: data.ocr_data.product_name_english,
-              weightKg: data.ocr_data.weight_kg,
-            }) === 'book_without_barcode') {
+            } else if (unreadOutcome === 'book_without_barcode') {
               // BOT-32: the digits were not read, but the name and the weight
               // were — the carton is captured. Book it under a no-barcode
               // marker, no warning, no gate. "Type digits" / "Create label"
@@ -2403,7 +2427,9 @@ export default function PalletVerifyPage({
               resolvedSku = '';
               trace('ui', 'manual_capture_no_digits', { provisional: lookupKey, booked_as: resolvedBarcode });
             } else {
-              needsReview = true; // nothing usable read → the worker has to look
+              // Nothing usable read, or (manual_capture_review on) no digits:
+              // the worker has to look. The MANUAL- key holds it (heldForDetails).
+              needsReview = true;
             }
           }
           // Even when OCR "succeeded", flag the box if the model didn't return
@@ -2499,7 +2525,10 @@ export default function PalletVerifyPage({
           );
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        // Log-only (04/11): a read that never came back looked, on the
+        // trace, like the carton was never read at all.
+        trace('ui', 'ocr_network_failed', { barcode: lookupKey, where: 'pallet', manual, error: String(err).slice(0, 200) });
         if (lateReadDropped(lookupKey, 'pallet', false)) return;
         const failPatch = failedReadPatch(lookupKey, scannedBoxesRef.current, 'pallet');
         setScannedBoxes((prev) => {
@@ -2923,20 +2952,27 @@ export default function PalletVerifyPage({
       setEditError(t(session?.language || 'English', dateError));
       return;
     }
-    trace('ui', 'edit_save', { barcode, isLoose, name_he, name_en, weight: w, expiry, production_date, batch, barcodeInput: editForm.barcodeInput, forcedId: editForm.forcedId, unidentified: editForm.unidentified });
-    clearScanNotice();
-
     // ── Identity for a manual capture ──
     // `resolvedId` is what this row's barcode BECOMES. For an already-identified
     // carton that is its existing barcode; for one the worker just typed digits
     // for it is those digits; for one they declared unreadable it is the
     // NOBC- marker set by handleNoBarcode (which leaves `unidentified` false).
+    // Decided before the trace, so edit_save names the barcode the row is
+    // saved under (`resolved`; null = refused for too few digits — a typed
+    // duplicate is refused by edit_barcode_duplicate right after).
+    const identity = resolveEditIdentity(editForm, MIN_BARCODE_DIGITS);
+    trace('ui', 'edit_save', {
+      barcode, isLoose, name_he, name_en, weight: w, expiry, production_date, batch,
+      barcodeInput: editForm.barcodeInput, forcedId: editForm.forcedId, unidentified: editForm.unidentified,
+      resolved: identity.kind === 'short' ? null : identity.id, identity: identity.kind,
+    });
+    clearScanNotice();
     let resolvedId = barcode;
-    if (editForm.forcedId) {
-      resolvedId = editForm.forcedId;
+    if (identity.kind === 'forced') {
+      resolvedId = identity.id;
     } else if (editForm.unidentified) {
       const typed = digitsOnly(editForm.barcodeInput);
-      if (typed.length >= MIN_BARCODE_DIGITS) {
+      if (identity.kind === 'typed') {
         // Same rule the scanned path uses: the FULL printed number identifies a
         // carton, not the 13-digit SKU, which repeats across every box of one
         // product. A clash here is the worker typing the sticker they already
@@ -2954,7 +2990,7 @@ export default function PalletVerifyPage({
           return;
         }
         resolvedId = typed;
-      } else if (editForm.barcodeInput.trim()) {
+      } else if (identity.kind === 'short') {
         // Started typing but stopped short — that is a slip, not a decision.
         setEditError(
           t(session?.language || 'English', 'terminal.barcodeDigitsCount', {
@@ -4649,6 +4685,17 @@ export default function PalletVerifyPage({
           ? cameraSerialOcrVerdict(lookupKey, digitsOnly(data.ocr_data.barcode_digits))
           : null;
         if (serialCheck) trace('ui', 'loose_camera_serial_ocr', { serial: lookupKey, digits: digitsOnly(data.ocr_data.barcode_digits), verdict: serialCheck });
+        // BOT-32 / manual_capture_review — see runOcr.
+        const unreadOutcome = manual && !ownDigits && data?.success && data.ocr_data
+          ? unreadDigitsOutcome({
+              nameHebrew: data.ocr_data.product_name_hebrew,
+              nameEnglish: data.ocr_data.product_name_english,
+              weightKg: data.ocr_data.weight_kg,
+            }, { holdForReview: !!sessionRef.current?.features?.manual_capture_review })
+          : null;
+        if (unreadOutcome === 'held_no_digits') {
+          trace('ui', 'loose_manual_capture_held_no_digits', { provisional: lookupKey, weight: data.ocr_data.weight_kg });
+        }
 
         setLooseBoxes((prev) => {
           const idx = prev.findIndex((b) => b.barcode === lookupKey);
@@ -4678,11 +4725,7 @@ export default function PalletVerifyPage({
               fromPhotoDigits = true;
               looseProcessedRef.current.add(digits);
               clearScanNotice();
-            } else if (unreadDigitsOutcome({
-              nameHebrew: data.ocr_data.product_name_hebrew,
-              nameEnglish: data.ocr_data.product_name_english,
-              weightKg: data.ocr_data.weight_kg,
-            }) === 'book_without_barcode') {
+            } else if (unreadOutcome === 'book_without_barcode') {
               // BOT-32, loose pile: same as the pallet phase (P0 = loose, as
               // stripProvisionalIds books it).
               resolvedBarcode = freeNoBarcodeId(
@@ -4745,7 +4788,9 @@ export default function PalletVerifyPage({
           }), { [resolvedBarcode]: [data.ocr_data.product_name_hebrew, data.ocr_data.product_name_english] });
         });
       })
-      .catch(() => {
+      .catch((err) => {
+        // Log-only, as in runOcr.
+        trace('ui', 'ocr_network_failed', { barcode: lookupKey, where: 'loose', manual, error: String(err).slice(0, 200) });
         if (lateReadDropped(lookupKey, 'loose', false)) return;
         const failPatch = failedReadPatch(lookupKey, looseBoxesRef.current, 'loose');
         setLooseBoxes((prev) => {

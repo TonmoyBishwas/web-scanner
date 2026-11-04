@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { cachedFlagRow, flagEnabledFor, shortSerialGate } from './scanner-flags';
+import { describe, expect, it, vi } from 'vitest';
+
+// No real database in a unit test: every flag read fails, and a failed read is off.
+vi.mock('./supabase', () => ({
+  supabase: { from: () => { throw new Error('no database in tests'); } },
+}));
+import { cachedFlagRow, flagEnabledFor, manualCaptureReviewOn, shortSerialGate } from './scanner-flags';
 
 describe('flagEnabledFor', () => {
   it('on for everyone', () => {
@@ -102,5 +107,11 @@ describe('shortSerialGate (camera_short_serial, item 1 04/11)', () => {
     vat = WALL_DAN;
     expect(await x.g(DAVID, 'r1')).toBe(true);
     expect(x.calls).toEqual(['r1', 'r1']);
+  });
+});
+
+describe('manualCaptureReviewOn', () => {
+  it('is off, never a throw, when the flag cannot be read', async () => {
+    await expect(manualCaptureReviewOn('972544965384')).resolves.toBe(false);
   });
 });
