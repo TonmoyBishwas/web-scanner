@@ -390,6 +390,13 @@ export interface MultiPalletSession {
      *  edit-panel save may raise it (lib/uniform-candidate.ts
      *  uniformAfterEditAllowed). */
     uniform_after_count?: boolean;
+    /** "All boxes identical" is not offered on a short carton serial
+     *  (lib/identical-boxes.ts identicalAllowed `noSerial`). Present only
+     *  when on. */
+    identical_no_serial?: boolean;
+    /** A label read that never came back shows palletVerify.networkError,
+     *  once per outage (lib/ocr-network-notice.ts). Present only when on. */
+    ocr_network_notice?: boolean;
   };
   receipt_id?: string;
   completed_pallets: Array<{

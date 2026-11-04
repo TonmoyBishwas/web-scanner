@@ -170,6 +170,28 @@ describe('GET /api/multi-pallet-session features.manual_target_hint (04/11)', ()
   });
 });
 
+describe('GET /api/multi-pallet-session features.identical_no_serial / ocr_network_notice (04/11)', () => {
+  const get = async (token: string) => (await sessionRoute.GET(req(`/api/multi-pallet-session?token=${token}`))).json();
+
+  it('no flag rows: absent, the features exactly as before', async () => {
+    expect((await get('tokT')).features).toEqual({ units_mode: true });
+    expect((await get('tokR')).features).toEqual({ units_mode: false });
+  });
+
+  it('a row on for the chat: present and true; another chat: absent', async () => {
+    db.scanner_flags.push({ flag: 'identical_no_serial', enabled_all: false, chat_ids: ['999000000001'] });
+    db.scanner_flags.push({ flag: 'ocr_network_notice', enabled_all: false, chat_ids: ['999000000001'] });
+    expect((await get('tokT')).features).toEqual({ units_mode: true, identical_no_serial: true, ocr_network_notice: true });
+    expect((await get('tokR')).features).toEqual({ units_mode: false });
+  });
+
+  it('is never stored on the session', async () => {
+    db.scanner_flags.push({ flag: 'ocr_network_notice', enabled_all: true, chat_ids: [] });
+    expect((await get('tokT')).features.ocr_network_notice).toBe(true);
+    expect(db.scan_sessions[0].data).not.toHaveProperty('features');
+  });
+});
+
 describe('POST /api/carton-labels — a units save', () => {
   const units = {
     token: 'tokT', origin: 'new_carton', pallet_number: 0, item_code: 'KK117', item_name_hebrew: 'מנה',

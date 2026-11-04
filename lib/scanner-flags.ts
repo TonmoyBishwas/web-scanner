@@ -233,3 +233,38 @@ export async function uniformAfterCountOn(chatId: string | number | null | undef
     return false;
   }
 }
+
+/**
+ * "All boxes identical" never on a short carton serial (04/11): a Wall Dan
+ * 6-digit running number (camera, photo digits or typed) is ONE carton, so
+ * copying it to N cartons books N cartons under one carton's number
+ * (lib/identical-boxes.ts identicalAllowed `noSerial`). A missing row is OFF;
+ * the action is then offered exactly as before.
+ */
+export const identicalNoSerialRow = flagRow('identical_no_serial');
+
+/** identical_no_serial for this chat; off when the flag cannot be read, never a throw. */
+export async function identicalNoSerialOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await identicalNoSerialRow(), chatId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A label read that never came back (04/11): the page shows the existing
+ * palletVerify.networkError once per outage (lib/ocr-network-notice.ts),
+ * where today it only traces ocr_network_failed. A missing row is OFF; the
+ * failed read is then silent on screen as before.
+ */
+export const ocrNetworkNoticeRow = flagRow('ocr_network_notice');
+
+/** ocr_network_notice for this chat; off when the flag cannot be read, never a throw. */
+export async function ocrNetworkNoticeOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await ocrNetworkNoticeRow(), chatId);
+  } catch {
+    return false;
+  }
+}
