@@ -84,6 +84,7 @@ import type { ReadPolicy } from '@/lib/barcode-frame';
 import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
 import { cartonsOnListFor, listAboveTotal, newCartonQuantity, type ListAboveTotal } from '@/lib/count-check';
 import { freeNoBarcodeId, isNoBarcodeId, provisionalAtBooking, unreadDigitsOutcome } from '@/lib/no-barcode';
+import { manualTargetDigits, noteShortRead, targetVerdict, type ShortReadNote } from '@/lib/manual-target';
 import { resolveEditIdentity } from '@/lib/edit-identity';
 import { useBackClose } from '@/lib/use-back-close';
 import { findWeightSuspects } from '@/lib/weight-sanity';
@@ -768,6 +769,13 @@ export default function PalletVerifyPage({
   // Wall Dan 25/10). Not the notice throttle above — booking must not hang
   // on when a notice was last shown.
   const decodedShortRef = useRef<Set<string>>(new Set());
+  // manual_target_hint (04/11, Well Done 48745 — lib/manual-target.ts): the
+  // last short read and when, so a photo tapped a moment later asks the
+  // label reader for THAT label; and the target each capture went out with,
+  // by its provisional key, so a retry of the row asks for the same label.
+  // Only read with the flag on.
+  const lastShortReadRef = useRef<ShortReadNote | null>(null);
+  const manualTargetRef = useRef<Map<string, string>>(new Map());
 
   // A notice belongs to the screen it was raised on: a phase change (confirm,
   // next pallet, loose phase) takes it down, and starts the re-read ticks
@@ -1679,7 +1687,10 @@ export default function PalletVerifyPage({
       // amber short-code one. Every short read is noted first, before any
       // throttle — a later photo of the sticker is checked against it.
       const tooShort = !verdict.ok && verdict.reason === 'too_short';
-      if (tooShort) decodedShortRef.current.add(read);
+      if (tooShort) {
+        decodedShortRef.current.add(read);
+        lastShortReadRef.current = noteShortRead(lastShortReadRef.current, read, now);
+      }
       const bookedSerial = tooShort && processedRef.current.has(read);
       if (!verdict.ok && !bookedSerial && !serial) {
         if (verdict.reason === 'pallet_label') {
@@ -1852,6 +1863,19 @@ export default function PalletVerifyPage({
     return cameraSerialBookable(s.features, read, s.ocr_data ?? [], [...sessionCodesRef.current, ...listed]);
   }
 
+  /** manual_target_hint (04/11): the short serial a photo tapped now is
+   *  meant to show — the camera read it a moment ago, alone, and it is on no
+   *  list yet (lib/manual-target.ts manualTargetDigits). Null with the flag
+   *  off, so the capture goes out exactly as before. Refs only. */
+  function manualTargetFor(): string | null {
+    const s = sessionRef.current;
+    if (!s?.features?.manual_target_hint) return null;
+    return manualTargetDigits(
+      lastShortReadRef.current, Date.now(), s.ocr_data ?? [],
+      [...sessionCodesRef.current, ...processedRef.current, ...looseProcessedRef.current],
+    );
+  }
+
   function refusedReadNotice(read: string, reason: string): ScanNotice {
     const lang = sessionRef.current?.language || 'English';
     const tooShort = reason === 'too_short';
@@ -1940,7 +1964,9 @@ export default function PalletVerifyPage({
       return;
     }
     const provisional = `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    trace('ui', 'manual_capture', { provisional, pallet: currentPalletRef.current, image_chars: imageData.length });
+    const target = manualTargetFor();
+    if (target) manualTargetRef.current.set(provisional, target);
+    trace('ui', 'manual_capture', { provisional, pallet: currentPalletRef.current, image_chars: imageData.length, target: target || undefined });
     const box: BoxScan = {
       barcode: provisional,
       sku: provisional,
@@ -2261,23 +2287,38 @@ export default function PalletVerifyPage({
       name_english: it.item_name_english,
       code: it.item_code,
     }));
+    // manual_target_hint: the label this capture was meant to show (none
+    // with the flag off — the body is then exactly as before).
+    const target = manual ? manualTargetRef.current.get(lookupKey) ?? null : null;
     return fetch('/api/multi-pallet-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey, candidates, token }),
+      body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey, candidates, token, target_digits: target ?? undefined }),
     })
       .then((r) => r.json())
       .then((data) => {
         if (lateReadDropped(lookupKey, 'pallet', !!(data?.success && data.ocr_data))) return;
+        // manual_target_hint (04/11, Well Done 48745): the reader was asked
+        // for one label. Its number back identifies the carton; any other
+        // number (a neighbouring label) or none holds the row for review —
+        // no NOBC-, no "already on the list" for a carton not aimed at.
+        const targetCheck = manual && data?.success && data.ocr_data
+          ? targetVerdict(target, data.ocr_data.barcode_digits)
+          : 'none';
+        if (targetCheck !== 'none') {
+          trace('ui', 'manual_target_verdict', {
+            provisional: lookupKey, target, digits: digitsOnly(data.ocr_data.barcode_digits), verdict: targetCheck,
+          });
+        }
         // Do the printed digits identify the carton? 13+, or a short serial
         // the decoder read too (Wall Dan 408274, 25/10 — it used to become
         // NOBC-…, and a second photo of it a second carton). Decided once,
         // out here, so the notice and the updater below agree.
         const ownDigits = manual && data?.success && data.ocr_data
-          ? printedDigitsIdentifyCarton(
+          ? targetCheck === 'match' || (targetCheck === 'none' && printedDigitsIdentifyCarton(
               digitsOnly(data.ocr_data.barcode_digits), decodedShortRef.current,
               sessionRef.current?.ocr_data, scannedBoxesRef.current.map((b) => b.barcode),
-            )
+            ))
           : false;
         // A manual capture whose printed digits are a carton already on the
         // list: drop the provisional row and SAY so, naming the carton the
@@ -2338,8 +2379,9 @@ export default function PalletVerifyPage({
         if (serialCheck) trace('ui', 'camera_serial_ocr', { serial: lookupKey, digits: digitsOnly(data.ocr_data.barcode_digits), verdict: serialCheck });
         // BOT-32 for a capture whose digits were not read — out here for the
         // same reason (the trace must not double). manual_capture_review
-        // (04/11) holds it instead of booking it NOBC-.
-        const unreadOutcome = manual && !ownDigits && data?.success && data.ocr_data
+        // (04/11) holds it instead of booking it NOBC-. A target mismatch is
+        // never booked NOBC- either: null here sends it to review below.
+        const unreadOutcome = manual && !ownDigits && targetCheck !== 'mismatch' && data?.success && data.ocr_data
           ? unreadDigitsOutcome({
               nameHebrew: data.ocr_data.product_name_hebrew,
               nameEnglish: data.ocr_data.product_name_english,
@@ -2636,7 +2678,10 @@ export default function PalletVerifyPage({
       trace('ui', 'loose_scan_detected', { barcode: read, ok: verdict.ok || serial, serial: serial || undefined, reason: verdict.ok ? undefined : verdict.reason, duplicate: hasCartonCode(looseProcessedRef.current, read), has_image: !!imageData, twin_held: twinHeld || undefined, same_held: sameHeld || undefined });
       // A short serial a label photo already booked — see the pallet phase.
       const tooShort = !verdict.ok && verdict.reason === 'too_short';
-      if (tooShort) decodedShortRef.current.add(read);
+      if (tooShort) {
+        decodedShortRef.current.add(read);
+        lastShortReadRef.current = noteShortRead(lastShortReadRef.current, read, now);
+      }
       const bookedSerial = tooShort && looseProcessedRef.current.has(read);
       if (!verdict.ok && !bookedSerial && !serial) {
         if (verdict.reason === 'pallet_label') {
@@ -2698,7 +2743,9 @@ export default function PalletVerifyPage({
       return;
     }
     const provisional = `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    trace('ui', 'loose_manual_capture', { provisional, image_chars: imageData.length });
+    const target = manualTargetFor();
+    if (target) manualTargetRef.current.set(provisional, target);
+    trace('ui', 'loose_manual_capture', { provisional, image_chars: imageData.length, target: target || undefined });
     const box: BoxScan = {
       barcode: provisional, sku: provisional, item_name: '', item_name_hebrew: '',
       weight: 0, expiry: '', scanned_at: new Date().toISOString(),
@@ -4644,20 +4691,31 @@ export default function PalletVerifyPage({
   ) : null;
 
   function runLooseOcr(lookupKey: string, imageData: string, manual = false): Promise<void> {
+    // manual_target_hint — see runOcr.
+    const target = manual ? manualTargetRef.current.get(lookupKey) ?? null : null;
     return fetch('/api/multi-pallet-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey, token }),
+      body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey, token, target_digits: target ?? undefined }),
     })
       .then((r) => r.json())
       .then((data) => {
         if (lateReadDropped(lookupKey, 'loose', !!(data?.success && data.ocr_data))) return;
+        // The label this capture was asked for — see runOcr.
+        const targetCheck = manual && data?.success && data.ocr_data
+          ? targetVerdict(target, data.ocr_data.barcode_digits)
+          : 'none';
+        if (targetCheck !== 'none') {
+          trace('ui', 'manual_target_verdict', {
+            provisional: lookupKey, target, digits: digitsOnly(data.ocr_data.barcode_digits), verdict: targetCheck, loose: true,
+          });
+        }
         // Printed digits that identify the carton — see runOcr.
         const ownDigits = manual && data?.success && data.ocr_data
-          ? printedDigitsIdentifyCarton(
+          ? targetCheck === 'match' || (targetCheck === 'none' && printedDigitsIdentifyCarton(
               digitsOnly(data.ocr_data.barcode_digits), decodedShortRef.current,
               sessionRef.current?.ocr_data, looseBoxesRef.current.map((b) => b.barcode),
-            )
+            ))
           : false;
         // A capture of a carton already on the loose list — see runOcr.
         if (manual && data?.success && data.ocr_data) {
@@ -4685,8 +4743,8 @@ export default function PalletVerifyPage({
           ? cameraSerialOcrVerdict(lookupKey, digitsOnly(data.ocr_data.barcode_digits))
           : null;
         if (serialCheck) trace('ui', 'loose_camera_serial_ocr', { serial: lookupKey, digits: digitsOnly(data.ocr_data.barcode_digits), verdict: serialCheck });
-        // BOT-32 / manual_capture_review — see runOcr.
-        const unreadOutcome = manual && !ownDigits && data?.success && data.ocr_data
+        // BOT-32 / manual_capture_review / a target mismatch — see runOcr.
+        const unreadOutcome = manual && !ownDigits && targetCheck !== 'mismatch' && data?.success && data.ocr_data
           ? unreadDigitsOutcome({
               nameHebrew: data.ocr_data.product_name_hebrew,
               nameEnglish: data.ocr_data.product_name_english,

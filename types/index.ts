@@ -379,6 +379,10 @@ export interface MultiPalletSession {
     /** A photo capture with no digits read is held, never booked NOBC-,
      *  and nothing books with a MANUAL- placeholder (lib/no-barcode.ts). */
     manual_capture_review?: boolean;
+    /** A photo capture right after the camera read a short serial asks the
+     *  label reader for that label only (lib/manual-target.ts). Present
+     *  only when on. */
+    manual_target_hint?: boolean;
   };
   receipt_id?: string;
   completed_pallets: Array<{

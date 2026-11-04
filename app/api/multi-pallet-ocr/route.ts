@@ -2,6 +2,7 @@ import { logServerEvent, errorData } from '@/lib/server-events';
 import { NextRequest, NextResponse } from 'next/server';
 import { touchSession } from '@/lib/redis';
 import { ocrWeightFromBarcode, rawOcrWeightKg } from '@/lib/barcode-weight';
+import { targetDigitsToForward } from '@/lib/manual-target';
 
 /**
  * POST /api/multi-pallet-ocr
@@ -13,6 +14,8 @@ import { ocrWeightFromBarcode, rawOcrWeightKg } from '@/lib/barcode-weight';
  *         candidates?: Array<{name_hebrew, name_english, code}> }
  *   `candidates` = the delivery's invoice items, forwarded so the bot's OCR
  *   prompt can pick a known canonical Hebrew name (closed set).
+ *   `target_digits` (optional, manual_target_hint) = the short carton serial
+ *   the photo is meant to show; the bot reads only that label.
  * Returns: { success: boolean, ocr_data?: { product_name_hebrew, product_name_english, weight_kg, expiry_date, ... } }
  *   `ocr_data.ocr_weight_kg` = the OCR's own weight reading before any
  *   barcode override (null = it read none), for the barcode-vs-OCR weight
@@ -25,7 +28,7 @@ export async function POST(request: NextRequest) {
   let traceBarcode = '';
   const started = Date.now();
   try {
-    const { image, barcode, candidates, token } = await request.json();
+    const { image, barcode, candidates, token, target_digits } = await request.json();
     traceToken = typeof token === 'string' ? token : '';
     traceBarcode = typeof barcode === 'string' ? barcode : '';
 
@@ -47,7 +50,11 @@ export async function POST(request: NextRequest) {
     const res = await fetch(`${botUrl}/webhook/process-box-ocr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image, barcode: barcode || 'multi-pallet', candidates: candidates || undefined }),
+      // target_digits (manual_target_hint, 04/11): the short serial the
+      // camera read just before a photo tap — forwarded only when the page
+      // sent one (lib/manual-target.ts targetDigitsToForward); otherwise the
+      // body is exactly as before.
+      body: JSON.stringify({ image, barcode: barcode || 'multi-pallet', candidates: candidates || undefined, target_digits: targetDigitsToForward(target_digits) }),
       // Longer than the bot's whole box-OCR budget (OCR_BUDGET_S = 40 s in
       // box_sticker_ocr_service.py) plus a cold start: at 30 s, with the bot
       // allowed 30 s per model, one stalled model turned readable stickers red

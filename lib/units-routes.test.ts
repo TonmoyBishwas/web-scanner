@@ -150,6 +150,26 @@ describe('GET /api/multi-pallet-session features.camera_short_serial (item 1, 04
   });
 });
 
+describe('GET /api/multi-pallet-session features.manual_target_hint (04/11)', () => {
+  const get = async (token: string) => (await sessionRoute.GET(req(`/api/multi-pallet-session?token=${token}`))).json();
+
+  it('no flag row: absent, the features exactly as before', async () => {
+    expect((await get('tokT')).features).toEqual({ units_mode: true });
+  });
+
+  it('row on for the chat: present and true; another chat: absent', async () => {
+    db.scanner_flags.push({ flag: 'manual_target_hint', enabled_all: false, chat_ids: ['999000000001'] });
+    expect((await get('tokT')).features).toEqual({ units_mode: true, manual_target_hint: true });
+    expect((await get('tokR')).features).toEqual({ units_mode: false });
+  });
+
+  it('is never stored on the session', async () => {
+    db.scanner_flags.push({ flag: 'manual_target_hint', enabled_all: true, chat_ids: [] });
+    expect((await get('tokT')).features.manual_target_hint).toBe(true);
+    expect(db.scan_sessions[0].data).not.toHaveProperty('features');
+  });
+});
+
 describe('POST /api/carton-labels — a units save', () => {
   const units = {
     token: 'tokT', origin: 'new_carton', pallet_number: 0, item_code: 'KK117', item_name_hebrew: 'מנה',
