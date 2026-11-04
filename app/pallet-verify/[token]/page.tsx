@@ -58,6 +58,7 @@ import {
   sourceSku,
   type IdenticalForm,
 } from '@/lib/identical-boxes';
+import { weightChanged } from '@/lib/weight-source';
 import { isMintedLabelBarcode, newBatchId, labelSheetUrl, liveRowPlaces, loadLabelSize, openListsForPhase, sessionBookedBarcodes } from '@/lib/label-batches';
 import { printGate, LABELS_NOT_PRINTED } from '@/lib/label-gate';
 import {
@@ -3021,6 +3022,9 @@ export default function PalletVerifyPage({
         // A suspect weight: saved = confirmed (lib/weight-sanity.ts).
         weight_suspect: undefined,
         weight_checked: true,
+        // He changed the weight: it is his figure, not the label's
+        // (lib/weight-source.ts, 04/11). weight_checked says only "saved".
+        weight_typed: b.weight_typed || (!units && Number.isFinite(w) && w > 0 && weightChanged(w, b.weight)) || undefined,
         // His dates are his answer too: the last pass before booking leaves
         // them (lib/barcode-reconcile.ts applyBarcodeReadings).
         expiry_checked: true,

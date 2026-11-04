@@ -323,6 +323,18 @@ export interface MultiPalletBoxScan {
    * the rest and send it to the bot with `barcode_format_ok` (01/11).
    */
   barcode_source?: 'scan' | 'photo_digits' | 'minted' | 'typed';
+  /**
+   * Where the weight came from (lib/weight-source.ts, 04/11). The complete
+   * routes derive it (weightSourceOf) and send it to the bot for
+   * box_inventory.weight_source. Optional: rows cached before still parse.
+   */
+  weight_source?: 'label_ocr' | 'label_barcode' | 'typed' | 'twin_copy' | 'identical_copy'
+    | 'note_avg' | 'units' | 'unknown';
+  /** The worker changed this carton's weight (edit panel, or a copy form vs its sample). */
+  weight_typed?: boolean;
+  /** A copy (identical / twin / New carton): the weight source of the carton it was copied from. */
+  weight_copied_from?: 'label_ocr' | 'label_barcode' | 'typed' | 'twin_copy' | 'identical_copy'
+    | 'note_avg' | 'units' | 'unknown';
 }
 
 export interface MultiPalletSession {

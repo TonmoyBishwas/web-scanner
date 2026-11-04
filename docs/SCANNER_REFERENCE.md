@@ -369,6 +369,25 @@ finished_in_chat / ops_duplicate, and `result.by` = the replacing form for `repl
   `receive.replacedTitle`/`Body`, `receive.openNewer`, `receive.cancelledTitle`/`Body`, `receive.duplicateTitle`/`Body`,
   the new `PACKAGING_LABELS` / `PACKAGING_PLURAL` words; changed: `receive.packaging`, `PACKAGING_LABELS.unit`.
 
+## Changes since the audit — 2026-11-04 where each carton's weight came from
+
+`lib/weight-source.ts` `weightSourceOf(row)` gives every carton a `weight_source`
+(`label_ocr` | `label_barcode` | `typed` | `twin_copy` | `identical_copy` | `note_avg`
+| `units` | `unknown`), sent to the bot on every carton of `/webhook/pallet-complete`
+(mix and single) and `/webhook/loose-boxes-complete` for `box_inventory.weight_source`.
+Rules in order: units → `units`; New carton → `typed`; a copy (minted / twin) →
+`label_barcode` if its barcode confirms the weight, `typed` if the form changed the
+weight or the sample's weight was typed/unknown, else `twin_copy` / `identical_copy`
+(no recorded sample source, e.g. a row cached before 04/11 → `unknown`); a weight the
+worker changed → `typed` unless the barcode confirms it within 0.011 kg; barcode
+filled or confirming → `label_barcode`; the label reading kept as read → `label_ocr`;
+else `unknown`. Damaged-sticker samples go as `note_avg`. Row fields (optional, so
+cached rows still parse): `weight_typed` (set by the edit-panel save when the weight
+changed by 1 g or more; on a copy, `copyWeightTyped`: the form weight 1 g or more
+off the sample's, unless it is the sample's own barcode weight within 0.011 kg, which is
+what the one-tap twin saves), `weight_copied_from` (set by `expandIdenticalBoxes` from
+the sample). `barcode_source` is unchanged. Nothing is shown to the worker.
+
 ## Table of contents
 
 - [Changes since the audit — the 2026-10-01 floor-feedback release](#changes-since-the-audit-the-2026-10-01-floor-feedback-release)

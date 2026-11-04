@@ -302,3 +302,21 @@ describe('groupSkuMismatch (soft "is this the same product?")', () => {
     expect(groupSkuMismatch({ barcode: 'NOBC-1-P1-1', item_name_hebrew: 'קבב' }, [kebab], keyOf)).toBeNull();
   });
 });
+
+describe('expandIdenticalBoxes: weight provenance (04/11)', () => {
+  const sample = { barcode: '7290011111110', sku: '7290011111110', item_name: 'X', weight: 10.105,
+    ocr_weight: 10.105, expiry: '', scanned_at: '2026-11-04T10:00:00Z' };
+  const labels = [{ barcode: '2826110400000401', batch_id: 'b' }];
+
+  it('weight_copied_from is the sample\'s own source', () => {
+    const [row] = expandIdenticalBoxes(sample, labels, { weight: 10.105, expiry: '', production_date: '' });
+    expect(row.weight_copied_from).toBe('label_ocr');
+  });
+
+  it('weight_typed only for a change of 1 g or more', () => {
+    const tiny = expandIdenticalBoxes(sample, labels, { weight: 10.1055, expiry: '', production_date: '' });
+    expect(tiny[0].weight_typed).toBeUndefined();
+    const real = expandIdenticalBoxes(sample, labels, { weight: 10.106, expiry: '', production_date: '' });
+    expect(real[0].weight_typed).toBe(true);
+  });
+});
