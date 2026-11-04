@@ -3025,11 +3025,20 @@ export default function PalletVerifyPage({
     // Decided before the trace, so edit_save names the barcode the row is
     // saved under (`resolved`; null = refused for too few digits — a typed
     // duplicate is refused by edit_barcode_duplicate right after).
-    const identity = resolveEditIdentity(editForm, MIN_BARCODE_DIGITS);
+    // camera_short_serial (04/11, Wall Dan): a typed 6-digit serial is taken
+    // exactly when the camera would book it (serialAccepted: the flag on this
+    // chat AND a short-serial supplier's receipt, CAMERA_SERIAL_RE, the same
+    // exclusions). Flag off: no predicate, refused for too few digits as before.
+    const identity = resolveEditIdentity(
+      editForm, MIN_BARCODE_DIGITS,
+      session?.features?.camera_short_serial ? (d) => serialAccepted(d, !!isLoose) : undefined,
+    );
+    const typedSerial = identity.kind === 'typed' && identity.id.length < MIN_BARCODE_DIGITS;
     trace('ui', 'edit_save', {
       barcode, isLoose, name_he, name_en, weight: w, expiry, production_date, batch,
       barcodeInput: editForm.barcodeInput, forcedId: editForm.forcedId, unidentified: editForm.unidentified,
       resolved: identity.kind === 'short' ? null : identity.id, identity: identity.kind,
+      ...(typedSerial ? { short_serial: true } : {}),
     });
     clearScanNotice();
     let resolvedId = barcode;
@@ -3120,8 +3129,10 @@ export default function PalletVerifyPage({
           : {}),
         // The SKU is the item prefix. Only re-derive it from a real typed
         // barcode — a NOBC- marker carries no item information, and
-        // overwriting a scanned box's sku here would be a regression.
-        sku: resolvedId !== barcode && /^\d{13,}$/.test(resolvedId)
+        // overwriting a scanned box's sku here would be a regression. A typed
+        // Wall Dan serial is its own sku, as a photo-confirmed one is (never
+        // the MANUAL- placeholder's).
+        sku: resolvedId !== barcode && (/^\d{13,}$/.test(resolvedId) || typedSerial)
           ? resolvedId.slice(0, 13)
           : b.sku,
         ocr_status: 'done' as OcrStatus,
@@ -4688,6 +4699,9 @@ export default function PalletVerifyPage({
       barcode={editForm.forcedId || editForm.barcode}
       barcodeEditable={editForm.unidentified}
       barcodeInput={editForm.barcodeInput}
+      // camera_short_serial: a Wall Dan serial the save will take shows as
+      // ready, not "need at least 13" (the same gate as handleSaveEdit).
+      shortSerialOk={session?.features?.camera_short_serial ? (d) => serialAccepted(d, !!editForm.isLoose) : undefined}
       // Each error goes when the worker changes what it is about: the barcode
       // ones here, "set the item name first" on a name pick or typed name.
       onBarcodeChange={(v) => { setEditForm({ ...editForm, barcodeInput: v }); setEditError(null); }}

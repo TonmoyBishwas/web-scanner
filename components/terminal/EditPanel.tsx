@@ -54,6 +54,12 @@ interface EditPanelProps {
   barcodeEditable?: boolean;
   /** Digits typed so far (only meaningful when `barcodeEditable`). */
   barcodeInput?: string;
+  /**
+   * Digits under 13 the save takes as the carton's own serial (flag
+   * camera_short_serial, Wall Dan — lib/edit-identity.ts): shown as ready.
+   * Absent, only 13+ digits are.
+   */
+  shortSerialOk?: (digits: string) => boolean;
   onBarcodeChange?: (v: string) => void;
   /**
    * Mint a replacement sticker for this carton — the same warehouse-minted
@@ -186,7 +192,7 @@ export function EditPanel({
   cartonNumber, name, weight, expiry, productionDate, batch, barcode, itemChips,
   imageData, photoPending = false, onViewImage,
   fromBarcode,
-  barcodeEditable, barcodeInput = '', onBarcodeChange,
+  barcodeEditable, barcodeInput = '', shortSerialOk, onBarcodeChange,
   onCreateBarcode, minting, onNoBarcode, showNoBarcode, onAddBarcode,
   needsReview, weightWarning, units, saveError, saveErrorActions,
   onNameChange, onWeightChange, onExpiryChange, onProductionDateChange, onBatchChange, onSave, onCancel,
@@ -212,7 +218,7 @@ export function EditPanel({
   const [typing, setTyping] = useState(false);
 
   const digits = barcodeInput.replace(/\D/g, '');
-  const barcodeReady = digits.length >= MIN_BARCODE_DIGITS;
+  const barcodeReady = digits.length >= MIN_BARCODE_DIGITS || (!!digits && !!shortSerialOk?.(digits));
   const barcodeMissing = !!barcodeEditable && !barcodeReady;
 
   const chips = itemChips ?? [];
