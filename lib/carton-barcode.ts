@@ -314,8 +314,10 @@ export function inboundReadPolicy(
 export function barcodeFormatOk(code: string | null | undefined): boolean | null {
   const d = (code || '').trim();
   if (!d) return null;
-  // A 6–11 digit per-carton serial (Wall Dan 408274) is booked only when the
-  // label photo confirmed it (labelConfirmsShortCode); it has no format to check.
+  // A 6–11 digit per-carton serial (Wall Dan 408274) is booked when the label
+  // photo confirmed it (labelConfirmsShortCode) or, on a short-serial
+  // supplier's receipt with the camera_short_serial flag on, from the camera
+  // (cameraSerialAccepted); either way it has no format to check.
   if (/^\d{6,11}$/.test(d)) return null;
   if (!classifyRead(d).ok) return false;
   if (parseGlattCode(d)) return true;
@@ -463,10 +465,11 @@ export function shortCodeDefaults(
  * the piece. And it is still none of the things a short code already is:
  *  * 6 to 11 digits (24755, five, stays out);
  *  * not an invoice line's item code (`501004` keeps its New-carton route,
- *    see matchInvoiceShortCode);
+ *    see matchInvoiceShortCode), nor a piece of one (04/11);
  *  * not carried by a long code already on the list (lib/frame-reads.ts
  *    belongsToCartonCode);
  *  * not the supplier's shipping-pallet label.
+ * (shortSerialExcluded — the camera path, cameraSerialAccepted, uses the same.)
  * The carton is then booked under the serial itself, as any carton is under
  * its full barcode — every photo a deliberate capture, a repeat caught as
  * the same carton.
@@ -479,9 +482,77 @@ export function labelConfirmsShortCode(
 ): boolean {
   if (!/^\d{6,11}$/.test(ocrDigits)) return false;
   if (!decodedShort.has(ocrDigits)) return false;
-  if (matchInvoiceShortCode(ocrDigits, lines) !== null) return false;
-  if (listedCodes.some((code) => belongsToCartonCode(ocrDigits, code))) return false;
-  return !isSupplierPalletLabel(ocrDigits);
+  return !shortSerialExcluded(ocrDigits, lines, listedCodes);
+}
+
+/**
+ * The things a short code already is, so it can never be a carton's own
+ * serial — one list for the photo path (labelConfirmsShortCode) and the
+ * camera path (cameraSerialAccepted), so the two cannot drift apart:
+ *  * an invoice line's item code (matchInvoiceShortCode: `501004` keeps its
+ *    New-carton route);
+ *  * a piece of a line's code (`628936` inside 7290006289360, the line of
+ *    Wall Dan note 48651 — 04/11);
+ *  * carried by a long code already on the list (belongsToCartonCode);
+ *  * the supplier's shipping-pallet label.
+ */
+export function shortSerialExcluded(
+  d: string,
+  lines: readonly ShortCodeLine[] | null | undefined,
+  listedCodes: readonly string[],
+): boolean {
+  if (matchInvoiceShortCode(d, lines) !== null) return true;
+  for (const line of lines ?? []) {
+    const codes = [line.item_code, line.supplier_code, line.supplier_item_code]
+      .map((c) => digitsOf(c == null ? '' : String(c)));
+    if (codes.some((c) => c.length > 0 && c.includes(d))) return true;
+  }
+  if (listedCodes.some((code) => belongsToCartonCode(d, code))) return true;
+  return isSupplierPalletLabel(d);
+}
+
+/**
+ * Suppliers whose cartons carry only a short per-carton serial (item 1,
+ * 04/11). Wall Dan (וול דאן מוצרי בשר בע"מ, VAT 515215705) prints a 6-digit
+ * running number under the bars (409251, 379300) and nothing longer: notes
+ * 48288, 48429, 48534, 48651 and 48696. Matched on deliveries.supplier_vat
+ * (lib/scanner-flags.ts cameraShortSerialOn). A new supplier is a code change.
+ */
+export const SHORT_SERIAL_SUPPLIER_VATS: readonly string[] = ['515215705'];
+
+/** A camera-bookable serial: exactly 6 digits, no leading zero (`020926`, a fragment of a 30-digit code on 48288, stays out). */
+export const CAMERA_SERIAL_RE = /^[1-9]\d{5}$/;
+
+/**
+ * May the camera book this short read as the carton's own serial? Only the
+ * shape and the exclusions (shortSerialExcluded) — the flag and the
+ * supplier are the caller's (the page's `features.camera_short_serial`).
+ * The read still needs the confirmer's two identical reads, and the label
+ * reader's printed digits are then checked against it
+ * (cameraSerialOcrVerdict).
+ */
+export function cameraSerialAccepted(
+  read: string,
+  lines: readonly ShortCodeLine[] | null | undefined,
+  knownCodes: readonly string[],
+): boolean {
+  const d = (read || '').trim();
+  return CAMERA_SERIAL_RE.test(d) && !shortSerialExcluded(d, lines, knownCodes);
+}
+
+/**
+ * The label reader's printed digits against a camera-booked serial:
+ *  * 'agrees' — the same number;
+ *  * 'unread' — no digits, or fewer than 6 (nothing to compare);
+ *  * 'other'  — anything else, a long code that contains the serial
+ *    included (the camera may have read a piece of it). The row then goes
+ *    to the edit panel (needs_review); it is never re-keyed.
+ */
+export function cameraSerialOcrVerdict(serial: string, ocrDigits: string | null | undefined): 'agrees' | 'unread' | 'other' {
+  const digits = digitsOf(ocrDigits);
+  if (digits === serial) return 'agrees';
+  if (digits.length < 6) return 'unread';
+  return 'other';
 }
 
 /**
