@@ -181,3 +181,21 @@ export async function manualCaptureReviewOn(chatId: string | number | null | und
     return false;
   }
 }
+
+/**
+ * Manual capture target hint (04/11, Well Done 48745): a photo tapped within
+ * a moment of the camera reading a short carton serial asks the label reader
+ * for THAT label only (lib/manual-target.ts), and a reply naming another
+ * number is held for review instead of booked or dropped as a duplicate.
+ * A missing row is OFF; the capture then goes out exactly as before.
+ */
+export const manualTargetHintRow = flagRow('manual_target_hint');
+
+/** The manual target hint for this chat; off when the flag cannot be read, never a throw. */
+export async function manualTargetHintOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await manualTargetHintRow(), chatId);
+  } catch {
+    return false;
+  }
+}

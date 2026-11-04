@@ -103,3 +103,24 @@ describe('/api/multi-pallet-ocr — barcode weight', () => {
     expect(data.ocr_data.weight_kg).toBe(10.15);
   });
 });
+
+describe('/api/multi-pallet-ocr — target_digits (manual_target_hint, 04/11)', () => {
+  async function post(body: Record<string, unknown>) {
+    botAnswer = { status: 'success', ocr_data: { product_name_hebrew: 'חזה עוף', weight_kg: 11.4 } };
+    await route.POST(new NextRequest('http://scanner.test/api/multi-pallet-ocr', {
+      method: 'POST',
+      body: JSON.stringify({ image: 'data:image/jpeg;base64,AAAA', barcode: '', token: 'tokWD', candidates: [], ...body }),
+    } as never));
+    return botBodies[botBodies.length - 1];
+  }
+
+  it('a short serial from the page goes on to the bot', async () => {
+    expect((await post({ target_digits: '410413' })).target_digits).toBe('410413');
+  });
+
+  it('none sent, or junk: the bot body has no target_digits key at all', async () => {
+    expect(await post({})).not.toHaveProperty('target_digits');
+    expect(await post({ target_digits: 'abc' })).not.toHaveProperty('target_digits');
+    expect(await post({ target_digits: 410413 })).not.toHaveProperty('target_digits');
+  });
+});

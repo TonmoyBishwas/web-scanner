@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('./supabase', () => ({
   supabase: { from: () => { throw new Error('no database in tests'); } },
 }));
-import { cachedFlagRow, flagEnabledFor, manualCaptureReviewOn, shortSerialGate } from './scanner-flags';
+import { cachedFlagRow, flagEnabledFor, manualCaptureReviewOn, manualTargetHintOn, shortSerialGate } from './scanner-flags';
 
 describe('flagEnabledFor', () => {
   it('on for everyone', () => {
@@ -113,5 +113,11 @@ describe('shortSerialGate (camera_short_serial, item 1 04/11)', () => {
 describe('manualCaptureReviewOn', () => {
   it('is off, never a throw, when the flag cannot be read', async () => {
     await expect(manualCaptureReviewOn('972544965384')).resolves.toBe(false);
+  });
+});
+
+describe('manualTargetHintOn', () => {
+  it('is off, never a throw, when the flag cannot be read', async () => {
+    await expect(manualTargetHintOn('972544965384')).resolves.toBe(false);
   });
 });
