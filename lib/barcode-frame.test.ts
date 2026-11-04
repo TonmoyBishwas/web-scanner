@@ -349,7 +349,7 @@ describe('nextPass', () => {
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { inboundReadPolicy, isGlattMisread, sameGlattCarton } from './carton-barcode';
-import { framesFromTrace, newRules, oldRules, replayFrames, type TraceRow } from './scan-replay';
+import { framesFromTrace, newRules, oldRules, replayFrames, serialRules, type TraceRow } from './scan-replay';
 
 describe('ReadConfirmer — read policy', () => {
   const at = (value: string) => [{ value, dist: 0 }];
@@ -489,5 +489,60 @@ describe('replay: session hceJxe4obaK2TgXOdVXfu (Glatt note 261062322)', () => {
     const c = new ReadConfirmer(2, 3000);
     expect(c.add([{ value: VALID[0], dist: 0 }], 0, '', policy).confirmed).toBeNull();
     expect(c.add([{ value: VALID[1], dist: 0 }], 10, '', policy).confirmed).toBe(VALID[1]);
+  });
+});
+
+/**
+ * Wall Dan item 1 (04/11): the real reads of notes 48651 and 48696 — every
+ * value a 6-digit carton serial the page refused — replayed with the
+ * camera_short_serial rules (lib/scan-replay.ts serialRules). An
+ * approximation: a refused value's confirms are traced at most once per 3 s.
+ */
+describe('replay: Wall Dan serials (item 1, camera_short_serial)', () => {
+  const load = (token: string) => JSON.parse(
+    readFileSync(path.resolve(__dirname, `../test/fixtures/scan_trace_${token}.json`), 'utf8'),
+  ) as { lines: Array<{ item_code: string }>; rows: TraceRow[] };
+
+  it('48696 (zc0OjN6GaKPyvrfOJh7rx): 0 → 20 cartons; 409829 and 379337 lost to the cooldown; flag off books 0', () => {
+    const fx = load('zc0OjN6GaKPyvrfOJh7rx');
+    const frames = framesFromTrace(fx.rows);
+    expect(replayFrames(frames, oldRules()).booked).toEqual([]);
+    expect(replayFrames(frames, newRules(fx.lines)).booked).toEqual([]);
+    const serial = replayFrames(frames, serialRules(fx.lines));
+    const codes = serial.booked.map((b) => b.value);
+    expect(codes).toEqual([
+      '406186', '409830', '409849', '379338', '379333', '379301', '409850', '409825', '379325', '379334',
+      '379341', '409826', '409824', '409823', '379300', '379335', '379326', '379439', '379343', '406190',
+    ]);
+    expect(new Set(codes).size).toBe(codes.length);
+    // Lost = dropped by the cooldown and never booked later (379326 was re-read and booked).
+    const lost = [...new Set(serial.cooldownDropped.map((d) => d.value))].filter((v) => !codes.includes(v));
+    expect(lost.sort()).toEqual(['379337', '409829']);
+  });
+
+  it('48651 (-9KcCgT1Q2nKSfVjfT6W7): 0 → 16 cartons, each once; 6 lost to the cooldown; flag off books 0', () => {
+    const fx = load('-9KcCgT1Q2nKSfVjfT6W7');
+    const frames = framesFromTrace(fx.rows);
+    expect(replayFrames(frames, oldRules()).booked).toEqual([]);
+    expect(replayFrames(frames, newRules(fx.lines)).booked).toEqual([]);
+    const serial = replayFrames(frames, serialRules(fx.lines));
+    const codes = serial.booked.map((b) => b.value);
+    expect(codes).toHaveLength(16);
+    expect(new Set(codes).size).toBe(16);
+    expect(codes).toContain('409251');
+    expect(codes).toContain('409241');
+    expect(codes.every((c) => /^[1-9]\d{5}$/.test(c))).toBe(true);
+    // Lost = dropped by the cooldown and never booked later (409235, 409254 were re-read and booked).
+    const lost = [...new Set(serial.cooldownDropped.map((d) => d.value))].filter((v) => !codes.includes(v));
+    expect(lost.sort()).toEqual(['409233', '409238', '409242', '409243', '409245', '409451']);
+    // Read 4 times each, booked once.
+    expect(codes.filter((c) => c === '409251')).toHaveLength(1);
+    expect(codes.filter((c) => c === '409241')).toHaveLength(1);
+  });
+
+  it('the Glatt session is unchanged under the serial rules (no short serial there)', () => {
+    const fx = load('hceJxe4obaK2TgXOdVXfu');
+    const frames = framesFromTrace(fx.rows);
+    expect(replayFrames(frames, serialRules(fx.lines))).toEqual(replayFrames(frames, newRules(fx.lines)));
   });
 });
