@@ -150,3 +150,49 @@ describe('barcode_source + barcode_format_ok on every carton sent to the bot (01
     expect(byCode(LABEL.barcode)).toMatchObject({ barcode_source: 'minted', barcode_format_ok: null });
   });
 });
+
+describe('weight_source on every carton sent to the bot (04/11)', () => {
+  const PHOTO = box('4721100101530065729703', CHICKEN, 15, { barcode_source: 'photo_digits', ocr_weight: 15 });
+  const LABEL = box('2826110119842666', CHICKEN, 13, { new_carton: true });
+  // A copy of a label-read carton ("all boxes identical").
+  const COPY = box('2826110119842667', CHICKEN, 15, { minted: true, weight_copied_from: 'label_ocr', ocr_weight: 15 });
+  // The worker changed a label-read weight in the edit panel.
+  const EDITED = box('4721100101530065729704', CHICKEN, 16, { ocr_weight: 15, weight_typed: true });
+
+  it('mix pallet: per carton, barcode_source unchanged', async () => {
+    expect(await completePallet([MISREAD, PHOTO, LABEL, COPY, EDITED])).toBe(200);
+    expect(byCode(MISREAD.barcode)).toMatchObject({ weight_source: 'label_barcode', barcode_source: 'scan', barcode_format_ok: true });
+    expect(byCode(PHOTO.barcode)).toMatchObject({ weight_source: 'label_ocr', barcode_source: 'photo_digits' });
+    expect(byCode(LABEL.barcode)).toMatchObject({ weight_source: 'typed', barcode_source: 'minted', barcode_format_ok: null });
+    expect(byCode(COPY.barcode)).toMatchObject({ weight_source: 'identical_copy', barcode_source: 'minted' });
+    expect(byCode(EDITED.barcode)).toMatchObject({ weight_source: 'typed' });
+  });
+
+  it('single-item pallet', async () => {
+    expect(await completePallet([MISREAD, { ...PHOTO, weight: 12.46, ocr_weight: 12.46 }])).toBe(200);
+    expect(botCalls[0].body.pallet_type).toBe('single');
+    expect(byCode(MISREAD.barcode)).toMatchObject({ weight_source: 'label_barcode' });
+    expect(byCode(PHOTO.barcode)).toMatchObject({ weight_source: 'label_ocr' });
+  });
+
+  it('loose pile: label_ocr even though ocr_weight is renamed on the way out', async () => {
+    expect(await completeLoose([PHOTO, LABEL, EDITED])).toBe(200);
+    expect(byCode(PHOTO.barcode)).toMatchObject({ weight_source: 'label_ocr', ocr_weight_kg: 15, barcode_source: 'photo_digits' });
+    expect(byCode(PHOTO.barcode)).not.toHaveProperty('ocr_weight');
+    expect(byCode(LABEL.barcode)).toMatchObject({ weight_source: 'typed' });
+    expect(byCode(EDITED.barcode)).toMatchObject({ weight_source: 'typed' });
+  });
+
+  it('damaged-sticker pallet: the sample carries the note average', async () => {
+    const { nonMeatItemKey } = await import('@/lib/nonmeat-key');
+    const res = await pallet.POST(new NextRequest('http://scanner.test/api/multi-pallet-complete', {
+      method: 'POST',
+      body: JSON.stringify({
+        token: TOKEN, scanned_boxes: [], box_count: 4, pallet_number: 1, manual_declared: true,
+        manual_items: [{ item_key: nonMeatItemKey(CHICKEN), box_count: 4, sample_barcode: '7290002195832' }],
+      }),
+    } as never));
+    expect(res.status).toBe(200);
+    expect(sentBoxes()).toEqual([expect.objectContaining({ barcode: '7290002195832', weight_source: 'note_avg' })]);
+  });
+});

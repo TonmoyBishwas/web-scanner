@@ -13,6 +13,7 @@ import { sessionBookedBarcodes } from '@/lib/label-batches';
 import { sanitizeUnitsBoxes } from '@/lib/units-cartons';
 import { rawOcrWeightKg } from '@/lib/barcode-weight';
 import { barcodeProvenance } from '@/lib/barcode-provenance';
+import { weightSourceOf } from '@/lib/weight-source';
 
 const SESSION_TTL = 7200;
 
@@ -152,6 +153,9 @@ export async function POST(request: NextRequest) {
           ocr_weight_kg: rawOcrWeightKg(ocr_weight),
           // Where the code came from and its format check (lib/barcode-provenance.ts).
           ...barcodeProvenance(b),
+          // Where the weight came from (lib/weight-source.ts, 04/11). The
+          // label reading was taken out of b above; it is put back for the check.
+          weight_source: weightSourceOf({ ...b, ocr_weight }),
           ...(unprintedBooked.has((b.barcode || '').trim()) ? { label_printed: false } : {}),
         })),
         unprinted_labels: unprintedBooked.size,
