@@ -60,6 +60,18 @@ export function weightChanged(next: number, prev: number): boolean {
   return Number.isFinite(next) && Number.isFinite(prev) && Math.abs(next - prev) >= 0.001 - 1e-9;
 }
 
+/**
+ * Did the worker change a copy's weight? The form weight against its sample's,
+ * except that the sample's OWN barcode weight never counts as typed: the
+ * one-tap twin saves at the barcode's figure (10 g steps) while the sample
+ * may keep the label's finer reading within 0.01 kg of it (review 04/11).
+ */
+export function copyWeightTyped(formWeight: number, sample: { barcode: string; weight: number }): boolean {
+  if (!weightChanged(formWeight, sample.weight)) return false;
+  const kg = barcodeWeight(sample.barcode)?.kg;
+  return !(kg !== undefined && Math.abs(formWeight - kg) <= WEIGHT_SOURCE_BARCODE_AGREE_KG);
+}
+
 function barcodeBacked(row: WeightSourceRow): boolean {
   const kg = barcodeWeight(row.barcode)?.kg;
   const w = Number(row.weight);

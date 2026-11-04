@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { WEIGHT_SOURCES, weightSourceOf } from './weight-source';
 import { asNewCartonRows, expandIdenticalBoxes, newCartonBatch } from './identical-boxes';
+import { differentCartonOffer } from './scan-notice';
 
 /** Where each carton's weight came from (04/11, items 9/10). */
 // 31-digit catch-weight: 13-digit GTIN, then weight in 10 g at chars 14-18 (12.46 kg), batch, DDMMYYYY.
@@ -96,6 +97,33 @@ describe('copies through expandIdenticalBoxes', () => {
     const [row] = expandIdenticalBoxes(read, [{ barcode: '2826110400000201', batch_id: 'b3' }],
       { weight: 10.105, expiry: '', production_date: '' });
     expect(weightSourceOf({ ...row, twin: true })).toBe('twin_copy');
+  });
+
+  // Review 04/11: the one-tap twin saves at the BARCODE's own weight
+  // (differentCartonOffer → parseCartonBarcode), while the sample keeps the
+  // label's finer reading when it agrees with the barcode within 0.01 kg
+  // (22 of 309 barcode-weight cartons since 28/10 are 1–10 g off). The twin
+  // must not come out typed for that 5 g.
+  it('a one-tap twin of a 31-digit carton whose label reads 5 g finer is never typed', () => {
+    const read = { ...sample, barcode: GS31, sku: GS31.slice(0, 13), weight: 12.465, ocr_weight: 12.465 };
+    expect(weightSourceOf(read)).toBe('label_barcode');
+    const offer = differentCartonOffer(GS31, { ...read, ocr_status: 'done' });
+    expect(offer).toEqual({ quick: true, weight: 12.46 });
+    const quick = (offer as { quick: true; weight: number }).weight;
+    const [row] = expandIdenticalBoxes(read, [{ barcode: '2826110400000211', batch_id: 'b5' }],
+      { weight: quick, expiry: '', production_date: '' });
+    expect(row.weight_typed).toBeUndefined();
+    const twin = weightSourceOf({ ...row, twin: true });
+    expect(['twin_copy', 'label_barcode']).toContain(twin);
+    expect(twin).toBe('twin_copy');
+  });
+
+  it('a copy form weight off the 31-digit sample\'s barcode is still typed', () => {
+    const read = { ...sample, barcode: GS31, sku: GS31.slice(0, 13), weight: 12.465, ocr_weight: 12.465 };
+    const [row] = expandIdenticalBoxes(read, [{ barcode: '2826110400000212', batch_id: 'b6' }],
+      { weight: 12.9, expiry: '', production_date: '' });
+    expect(row.weight_typed).toBe(true);
+    expect(weightSourceOf({ ...row, twin: true })).toBe('typed');
   });
 
   it('a New carton batch → typed', () => {

@@ -20,7 +20,7 @@ import type { CartonLabel, MultiPalletBoxScan } from '@/types';
 import { isMintedLabelBarcode } from './label-batches';
 import { isNoBarcodeId } from './no-barcode';
 import { barcodeCarriesWeight } from './barcode-weight';
-import { weightSourceOf, weightChanged, type WeightSource } from './weight-source';
+import { weightSourceOf, copyWeightTyped, type WeightSource } from './weight-source';
 
 /**
  * May "All boxes identical" be offered on this row (its row actions, the
@@ -146,9 +146,10 @@ export function expandIdenticalBoxes<T extends SampleRow>(
     label_batch_id: label.batch_id,
     source_barcode: sample.barcode,
     // Where the copied weight came from (lib/weight-source.ts, 04/11): the
-    // sample's own source, and whether the form changed it.
+    // sample's own source, and whether the form changed it (its barcode's
+    // own weight, the one-tap twin's figure, is not a change).
     weight_copied_from: copiedFrom,
-    weight_typed: weightChanged(form.weight, sample.weight) || undefined,
+    weight_typed: copyWeightTyped(form.weight, sample) || undefined,
   }));
 }
 
