@@ -76,7 +76,8 @@ import { LanguageContext, useLangDir, t } from '@/lib/i18n';
 import type { Language, MultiPalletSession, MultiPalletBoxScan, ParsedBarcode } from '@/types';
 import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
 import { cartonOwnCodes, invoiceNameConflict, matchInvoiceItem } from '@/lib/invoice-match';
-import { labelPrintsWeight, uniformCandidate } from '@/lib/uniform-candidate';
+import { labelPrintsWeight, uniformAfterEditAllowed, uniformCandidate, uniformListSettled } from '@/lib/uniform-candidate';
+import { typedNearMatch } from '@/lib/typed-near-match';
 import { isSplitSession } from '@/lib/session-mode';
 import { findDuplicateOwner } from '@/lib/duplicate-guard';
 import { cameraSerialBookable, cameraSerialOcrVerdict, CAMERA_SERIAL_RE, classifyRead, hasCartonCode, inboundReadPolicy, matchInvoiceShortCode, parseGlattCode, noteRepeatedRead, printedDigitsIdentifyCarton, shortCodeDefaults } from '@/lib/carton-barcode';
@@ -1546,7 +1547,7 @@ export default function PalletVerifyPage({
               setForcedMix(!!cached.forcedMix);
           if (cached.supplierPalletRef) setSupplierPalletRef(cached.supplierPalletRef);
               if (cached.detectedType) setDetectedType(cached.detectedType);
-              restoreUniformPrompt(cached);
+              restoreUniformPrompt(cached, !!data.features?.uniform_after_count);
               for (const code of dedupCodes(cached.scannedBoxes)) processedRef.current.add(code);
             }
             setPhase('scanning');
@@ -1594,7 +1595,7 @@ export default function PalletVerifyPage({
           setForcedMix(!!cached.forcedMix);
           if (cached.supplierPalletRef) setSupplierPalletRef(cached.supplierPalletRef);
           if (cached.detectedType) setDetectedType(cached.detectedType);
-          restoreUniformPrompt(cached);
+          restoreUniformPrompt(cached, !!data.features?.uniform_after_count);
           // Repopulate the dedup set so a re-scan of a restored sticker is caught.
           for (const code of dedupCodes(cached.scannedBoxes)) processedRef.current.add(code);
         } else if (data.current_box_count && data.current_box_count > 0) {
@@ -2605,7 +2606,7 @@ export default function PalletVerifyPage({
   // prompt at all — pushing a pallet that qualifies for the shortcut onto the
   // scan-every-box path instead. Re-derive it from the cached snapshot, using
   // the cached flags rather than the refs, which useEffect has not synced yet.
-  function restoreUniformPrompt(cached: PalletScanSnapshot) {
+  function restoreUniformPrompt(cached: PalletScanSnapshot, afterCount = false) {
     if (cached.forcedMix) return;                       // worker already said mix
     if ((cached.uniformGroups || []).length > 0) return; // single already locked in
     if (cached.confirmedBoxCount > 0) return;            // total already declared
@@ -2614,7 +2615,11 @@ export default function PalletVerifyPage({
     const done = boxes.filter(
       (b) => b.ocr_status === 'done' && b.weight > 0 && (b.item_name || b.item_name_hebrew),
     );
-    const candidate = uniformCandidateFrom(done, new Map(cached.acceptedMerges || []));
+    const merges = new Map(cached.acceptedMerges || []);
+    const candidate = uniformCandidateFrom(done, merges);
+    // uniform_after_count: not while a carton holds the confirm or one of the
+    // product's cartons is still at 0 kg (lib/uniform-candidate.ts uniformListSettled).
+    if (candidate && afterCount && !uniformListSettled(boxes, candidate.name_key, (b) => merges.get(groupKeyForBox(b)) ?? groupKeyForBox(b))) return;
     if (candidate) {
       trace('ui', 'uniform_prompt_shown', { pallet: currentPalletRef.current, weight: candidate.avg_weight, samples: candidate.sample_barcodes, restored: true });
       setPendingUniformPrompt({ mode: 'single_or_mix', ...candidate });
@@ -2627,12 +2632,25 @@ export default function PalletVerifyPage({
   // prompt — they fall through to the pallet-total input (mix path).
   function maybeTriggerUniformPrompt(latestBoxes: BoxScan[], _justFinishedBarcode: string) {
     if (forcedMixRef.current) return;                // worker already said it's mix
+    // uniform_after_count: "Done scanning?" no longer sets forcedMix, so the
+    // declared total is what closes the question now.
+    if (sessionRef.current?.features?.uniform_after_count && confirmedBoxCountRef.current > 0) return;
     if (uniformGroupsRef.current.size > 0) return;   // single already locked in
     const done = latestBoxes.filter(
       (b) => b.ocr_status === 'done' && b.weight > 0 && (b.item_name || b.item_name_hebrew),
     );
     if (latestBoxes.some((b) => b.ocr_status === 'processing')) return;
-    const candidate = uniformCandidateFrom(done);
+    let candidate = uniformCandidateFrom(done);
+    // uniform_after_count (04/11): the candidate sees only finished rows with
+    // a weight. A carton that still holds the confirm, or one of the same
+    // product still at 0 kg, would be booked unchecked by "whole pallet" +
+    // total (that auto-confirm passes the footer's gate by) — no question
+    // until the list is settled; an open one is retracted
+    // (lib/uniform-candidate.ts uniformListSettled).
+    if (
+      candidate && sessionRef.current?.features?.uniform_after_count &&
+      !uniformListSettled(latestBoxes, candidate.name_key, (b) => acceptedMerges.get(groupKeyForBox(b)) ?? groupKeyForBox(b))
+    ) candidate = null;
     if (pendingUniformPromptRef.current) {
       // Prompting from two samples means a later box can invalidate the
       // question while it is still on screen (a second product, or a box that
@@ -3038,6 +3056,24 @@ export default function PalletVerifyPage({
         }
         resolvedId = typed;
       } else if (identity.kind === 'short') {
+        // Flag typed_near_match (04/11, Baladi 200009700258 for
+        // 2000097200258): digits one short of exactly one code on this list
+        // are that code — the carton already on the list. The existing
+        // duplicate question follows, with the full code in the box so its
+        // buttons show (lib/typed-near-match.ts). Anything else: refused as before.
+        if (session?.features?.typed_near_match && typed.length > 0) {
+          const list = isLoose ? looseBoxes : scannedBoxes;
+          const matched = typedNearMatch(typed, list, { exceptBarcode: barcode, nameHe: name_he, nameEn: name_en, minDigits: MIN_BARCODE_DIGITS });
+          const dupOf = matched ? findCountedCartonByDigits(list, matched, barcode) : null;
+          if (matched && dupOf) {
+            const twinOk = canOfferDifferentCarton(matched, dupOf.row);
+            trace('ui', 'edit_barcode_near_match', { barcode, typed, matched, of: dupOf.n, twin_ok: twinOk });
+            setEditForm({ ...editForm, barcodeInput: matched });
+            setEditError(t(session?.language || 'English', twinOk ? 'terminal.barcodeDuplicate' : 'terminal.barcodeDuplicateSame', { n: dupOf.n }));
+            setEditDup({ n: dupOf.n, row: dupOf.row, typed: matched, twinOk });
+            return;
+          }
+        }
         // Started typing but stopped short — that is a slip, not a decision.
         setEditError(
           t(session?.language || 'English', 'terminal.barcodeDigitsCount', {
@@ -3167,6 +3203,16 @@ export default function PalletVerifyPage({
       });
       return updated;
     });
+    // Flag uniform_after_count (04/11, Glatt ground turkey: the label prints
+    // no net weight, so OCR never raised the single-item question and the
+    // weights are typed here). Before a total is declared, with no minted
+    // row on the list (lib/uniform-candidate.ts uniformAfterEditAllowed).
+    if (session?.features?.uniform_after_count) {
+      const updated = scannedBoxesRef.current.map(patch);
+      if (uniformAfterEditAllowed(updated, { confirmedBoxCount: confirmedBoxCountRef.current, pendingSingle: !!pendingSingleGroup })) {
+        maybeTriggerUniformPrompt(updated, '');
+      }
+    }
     setEditForm(null);
   }
 
@@ -5063,7 +5109,7 @@ export default function PalletVerifyPage({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token, current_box_count: count }),
       }).catch(() => {});
-      setTimeout(() => handleConfirmPallet({ boxCount: count, groups: nextGroups }), 0);
+      setTimeout(() => handleConfirmPallet({ boxCount: count, groups: nextGroups, auto: true }), 0);
       return;
     }
 
@@ -5089,7 +5135,7 @@ export default function PalletVerifyPage({
       // the old ones. Reading them from state here posted box_count: 0 with an
       // empty uniform_groups, and the server's `box_count || itemBoxes.length`
       // fallback then booked the pallet at the SAMPLE count: declare 40, get 4.
-      setTimeout(() => handleConfirmPallet({ boxCount: count, groups: nextGroups }), 0);
+      setTimeout(() => handleConfirmPallet({ boxCount: count, groups: nextGroups, auto: true }), 0);
     } else {
       // Mix / non-uniform path: persist the count for resume safety.
       fetch('/api/multi-pallet-session', {
@@ -5292,6 +5338,8 @@ export default function PalletVerifyPage({
   async function handleConfirmPallet(override?: {
     boxCount: number;
     groups: Map<string, UniformGroup>;
+    /** The single-item auto-confirm after the total is set (no footer gate). */
+    auto?: boolean;
   }) {
     if (refuseIfSessionLost('confirm_pallet')) return;
     trace('ui', 'confirm_pallet', { pallet: currentPallet, scanned: scannedBoxes.length, confirmedBoxCount, override: override ? { boxCount: override.boxCount, groups: override.groups } : undefined, forcedMix, detectedType });
@@ -5321,6 +5369,21 @@ export default function PalletVerifyPage({
       setSwipeKey((k) => k + 1);
       setPhase('scanning');
       return;
+    }
+    // uniform_after_count (04/11): the single-item auto-confirm passes the
+    // footer's gate by, so a carton that still holds the confirm (needs
+    // review, a failed read, an open ratio doubt — blocksConfirm) sends the
+    // worker back to the list with that carton open, instead of being booked
+    // unchecked. The group stays locked: once it is fixed, the slide books.
+    if (override?.auto && sessionRef.current?.features?.uniform_after_count) {
+      const held = scannedBoxesRef.current.filter(blocksConfirm);
+      if (held.length) {
+        trace('ui', 'confirm_held_single', { pallet: currentPallet, cartons: held.map((b) => b.barcode) });
+        setSwipeKey((k) => k + 1);
+        setPhase('scanning');
+        openEdit(held[0]);
+        return;
+      }
     }
     // The list as it is now (the reconcile above awaited): book exactly this —
     // with every carton's weight and expiry following its barcode, the last
@@ -6277,7 +6340,9 @@ export default function PalletVerifyPage({
   function openCountInput() {
     trace('ui', 'count_open', { pallet: currentPallet, scanned: scannedBoxes.length });
     clearScanNotice(); // a question left on the camera is moot now
-    setForcedMix(true);
+    // uniform_after_count (04/11): opening the total no longer closes the
+    // single-item question — forcedMix stays for "other products too".
+    if (!session?.features?.uniform_after_count) setForcedMix(true);
     setCountAsked(true);
     setPalletCountError(null);
     setCountFocusTick((n) => n + 1);

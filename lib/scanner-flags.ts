@@ -199,3 +199,37 @@ export async function manualTargetHintOn(chatId: string | number | null | undefi
     return false;
   }
 }
+
+/**
+ * Typed digits one short of a code on the list (04/11, Baladi 200009700258
+ * for 2000097200258): the edit panel takes the one code they fit
+ * (lib/typed-near-match.ts) into the existing "already on the list"
+ * question instead of refusing. A missing row is OFF.
+ */
+export const typedNearMatchRow = flagRow('typed_near_match');
+
+/** Typed near match for this chat; off when the flag cannot be read, never a throw. */
+export async function typedNearMatchOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await typedNearMatchRow(), chatId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The single-item question after "Done scanning?" (04/11, Glatt ground
+ * turkey: the label prints no net weight). "Done scanning?" no longer
+ * closes the question for the pallet, and an edit-panel save may raise it
+ * (lib/uniform-candidate.ts uniformAfterEditAllowed). A missing row is OFF.
+ */
+export const uniformAfterCountRow = flagRow('uniform_after_count');
+
+/** Uniform-after-count for this chat; off when the flag cannot be read, never a throw. */
+export async function uniformAfterCountOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await uniformAfterCountRow(), chatId);
+  } catch {
+    return false;
+  }
+}

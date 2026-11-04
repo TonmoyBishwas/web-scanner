@@ -383,6 +383,13 @@ export interface MultiPalletSession {
      *  label reader for that label only (lib/manual-target.ts). Present
      *  only when on. */
     manual_target_hint?: boolean;
+    /** Edit panel: typed digits one short of a code on the list take that
+     *  code into the "already on the list" question (lib/typed-near-match.ts). */
+    typed_near_match?: boolean;
+    /** "Done scanning?" no longer closes the single-item question, and an
+     *  edit-panel save may raise it (lib/uniform-candidate.ts
+     *  uniformAfterEditAllowed). */
+    uniform_after_count?: boolean;
   };
   receipt_id?: string;
   completed_pallets: Array<{

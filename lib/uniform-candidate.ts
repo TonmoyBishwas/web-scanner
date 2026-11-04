@@ -19,6 +19,11 @@
  */
 
 import { barcodeCarriesWeight } from './barcode-weight';
+import { barcodeSourceOf, type ProvenanceRow } from './barcode-provenance';
+import { blocksConfirm } from './failed-read';
+
+/** The fields of a row the confirm gate reads (lib/failed-read.ts blocksConfirm). */
+type GateFields = Parameters<typeof blocksConfirm>[0];
 
 export interface UniformSampleRow {
   barcode: string;
@@ -65,4 +70,54 @@ export function uniformCandidate<T extends UniformSampleRow>(
     avg_weight: Math.round(avg * 1000) / 1000,
     sample_barcodes: done.map((b) => b.barcode),
   };
+}
+
+/**
+ * May an edit-panel save ask the single-item question (04/11, flag
+ * `uniform_after_count`, lib/scanner-flags.ts)?
+ *
+ * Glatt ground turkey: the label prints "16 יחידות" and no net weight, so
+ * every carton reads 0 kg and the question never came up from OCR. The
+ * weight is typed in the edit panel — and today a save never re-asks, so
+ * two cartons typed at the same 8 kg stayed on the scan-every-carton path.
+ *
+ * Only before a total is declared, never once a single-item answer is in
+ * progress, and never when any row on the list is warehouse-minted (a
+ * minted/twin/New-carton row or a NOBC- marker carries its exact count —
+ * there is nothing to multiply), nor while any row on the list still holds
+ * the confirm (needs_review, a failed read, an open ratio doubt —
+ * lib/failed-read.ts blocksConfirm): "whole pallet" auto-confirms past the
+ * footer's gate, so asking now would book those cartons unchecked. The
+ * candidate rule itself (same product, same weight, no label that prints its
+ * own weight) is `uniformCandidate`, applied by the page's
+ * maybeTriggerUniformPrompt, which also applies `uniformListSettled`.
+ */
+export function uniformAfterEditAllowed(
+  rows: ReadonlyArray<ProvenanceRow & GateFields>,
+  state: { confirmedBoxCount: number; pendingSingle: boolean },
+): boolean {
+  if (state.confirmedBoxCount !== 0) return false;
+  if (state.pendingSingle) return false;
+  if (rows.some(blocksConfirm)) return false;
+  return !rows.some((r) => barcodeSourceOf(r) === 'minted');
+}
+
+/**
+ * Under `uniform_after_count` (04/11): may the single-item question be asked
+ * of a candidate found on this list? `uniformCandidate` sees only finished
+ * rows with a weight, so a carton of the same product still at 0 kg (its
+ * weight not typed yet) or one still held for review is invisible to it —
+ * and "whole pallet" + total auto-confirms the pallet without the footer's
+ * gate, booking those cartons unchecked (Glatt ground turkey: 4 cartons, 2
+ * typed at 8 kg, 2 still 0 kg / needs_review). So: no row on the list may
+ * hold the confirm (blocksConfirm), and no row of the candidate's product
+ * may be at 0 kg.
+ */
+export function uniformListSettled<T extends GateFields & { weight: number }>(
+  rows: ReadonlyArray<T>,
+  candidateKey: string,
+  keyOf: (b: T) => string,
+): boolean {
+  if (rows.some(blocksConfirm)) return false;
+  return !rows.some((r) => !(r.weight > 0) && keyOf(r) === candidateKey);
 }
