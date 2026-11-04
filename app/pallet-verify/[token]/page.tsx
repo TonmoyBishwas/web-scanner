@@ -83,6 +83,7 @@ import type { ReadPolicy } from '@/lib/barcode-frame';
 import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
 import { cartonsOnListFor, listAboveTotal, newCartonQuantity, type ListAboveTotal } from '@/lib/count-check';
 import { freeNoBarcodeId, isNoBarcodeId, unreadDigitsOutcome } from '@/lib/no-barcode';
+import { resolveEditIdentity } from '@/lib/edit-identity';
 import { useBackClose } from '@/lib/use-back-close';
 import { findWeightSuspects } from '@/lib/weight-sanity';
 import { acceptDoubts, releaseDoubtHold, sharedDoubt, weightDoubts } from '@/lib/weight-review';
@@ -2467,7 +2468,10 @@ export default function PalletVerifyPage({
           );
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        // Log-only (04/11): a read that never came back looked, on the
+        // trace, like the carton was never read at all.
+        trace('ui', 'ocr_network_failed', { barcode: lookupKey, where: 'pallet', manual, error: String(err).slice(0, 200) });
         if (lateReadDropped(lookupKey, 'pallet', false)) return;
         const failPatch = failedReadPatch(lookupKey, scannedBoxesRef.current, 'pallet');
         setScannedBoxes((prev) => {
@@ -2889,20 +2893,27 @@ export default function PalletVerifyPage({
       setEditError(t(session?.language || 'English', dateError));
       return;
     }
-    trace('ui', 'edit_save', { barcode, isLoose, name_he, name_en, weight: w, expiry, production_date, batch, barcodeInput: editForm.barcodeInput, forcedId: editForm.forcedId, unidentified: editForm.unidentified });
-    clearScanNotice();
-
     // ── Identity for a manual capture ──
     // `resolvedId` is what this row's barcode BECOMES. For an already-identified
     // carton that is its existing barcode; for one the worker just typed digits
     // for it is those digits; for one they declared unreadable it is the
     // NOBC- marker set by handleNoBarcode (which leaves `unidentified` false).
+    // Decided before the trace, so edit_save names the barcode the row is
+    // saved under (`resolved`; null = refused for too few digits — a typed
+    // duplicate is refused by edit_barcode_duplicate right after).
+    const identity = resolveEditIdentity(editForm, MIN_BARCODE_DIGITS);
+    trace('ui', 'edit_save', {
+      barcode, isLoose, name_he, name_en, weight: w, expiry, production_date, batch,
+      barcodeInput: editForm.barcodeInput, forcedId: editForm.forcedId, unidentified: editForm.unidentified,
+      resolved: identity.kind === 'short' ? null : identity.id, identity: identity.kind,
+    });
+    clearScanNotice();
     let resolvedId = barcode;
-    if (editForm.forcedId) {
-      resolvedId = editForm.forcedId;
+    if (identity.kind === 'forced') {
+      resolvedId = identity.id;
     } else if (editForm.unidentified) {
       const typed = digitsOnly(editForm.barcodeInput);
-      if (typed.length >= MIN_BARCODE_DIGITS) {
+      if (identity.kind === 'typed') {
         // Same rule the scanned path uses: the FULL printed number identifies a
         // carton, not the 13-digit SKU, which repeats across every box of one
         // product. A clash here is the worker typing the sticker they already
@@ -2920,7 +2931,7 @@ export default function PalletVerifyPage({
           return;
         }
         resolvedId = typed;
-      } else if (editForm.barcodeInput.trim()) {
+      } else if (identity.kind === 'short') {
         // Started typing but stopped short — that is a slip, not a decision.
         setEditError(
           t(session?.language || 'English', 'terminal.barcodeDigitsCount', {
@@ -4701,7 +4712,9 @@ export default function PalletVerifyPage({
           }), { [resolvedBarcode]: [data.ocr_data.product_name_hebrew, data.ocr_data.product_name_english] });
         });
       })
-      .catch(() => {
+      .catch((err) => {
+        // Log-only, as in runOcr.
+        trace('ui', 'ocr_network_failed', { barcode: lookupKey, where: 'loose', manual, error: String(err).slice(0, 200) });
         if (lateReadDropped(lookupKey, 'loose', false)) return;
         const failPatch = failedReadPatch(lookupKey, looseBoxesRef.current, 'loose');
         setLooseBoxes((prev) => {
