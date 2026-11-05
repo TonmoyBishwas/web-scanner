@@ -3938,6 +3938,10 @@ export default function PalletVerifyPage({
       { id: 'pallets', icon: <PalletIcon />, label: tr('terminal.toolPallets'), tint: 'neutral', onPress: () => setShowPallets(true) },
       {
         id: 'delete', icon: 'delete_sweep', label: tr('terminal.toolDelete'), tint: 'red',
+        // top_bar_delete_only on (05/11): outside a list open for scanning the
+        // rows have no Delete, so "Tap a row to delete it" would be false —
+        // the chip is locked there instead (the existing lock toast).
+        locked: !rowDelete && phase !== 'scanning' && phase !== 'loose_scanning',
         // Only while a list is open for scanning; the rows of a booked list
         // are on an LPN and cannot be deleted from here. Cartons on the list
         // → selection mode (tap again leaves it); an empty list → the bulk
