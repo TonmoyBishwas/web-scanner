@@ -73,7 +73,9 @@ interface EditPanelProps {
    * "Book it without a barcode." Shown ONLY once minting has actually failed —
    * it is a worse outcome than a real sticker, so it must not sit next to the
    * good option as an equal choice. It exists so a network problem can never
-   * leave a worker unable to finish the pallet.
+   * leave a worker unable to finish the pallet. With the scanner flag
+   * no_hand_codes there is no mint at all (onCreateBarcode absent) and this
+   * is shown from the start: the carton is booked with no barcode, pending.
    */
   onNoBarcode?: () => void;
   showNoBarcode?: boolean;
@@ -529,7 +531,7 @@ export function EditPanel({
               </button>
             )}
 
-            {/* Only after a mint has failed — see the prop comment. */}
+            {/* After a failed mint, or always under no_hand_codes — see the prop comment. */}
             {showNoBarcode && onNoBarcode && (
               <button
                 onClick={onNoBarcode}
