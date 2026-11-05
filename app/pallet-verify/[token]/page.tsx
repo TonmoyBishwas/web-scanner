@@ -61,7 +61,7 @@ import {
 import { weightChanged } from '@/lib/weight-source';
 import { isMintedLabelBarcode, newBatchId, labelSheetUrl, liveRowPlaces, loadLabelSize, openListsForPhase, sessionBookedBarcodes } from '@/lib/label-batches';
 import { printGate, LABELS_NOT_PRINTED } from '@/lib/label-gate';
-import { cartonLabelsShown } from '@/lib/label-switches';
+import { cartonLabelsShown, lpnLabelsShown } from '@/lib/label-switches';
 import {
   labelPrintingEnabled, labelsChipLook, labelsInitialStatus, newCartonUncountedToast, unprintedMarkers,
 } from '@/lib/label-printing';
@@ -990,7 +990,8 @@ export default function PalletVerifyPage({
   // card's "Scan pallet N" button advances to.
   const sheetRef = useRef<BottomSheetHandle>(null);
   const looseSheetRef = useRef<BottomSheetHandle>(null);
-  const drawer = useDrawerHost(token);
+  // lpn_labels off (05/11): no LPN sticker link in the archive's pallet view.
+  const drawer = useDrawerHost(token, undefined, { lpnSticker: lpnLabelsShown(session?.features) });
   const { toast, showToast, showLockToast } = useLockToast(tr('terminal.lockedToast'));
 
   // A carton just flagged by the weight check (flagSuspectWeights) is said
@@ -4021,7 +4022,7 @@ export default function PalletVerifyPage({
 
   // משטחים pallets browser overlay (opened from the tool dock).
   const palletsBrowser = showPallets ? (
-    <PalletsBrowser token={token} onBack={() => setShowPallets(false)} />
+    <PalletsBrowser token={token} onBack={() => setShowPallets(false)} lpnSticker={lpnLabelsShown(session?.features)} />
   ) : null;
 
   // צור קרטון + מדבקות overlays. Rendered next to `palletsBrowser` at every
