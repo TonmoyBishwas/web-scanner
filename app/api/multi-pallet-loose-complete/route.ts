@@ -14,6 +14,8 @@ import { sanitizeUnitsBoxes } from '@/lib/units-cartons';
 import { rawOcrWeightKg } from '@/lib/barcode-weight';
 import { barcodeProvenance } from '@/lib/barcode-provenance';
 import { weightSourceOf } from '@/lib/weight-source';
+import { noHandCodesOn } from '@/lib/scanner-flags';
+import { pendingBarcodes } from '@/lib/no-hand-codes';
 
 const SESSION_TTL = 7200;
 
@@ -135,7 +137,12 @@ export async function POST(request: NextRequest) {
       );
 
       // To the bot once the response is out — see the after() below.
-      const boxes: MultiPalletBoxScan[] = scanned_boxes || [];
+      // no_hand_codes (05/11): a carton with no readable barcode goes with
+      // none ('' → box_inventory.barcode NULL), never as MANUAL-/NOBC-
+      // (lib/no-hand-codes.ts). Flag off: the list as it came.
+      const boxes: MultiPalletBoxScan[] = (await noHandCodesOn(session.chat_id))
+        ? pendingBarcodes(scanned_boxes || [])
+        : (scanned_boxes || []);
       const botBody = JSON.stringify({
         // Lets the bot detect a stale plan the same way pallet-complete
         // does. Additive only — the bot already tolerates the field being
@@ -152,7 +159,8 @@ export async function POST(request: NextRequest) {
           ...b,
           ocr_weight_kg: rawOcrWeightKg(ocr_weight),
           // Where the code came from and its format check (lib/barcode-provenance.ts).
-          ...barcodeProvenance(b),
+          // None for a carton with no code at all (no_hand_codes): NULL, pending.
+          ...(b.barcode ? barcodeProvenance(b) : {}),
           // Where the weight came from (lib/weight-source.ts, 04/11). The
           // label reading was taken out of b above; it is put back for the check.
           weight_source: weightSourceOf({ ...b, ocr_weight }),

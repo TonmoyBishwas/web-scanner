@@ -17,7 +17,8 @@ import { parseBatchId, parseLabelOrigin } from '@/lib/label-batches';
 import { parseClearMode } from '@/lib/pallet-clear';
 import { pendingLabelsUrl } from '@/lib/label-link';
 import { parseUnitsRequest } from '@/lib/units-cartons';
-import { unitsModeOn } from '@/lib/scanner-flags';
+import { noHandCodesOn, unitsModeOn } from '@/lib/scanner-flags';
+import { mintRefused } from '@/lib/no-hand-codes';
 import type { CartonLabelOrigin } from '@/types';
 
 const unauthorized = () =>
@@ -123,6 +124,12 @@ export async function POST(request: NextRequest) {
     // pallet it was saved on (0 = loose pile); the identical path also which
     // supplier barcode the batch stands in for.
     const origin: CartonLabelOrigin = parseLabelOrigin(body.origin);
+    // no_hand_codes (05/11): the edit panel's "create barcode" is gone; a
+    // page cached from before the flip gets the mint failure it already
+    // handles (its No barcode button), never a code for the carton.
+    if (origin === 'receiving' && mintRefused(origin, await noHandCodesOn(context.chatId))) {
+      return NextResponse.json({ success: false, error: 'no_hand_codes' }, { status: 403 });
+    }
     const sourceBarcode =
       typeof body.source_barcode === 'string' ? body.source_barcode.replace(/\D/g, '').slice(0, 40) || null : null;
     const rawPallet = body.pallet_number;

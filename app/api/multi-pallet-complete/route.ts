@@ -18,6 +18,8 @@ import { snapNamelessByCode } from '@/lib/failed-read';
 import { rawOcrWeightKg } from '@/lib/barcode-weight';
 import { barcodeProvenance } from '@/lib/barcode-provenance';
 import { weightSourceOf } from '@/lib/weight-source';
+import { noHandCodesOn } from '@/lib/scanner-flags';
+import { pendingBarcodes, pendingSampleBarcode } from '@/lib/no-hand-codes';
 
 const SESSION_TTL = 7200;
 // "Same weight" means the printed weights are EXACTLY equal — a fixed-weight
@@ -144,7 +146,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     traceToken = typeof body?.token === 'string' ? body.token : '';
-    const { token, scanned_boxes: rawScannedBoxes, box_count, uniform_groups, merge_map, nonmeat_items,
+    const { token, scanned_boxes: rawScannedBoxes, box_count, uniform_groups, merge_map, nonmeat_items: rawNonmeatItems,
       manual_declared, manual_items, worker_chat_id, supplier_pallet_ref, pallet_number: clientPallet } = body as {
       token: string;
       /** The pallet the page is booking (single jobs): refused when it is no
@@ -181,6 +183,7 @@ export async function POST(request: NextRequest) {
     let scanned_boxes = Array.isArray(rawScannedBoxes)
       ? normalizeBoxExpiries(rawScannedBoxes)
       : rawScannedBoxes;
+    let nonmeat_items = rawNonmeatItems;
 
     if (!token) {
       return NextResponse.json({ success: false, error: t(undefined, 'errors.missingToken') }, { status: 400 });
@@ -201,6 +204,16 @@ export async function POST(request: NextRequest) {
     if (session.status === 'completed') {
       errorResult = { status: 400, body: { success: false, code: 'session_completed', error: t(lang, 'errors.sessionAlreadyCompleted') } };
       return;
+    }
+
+    // no_hand_codes (05/11): a carton with no readable barcode is booked
+    // with none — '' here, box_inventory.barcode NULL — never as a MANUAL-
+    // placeholder or a NOBC- marker; a Type A sample captured by photo
+    // likewise (lib/no-hand-codes.ts). One row in, one row out: counts,
+    // samples and declared totals are untouched. Flag off: as sent.
+    if (await noHandCodesOn(session.chat_id)) {
+      if (Array.isArray(scanned_boxes)) scanned_boxes = pendingBarcodes(scanned_boxes);
+      nonmeat_items = nonmeat_items?.map((ni) => ({ ...ni, sample_barcode: pendingSampleBarcode(ni.sample_barcode) }));
     }
 
     // Split jobs: the worker is finishing the slot they claimed, which is not
@@ -709,7 +722,8 @@ export async function POST(request: NextRequest) {
           ocr_weight_kg: rawOcrWeightKg(b.ocr_weight),
           // Where the code came from and whether it passes its format check
           // (lib/barcode-provenance.ts, 01/11) — for box_inventory, never shown.
-          ...barcodeProvenance(b),
+          // None for a carton with no code at all (no_hand_codes): NULL, pending.
+          ...(b.barcode ? barcodeProvenance(b) : {}),
           // Where the weight came from (lib/weight-source.ts, 04/11) — for
           // box_inventory.weight_source, never shown.
           weight_source: weightSourceOf(b),
@@ -773,7 +787,8 @@ export async function POST(request: NextRequest) {
           ocr_weight_kg: rawOcrWeightKg(b.ocr_weight),
           // Where the code came from and whether it passes its format check
           // (lib/barcode-provenance.ts, 01/11) — for box_inventory, never shown.
-          ...barcodeProvenance(b),
+          // None for a carton with no code at all (no_hand_codes): NULL, pending.
+          ...(b.barcode ? barcodeProvenance(b) : {}),
           // Where the weight came from (lib/weight-source.ts, 04/11) — for
           // box_inventory.weight_source, never shown.
           weight_source: weightSourceOf(b),
