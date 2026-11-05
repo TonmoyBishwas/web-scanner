@@ -61,6 +61,7 @@ import {
 import { weightChanged } from '@/lib/weight-source';
 import { isMintedLabelBarcode, newBatchId, labelSheetUrl, liveRowPlaces, loadLabelSize, openListsForPhase, sessionBookedBarcodes } from '@/lib/label-batches';
 import { printGate, LABELS_NOT_PRINTED } from '@/lib/label-gate';
+import { cartonLabelsShown, lpnLabelsShown, perCartonDeleteShown } from '@/lib/label-switches';
 import {
   labelPrintingEnabled, labelsChipLook, labelsInitialStatus, newCartonUncountedToast, unprintedMarkers,
 } from '@/lib/label-printing';
@@ -990,7 +991,8 @@ export default function PalletVerifyPage({
   // card's "Scan pallet N" button advances to.
   const sheetRef = useRef<BottomSheetHandle>(null);
   const looseSheetRef = useRef<BottomSheetHandle>(null);
-  const drawer = useDrawerHost(token);
+  // lpn_labels off (05/11): no LPN sticker link in the archive's pallet view.
+  const drawer = useDrawerHost(token, undefined, { lpnSticker: lpnLabelsShown(session?.features) });
   const { toast, showToast, showLockToast } = useLockToast(tr('terminal.lockedToast'));
 
   // A carton just flagged by the weight check (flagSuspectWeights) is said
@@ -1051,6 +1053,10 @@ export default function PalletVerifyPage({
   // The rows' "Label not printed" marker — none while printing is off. The
   // real set above still drives deletes and group counts.
   const unprintedShown = unprintedMarkers(unprintedBarcodes, PRINTING);
+  // Label switches and the top-bar-only delete (lib/label-switches.ts,
+  // 05/11): read live from the session's features; absent = as today.
+  const cartonLabels = cartonLabelsShown(session?.features);
+  const rowDelete = perCartonDeleteShown(session?.features);
   // The print gate (lib/label-gate.ts): the unprinted labels that stop the
   // list in front of the worker from being booked — its own cartons' labels,
   // plus every New carton label. While it is non-empty the confirm slide
@@ -3976,17 +3982,22 @@ export default function PalletVerifyPage({
         id: 'create', icon: 'add', label: tr('terminal.toolCreateCarton'), tint: 'blue', iconColor: '#33b1f0',
         onPress: () => tapNewCarton(),
       },
-      {
-        // Amber + count while saved labels wait for the printer (printing on
-        // only — off, a plain chip onto the view-and-delete list).
+      // Amber + count while saved labels wait for the printer (printing on
+      // only — off, a plain chip onto the view-and-delete list). Not there at
+      // all with carton_labels off (05/11): the chat has no carton labels.
+      ...(cartonLabels ? [{
         id: 'labels', icon: 'label', label: tr('terminal.toolLabels'),
         ...labelsChipLook(unprinted.labels.length, PRINTING),
         onPress: () => setShowLabels(true),
-      },
+      }] : []),
       { id: 'warehouses', icon: 'warehouse', label: tr('terminal.toolWarehouses'), tint: 'neutral', locked: true },
       { id: 'pallets', icon: <PalletIcon />, label: tr('terminal.toolPallets'), tint: 'neutral', onPress: () => setShowPallets(true) },
       {
         id: 'delete', icon: 'delete_sweep', label: tr('terminal.toolDelete'), tint: 'red',
+        // top_bar_delete_only on (05/11): outside a list open for scanning the
+        // rows have no Delete, so "Tap a row to delete it" would be false —
+        // the chip is locked there instead (the existing lock toast).
+        locked: !rowDelete && phase !== 'scanning' && phase !== 'loose_scanning',
         // Only while a list is open for scanning; the rows of a booked list
         // are on an LPN and cannot be deleted from here. Cartons on the list
         // → selection mode (tap again leaves it); an empty list → the bulk
@@ -4072,7 +4083,7 @@ export default function PalletVerifyPage({
 
   // משטחים pallets browser overlay (opened from the tool dock).
   const palletsBrowser = showPallets ? (
-    <PalletsBrowser token={token} onBack={() => setShowPallets(false)} />
+    <PalletsBrowser token={token} onBack={() => setShowPallets(false)} lpnSticker={lpnLabelsShown(session?.features)} />
   ) : null;
 
   // צור קרטון + מדבקות overlays. Rendered next to `palletsBrowser` at every
@@ -4294,6 +4305,8 @@ export default function PalletVerifyPage({
           // Q5 (client 2026-10-13): counted now, at the typed weight.
           countOnSave
           onList={cartonOnList}
+          // carton_labels off (05/11): no label wording on the form.
+          cartonLabels={cartonLabels}
           units={cartonUnits}
           onBack={() => {
             trace('ui', 'carton_creator_cancel', { preset_item: cartonPreset?.item.item_code });
@@ -4367,6 +4380,7 @@ export default function PalletVerifyPage({
           <IdenticalBoxesForm
             token={token}
             palletNumber={identicalFor.loose ? 0 : currentPallet}
+            cartonLabels={cartonLabels}
             sample={{
               barcode: box.barcode,
               item_code: line?.item_code ?? null,
@@ -4784,12 +4798,13 @@ export default function PalletVerifyPage({
       // ones here, "set the item name first" on a name pick or typed name.
       onBarcodeChange={(v) => { setEditForm({ ...editForm, barcodeInput: v }); setEditError(null); }}
       // no_hand_codes (05/11): no "create barcode" — the carton with no
-      // readable code is booked with none (pending), so "no readable
-      // barcode" is the way on from the start, not only after a failed mint.
-      onCreateBarcode={session?.features?.no_hand_codes ? undefined : handleCreateBarcode}
+      // readable code is booked with none (pending). carton_labels off
+      // (05/11): no label to mint either. Either way "no readable barcode"
+      // is the way on from the start, not only after a failed mint.
+      onCreateBarcode={cartonLabels && !session?.features?.no_hand_codes ? handleCreateBarcode : undefined}
       minting={mintingBarcode}
       onNoBarcode={handleNoBarcode}
-      showNoBarcode={mintFailed || !!session?.features?.no_hand_codes}
+      showNoBarcode={mintFailed || !cartonLabels || !!session?.features?.no_hand_codes}
       // BOT-32: a carton booked without a barcode can still get one — typed
       // or minted — but only if the worker goes looking for it.
       onAddBarcode={!editForm.unidentified && isNoBarcodeId(editForm.forcedId || editForm.barcode)
@@ -6031,7 +6046,8 @@ export default function PalletVerifyPage({
     // it does not also collapse the row.
     const looseRowActions = (box: BoxScan) => {
       if (selectedBarcode !== box.barcode) return undefined;
-      const onDelete = () => { rescanLooseBox(box.barcode); setSelectedBarcode(null); };
+      // top_bar_delete_only (05/11): no Delete on the row; the top bar's chip.
+      const onDelete = rowDelete ? () => { rescanLooseBox(box.barcode); setSelectedBarcode(null); } : undefined;
       if (box.ocr_status === 'failed') {
         return (
           <ScanActions
@@ -6258,7 +6274,7 @@ export default function PalletVerifyPage({
                       ? () => tapCartonRow(looseActive, true)
                       : () => setActiveExpanded((v) => !v)}
                     onEdit={() => openEdit(looseActive, true)}
-                    onDelete={weightFirst(looseActive)
+                    onDelete={!rowDelete || weightFirst(looseActive)
                       ? undefined
                       : () => { rescanLooseBox(looseActive.barcode); setSelectedBarcode(null); }}
                     onIdentical={canDeclareIdentical(looseActive) ? () => openIdentical(looseActive, true) : undefined}
@@ -6396,7 +6412,8 @@ export default function PalletVerifyPage({
   // it does not also collapse the row.
   const palletRowActions = (box: BoxScan) => {
     if (selectedBarcode !== box.barcode) return undefined;
-    const onDelete = () => { rescanPalletBox(box.barcode); setSelectedBarcode(null); };
+    // top_bar_delete_only (05/11): no Delete on the row; the top bar's chip.
+    const onDelete = rowDelete ? () => { rescanPalletBox(box.barcode); setSelectedBarcode(null); } : undefined;
     if (box.ocr_status === 'failed') {
       return (
         <ScanActions
@@ -6909,7 +6926,7 @@ export default function PalletVerifyPage({
                     ? () => tapCartonRow(activeBox, false)
                     : () => setActiveExpanded((v) => !v)}
                   onEdit={() => openEdit(activeBox)}
-                  onDelete={weightFirst(activeBox)
+                  onDelete={!rowDelete || weightFirst(activeBox)
                     ? undefined
                     : () => { rescanPalletBox(activeBox.barcode); setSelectedBarcode(null); }}
                   onIdentical={canDeclareIdentical(activeBox) ? () => openIdentical(activeBox, false) : undefined}

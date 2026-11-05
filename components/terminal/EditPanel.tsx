@@ -74,8 +74,9 @@ interface EditPanelProps {
    * it is a worse outcome than a real sticker, so it must not sit next to the
    * good option as an equal choice. It exists so a network problem can never
    * leave a worker unable to finish the pallet. With the scanner flag
-   * no_hand_codes there is no mint at all (onCreateBarcode absent) and this
-   * is shown from the start: the carton is booked with no barcode, pending.
+   * no_hand_codes, or with carton labels off (scanner flag `carton_labels`,
+   * 05/11), there is no mint at all (onCreateBarcode absent) and this is
+   * shown from the start.
    */
   onNoBarcode?: () => void;
   showNoBarcode?: boolean;

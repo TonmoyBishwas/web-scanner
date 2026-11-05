@@ -55,9 +55,10 @@ function SettingsScreen({ onBack }: { onBack: () => void }) {
 // (The useDrawerHost hook itself runs above that provider and must not
 // translate anything.)
 function DrawerHostView({
-  token, drawerOpen, screen, onCloseDrawer, onGo, onCloseScreen, footer,
+  token, drawerOpen, screen, onCloseDrawer, onGo, onCloseScreen, footer, lpnSticker,
 }: {
   token: string;
+  lpnSticker: boolean;
   drawerOpen: boolean;
   screen: Screen;
   onCloseDrawer: () => void;
@@ -78,7 +79,7 @@ function DrawerHostView({
         ]}
         footer={footer}
       />
-      {screen === 'docs' && <DocumentsBrowser token={token} onBack={onCloseScreen} />}
+      {screen === 'docs' && <DocumentsBrowser token={token} onBack={onCloseScreen} lpnSticker={lpnSticker} />}
       {screen === 'warehouses' && (
         <LockedScreen title={tr('terminal.menuWarehouses')} onBack={onCloseScreen} stubIcon="warehouse" />
       )}
@@ -92,8 +93,14 @@ function DrawerHostView({
  * מסמכים (documents archive), מחסנים (locked stub), הגדרות (real toggles).
  * Usage: const drawer = useDrawerHost(token, footer?); render {drawer.node}
  * INSIDE the page's LanguageContext.Provider; open with drawer.open().
+ * `opts.lpnSticker` false (lpn_labels off, 05/11): no LPN sticker link in the
+ * documents archive's pallet view. Default true: as today.
  */
-export function useDrawerHost(token: string, footer?: ReactNode): { open: () => void; node: ReactNode } {
+export function useDrawerHost(
+  token: string,
+  footer?: ReactNode,
+  opts?: { lpnSticker?: boolean },
+): { open: () => void; node: ReactNode } {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [screen, setScreen] = useState<Screen>(null);
 
@@ -106,6 +113,7 @@ export function useDrawerHost(token: string, footer?: ReactNode): { open: () => 
       onGo={(s) => { setDrawerOpen(false); setScreen(s); }}
       onCloseScreen={() => setScreen(null)}
       footer={footer}
+      lpnSticker={opts?.lpnSticker !== false}
     />
   );
 

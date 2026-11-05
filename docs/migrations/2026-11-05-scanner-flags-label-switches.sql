@@ -1,0 +1,58 @@
+-- 2026-11-05 — label switches + top-bar-only delete (scanner branch nov05-labels-delete).
+--
+-- NOTHING TO APPLY. No DDL: public.scanner_flags exists since 2026-10-27.
+-- Every statement below is commented out ON PURPOSE: with no rows, the
+-- scanner behaves exactly as today. Insert a row only when Mevaser says so.
+--
+-- Three flags (lib/scanner-flags.ts, lib/label-switches.ts):
+--
+--   carton_labels   DEFAULT-ON. No row, an unreadable row or a DB error = ON
+--                   = today's screens. A row that is NOT on for a chat turns
+--                   the carton-label wording, the Labels chip and the edit
+--                   panel's "create a barcode for this carton" OFF for it.
+--   lpn_labels      DEFAULT-ON, same rule. Off: no "Open sticker" on the
+--                   Pallets screen. The LPN itself, its QR and its sticker
+--                   page are unchanged; the bot's sticker message is not
+--                   behind this flag.
+--   top_bar_delete_only
+--                   An ordinary flag: no row = OFF = today. On: the carton
+--                   rows lose their Delete; the top bar's Delete chip (next
+--                   to Pallets) is the one way.
+--
+-- A running server instance caches each row for 30 s; the page reads the
+-- session's features on every poll, so a flip reaches an open page within
+-- about 30 s (wording/buttons only — nothing saved changes).
+
+-- ── Mevaser's decision 2 (05/11) for the current tenant: carton labels OFF,
+--    LPN labels ON. The scanner has one tenant, so "the tenant" = every chat
+--    (enabled_all). The lpn_labels row is optional: no row is already ON;
+--    it makes the decision explicit.
+--
+-- insert into public.scanner_flags (flag, enabled_all, chat_ids, note)
+-- values ('carton_labels', false, '{}',
+--         'Carton labels OFF for the current tenant (Mevaser 05/11): no carton-label wording, Labels chip or create-barcode. Default-on flag: delete this row to restore.')
+-- on conflict (flag) do update set enabled_all = excluded.enabled_all, chat_ids = excluded.chat_ids,
+--   note = excluded.note, updated_at = now();
+--
+-- insert into public.scanner_flags (flag, enabled_all, chat_ids, note)
+-- values ('lpn_labels', true, '{}',
+--         'LPN pallet labels ON for the current tenant (Mevaser 05/11). Default-on flag: no row = on.')
+-- on conflict (flag) do update set enabled_all = excluded.enabled_all, chat_ids = excluded.chat_ids,
+--   note = excluded.note, updated_at = now();
+
+-- ── No harness-only trial of carton_labels OFF: a default-on row is ON for
+--    the chats it lists and OFF for all others, so this table cannot turn it
+--    off for the harness chats alone. Trial = insert the row above in a quiet
+--    hour, run the harness, delete the row.
+
+-- ── top_bar_delete_only, harness chats first (an ordinary flag):
+--
+-- insert into public.scanner_flags (flag, enabled_all, chat_ids, note)
+-- values ('top_bar_delete_only', false,
+--         array(select (999000000000 + n)::text from generate_series(1, 30) as n),
+--         'No per-carton Delete; top-bar Delete chip only (Mevaser 05/11). Harness chats first.')
+-- on conflict (flag) do nothing;
+-- Everyone:  update public.scanner_flags set enabled_all = true, updated_at = now() where flag = 'top_bar_delete_only';
+
+-- ── Roll back (any of them): delete the row.
+--   delete from public.scanner_flags where flag in ('carton_labels', 'lpn_labels', 'top_bar_delete_only');

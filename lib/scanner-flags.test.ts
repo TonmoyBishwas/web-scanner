@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('./supabase', () => ({
   supabase: { from: () => { throw new Error('no database in tests'); } },
 }));
-import { cachedFlagRow, flagEnabledFor, identicalNoSerialOn, manualCaptureReviewOn, manualTargetHintOn, noHandCodesOn, ocrNetworkNoticeOn, shortSerialGate } from './scanner-flags';
+import { cachedFlagRow, cartonLabelsOn, defaultOnFlagFor, flagEnabledFor, identicalNoSerialOn, lpnLabelsOn, topBarDeleteOnlyOn, manualCaptureReviewOn, manualTargetHintOn, noHandCodesOn, ocrNetworkNoticeOn, shortSerialGate } from './scanner-flags';
 
 describe('flagEnabledFor', () => {
   it('on for everyone', () => {
@@ -137,5 +137,26 @@ describe('ocrNetworkNoticeOn', () => {
 describe('noHandCodesOn', () => {
   it('is off, never a throw, when the flag cannot be read', async () => {
     await expect(noHandCodesOn('972544965384')).resolves.toBe(false);
+  });
+});
+
+describe('defaultOnFlagFor (carton_labels, lpn_labels: 05/11)', () => {
+  it('no row or an unreadable read: on, as today', () => {
+    expect(defaultOnFlagFor(null, '999000000001')).toBe(true);
+    expect(defaultOnFlagFor(undefined, '999000000001')).toBe(true);
+  });
+  it('a row: on for everyone or its listed chats only', () => {
+    expect(defaultOnFlagFor({ enabled_all: true, chat_ids: [] }, '972500000000')).toBe(true);
+    expect(defaultOnFlagFor({ enabled_all: false, chat_ids: [] }, '972500000000')).toBe(false);
+    expect(defaultOnFlagFor({ enabled_all: false, chat_ids: ['999000000001'] }, '999000000001')).toBe(true);
+    expect(defaultOnFlagFor({ enabled_all: false, chat_ids: ['999000000001'] }, '972500000000')).toBe(false);
+  });
+});
+
+describe('cartonLabelsOn / lpnLabelsOn / topBarDeleteOnlyOn', () => {
+  it('the DB cannot be read: labels on (as today), delete-only off', async () => {
+    await expect(cartonLabelsOn('972544965384')).resolves.toBe(true);
+    await expect(lpnLabelsOn('972544965384')).resolves.toBe(true);
+    await expect(topBarDeleteOnlyOn('972544965384')).resolves.toBe(false);
   });
 });
