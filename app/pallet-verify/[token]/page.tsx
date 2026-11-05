@@ -3936,8 +3936,6 @@ export default function PalletVerifyPage({
     showToast(tr('terminal.groupCountSaved', { from, to: next }), 'edit_note');
   }
 
-  /** "All boxes identical" on this row? lib/identical-boxes.ts identicalAllowed.
-   *  identical_no_serial (04/11): never on a short carton serial. */
   // no_hand_codes (05/11, decision 5): a carton read by its own real barcode
   // whose weight is missing (lib/no-hand-codes.ts realCodeMissingWeight)
   // goes straight to its edit panel, which starts on the weight. Its row
@@ -3966,6 +3964,8 @@ export default function PalletVerifyPage({
     return code;
   }
 
+  /** "All boxes identical" on this row? lib/identical-boxes.ts identicalAllowed.
+   *  identical_no_serial (04/11): never on a short carton serial. */
   function canDeclareIdentical(box: BoxScan): boolean {
     return identicalAllowed(box, PROVISIONAL_PREFIX, { noSerial: !!session?.features?.identical_no_serial });
   }

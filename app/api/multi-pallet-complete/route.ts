@@ -211,7 +211,8 @@ export async function POST(request: NextRequest) {
     // placeholder or a NOBC- marker; a Type A sample captured by photo
     // likewise (lib/no-hand-codes.ts). One row in, one row out: counts,
     // samples and declared totals are untouched. Flag off: as sent.
-    if (await noHandCodesOn(session.chat_id)) {
+    const noHandCodes = await noHandCodesOn(session.chat_id);
+    if (noHandCodes) {
       if (Array.isArray(scanned_boxes)) scanned_boxes = pendingBarcodes(scanned_boxes);
       nonmeat_items = nonmeat_items?.map((ni) => ({ ...ni, sample_barcode: pendingSampleBarcode(ni.sample_barcode) }));
     }
@@ -723,7 +724,8 @@ export async function POST(request: NextRequest) {
           // Where the code came from and whether it passes its format check
           // (lib/barcode-provenance.ts, 01/11) — for box_inventory, never shown.
           // None for a carton with no code at all (no_hand_codes): NULL, pending.
-          ...(b.barcode ? barcodeProvenance(b) : {}),
+          // Flag off: every carton as before, an empty code included.
+          ...(b.barcode || !noHandCodes ? barcodeProvenance(b) : {}),
           // Where the weight came from (lib/weight-source.ts, 04/11) — for
           // box_inventory.weight_source, never shown.
           weight_source: weightSourceOf(b),
@@ -788,7 +790,8 @@ export async function POST(request: NextRequest) {
           // Where the code came from and whether it passes its format check
           // (lib/barcode-provenance.ts, 01/11) — for box_inventory, never shown.
           // None for a carton with no code at all (no_hand_codes): NULL, pending.
-          ...(b.barcode ? barcodeProvenance(b) : {}),
+          // Flag off: every carton as before, an empty code included.
+          ...(b.barcode || !noHandCodes ? barcodeProvenance(b) : {}),
           // Where the weight came from (lib/weight-source.ts, 04/11) — for
           // box_inventory.weight_source, never shown.
           weight_source: weightSourceOf(b),

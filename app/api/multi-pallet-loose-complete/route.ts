@@ -140,7 +140,8 @@ export async function POST(request: NextRequest) {
       // no_hand_codes (05/11): a carton with no readable barcode goes with
       // none ('' → box_inventory.barcode NULL), never as MANUAL-/NOBC-
       // (lib/no-hand-codes.ts). Flag off: the list as it came.
-      const boxes: MultiPalletBoxScan[] = (await noHandCodesOn(session.chat_id))
+      const noHandCodes = await noHandCodesOn(session.chat_id);
+      const boxes: MultiPalletBoxScan[] = noHandCodes
         ? pendingBarcodes(scanned_boxes || [])
         : (scanned_boxes || []);
       const botBody = JSON.stringify({
@@ -160,7 +161,8 @@ export async function POST(request: NextRequest) {
           ocr_weight_kg: rawOcrWeightKg(ocr_weight),
           // Where the code came from and its format check (lib/barcode-provenance.ts).
           // None for a carton with no code at all (no_hand_codes): NULL, pending.
-          ...(b.barcode ? barcodeProvenance(b) : {}),
+          // Flag off: every carton as before, an empty code included.
+          ...(b.barcode || !noHandCodes ? barcodeProvenance(b) : {}),
           // Where the weight came from (lib/weight-source.ts, 04/11). The
           // label reading was taken out of b above; it is put back for the check.
           weight_source: weightSourceOf({ ...b, ocr_weight }),
