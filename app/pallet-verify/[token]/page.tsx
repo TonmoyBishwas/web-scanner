@@ -86,6 +86,7 @@ import type { ReadPolicy } from '@/lib/barcode-frame';
 import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
 import { cartonsOnListFor, listAboveTotal, newCartonQuantity, type ListAboveTotal } from '@/lib/count-check';
 import { freeNoBarcodeId, isNoBarcodeId, provisionalAtBooking, unreadDigitsOutcome } from '@/lib/no-barcode';
+import { firstRealCodeMissingWeight, realCodeMissingWeight } from '@/lib/no-hand-codes';
 import { manualTargetDigits, noteShortRead, targetVerdict, type ShortReadNote } from '@/lib/manual-target';
 import { resolveEditIdentity } from '@/lib/edit-identity';
 import { useBackClose } from '@/lib/use-back-close';
@@ -1964,6 +1965,26 @@ export default function PalletVerifyPage({
     return true;
   }
 
+  // New carton by the worker's own tap (the dock, a short read's notice).
+  // no_hand_codes (05/11, Glatt 261063350 at 12:14 UTC 04/11): while a
+  // carton read by its own real barcode still has no weight, the tap opens
+  // that carton's edit panel instead — it starts on the weight
+  // (lib/edit-panel-state.ts firstField). A missing weight is typed, never
+  // answered by deleting the real carton and creating labels in its place.
+  // Flag off, or nothing waiting: New carton as before.
+  function tapNewCarton(preset?: CartonCreatorPreset) {
+    if (sessionRef.current?.features?.no_hand_codes) {
+      const loose = phaseRef.current === 'loose_scanning' || phaseRef.current === 'loose_confirming';
+      const waiting = firstRealCodeMissingWeight(loose ? looseBoxesRef.current : scannedBoxesRef.current);
+      if (waiting) {
+        trace('ui', 'new_carton_weight_first', { barcode: waiting.barcode, isLoose: loose });
+        openEdit(waiting, loose);
+        return;
+      }
+    }
+    openCartonCreator(preset);
+  }
+
   function openCartonCreator(preset?: CartonCreatorPreset) {
     trace('ui', 'carton_creator_open', preset
       ? { item_code: preset.item.item_code, weight: preset.weight, quantity: preset.quantity }
@@ -2948,6 +2969,8 @@ export default function PalletVerifyPage({
   // be scanned again on the way out.
   async function handleCreateBarcode() {
     if (!editForm || mintingBarcode) return;
+    // no_hand_codes: never offered (the panel gets no onCreateBarcode).
+    if (session?.features?.no_hand_codes) return;
     trace('ui', 'create_barcode', { barcode: editForm.barcode, isLoose: editForm.isLoose });
     const nameHe = editForm.name_he.trim();
     const nameEn = editForm.name_en.trim();
@@ -3106,11 +3129,16 @@ export default function PalletVerifyPage({
           }
         }
         // Started typing but stopped short — that is a slip, not a decision.
-        setEditError(
-          t(session?.language || 'English', 'terminal.barcodeDigitsCount', {
-            n: typed.length,
-          }),
-        );
+        // no_hand_codes ("one signal per problem"): the count under the
+        // field already says exactly this; no second, red copy above it.
+        // The refusal is in edit_save above (resolved null, identity short).
+        if (!session?.features?.no_hand_codes) {
+          setEditError(
+            t(session?.language || 'English', 'terminal.barcodeDigitsCount', {
+              n: typed.length,
+            }),
+          );
+        }
         return;
       }
       // Nothing typed at all: leave the placeholder for now. The box keeps its
@@ -3910,6 +3938,34 @@ export default function PalletVerifyPage({
 
   /** "All boxes identical" on this row? lib/identical-boxes.ts identicalAllowed.
    *  identical_no_serial (04/11): never on a short carton serial. */
+  // no_hand_codes (05/11, decision 5): a carton read by its own real barcode
+  // whose weight is missing (lib/no-hand-codes.ts realCodeMissingWeight)
+  // goes straight to its edit panel, which starts on the weight. Its row
+  // and card offer no Delete: the answer is "type the weight", never
+  // "delete and create". Delete selected (the top bar) is unchanged.
+  function weightFirst(box: BoxScan): boolean {
+    return !!session?.features?.no_hand_codes && realCodeMissingWeight(box);
+  }
+
+  // A tap on a carton row: its actions, or (weightFirst) its weight.
+  function tapCartonRow(box: BoxScan, isLoose: boolean) {
+    if (weightFirst(box)) {
+      trace('ui', 'row_weight_first', { barcode: box.barcode, isLoose });
+      openEdit(box, isLoose);
+      return;
+    }
+    setSelectedBarcode(selectedBarcode === box.barcode ? null : box.barcode);
+  }
+
+  // The code a carton's row / card shows: none for a NOBC- marker (as
+  // before) and, with no_hand_codes, none for a MANUAL- placeholder either —
+  // a key of this page, never something the worker reads as a barcode.
+  function shownBarcode(code: string): string | undefined {
+    if (isNoBarcodeId(code)) return undefined;
+    if (session?.features?.no_hand_codes && isProvisional(code)) return undefined;
+    return code;
+  }
+
   function canDeclareIdentical(box: BoxScan): boolean {
     return identicalAllowed(box, PROVISIONAL_PREFIX, { noSerial: !!session?.features?.identical_no_serial });
   }
@@ -3918,7 +3974,7 @@ export default function PalletVerifyPage({
     return [
       {
         id: 'create', icon: 'add', label: tr('terminal.toolCreateCarton'), tint: 'blue', iconColor: '#33b1f0',
-        onPress: () => openCartonCreator(),
+        onPress: () => tapNewCarton(),
       },
       {
         // Amber + count while saved labels wait for the printer (printing on
@@ -4628,7 +4684,7 @@ export default function PalletVerifyPage({
                 const nc = scanNotice.newCarton!;
                 trace('ui', 'short_read_add_cartons', { item_code: nc.preset?.item.item_code });
                 clearScanNotice();
-                openCartonCreator(nc.preset);
+                tapNewCarton(nc.preset);
               }}
               className={`flex-1 min-w-0 min-h-[48px] rounded-[10px] flex items-center justify-center gap-[5px] px-2 py-2 text-[13px] font-black ${
                 scanNotice.tone === 'info' ? 'bg-brand text-white' : 'bg-warn text-canvas'
@@ -4644,7 +4700,7 @@ export default function PalletVerifyPage({
             onClick={() => {
               const nc = scanNotice.newCarton!;
               clearScanNotice();
-              openCartonCreator(nc.preset);
+              tapNewCarton(nc.preset);
             }}
             className={`w-full min-h-[40px] flex items-center justify-center gap-[5px] border-t px-3 py-2 font-black ${
               scanNotice.tone === 'info' ? 'border-brand/40 bg-brand-weak' : 'border-warn/50 bg-warn/10'
@@ -4727,10 +4783,13 @@ export default function PalletVerifyPage({
       // Each error goes when the worker changes what it is about: the barcode
       // ones here, "set the item name first" on a name pick or typed name.
       onBarcodeChange={(v) => { setEditForm({ ...editForm, barcodeInput: v }); setEditError(null); }}
-      onCreateBarcode={handleCreateBarcode}
+      // no_hand_codes (05/11): no "create barcode" — the carton with no
+      // readable code is booked with none (pending), so "no readable
+      // barcode" is the way on from the start, not only after a failed mint.
+      onCreateBarcode={session?.features?.no_hand_codes ? undefined : handleCreateBarcode}
       minting={mintingBarcode}
       onNoBarcode={handleNoBarcode}
-      showNoBarcode={mintFailed}
+      showNoBarcode={mintFailed || !!session?.features?.no_hand_codes}
       // BOT-32: a carton booked without a barcode can still get one — typed
       // or minted — but only if the worker goes looking for it.
       onAddBarcode={!editForm.unidentified && isNoBarcodeId(editForm.forcedId || editForm.barcode)
@@ -5992,7 +6051,7 @@ export default function PalletVerifyPage({
           onEdit={() => openEdit(box, true)}
           onIdentical={canDeclareIdentical(box) ? () => openIdentical(box, true) : undefined}
           {...groupCountAction(box, true)}
-          onDelete={onDelete}
+          onDelete={weightFirst(box) ? undefined : onDelete}
         />
       );
     };
@@ -6003,7 +6062,7 @@ export default function PalletVerifyPage({
         key={key}
         index={index}
         name={box.item_name_hebrew || box.item_name || '—'}
-        barcode={isNoBarcodeId(box.barcode) ? undefined : box.barcode}
+        barcode={shownBarcode(box.barcode)}
         weight={isUnitsCarton(box) ? String(box.units) : box.weight > 0 ? box.weight.toFixed(2) : undefined}
         weightFromBarcode={barcodeMarks(box)?.weight ? tr('terminal.fromBarcode') : undefined}
         unitLabel={isUnitsCarton(box) ? tr('carton.unitsToggle') : tr('common.kg')}
@@ -6019,7 +6078,7 @@ export default function PalletVerifyPage({
         note={cardNote(box, tr)}
         onClick={selectMode
           ? () => toggleSelectCarton(box.barcode)
-          : () => setSelectedBarcode(selectedBarcode === box.barcode ? null : box.barcode)}
+          : () => tapCartonRow(box, true)}
         actions={selectMode ? undefined : looseRowActions(box)}
         select={selectMode ? { checked: selectPicked.has(box.barcode), locked: bookedInSession.has(box.barcode) } : undefined}
         unprinted={unprintedShown.has(box.barcode)}
@@ -6183,7 +6242,7 @@ export default function PalletVerifyPage({
                     name={looseActive.item_name_hebrew || looseActive.item_name || '—'}
                     value={isUnitsCarton(looseActive) ? String(looseActive.units) : looseActive.weight > 0 ? looseActive.weight.toFixed(2) : '—'}
                     unit={isUnitsCarton(looseActive) ? tr('carton.unitsToggle') : tr('common.kg')}
-                    barcode={looseActive.barcode}
+                    barcode={session?.features?.no_hand_codes ? shownBarcode(looseActive.barcode) : looseActive.barcode}
                     expiry={looseActive.expiry || undefined}
                     fromBarcode={barcodeMarks(looseActive)}
                     status={
@@ -6195,9 +6254,13 @@ export default function PalletVerifyPage({
                     }
                     note={cardNote(looseActive, tr)}
                     expanded={activeExpanded}
-                    onToggleExpand={() => setActiveExpanded((v) => !v)}
+                    onToggleExpand={weightFirst(looseActive)
+                      ? () => tapCartonRow(looseActive, true)
+                      : () => setActiveExpanded((v) => !v)}
                     onEdit={() => openEdit(looseActive, true)}
-                    onDelete={() => { rescanLooseBox(looseActive.barcode); setSelectedBarcode(null); }}
+                    onDelete={weightFirst(looseActive)
+                      ? undefined
+                      : () => { rescanLooseBox(looseActive.barcode); setSelectedBarcode(null); }}
                     onIdentical={canDeclareIdentical(looseActive) ? () => openIdentical(looseActive, true) : undefined}
                     {...groupCountAction(looseActive, true)}
                     onRetry={looseActive.ocr_status === 'failed' ? () => retryLooseOcr(looseActive.barcode) : undefined}
@@ -6353,7 +6416,7 @@ export default function PalletVerifyPage({
         onEdit={() => openEdit(box)}
         onIdentical={canDeclareIdentical(box) ? () => openIdentical(box, false) : undefined}
         {...groupCountAction(box, false)}
-        onDelete={onDelete}
+        onDelete={weightFirst(box) ? undefined : onDelete}
       />
     );
   };
@@ -6830,7 +6893,7 @@ export default function PalletVerifyPage({
                   name={activeBox.item_name_hebrew || activeBox.item_name || '—'}
                   value={activeBox.weight > 0 ? activeBox.weight.toFixed(2) : '—'}
                   unit={tr('common.kg')}
-                  barcode={activeBox.barcode}
+                  barcode={session?.features?.no_hand_codes ? shownBarcode(activeBox.barcode) : activeBox.barcode}
                   expiry={activeBox.expiry || undefined}
                   fromBarcode={barcodeMarks(activeBox)}
                   status={
@@ -6842,9 +6905,13 @@ export default function PalletVerifyPage({
                   }
                   note={cardNote(activeBox, tr)}
                   expanded={activeExpanded}
-                  onToggleExpand={() => setActiveExpanded((v) => !v)}
+                  onToggleExpand={weightFirst(activeBox)
+                    ? () => tapCartonRow(activeBox, false)
+                    : () => setActiveExpanded((v) => !v)}
                   onEdit={() => openEdit(activeBox)}
-                  onDelete={() => { rescanPalletBox(activeBox.barcode); setSelectedBarcode(null); }}
+                  onDelete={weightFirst(activeBox)
+                    ? undefined
+                    : () => { rescanPalletBox(activeBox.barcode); setSelectedBarcode(null); }}
                   onIdentical={canDeclareIdentical(activeBox) ? () => openIdentical(activeBox, false) : undefined}
                   {...groupCountAction(activeBox, false)}
                   onRetry={activeBox.ocr_status === 'failed' ? () => retryPalletOcr(activeBox.barcode) : undefined}
@@ -6864,7 +6931,7 @@ export default function PalletVerifyPage({
                   key={box.barcode + i}
                   index={scannedBoxes.length - 1 - i}
                   name={box.item_name_hebrew || box.item_name || '—'}
-                  barcode={isNoBarcodeId(box.barcode) ? undefined : box.barcode}
+                  barcode={shownBarcode(box.barcode)}
                   weight={box.weight > 0 ? box.weight.toFixed(2) : undefined}
                   weightFromBarcode={barcodeMarks(box)?.weight ? tr('terminal.fromBarcode') : undefined}
                   unitLabel={tr('common.kg')}
@@ -6880,7 +6947,7 @@ export default function PalletVerifyPage({
                   note={cardNote(box, tr)}
                   onClick={selectMode
                     ? () => toggleSelectCarton(box.barcode)
-                    : () => setSelectedBarcode(selectedBarcode === box.barcode ? null : box.barcode)}
+                    : () => tapCartonRow(box, false)}
                   actions={selectMode ? undefined : palletRowActions(box)}
                   select={selectMode ? { checked: selectPicked.has(box.barcode), locked: bookedInSession.has(box.barcode) } : undefined}
                   unprinted={unprintedShown.has(box.barcode)}
