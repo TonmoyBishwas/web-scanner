@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyRead, digitsOf, gtinCheckDigitValid, isInHouseCode, isIsraeliGtinPrefixed, labelConfirmsShortCode, matchInvoiceShortCode, noteRepeatedRead, printedDigitsIdentifyCarton, shortCodeDefaults } from './carton-barcode';
+import { cameraSerialAccepted, cameraSerialBookable, cameraSerialOcrVerdict, classifyRead, digitsOf, gtinCheckDigitValid, isInHouseCode, isIsraeliGtinPrefixed, labelConfirmsShortCode, matchInvoiceShortCode, noteRepeatedRead, printedDigitsIdentifyCarton, shortCodeDefaults, shortSerialExcluded } from './carton-barcode';
 
 describe('carton-barcode', () => {
   it('digitsOf strips everything but digits', () => {
@@ -192,6 +192,83 @@ describe('labelConfirmsShortCode (Wall Dan 48534, 2026-10-25)', () => {
     expect(labelConfirmsShortCode('408274000112', new Set(['408274000112']), lines, [])).toBe(false);
     expect(labelConfirmsShortCode('4082a4', new Set(['4082a4']), lines, [])).toBe(false);
     expect(labelConfirmsShortCode('', new Set(['']), lines, [])).toBe(false);
+  });
+});
+
+describe('cameraSerialAccepted / shortSerialExcluded (Wall Dan item 1, 04/11)', () => {
+  // The lines of Wall Dan notes 48651 / 48696.
+  const WALL_DAN = [
+    { item_code: '7290006289353' },
+    { item_code: '7290015760553' },
+    { item_code: '7290008432894' },
+  ];
+  const SOKOLOW = '388432467020926171026048702036';
+
+  it('6-digit carton serials with no leading zero are accepted', () => {
+    for (const s of ['409251', '379300', '406190', '379439']) {
+      expect(cameraSerialAccepted(s, WALL_DAN, [])).toBe(true);
+    }
+  });
+
+  it('a leading zero (the 48288 Sokołów fragment) is refused', () => {
+    expect(cameraSerialAccepted('020926', WALL_DAN, [])).toBe(false);
+  });
+
+  it('5 or 7 digits, or not digits, are refused', () => {
+    expect(cameraSerialAccepted('24755', WALL_DAN, [])).toBe(false);
+    expect(cameraSerialAccepted('4092510', WALL_DAN, [])).toBe(false);
+    expect(cameraSerialAccepted('4092a1', WALL_DAN, [])).toBe(false);
+    expect(cameraSerialAccepted('', WALL_DAN, [])).toBe(false);
+  });
+
+  it('an invoice line item code keeps its New-carton route (Milgam 501004)', () => {
+    expect(cameraSerialAccepted('501004', [{ item_code: '501004' }], [])).toBe(false);
+  });
+
+  it('a piece of a line code is refused (628936 inside 7290006289360, note 48651)', () => {
+    expect(cameraSerialAccepted('628936', [{ item_code: '7290006289360' }], [])).toBe(false);
+    expect(shortSerialExcluded('628936', [{ supplier_item_code: '7290006289360' }], [])).toBe(true);
+  });
+
+  it('a piece of a long carton code on the list is refused', () => {
+    expect(cameraSerialAccepted('432467', WALL_DAN, [SOKOLOW])).toBe(false);
+    expect(cameraSerialAccepted('432467', WALL_DAN, [])).toBe(true);
+  });
+
+  it('shortSerialExcluded: a Wall Dan serial is none of the excluded things', () => {
+    expect(shortSerialExcluded('409251', WALL_DAN, ['409241'])).toBe(false);
+    expect(shortSerialExcluded('409251', null, [])).toBe(false);
+  });
+});
+
+describe('cameraSerialBookable (the page: acceptScannerValue / detect handlers)', () => {
+  const LINES = [{ item_code: '7290006289360' }];
+  it('flag off (features absent or false) → never, the page refuses as before', () => {
+    expect(cameraSerialBookable(undefined, '409251', LINES, [])).toBe(false);
+    expect(cameraSerialBookable({}, '409251', LINES, [])).toBe(false);
+    expect(cameraSerialBookable({ camera_short_serial: false }, '409251', LINES, [])).toBe(false);
+  });
+  it('flag on → a Wall Dan serial is booked', () => {
+    expect(cameraSerialBookable({ camera_short_serial: true }, '409251', LINES, [])).toBe(true);
+  });
+  it('flag on, but the serial is a piece of a listed long carton code → refused', () => {
+    expect(cameraSerialBookable({ camera_short_serial: true }, '409251', LINES, ['729000628936040925112345678901'])).toBe(false);
+  });
+});
+
+describe('cameraSerialOcrVerdict', () => {
+  it('the same printed number agrees', () => {
+    expect(cameraSerialOcrVerdict('406186', '406186')).toBe('agrees');
+    expect(cameraSerialOcrVerdict('406186', ' 406 186 ')).toBe('agrees');
+  });
+  it('no digits or fewer than 6 is unread', () => {
+    expect(cameraSerialOcrVerdict('406186', '')).toBe('unread');
+    expect(cameraSerialOcrVerdict('406186', null)).toBe('unread');
+    expect(cameraSerialOcrVerdict('406186', '40618')).toBe('unread');
+  });
+  it('anything else is other, a long code containing the serial included', () => {
+    expect(cameraSerialOcrVerdict('379439', '379339')).toBe('other');
+    expect(cameraSerialOcrVerdict('406186', '729000628936040618612345678901')).toBe('other');
   });
 });
 

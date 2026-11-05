@@ -323,6 +323,18 @@ export interface MultiPalletBoxScan {
    * the rest and send it to the bot with `barcode_format_ok` (01/11).
    */
   barcode_source?: 'scan' | 'photo_digits' | 'minted' | 'typed';
+  /**
+   * Where the weight came from (lib/weight-source.ts, 04/11). The complete
+   * routes derive it (weightSourceOf) and send it to the bot for
+   * box_inventory.weight_source. Optional: rows cached before still parse.
+   */
+  weight_source?: 'label_ocr' | 'label_barcode' | 'typed' | 'twin_copy' | 'identical_copy'
+    | 'note_avg' | 'units' | 'unknown';
+  /** The worker changed this carton's weight (edit panel, or a copy form vs its sample). */
+  weight_typed?: boolean;
+  /** A copy (identical / twin / New carton): the weight source of the carton it was copied from. */
+  weight_copied_from?: 'label_ocr' | 'label_barcode' | 'typed' | 'twin_copy' | 'identical_copy'
+    | 'note_avg' | 'units' | 'unknown';
 }
 
 export interface MultiPalletSession {
@@ -360,6 +372,31 @@ export interface MultiPalletSession {
   features?: {
     /** New carton's units mode in the loose pile (lib/units-cartons.ts). */
     units_mode?: boolean;
+    /** The camera books a 6-digit carton serial on a short-serial supplier's
+     *  receipt (Wall Dan; lib/scanner-flags.ts cameraShortSerialOn). Present
+     *  only when on. */
+    camera_short_serial?: boolean;
+    /** A photo capture with no digits read is held, never booked NOBC-,
+     *  and nothing books with a MANUAL- placeholder (lib/no-barcode.ts). */
+    manual_capture_review?: boolean;
+    /** A photo capture right after the camera read a short serial asks the
+     *  label reader for that label only (lib/manual-target.ts). Present
+     *  only when on. */
+    manual_target_hint?: boolean;
+    /** Edit panel: typed digits one short of a code on the list take that
+     *  code into the "already on the list" question (lib/typed-near-match.ts). */
+    typed_near_match?: boolean;
+    /** "Done scanning?" no longer closes the single-item question, and an
+     *  edit-panel save may raise it (lib/uniform-candidate.ts
+     *  uniformAfterEditAllowed). */
+    uniform_after_count?: boolean;
+    /** "All boxes identical" is not offered on a short carton serial
+     *  (lib/identical-boxes.ts identicalAllowed `noSerial`). Present only
+     *  when on. */
+    identical_no_serial?: boolean;
+    /** A label read that never came back shows palletVerify.networkError,
+     *  once per outage (lib/ocr-network-notice.ts). Present only when on. */
+    ocr_network_notice?: boolean;
   };
   receipt_id?: string;
   completed_pallets: Array<{

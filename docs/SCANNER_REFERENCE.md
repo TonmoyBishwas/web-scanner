@@ -369,6 +369,25 @@ finished_in_chat / ops_duplicate, and `result.by` = the replacing form for `repl
   `receive.replacedTitle`/`Body`, `receive.openNewer`, `receive.cancelledTitle`/`Body`, `receive.duplicateTitle`/`Body`,
   the new `PACKAGING_LABELS` / `PACKAGING_PLURAL` words; changed: `receive.packaging`, `PACKAGING_LABELS.unit`.
 
+## Changes since the audit — 2026-11-04 where each carton's weight came from
+
+`lib/weight-source.ts` `weightSourceOf(row)` gives every carton a `weight_source`
+(`label_ocr` | `label_barcode` | `typed` | `twin_copy` | `identical_copy` | `note_avg`
+| `units` | `unknown`), sent to the bot on every carton of `/webhook/pallet-complete`
+(mix and single) and `/webhook/loose-boxes-complete` for `box_inventory.weight_source`.
+Rules in order: units → `units`; New carton → `typed`; a copy (minted / twin) →
+`label_barcode` if its barcode confirms the weight, `typed` if the form changed the
+weight or the sample's weight was typed/unknown, else `twin_copy` / `identical_copy`
+(no recorded sample source, e.g. a row cached before 04/11 → `unknown`); a weight the
+worker changed → `typed` unless the barcode confirms it within 0.011 kg; barcode
+filled or confirming → `label_barcode`; the label reading kept as read → `label_ocr`;
+else `unknown`. Damaged-sticker samples go as `note_avg`. Row fields (optional, so
+cached rows still parse): `weight_typed` (set by the edit-panel save when the weight
+changed by 1 g or more; on a copy, `copyWeightTyped`: the form weight 1 g or more
+off the sample's, unless it is the sample's own barcode weight within 0.011 kg, which is
+what the one-tap twin saves), `weight_copied_from` (set by `expandIdenticalBoxes` from
+the sample). `barcode_source` is unchanged. Nothing is shown to the worker.
+
 ## Table of contents
 
 - [Changes since the audit — the 2026-10-01 floor-feedback release](#changes-since-the-audit-the-2026-10-01-floor-feedback-release)
@@ -999,6 +1018,7 @@ Others: `common.cancel`, `common.delete`, `common.kg`, `loose.title`, `ocr.retry
 | `scanner-settings` localStorage | via settings-store | on | sound/vibration for scan feedback |
 | `LABEL_PRINT_GATE` (added 2026-10-15) | `lib/label-gate.ts` `labelPrintGateEnabled` / `printGate`; inlined by `next.config.ts` | `off` | `on`/`true`/`1`: an LPN or a loose finish is refused (page and server) while a saved label on the list being booked is unprinted. Since 20/10 it blocks only when `LABEL_PRINTING_ENABLED` is on as well |
 | `LABEL_PRINTING_ENABLED` (added 2026-10-20) | `lib/label-printing.ts` `labelPrintingEnabled`; inlined by `next.config.ts` | `off` | `on`/`true`/`yes`/`1` (same set as the bot's flag of that name): print dialog, print buttons, size picker, "Not printed" filter/badges/markers, print reminders, and the `/scan` + `/issue` New carton / Labels chips. Off: none of these; `28…` codes are still minted, saved and booked. Build-time — a change needs a Vercel redeploy |
+| `features.camera_short_serial` (added 2026-11-04, item 1) | `lib/scanner-flags.ts` `cameraShortSerialOn` → session GET (`app/api/multi-pallet-session/route.ts`, present only when on); page `serialAccepted` → `lib/carton-barcode.ts` `cameraSerialBookable` | off (no `scanner_flags` row `camera_short_serial`) | runtime row in our `public.scanner_flags` (enabled_all / chat_ids, 30 s row cache) **and** the receipt's `deliveries.supplier_vat` in `SHORT_SERIAL_SUPPLIER_VATS` (`['515215705']`, Wall Dan; VAT cached 10 min per receipt, a null never cached). On: a 6-digit serial with no leading zero that `shortSerialExcluded` does not claim (a line code or a piece of one, a piece of a listed/session long code, the pallet label) is accepted by `acceptScannerValue` and both detect handlers like a full code — 2 reads, 3 s cooldown, burst frame, box OCR, row keyed to the serial, `barcode_source` 'scan'. `runOcr`/`runLooseOcr` compare the label's printed digits (`cameraSerialOcrVerdict`, trace `camera_serial_ocr` / `loose_camera_serial_ocr`): 'other' sets `needs_review`, never re-keys. Off: the short read is refused as before (amber notice, photo path). Turn on: INSERT the row; rollback: DELETE it. Replay: `scripts/replay-scan-sessions.ts --short-serial` |
 No `process.env.*` is read in this file; no role check exists in this file (roles are decided by the bot before the link is sent).
 
 ---

@@ -20,6 +20,7 @@ import type { CartonLabel, MultiPalletBoxScan } from '@/types';
 import { isMintedLabelBarcode } from './label-batches';
 import { isNoBarcodeId } from './no-barcode';
 import { barcodeCarriesWeight } from './barcode-weight';
+import { weightSourceOf, copyWeightTyped, type WeightSource } from './weight-source';
 
 /**
  * May "All boxes identical" be offered on this row (its row actions, the
@@ -37,15 +38,34 @@ import { barcodeCarriesWeight } from './barcode-weight';
  * something else (28/10: a Glatt fillet carton whose code did not read got
  * another carton's 13.59 kg). An unreadable one goes through the label photo /
  * manual capture instead.
+ *
+ * `noSerial` (scanner flag `identical_no_serial`, 04/11): nor on a short
+ * carton serial (isShortCartonSerial) — a per-carton number is one carton,
+ * never N. Off (the default), the answer is exactly as before.
  */
 export function identicalAllowed(
   box: { barcode: string; ocr_status?: string; minted?: boolean },
   provisionalPrefix = 'MANUAL-',
+  opts: { noSerial?: boolean } = {},
 ): boolean {
   const code = box.barcode || '';
   return box.ocr_status !== 'processing' && !box.minted
     && !code.startsWith(provisionalPrefix) && !isNoBarcodeId(code)
-    && !barcodeCarriesWeight(code);
+    && !barcodeCarriesWeight(code)
+    && !(opts.noSerial && isShortCartonSerial(code));
+}
+
+/**
+ * A short carton serial: 6–11 digits and nothing else. The camera refuses
+ * any read under 12 digits (lib/carton-barcode.ts classifyRead), so a row
+ * keyed this short got there only as a carton's own running number — a
+ * Wall Dan serial the camera booked (CAMERA_SERIAL_RE), a label photo
+ * confirmed (labelConfirmsShortCode, `photo_digits`) or the edit panel took
+ * as typed. The same 6–11 rule lib/scan-notice.ts canOfferDifferentCarton
+ * uses for "a re-read IS that carton".
+ */
+export function isShortCartonSerial(code: string): boolean {
+  return /^\d{6,11}$/.test((code || '').trim());
 }
 
 /** What the confirmation form settles for the whole batch. */
@@ -110,7 +130,10 @@ type SampleRow = MultiPalletBoxScan & {
  * holds only its first 13 digits). The page keeps that code in its dedup set
  * while any row standing in for it is still on the list (`releasedSources`).
  */
-export type MintedRow<T> = T & { minted: true; label_batch_id: string; source_barcode: string };
+export type MintedRow<T> = T & {
+  minted: true; label_batch_id: string; source_barcode: string;
+  weight_copied_from: WeightSource; weight_typed?: boolean;
+};
 
 export function expandIdenticalBoxes<T extends SampleRow>(
   sample: T,
@@ -119,6 +142,7 @@ export function expandIdenticalBoxes<T extends SampleRow>(
 ): MintedRow<T>[] {
   const sku = sourceSku(sample.barcode);
   const now = new Date().toISOString();
+  const copiedFrom = weightSourceOf(sample);
   return labels.map((label, i) => ({
     ...sample,
     barcode: label.barcode,
@@ -140,6 +164,11 @@ export function expandIdenticalBoxes<T extends SampleRow>(
     minted: true as const,
     label_batch_id: label.batch_id,
     source_barcode: sample.barcode,
+    // Where the copied weight came from (lib/weight-source.ts, 04/11): the
+    // sample's own source, and whether the form changed it (its barcode's
+    // own weight, the one-tap twin's figure, is not a change).
+    weight_copied_from: copiedFrom,
+    weight_typed: copyWeightTyped(form.weight, sample) || undefined,
   }));
 }
 

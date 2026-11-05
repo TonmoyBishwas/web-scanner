@@ -138,6 +138,8 @@ export interface GapLine {
   unit_risk?: string | null;
   /** The client's builder found no Priority item for the code. */
   item_not_linked?: boolean | null;
+  /** delivery_items.discrepancy_status (None / Short / Over), from the view. */
+  discrepancy_status?: string | null;
 }
 
 /** The lines of one delivery, for the "lines to check in Priority" section. */
@@ -170,6 +172,34 @@ export const UNIT_RISK_TEXT: Readonly<Record<string, string>> = {
   kg_to_unit_item: 'weighed in kg, but the Priority item counts units',
   packs_not_units: 'counted in cartons or packs, not single units',
 };
+
+/**
+ * unit_risk codes with no approved wording yet (text freeze 20/10). Item 7
+ * (pack table, 2026-11-04): with priority_push_config.pack_table_check on, the
+ * bot's explain() adds a line whose count the client's builder left
+ * unconverted (e.g. acetic acid 4 units sent as 4 L) as 'pack_not_converted'.
+ * Until Mevaser approves a label it is not shown here: no note, and a line
+ * listed ONLY because of it is left out. Rows stored while the switch was on
+ * stay hidden after it is switched off.
+ */
+export const HIDDEN_UNIT_RISKS: ReadonlySet<string> = new Set(['pack_not_converted']);
+
+/** The line as the page shows it: a hidden unit_risk is dropped; null when
+ * nothing else made delivery_gaps_v list it. */
+export function visibleFixLine(line: GapLine): GapLine | null {
+  if (!line.unit_risk || !HIDDEN_UNIT_RISKS.has(line.unit_risk)) return line;
+  const shown: GapLine = { ...line, unit_risk: null };
+  // delivery_gaps_v's other reasons to list a line; a row without
+  // discrepancy_status (an older view) is kept
+  const listed =
+    shown.discrepancy_status === undefined ||
+    (shown.discrepancy_status != null && shown.discrepancy_status !== 'None') ||
+    shown.count_source === 'invoice_assumed' ||
+    !!shown.gap_reason ||
+    !!shown.rest_expected ||
+    !!shown.item_not_linked;
+  return listed ? shown : null;
+}
 
 /** priority_push_resend refusal codes, in plain English. */
 export const REFUSAL_TEXT: Readonly<Record<string, string>> = {
@@ -353,7 +383,9 @@ export function closedLine(row: Pick<ClosedAttentionRow, 'closed_at' | 'closed_b
  */
 export function groupFixLines(lines: readonly GapLine[]): FixDelivery[] {
   const byId = new Map<string, FixDelivery>();
-  for (const line of lines) {
+  for (const raw of lines) {
+    const line = visibleFixLine(raw);
+    if (!line) continue;
     let d = byId.get(line.delivery_id);
     if (!d) {
       d = {
@@ -396,7 +428,8 @@ export function fixLineText(line: GapLine): string {
   if (line.gap_reason) notes.push(`reason: ${GAP_REASON_TEXT[line.gap_reason] ?? line.gap_reason}`);
   if (line.gap_note) notes.push(`note: ${line.gap_note}`);
   if (line.rest_expected) notes.push(REST_TEXT[line.rest_expected] ?? line.rest_expected);
-  if (line.unit_risk) notes.push(`unit risk: ${UNIT_RISK_TEXT[line.unit_risk] ?? line.unit_risk}`);
+  if (line.unit_risk && !HIDDEN_UNIT_RISKS.has(line.unit_risk))
+    notes.push(`unit risk: ${UNIT_RISK_TEXT[line.unit_risk] ?? line.unit_risk}`);
   if (line.item_not_linked) notes.push('item not linked to a Priority item');
   return [head, ...notes].join(' · ');
 }

@@ -17,6 +17,7 @@ import { isEmptySummaryLine } from '@/lib/pallet-lines';
 import { snapNamelessByCode } from '@/lib/failed-read';
 import { rawOcrWeightKg } from '@/lib/barcode-weight';
 import { barcodeProvenance } from '@/lib/barcode-provenance';
+import { weightSourceOf } from '@/lib/weight-source';
 
 const SESSION_TTL = 7200;
 // "Same weight" means the printed weights are EXACTLY equal — a fixed-weight
@@ -455,6 +456,8 @@ export async function POST(request: NextRequest) {
           expiry: '',
           item_name: it.item_name,
           item_name_hebrew: it.item_name_hebrew,
+          // The note's per-carton average, not this sample's label (04/11).
+          weight_source: 'note_avg' as const,
         }));
 
       const mPayload: Record<string, unknown> = {
@@ -707,6 +710,9 @@ export async function POST(request: NextRequest) {
           // Where the code came from and whether it passes its format check
           // (lib/barcode-provenance.ts, 01/11) — for box_inventory, never shown.
           ...barcodeProvenance(b),
+          // Where the weight came from (lib/weight-source.ts, 04/11) — for
+          // box_inventory.weight_source, never shown.
+          weight_source: weightSourceOf(b),
           ...labelPrintedFlag(b.barcode),
         })),
         unprinted_labels: unprintedBooked.size,
@@ -768,6 +774,9 @@ export async function POST(request: NextRequest) {
           // Where the code came from and whether it passes its format check
           // (lib/barcode-provenance.ts, 01/11) — for box_inventory, never shown.
           ...barcodeProvenance(b),
+          // Where the weight came from (lib/weight-source.ts, 04/11) — for
+          // box_inventory.weight_source, never shown.
+          weight_source: weightSourceOf(b),
           ...labelPrintedFlag(b.barcode),
         })),
         unprinted_labels: unprintedBooked.size,

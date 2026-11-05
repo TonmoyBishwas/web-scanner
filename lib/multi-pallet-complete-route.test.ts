@@ -34,6 +34,7 @@ vi.mock('next/server', async (orig) => ({
 }));
 
 const route = await import('@/app/api/multi-pallet-complete/route');
+const { groupKeyForBox } = await import('@/lib/group-key');
 
 const TOKEN = 'tokS03';
 // S03's chicken line and carton C13 (12.570 kg, 22/10/2027).
@@ -137,5 +138,42 @@ describe('multi-pallet-complete: a units line declared on a pallet (27/10)', () 
     expect(items[0].box_count).toBe(7);
     expect(items[0].calculated_total_weight).toBe(126);
     expect(items[0].ocr_box_weight).toBe(18);
+  });
+});
+
+describe('multi-pallet-complete: the single-item question on 2 weightless-label samples (04/11)', () => {
+  // Glatt ground turkey 2465: the label prints no net weight (25-digit code,
+  // weight field 0001); the worker typed 8 kg on two cartons, answered the
+  // single-item question and declared 50. The page hands the declared total
+  // and the locked group over explicitly (handlePalletCountSubmit →
+  // handleConfirmPallet({ boxCount, groups })) — this pins what the bot gets.
+  const TURKEY = { item_code: '2465', item_name_hebrew: 'הודו טחון 500 גרם', item_name_english: '', quantity_kg: 800 };
+  const g = (serial: string) => box('1' + '02465' + '010010' + '0001' + serial, {
+    item_name_hebrew: TURKEY.item_name_hebrew, weight: 8, expiry: '2027-02-26', weight_typed: true,
+  });
+
+  it('2 samples + declared 50 → one single-item line of 50 cartons, 400 kg', async () => {
+    sessions.set(`pallet:multi:${TOKEN}`, {
+      ...(sessions.get(`pallet:multi:${TOKEN}`) as Record<string, unknown>),
+      ocr_data: [TURKEY],
+    });
+    const samples = [g('000708241'), g('000708309')];
+    const name_key = groupKeyForBox(samples[0]);
+    const res = await route.POST(new NextRequest('http://scanner.test/api/multi-pallet-complete', {
+      method: 'POST',
+      body: JSON.stringify({
+        token: TOKEN, scanned_boxes: samples, box_count: 50, pallet_number: 1,
+        uniform_groups: [{ name_key, total_count: 50, avg_weight: 8 }],
+      }),
+    } as never));
+    expect(res.status).toBe(200);
+    // One item → the bot's single-pallet shape: the line's fields at the top.
+    const sent = botCalls[0].body;
+    expect(sent.pallet_type).toBe('single');
+    expect(sent.item_code).toBe('2465');
+    expect(sent.box_count).toBe(50);
+    expect(sent.ocr_box_weight).toBe(8);
+    expect(sent.calculated_total_weight).toBe(400);
+    expect(sent.verified_scan_count).toBe(2);
   });
 });

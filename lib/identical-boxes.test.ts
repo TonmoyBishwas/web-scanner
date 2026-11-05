@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   dedupCodes, expandIdenticalBoxes, identicalLabelPayload, postIdenticalLabels, releasedSources, sourceSku, sourceStillListed,
-  newCartonBatch, asNewCartonRows, labelsToSave, groupSkuMismatch,
+  newCartonBatch, asNewCartonRows, labelsToSave, groupSkuMismatch, identicalAllowed, isShortCartonSerial,
 } from './identical-boxes';
 
 const sample = {
@@ -300,5 +300,67 @@ describe('groupSkuMismatch (soft "is this the same product?")', () => {
 
   it('a carton with no supplier code (photo, provisional) → null', () => {
     expect(groupSkuMismatch({ barcode: 'NOBC-1-P1-1', item_name_hebrew: 'קבב' }, [kebab], keyOf)).toBeNull();
+  });
+});
+
+describe('expandIdenticalBoxes: weight provenance (04/11)', () => {
+  const sample = { barcode: '7290011111110', sku: '7290011111110', item_name: 'X', weight: 10.105,
+    ocr_weight: 10.105, expiry: '', scanned_at: '2026-11-04T10:00:00Z' };
+  const labels = [{ barcode: '2826110400000401', batch_id: 'b' }];
+
+  it('weight_copied_from is the sample\'s own source', () => {
+    const [row] = expandIdenticalBoxes(sample, labels, { weight: 10.105, expiry: '', production_date: '' });
+    expect(row.weight_copied_from).toBe('label_ocr');
+  });
+
+  it('weight_typed only for a change of 1 g or more', () => {
+    const tiny = expandIdenticalBoxes(sample, labels, { weight: 10.1055, expiry: '', production_date: '' });
+    expect(tiny[0].weight_typed).toBeUndefined();
+    const real = expandIdenticalBoxes(sample, labels, { weight: 10.106, expiry: '', production_date: '' });
+    expect(real[0].weight_typed).toBe(true);
+  });
+});
+
+describe('identicalAllowed — identical_no_serial (04/11)', () => {
+  const row = (barcode: string, extra: Record<string, unknown> = {}) => ({ barcode, ocr_status: 'done', ...extra });
+  // Wall Dan serials: camera-booked (409251), a photo's printed digits, a
+  // leading-zero one only a photo can confirm (020926), up to 11 digits.
+  const SERIALS = ['409251', '379300', '020926', '12345678', '12345678901'];
+  const FULL = ['7290020497000', '7290004456825123'];
+
+  it('flag off (the default): exactly as before — a serial row may be copied', () => {
+    for (const code of SERIALS) {
+      expect(identicalAllowed(row(code))).toBe(true);
+      expect(identicalAllowed(row(code), 'MANUAL-')).toBe(true);
+      expect(identicalAllowed(row(code), 'MANUAL-', {})).toBe(true);
+      expect(identicalAllowed(row(code), 'MANUAL-', { noSerial: false })).toBe(true);
+    }
+  });
+
+  it('flag on: a short serial is refused, whatever put it there', () => {
+    for (const code of SERIALS) {
+      expect(identicalAllowed(row(code), 'MANUAL-', { noSerial: true })).toBe(false);
+      expect(identicalAllowed(row(code, { barcode_source: 'photo_digits' }), 'MANUAL-', { noSerial: true })).toBe(false);
+      expect(identicalAllowed(row(code, { barcode_source: 'typed' }), 'MANUAL-', { noSerial: true })).toBe(false);
+    }
+  });
+
+  it('flag on: a full supplier code is offered as before', () => {
+    for (const code of FULL) expect(identicalAllowed(row(code), 'MANUAL-', { noSerial: true })).toBe(true);
+  });
+
+  it('flag on: every earlier refusal still holds', () => {
+    const on = { noSerial: true };
+    expect(identicalAllowed(row('7290020497000', { ocr_status: 'processing' }), 'MANUAL-', on)).toBe(false);
+    expect(identicalAllowed(row('2826092212345678', { minted: true }), 'MANUAL-', on)).toBe(false);
+    expect(identicalAllowed(row('MANUAL-1793781692727-4v2wvr'), 'MANUAL-', on)).toBe(false);
+  });
+
+  it('isShortCartonSerial: 6–11 digits only', () => {
+    expect(SERIALS.every(isShortCartonSerial)).toBe(true);
+    expect(isShortCartonSerial(' 409251 ')).toBe(true);
+    for (const code of ['', '40925', '729002049700', '7290020497000', 'NOBC-IN1-P1-1', 'MANUAL-409251', '40925a']) {
+      expect(isShortCartonSerial(code)).toBe(false);
+    }
   });
 });
