@@ -61,7 +61,7 @@ import {
 import { weightChanged } from '@/lib/weight-source';
 import { isMintedLabelBarcode, newBatchId, labelSheetUrl, liveRowPlaces, loadLabelSize, openListsForPhase, sessionBookedBarcodes } from '@/lib/label-batches';
 import { printGate, LABELS_NOT_PRINTED } from '@/lib/label-gate';
-import { cartonLabelsShown, lpnLabelsShown } from '@/lib/label-switches';
+import { cartonLabelsShown, lpnLabelsShown, perCartonDeleteShown } from '@/lib/label-switches';
 import {
   labelPrintingEnabled, labelsChipLook, labelsInitialStatus, newCartonUncountedToast, unprintedMarkers,
 } from '@/lib/label-printing';
@@ -1052,9 +1052,10 @@ export default function PalletVerifyPage({
   // The rows' "Label not printed" marker — none while printing is off. The
   // real set above still drives deletes and group counts.
   const unprintedShown = unprintedMarkers(unprintedBarcodes, PRINTING);
-  // Label switches (lib/label-switches.ts, 05/11): read live from the
-  // session's features; absent = as today.
+  // Label switches and the top-bar-only delete (lib/label-switches.ts,
+  // 05/11): read live from the session's features; absent = as today.
   const cartonLabels = cartonLabelsShown(session?.features);
+  const rowDelete = perCartonDeleteShown(session?.features);
   // The print gate (lib/label-gate.ts): the unprinted labels that stop the
   // list in front of the worker from being booked — its own cartons' labels,
   // plus every New carton label. While it is non-empty the confirm slide
@@ -5984,7 +5985,8 @@ export default function PalletVerifyPage({
     // it does not also collapse the row.
     const looseRowActions = (box: BoxScan) => {
       if (selectedBarcode !== box.barcode) return undefined;
-      const onDelete = () => { rescanLooseBox(box.barcode); setSelectedBarcode(null); };
+      // top_bar_delete_only (05/11): no Delete on the row; the top bar's chip.
+      const onDelete = rowDelete ? () => { rescanLooseBox(box.barcode); setSelectedBarcode(null); } : undefined;
       if (box.ocr_status === 'failed') {
         return (
           <ScanActions
@@ -6209,7 +6211,7 @@ export default function PalletVerifyPage({
                     expanded={activeExpanded}
                     onToggleExpand={() => setActiveExpanded((v) => !v)}
                     onEdit={() => openEdit(looseActive, true)}
-                    onDelete={() => { rescanLooseBox(looseActive.barcode); setSelectedBarcode(null); }}
+                    onDelete={rowDelete ? () => { rescanLooseBox(looseActive.barcode); setSelectedBarcode(null); } : undefined}
                     onIdentical={canDeclareIdentical(looseActive) ? () => openIdentical(looseActive, true) : undefined}
                     {...groupCountAction(looseActive, true)}
                     onRetry={looseActive.ocr_status === 'failed' ? () => retryLooseOcr(looseActive.barcode) : undefined}
@@ -6345,7 +6347,8 @@ export default function PalletVerifyPage({
   // it does not also collapse the row.
   const palletRowActions = (box: BoxScan) => {
     if (selectedBarcode !== box.barcode) return undefined;
-    const onDelete = () => { rescanPalletBox(box.barcode); setSelectedBarcode(null); };
+    // top_bar_delete_only (05/11): no Delete on the row; the top bar's chip.
+    const onDelete = rowDelete ? () => { rescanPalletBox(box.barcode); setSelectedBarcode(null); } : undefined;
     if (box.ocr_status === 'failed') {
       return (
         <ScanActions
@@ -6856,7 +6859,7 @@ export default function PalletVerifyPage({
                   expanded={activeExpanded}
                   onToggleExpand={() => setActiveExpanded((v) => !v)}
                   onEdit={() => openEdit(activeBox)}
-                  onDelete={() => { rescanPalletBox(activeBox.barcode); setSelectedBarcode(null); }}
+                  onDelete={rowDelete ? () => { rescanPalletBox(activeBox.barcode); setSelectedBarcode(null); } : undefined}
                   onIdentical={canDeclareIdentical(activeBox) ? () => openIdentical(activeBox, false) : undefined}
                   {...groupCountAction(activeBox, false)}
                   onRetry={activeBox.ocr_status === 'failed' ? () => retryPalletOcr(activeBox.barcode) : undefined}
