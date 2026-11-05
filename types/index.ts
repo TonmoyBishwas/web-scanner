@@ -397,6 +397,10 @@ export interface MultiPalletSession {
     /** A label read that never came back shows palletVerify.networkError,
      *  once per outage (lib/ocr-network-notice.ts). Present only when on. */
     ocr_network_notice?: boolean;
+    /** No hand-made carton codes: no "create barcode", an unreadable
+     *  barcode is booked pending (NULL), a real barcode with no weight goes
+     *  to the weight field (lib/no-hand-codes.ts). Present only when on. */
+    no_hand_codes?: boolean;
   };
   receipt_id?: string;
   completed_pallets: Array<{

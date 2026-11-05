@@ -268,3 +268,22 @@ export async function ocrNetworkNoticeOn(chatId: string | number | null | undefi
     return false;
   }
 }
+
+/**
+ * No hand-made carton codes (Mevaser 05/11, decisions 2 and 5): the edit
+ * panel offers no "create barcode", a carton whose barcode cannot be read is
+ * booked with no barcode at all (box_inventory.barcode NULL — pending, never
+ * a MANUAL- or NOBC- marker; lib/no-hand-codes.ts), and a carton with a real
+ * barcode but no weight goes to the weight field, not to Delete / New carton.
+ * A missing row is OFF; everything then behaves exactly as before.
+ */
+export const noHandCodesRow = flagRow('no_hand_codes');
+
+/** no_hand_codes for this chat; off when the flag cannot be read, never a throw. */
+export async function noHandCodesOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await noHandCodesRow(), chatId);
+  } catch {
+    return false;
+  }
+}

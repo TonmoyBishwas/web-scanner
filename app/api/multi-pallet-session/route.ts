@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nanoid } from 'nanoid';
 import { getRedisClient, touchSession } from '@/lib/redis';
-import { cameraShortSerialOn, identicalNoSerialOn, manualCaptureReviewOn, manualTargetHintOn, ocrNetworkNoticeOn, typedNearMatchOn, uniformAfterCountOn, unitsModeOn } from '@/lib/scanner-flags';
+import { cameraShortSerialOn, identicalNoSerialOn, manualCaptureReviewOn, manualTargetHintOn, noHandCodesOn, ocrNetworkNoticeOn, typedNearMatchOn, uniformAfterCountOn, unitsModeOn } from '@/lib/scanner-flags';
 import type { MultiPalletSession } from '@/types';
 
 const SESSION_TTL = 7200; // 2 hours
@@ -136,6 +136,8 @@ export async function GET(request: NextRequest) {
       // identical_no_serial and ocr_network_notice (04/11): same, present only when on.
       ...((await identicalNoSerialOn(session.chat_id)) ? { identical_no_serial: true } : {}),
       ...((await ocrNetworkNoticeOn(session.chat_id)) ? { ocr_network_notice: true } : {}),
+      // no_hand_codes (05/11): same, present only when on.
+      ...((await noHandCodesOn(session.chat_id)) ? { no_hand_codes: true } : {}),
     };
     return NextResponse.json({ ...session, features });
   } catch (error) {

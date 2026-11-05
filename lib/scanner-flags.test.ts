@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('./supabase', () => ({
   supabase: { from: () => { throw new Error('no database in tests'); } },
 }));
-import { cachedFlagRow, flagEnabledFor, identicalNoSerialOn, manualCaptureReviewOn, manualTargetHintOn, ocrNetworkNoticeOn, shortSerialGate } from './scanner-flags';
+import { cachedFlagRow, flagEnabledFor, identicalNoSerialOn, manualCaptureReviewOn, manualTargetHintOn, noHandCodesOn, ocrNetworkNoticeOn, shortSerialGate } from './scanner-flags';
 
 describe('flagEnabledFor', () => {
   it('on for everyone', () => {
@@ -131,5 +131,11 @@ describe('identicalNoSerialOn', () => {
 describe('ocrNetworkNoticeOn', () => {
   it('is off, never a throw, when the flag cannot be read', async () => {
     await expect(ocrNetworkNoticeOn('972544965384')).resolves.toBe(false);
+  });
+});
+
+describe('noHandCodesOn', () => {
+  it('is off, never a throw, when the flag cannot be read', async () => {
+    await expect(noHandCodesOn('972544965384')).resolves.toBe(false);
   });
 });
