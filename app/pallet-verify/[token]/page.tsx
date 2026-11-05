@@ -61,6 +61,7 @@ import {
 import { weightChanged } from '@/lib/weight-source';
 import { isMintedLabelBarcode, newBatchId, labelSheetUrl, liveRowPlaces, loadLabelSize, openListsForPhase, sessionBookedBarcodes } from '@/lib/label-batches';
 import { printGate, LABELS_NOT_PRINTED } from '@/lib/label-gate';
+import { cartonLabelsShown } from '@/lib/label-switches';
 import {
   labelPrintingEnabled, labelsChipLook, labelsInitialStatus, newCartonUncountedToast, unprintedMarkers,
 } from '@/lib/label-printing';
@@ -1050,6 +1051,9 @@ export default function PalletVerifyPage({
   // The rows' "Label not printed" marker — none while printing is off. The
   // real set above still drives deletes and group counts.
   const unprintedShown = unprintedMarkers(unprintedBarcodes, PRINTING);
+  // Label switches (lib/label-switches.ts, 05/11): read live from the
+  // session's features; absent = as today.
+  const cartonLabels = cartonLabelsShown(session?.features);
   // The print gate (lib/label-gate.ts): the unprinted labels that stop the
   // list in front of the worker from being booked — its own cartons' labels,
   // plus every New carton label. While it is non-empty the confirm slide
@@ -3920,13 +3924,14 @@ export default function PalletVerifyPage({
         id: 'create', icon: 'add', label: tr('terminal.toolCreateCarton'), tint: 'blue', iconColor: '#33b1f0',
         onPress: () => openCartonCreator(),
       },
-      {
-        // Amber + count while saved labels wait for the printer (printing on
-        // only — off, a plain chip onto the view-and-delete list).
+      // Amber + count while saved labels wait for the printer (printing on
+      // only — off, a plain chip onto the view-and-delete list). Not there at
+      // all with carton_labels off (05/11): the chat has no carton labels.
+      ...(cartonLabels ? [{
         id: 'labels', icon: 'label', label: tr('terminal.toolLabels'),
         ...labelsChipLook(unprinted.labels.length, PRINTING),
         onPress: () => setShowLabels(true),
-      },
+      }] : []),
       { id: 'warehouses', icon: 'warehouse', label: tr('terminal.toolWarehouses'), tint: 'neutral', locked: true },
       { id: 'pallets', icon: <PalletIcon />, label: tr('terminal.toolPallets'), tint: 'neutral', onPress: () => setShowPallets(true) },
       {
@@ -4238,6 +4243,8 @@ export default function PalletVerifyPage({
           // Q5 (client 2026-10-13): counted now, at the typed weight.
           countOnSave
           onList={cartonOnList}
+          // carton_labels off (05/11): no label wording on the form.
+          cartonLabels={cartonLabels}
           units={cartonUnits}
           onBack={() => {
             trace('ui', 'carton_creator_cancel', { preset_item: cartonPreset?.item.item_code });
@@ -4311,6 +4318,7 @@ export default function PalletVerifyPage({
           <IdenticalBoxesForm
             token={token}
             palletNumber={identicalFor.loose ? 0 : currentPallet}
+            cartonLabels={cartonLabels}
             sample={{
               barcode: box.barcode,
               item_code: line?.item_code ?? null,
@@ -4727,10 +4735,13 @@ export default function PalletVerifyPage({
       // Each error goes when the worker changes what it is about: the barcode
       // ones here, "set the item name first" on a name pick or typed name.
       onBarcodeChange={(v) => { setEditForm({ ...editForm, barcodeInput: v }); setEditError(null); }}
-      onCreateBarcode={handleCreateBarcode}
+      // carton_labels off (05/11): no "create a barcode for this carton" (no
+      // label to mint); "book it without a barcode" is the way out at once,
+      // as it is today after a failed mint.
+      onCreateBarcode={cartonLabels ? handleCreateBarcode : undefined}
       minting={mintingBarcode}
       onNoBarcode={handleNoBarcode}
-      showNoBarcode={mintFailed}
+      showNoBarcode={mintFailed || !cartonLabels}
       // BOT-32: a carton booked without a barcode can still get one — typed
       // or minted — but only if the worker goes looking for it.
       onAddBarcode={!editForm.unidentified && isNoBarcodeId(editForm.forcedId || editForm.barcode)

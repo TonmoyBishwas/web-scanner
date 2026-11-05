@@ -73,7 +73,9 @@ interface EditPanelProps {
    * "Book it without a barcode." Shown ONLY once minting has actually failed —
    * it is a worse outcome than a real sticker, so it must not sit next to the
    * good option as an equal choice. It exists so a network problem can never
-   * leave a worker unable to finish the pallet.
+   * leave a worker unable to finish the pallet. With carton labels off
+   * (scanner flag `carton_labels`, 05/11) there is no mint, so the page shows
+   * it at once in place of "create a barcode".
    */
   onNoBarcode?: () => void;
   showNoBarcode?: boolean;
