@@ -367,7 +367,8 @@ export interface MultiPalletSession {
   /**
    * Runtime feature switches for this session's chat — added by the session
    * GET from `public.scanner_flags` (lib/scanner-flags.ts), never stored on
-   * the session. Absent = everything off.
+   * the session. Absent = everything as today (off; the label switches,
+   * default-on, are absent when on).
    */
   features?: {
     /** New carton's units mode in the loose pile (lib/units-cartons.ts). */
@@ -397,6 +398,15 @@ export interface MultiPalletSession {
     /** A label read that never came back shows palletVerify.networkError,
      *  once per outage (lib/ocr-network-notice.ts). Present only when on. */
     ocr_network_notice?: boolean;
+    /** Carton labels (lib/label-switches.ts). DEFAULT-ON: present, as
+     *  `false`, only when a scanner_flags row turns them off for this chat. */
+    carton_labels?: boolean;
+    /** LPN pallet sticker link (lib/label-switches.ts). DEFAULT-ON, like
+     *  `carton_labels`: present only as `false`. */
+    lpn_labels?: boolean;
+    /** No per-carton Delete; the top bar's Delete chip only
+     *  (lib/label-switches.ts). Present only when on. */
+    top_bar_delete_only?: boolean;
   };
   receipt_id?: string;
   completed_pallets: Array<{

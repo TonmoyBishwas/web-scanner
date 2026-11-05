@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nanoid } from 'nanoid';
 import { getRedisClient, touchSession } from '@/lib/redis';
-import { cameraShortSerialOn, identicalNoSerialOn, manualCaptureReviewOn, manualTargetHintOn, ocrNetworkNoticeOn, typedNearMatchOn, uniformAfterCountOn, unitsModeOn } from '@/lib/scanner-flags';
+import { cameraShortSerialOn, cartonLabelsOn, identicalNoSerialOn, lpnLabelsOn, manualCaptureReviewOn, manualTargetHintOn, ocrNetworkNoticeOn, topBarDeleteOnlyOn, typedNearMatchOn, uniformAfterCountOn, unitsModeOn } from '@/lib/scanner-flags';
 import type { MultiPalletSession } from '@/types';
 
 const SESSION_TTL = 7200; // 2 hours
@@ -136,6 +136,12 @@ export async function GET(request: NextRequest) {
       // identical_no_serial and ocr_network_notice (04/11): same, present only when on.
       ...((await identicalNoSerialOn(session.chat_id)) ? { identical_no_serial: true } : {}),
       ...((await ocrNetworkNoticeOn(session.chat_id)) ? { ocr_network_notice: true } : {}),
+      // Label switches (05/11): DEFAULT-ON, so present only when a row turns
+      // them OFF for this chat; no rows = the response is exactly as before.
+      ...((await cartonLabelsOn(session.chat_id)) ? {} : { carton_labels: false }),
+      ...((await lpnLabelsOn(session.chat_id)) ? {} : { lpn_labels: false }),
+      // top_bar_delete_only (05/11): an ordinary flag, present only when on.
+      ...((await topBarDeleteOnlyOn(session.chat_id)) ? { top_bar_delete_only: true } : {}),
     };
     return NextResponse.json({ ...session, features });
   } catch (error) {

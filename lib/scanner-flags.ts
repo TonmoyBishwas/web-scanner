@@ -2,11 +2,14 @@
  * Runtime switches for scanner features (27/10): `public.scanner_flags`, one
  * row per flag — `enabled_all`, or a list of chat ids it is on for. Read by
  * the session GET (app/api/multi-pallet-session/route.ts), which hands the
- * page `features: { units_mode, camera_short_serial }`; flipping a row needs
+ * page `features: { units_mode, camera_short_serial, … }`; flipping a row needs
  * no redeploy.
  *
  * A missing table, a missing row or any DB error is OFF: a feature behind a
- * flag must never switch on because the flag could not be read.
+ * flag must never switch on because the flag could not be read. The two
+ * label switches (`carton_labels`, `lpn_labels`) are the exception: they
+ * HIDE today's screens, so for them unreadable is ON = as today
+ * (`defaultOnFlagFor`).
  *
  * Server only (the service-role client): the page sees `features` alone.
  */
@@ -264,6 +267,69 @@ export const ocrNetworkNoticeRow = flagRow('ocr_network_notice');
 export async function ocrNetworkNoticeOn(chatId: string | number | null | undefined): Promise<boolean> {
   try {
     return flagEnabledFor(await ocrNetworkNoticeRow(), chatId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A DEFAULT-ON switch for this chat (lib/label-switches.ts): no row, an
+ * unreadable row or a failed read is ON — today's behaviour — so a switch
+ * that hides something can never hide it because the flag could not be read.
+ * A row is on for everyone (`enabled_all`) or for its listed chats only.
+ */
+export function defaultOnFlagFor(
+  row: ScannerFlagRow | null | undefined,
+  chatId: string | number | null | undefined,
+): boolean {
+  if (!row) return true;
+  return flagEnabledFor(row, chatId);
+}
+
+/**
+ * Carton labels (Mevaser 04/11 + 05/11): the warehouse's own carton-label
+ * wording, save-labels buttons, Labels chip and "create a barcode for this
+ * carton". DEFAULT-ON: a missing row is as today. Insert a row that is not
+ * on for a chat to switch it off there.
+ */
+export const cartonLabelsRow = flagRow('carton_labels');
+
+/** Carton labels for this chat; on (as today) when the flag cannot be read, never a throw. */
+export async function cartonLabelsOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return defaultOnFlagFor(await cartonLabelsRow(), chatId);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * LPN pallet labels (Mevaser 05/11, a separate switch): the Pallets screen's
+ * "Open sticker". DEFAULT-ON like `carton_labels`. The LPN itself, its
+ * sticker page and the bot's sticker message are not behind it.
+ */
+export const lpnLabelsRow = flagRow('lpn_labels');
+
+/** LPN labels for this chat; on (as today) when the flag cannot be read, never a throw. */
+export async function lpnLabelsOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return defaultOnFlagFor(await lpnLabelsRow(), chatId);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * No per-carton delete (Mevaser 05/11): the rows lose their Delete action;
+ * the top bar's Delete chip (select, then delete selected) stays the one
+ * way. An ordinary flag: a missing row is OFF.
+ */
+export const topBarDeleteOnlyRow = flagRow('top_bar_delete_only');
+
+/** top_bar_delete_only for this chat; off when the flag cannot be read, never a throw. */
+export async function topBarDeleteOnlyOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await topBarDeleteOnlyRow(), chatId);
   } catch {
     return false;
   }
