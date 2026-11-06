@@ -70,7 +70,7 @@ export const V3_FORM_VERSION = 3;
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
-export type V3Mode = 'same' | 'pack' | 'two';
+export type V3Mode = 'same' | 'pack' | 'kg';
 export type V3LineStatus = 'ready' | 'expiry' | 'gap' | 'pallet' | 'fix';
 export type V3ExpState = 'ok' | 'empty' | 'partial' | 'invalid' | 'past' | 'far' | 'over';
 /** 'none' = nothing arrived (quantity 0): no pallet needed. */
@@ -216,17 +216,24 @@ function packagesOf(d: Pick<V3LineDraft, 'cartons'>): number {
 // ── Mode ──────────────────────────────────────────────────────────────────
 
 /**
- * How step 1 lays out a line: 'same' = the package count IS the quantity
- * (one stepper), 'pack' = packages × units per package (the units total
- * follows the stepper), 'two' = a weight or a quantity and a package count
- * typed separately. A counted line whose packages ≠ units and no per_pack is
- * 'two' [INFERRED, spec O6].
+ * How step 1 lays out a line — only the prototype's three layouts
+ * (`mode(l)`: weighed → kg, perPack → pack, else same):
+ * - 'kg'   = a weighed line: the weight and the package count, two fields;
+ * - 'pack' = one packages stepper + the packaging, and the units total as a
+ *   link under it (it follows the stepper while it equals packages × per pack);
+ * - 'same' = one packages stepper + the packaging; the count IS the quantity.
+ * A counted line with no per_pack whose package count is not its quantity
+ * (or has no package count) is laid out as 'pack' [INFERRED; the prototype
+ * has no such line]: still one stepper with the packaging picker, never two
+ * fields, and its units total stays visible and is never overwritten by the
+ * package count, as it would be on a 'same' line (24 units in 4 cartons
+ * must not become 4).
  */
 export function lineMode(line: FormLine): V3Mode {
-  if (line.weighed) return 'two';
+  if (line.weighed) return 'kg';
   if (line.per_pack !== null) return 'pack';
   if (line.cartons !== null && Math.abs(line.cartons - line.qty) < SHORT_EPSILON) return 'same';
-  return 'two';
+  return 'pack';
 }
 
 // ── The draft ─────────────────────────────────────────────────────────────
@@ -500,8 +507,9 @@ export function remainingLines(lines: FormLine[], draft: V3Draft, today: string)
 /**
  * The package stepper / field: 'same' → the quantity follows (blank = 0);
  * 'pack' → the units total follows when it still equalled packages × per
- * pack (else the worker typed a total, which stays); 'two' → packages alone.
- * Every step-1 edit marks the line edited.
+ * pack (else the worker typed a total, which stays; with no per_pack it
+ * always stays); 'kg' → packages alone. Every step-1 edit marks the line
+ * edited.
  */
 export function setCartonsPatch(line: FormLine, d: V3LineDraft, value: string): Partial<V3LineDraft> {
   const v = digitsOf(value).slice(0, 6);

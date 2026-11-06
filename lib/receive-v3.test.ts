@@ -85,19 +85,23 @@ function draftWith(pallets: number, patches: Record<number, Partial<V3LineDraft>
 const D = (draft: V3Draft, i: number) => draft.lines[i - 1];
 
 describe('lineMode (spec 7.1, the Bnei Darom fixture)', () => {
-  it('same / pack / two per line', () => {
-    const byMode = { same: [] as number[], pack: [] as number[], two: [] as number[] };
+  it("same / pack / kg per line (the prototype's three modes only)", () => {
+    const byMode = { same: [] as number[], pack: [] as number[], kg: [] as number[] };
     for (const l of LINES) byMode[lineMode(l)].push(l.index);
     expect(byMode).toEqual({
       same: [1, 2, 4, 6, 10, 11, 12, 16],
       pack: [3, 7, 8, 9, 13, 14, 15],
-      two: [5, 17, 18],
+      kg: [5, 17, 18],
     });
   });
 
-  it('a counted line whose packages are not its units and no per_pack is two [INFERRED]', () => {
-    expect(lineMode({ ...L(1), cartons: 2, qty: 7 })).toBe('two');
-    expect(lineMode({ ...L(1), cartons: null })).toBe('two');
+  it('a counted line whose packages are not its units and no per_pack: one stepper (pack layout), never two fields [INFERRED]', () => {
+    expect(lineMode({ ...L(1), cartons: 2, qty: 7 })).toBe('pack');
+    expect(lineMode({ ...L(1), cartons: null })).toBe('pack');
+    // The stepper changes the packages only: the 7 units stay (no per_pack to derive them from).
+    const line = { ...L(1), cartons: 2, qty: 7 };
+    const d = { ...D(draftWith(1), 1), qty: '7', cartons: '2' };
+    expect(setCartonsPatch(line, d, '3')).toEqual({ cartons: '3', edited: true });
   });
 });
 
@@ -303,7 +307,7 @@ describe('step 1 edits (spec 7.2)', () => {
     expect(setCartonsPatch(L(7), d, '4')).toEqual({ cartons: '4', edited: true });
   });
 
-  it('two: packages alone', () => {
+  it('kg: packages alone', () => {
     const d = D(draftWith(1), 5);
     expect(setCartonsPatch(L(5), d, '19')).toEqual({ cartons: '19', edited: true });
   });

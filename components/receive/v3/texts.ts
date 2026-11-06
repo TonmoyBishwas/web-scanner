@@ -71,7 +71,7 @@ export function valuesText(line: FormLine, d: V3LineDraft, lang: Lang, tr: Tr): 
   const qtyU = `${I(d.qty)} ${line.unit_label}`;
   let out: string;
   if (m === 'same') out = pk || qtyU;
-  else if (m === 'two') out = [qtyU, pk].filter(Boolean).join(' · ');
+  else if (m === 'kg') out = [qtyU, pk].filter(Boolean).join(' · ');
   else {
     const q = num(d.qty) ?? 0;
     const c = num(d.cartons) ?? 0;

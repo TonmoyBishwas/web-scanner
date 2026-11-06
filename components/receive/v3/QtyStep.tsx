@@ -3,7 +3,7 @@
 /**
  * Receive form v3, rubric 1 "אריזה וכמות" (states 13–16): one layout per line
  * mode — `same` (one packages stepper), `pack` (packages + the units total
- * as a link that turns into a field), `two` (quantity/kg + packages) — then
+ * as a link that turns into a field), `kg` (weight + packages) — then
  * the info row: short by …, the reason chips or the chosen reason, and
  * "כמו בתעודה" when anything differs from the note.
  */
@@ -133,7 +133,7 @@ export function QtyStep(p: QtyStepProps) {
 
   return (
     <div data-group="1-quantity" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {mode !== 'two' ? (
+      {mode !== 'kg' ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {stepper}
           {pkgButton}

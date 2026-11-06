@@ -51,7 +51,7 @@ const L: FormLine[] = [
   { index: 1, code: '92028', name_he: 'קסיבשאב גמבה קוביות פח 9 ליטר בד"ץ', name_en: 'Roasted Pepper Cubes 9L tin', qty: 7, unit: 'units', unit_label: 'יחידות', weighed: false, cartons: 7, packaging: 'can', per_pack: null, inner: null, needs_expiry: true },
   // pack: 1 carton × 3 gallons
   { index: 3, code: '92030', name_he: 'קסיבשאג חומץ 5% מכוהל בני דרום גלון בד"ץ', name_en: 'Vinegar 5% Bnei Darom gallon', qty: 3, unit: 'units', unit_label: 'יחידות', weighed: false, cartons: 1, packaging: 'carton', per_pack: 3, inner: 'gallon', needs_expiry: true },
-  // two: weighed kg + sacks
+  // kg: weighed kg + sacks
   { index: 5, code: '92032', name_he: 'סוכר לבן 1 ק"ג', name_en: 'White sugar', qty: 20, unit: 'kg', unit_label: 'ק"ג', weighed: true, cartons: 20, packaging: 'sack', per_pack: null, inner: null, needs_expiry: true },
   // same: buckets
   { index: 4, code: '340113', name_he: 'מיונז 5 ק"ג תלמה', name_en: 'Mayonnaise 5kg', qty: 3, unit: 'units', unit_label: 'יחידות', weighed: false, cartons: 3, packaging: 'bucket', per_pack: null, inner: null, needs_expiry: true },
@@ -392,7 +392,7 @@ describe('list', () => {
     expect(html).toContain('3 יחידות');
   });
 
-  it('open card, two mode (weighed): kg field with the decimal keyboard + packages', () => {
+  it('open card, kg mode (weighed): kg field with the decimal keyboard + packages', () => {
     const html = card(5, draftWith(), API);
     const kg = html.match(/<input[^>]*aria-label="משקל \(ק"ג\)"[^>]*>/)?.[0] ?? '';
     expect(kg).toContain('inputMode="decimal"');
