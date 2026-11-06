@@ -34,6 +34,9 @@ const IMPERATIVE_ALLOWED: Record<string, string> = {
   // Units-carton save button: Mevaser chose the singular "הוסף" himself (27/10).
   'carton.unitsSave': 'הוסף',
   'carton.unitsSaveOne': 'הוסף',
+  // Receive form v3 (flag receive_form_v3, off): verbatim from Mevaser's own Claude Design
+  // prototype (06/11, "ערוך" next to the loose summary); listed for him to confirm.
+  'receive.v3.edit': 'ערוך',
 };
 
 // Mevaser 21/10, rule 3: no sentence dash (— / –, or a spaced " - "); a period
@@ -52,6 +55,13 @@ const OFFICE_ONLY_PREFIXES = ['receipts.']; // /priority/receipts, the owner's b
 // new worker text with one of the words fails here.
 const PRIORITY_WORDS_PENDING = new Set([
   'errors.lockFailed', // קבלת נעילה = acquiring a lock, not a receipt
+  // Receive form v3 status screen (flag receive_form_v3, off): Mevaser's own design shows the
+  // worker the Priority step (06/11 prototype). Only an ERP tenant renders these keys.
+  'receive.v3.erp.stepSending',
+  'receive.v3.erp.stepReceived',
+  'receive.v3.erp.partial',
+  'receive.v3.erp.timeout',
+  'receive.v3.erp.failed',
 ]);
 
 // Mevaser 21/10, sweep reply A.5: no system or tool name in any user text
