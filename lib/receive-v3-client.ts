@@ -12,7 +12,7 @@
  *   status submitted / processing          → in_flight
  *   status failed                          → failed
  *   401 / 404 / 410 (link_invalid, not_found, expired) → link_invalid
- *   422 invalid                            → error 'invalid'
+ *   422 invalid                            → error 'invalid' + the lines / pallets it names
  *   502 bot_unreachable / bot_not_configured → error 'bot'
  *   network error                          → error 'network'
  *   anything else                          → error 'generic' (+ the bot's message)
@@ -20,7 +20,7 @@
  */
 import { normalizeFormLines, type FormLine } from './receipt-form';
 import { getReceiptForm, postReceiptForm, type ReceiptFormAnswer } from './receipt-form-client';
-import type { AnswersV3, V3Erp, V3Outcome, V3StatusResponse } from './receive-v3';
+import { v3SaveProblems, type AnswersV3, type V3Erp, type V3Outcome, type V3SaveProblems, type V3StatusResponse } from './receive-v3';
 
 export interface V3SubmitMeta {
   /** The HTTP status; null on a network error. */
@@ -36,7 +36,9 @@ export type V3SubmitResult = (
   | { kind: 'in_flight' }
   | { kind: 'failed' }
   | { kind: 'link_invalid' }
-  | { kind: 'error'; reason: 'invalid' | 'bot' | 'network' | 'generic'; message: string | null }
+  | { kind: 'error'; reason: 'bot' | 'network' | 'generic'; message: string | null }
+  /** 422: the lines and form-level problems the server named (v3SaveProblems). */
+  | { kind: 'error'; reason: 'invalid'; message: null; problems: V3SaveProblems }
 ) &
   V3SubmitMeta;
 
@@ -70,7 +72,9 @@ export function readSubmitAnswer(http: number, data: unknown): V3SubmitResult {
   if (status === 'failed') return { kind: 'failed', ...meta };
   if ((error && LINK_ERRORS.has(error)) || http === 401 || http === 404 || http === 410) return { kind: 'link_invalid', ...meta };
   if (error === 'not_open') return { kind: 'not_open', status, closed_reason: strOrNull(o?.closed_reason), newer: newerOf(o?.newer), ...meta };
-  if (error === 'invalid' || http === 422) return { kind: 'error', reason: 'invalid', message: null, ...meta };
+  if (error === 'invalid' || http === 422) {
+    return { kind: 'error', reason: 'invalid', message: null, problems: v3SaveProblems(o?.errors, o?.v3_errors), ...meta };
+  }
   if (error === 'bot_unreachable' || error === 'bot_not_configured') return { kind: 'error', reason: 'bot', message: null, ...meta };
   const message = typeof o?.message === 'string' && o.message.trim() ? o.message.trim() : null;
   return { kind: 'error', reason: 'generic', message, ...meta };

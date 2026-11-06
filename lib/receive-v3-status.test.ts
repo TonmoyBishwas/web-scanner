@@ -109,6 +109,15 @@ describe('readSubmitAnswer (spec 8.1)', () => {
   });
   it('errors: invalid, bot, the bot\'s message, generic', () => {
     expect(readSubmitAnswer(422, { error: 'invalid' })).toMatchObject({ kind: 'error', reason: 'invalid', message: null });
+    // The 422 names the lines (validateAnswers `errors`, validateV3 `v3_errors`) and the pallet problems.
+    expect(
+      readSubmitAnswer(422, {
+        ok: false,
+        error: 'invalid',
+        errors: { ok: false, lines: { 4: ['expiry_missing'] }, extras: {}, form: [] },
+        v3_errors: { ok: false, lines: { 2: ['split_sum'], 4: ['pallet_missing'] }, form: ['nothing_to_receive'] },
+      }),
+    ).toMatchObject({ kind: 'error', reason: 'invalid', problems: { ok: false, lines: [2, 4], pallets: true, other: false } });
     expect(readSubmitAnswer(502, { error: 'bot_unreachable', status: 'open' })).toMatchObject({ kind: 'error', reason: 'bot' });
     expect(readSubmitAnswer(502, { error: 'bot_not_configured' })).toMatchObject({ kind: 'error', reason: 'bot' });
     expect(readSubmitAnswer(500, { error: 'page_pending', message: ' wait ', status: 'open' })).toMatchObject({ kind: 'error', reason: 'generic', message: 'wait' });

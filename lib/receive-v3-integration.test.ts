@@ -35,7 +35,7 @@ describe('legacyToV3Draft (flag switched on under today\'s form)', () => {
     const legacy: FormDraft = initialDraft(LINES);
     legacy.pallets = '3';
     legacy.lines[0] = { ...legacy.lines[0], expiry: '2027-05-12' };
-    legacy.lines[1] = { ...legacy.lines[1], qty: '2', gap: 'other', gapNote: 'נשבר' };
+    legacy.lines[1] = { ...legacy.lines[1], qty: '2', cartons: '2', gap: 'other', gapNote: 'נשבר' };
     legacy.lines[2] = { ...legacy.lines[2], noExpiry: true };
     legacy.extras = [{ key: 'x1', name: 'שמן', quantity: '2', unit: 'units' }];
     const v3 = legacyToV3Draft(LINES, legacy);
@@ -57,6 +57,18 @@ describe('legacyToV3Draft (flag switched on under today\'s form)', () => {
       })),
     });
     expect(legacyKeys(after)).toEqual(legacyKeys(before as typeof after));
+  });
+
+  it("a 'same' line typed apart in the classic form (qty ≠ packages) carries its quantity as the package count", () => {
+    // Line 2: 8 cartons = 8 on the note ('same': the stepper is both). Classic: qty 2, cartons left at 8.
+    const legacy: FormDraft = initialDraft(LINES);
+    legacy.lines[1] = { ...legacy.lines[1], qty: '2', gap: 'will' };
+    const v3 = legacyToV3Draft(LINES, legacy);
+    expect(v3.lines[1]).toMatchObject({ qty: '2', cartons: '2', edited: true });
+    // A per-pack line keeps its own package count.
+    const pack = initialDraft(LINES);
+    pack.lines[6] = { ...pack.lines[6], qty: '12' };
+    expect(legacyToV3Draft(LINES, pack).lines[6]).toMatchObject({ qty: '12', cartons: pack.lines[6].cartons });
   });
 
   it('pallets over the bot\'s 50 are capped; junk pallets start at 0', () => {

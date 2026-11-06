@@ -20,6 +20,7 @@ import type { ReceiveEventName } from '@/lib/receive-trace';
 import {
   V3,
   addSplitRowPatch,
+  checkV3BeforeSend,
   dottedToIso,
   expState,
   expandDate,
@@ -46,6 +47,7 @@ import {
   type V3LineDraft,
   type V3LineStatus,
   type V3NoticeKind,
+  type V3SaveProblems,
 } from '@/lib/receive-v3';
 import { fetchV3Status, pollFormV3, submitV3, type V3SubmitResult } from '@/lib/receive-v3-client';
 import { BottomBar } from './BottomBar';
@@ -139,6 +141,13 @@ function later(fn: () => void): void {
   window.setTimeout(fn, 60);
 }
 
+/** Lines not ready (remainingLines) plus the lines a save check refused, in note order. */
+function remainingWith(lines: FormLine[], draft: V3Draft, today: string, flagged: ReadonlySet<number>): number[] {
+  if (!flagged.size) return remainingLines(lines, draft, today);
+  const rem = new Set(remainingLines(lines, draft, today));
+  return lines.filter((l) => rem.has(l.index) || flagged.has(l.index)).map((l) => l.index);
+}
+
 // ── The form ─────────────────────────────────────────────────────────────
 
 export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
@@ -154,12 +163,35 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
   const linesRef = useRef(lines);
   const revRef = useRef(rev);
 
+  /** Lines a save check refused (page or server 422): shown as "בדקו את השורה" until changed. */
+  const [flagged, setFlagged] = useState<ReadonlySet<number>>(() => new Set());
+  const flaggedRef = useRef(flagged);
+
   // The draft: every change goes through commit() so the ref is never behind.
   const [draft, setDraftState] = useState<V3Draft>(() => initialV3Draft(props.lines));
   const draftRef = useRef(draft);
   const commit = useCallback((next: V3Draft) => {
+    const prev = draftRef.current;
     draftRef.current = next;
     setDraftState(next);
+    // A refused line that changed (its values, its pallet, outside the pallet) or a new
+    // pallet count clears the mark; the page's own checks and the next save decide again.
+    if (flaggedRef.current.size) {
+      const before = new Map(prev.lines.map((l) => [l.index, l]));
+      const keep = new Set<number>();
+      if (prev.pallets === next.pallets) {
+        for (const l of next.lines) {
+          if (!flaggedRef.current.has(l.index)) continue;
+          const b = before.get(l.index);
+          const same = !!b && JSON.stringify({ ...b, ack: false }) === JSON.stringify({ ...l, ack: false });
+          if (same && prev.loose[l.index] === next.loose[l.index]) keep.add(l.index);
+        }
+      }
+      if (keep.size !== flaggedRef.current.size) {
+        flaggedRef.current = keep;
+        setFlagged(keep);
+      }
+    }
   }, []);
   const [restored, setRestored] = useState(false);
   const savedRef = useRef(false);
@@ -197,6 +229,7 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
     linesRef.current = lines;
     revRef.current = rev;
     openRef.current = open;
+    flaggedRef.current = flagged;
   });
 
   // ── Trace (never breaks the form) ──
@@ -222,11 +255,11 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
     const m = new Map<number, V3LineStatus>();
     for (const l of lines) {
       const d = byIndex.get(l.index);
-      if (d) m.set(l.index, lineStatusV3(l, d, draft, today));
+      if (d) m.set(l.index, flagged.has(l.index) ? 'fix' : lineStatusV3(l, d, draft, today));
     }
     return m;
-  }, [lines, byIndex, draft, today]);
-  const remaining = useMemo(() => remainingLines(lines, draft, today), [lines, draft, today]);
+  }, [lines, byIndex, draft, today, flagged]);
+  const remaining = useMemo(() => remainingWith(lines, draft, today, flagged), [lines, draft, today, flagged]);
   const looseCount = Object.keys(draft.loose).length;
   const looseOn = looseYes || looseCount > 0;
   const search = useMemo(() => searchV3(lines, query), [lines, query]);
@@ -616,7 +649,7 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
 
   // ── List actions ──
   const goFirstMissing = useCallback(() => {
-    const rem = remainingLines(linesRef.current, draftRef.current, today);
+    const rem = remainingWith(linesRef.current, draftRef.current, today, flaggedRef.current);
     if (!rem.length) return;
     setTab('need');
     setQuery('');
@@ -780,8 +813,38 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
   }, [initialView.kind, poll]);
 
   // ── Submit (8.1) ──
+  /**
+   * A save the checks refuse (on the page, or the server's 422): mark the
+   * lines it names and go back to the list. Only the pallet count wrong
+   * (0 pallets and nothing outside, or out of range) → the pallets sheet,
+   * which cannot be confirmed in that state. Approved texts only.
+   */
+  const refuse = useCallback(
+    (pb: V3SaveProblems) => {
+      const marks = new Set(pb.lines);
+      flaggedRef.current = marks;
+      setFlagged(marks);
+      setScreen('list');
+      setTab('need');
+      setQuery('');
+      setOpen(null);
+      openRef.current = null;
+      step('save_refused', { lines: pb.lines.length, pallets: pb.pallets, other: pb.other });
+      if (pb.pallets && !pb.lines.length) {
+        setError(null);
+        setSheet({ kind: 'pallets', snap: { pallets: draftRef.current.pallets, loose: { ...draftRef.current.loose }, looseYes } });
+        return;
+      }
+      setError({ text: tr('receive.errorInvalid'), retry: 'first' });
+    },
+    [looseYes, step, tr],
+  );
+
   const send = useCallback(async () => {
     if (sending.current) return;
+    // The server's own two checks first: a save it would refuse never leaves the page.
+    const pre = checkV3BeforeSend(linesRef.current, draftRef.current, today);
+    if (!pre.ok) return refuse(pre);
     sending.current = true;
     setError(null);
     setScreen('status');
@@ -840,13 +903,14 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
       case 'link_invalid':
         return showNotice('linkInvalid');
       case 'error': {
-        if (r.reason === 'invalid') return setError({ text: tr('receive.errorInvalid'), retry: 'first' });
+        if (r.reason === 'invalid') return refuse(r.problems.ok ? { ...r.problems, other: true, ok: false } : r.problems);
         if (r.reason === 'bot') return setError({ text: tr('receive.v3.errBot'), retry: 'send' });
         if (r.reason === 'network') return setError({ text: tr('receive.v3.errNetwork'), retry: 'send' });
-        return setError({ text: r.message ?? tr('receive.v3.errGeneric'), retry: 'send' });
+        // The server's own wording is never shown (text freeze): the prototype's generic error.
+        return setError({ text: tr('receive.v3.errGeneric'), retry: 'send' });
       }
     }
-  }, [applyLines, clearStoredDraft, exp, flow, formId, onNotOpen, showNotice, sig, step, today, tr]);
+  }, [applyLines, clearStoredDraft, exp, flow, formId, onNotOpen, refuse, showNotice, sig, step, today, tr]);
 
   const closeError = useCallback(() => {
     setError(null);
@@ -1272,6 +1336,7 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
         onPallets={setPallets}
         onToggleLoose={() => toggleLooseCheck('list')}
         onEditLoose={() => openLoose('list')}
+        canConfirm={draft.pallets > 0 || looseCount > 0}
         onConfirm={() => {
           if (draftRef.current.pallets > 0 || Object.keys(draftRef.current.loose).length > 0) setSheet(null);
         }}

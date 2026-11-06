@@ -34,6 +34,7 @@ import {
   lineFingerprint,
   parseDecimal,
   parseWholeOrBlank,
+  validateAnswers,
   type Answers,
   type ExtraDraft,
   type FormDraft,
@@ -777,6 +778,12 @@ export function legacyToV3Draft(lines: FormLine[], legacy: FormDraft): V3Draft {
         gapNote: o.gapNote,
       };
       const line = lineOf.get(b.index);
+      // A 'same' line's package count IS its quantity (the stepper drives both):
+      // the classic form typed them apart, so the quantity (what Priority gets) wins.
+      if (line && lineMode(line) === 'same') {
+        const q = parseDecimal(d.qty);
+        if (Number.isInteger(q) && q >= 0 && whole(d.cartons) !== q) d.cartons = String(q);
+      }
       return line && differsFromNote(line, d) ? { ...d, edited: true } : d;
     }),
     extras: legacy.extras.slice(0, MAX_EXTRAS),
@@ -854,6 +861,50 @@ export function validateV3(lines: FormLine[], answers: AnswersV3, today: string)
   }
   res.ok = res.form.length === 0 && Object.keys(res.lines).length === 0;
   return res;
+}
+
+/**
+ * What stops a save, from the 422 body's `errors` (validateAnswers) and
+ * `v3_errors` (validateV3), or from the same two checks run on the page:
+ * the line indexes to mark, whether the pallet count is the problem
+ * (pallets_invalid / pallets_range / nothing_to_receive: the pallets sheet
+ * fixes it), and whether anything else is (lines_mismatch, extras).
+ */
+export interface V3SaveProblems {
+  ok: boolean;
+  lines: number[];
+  pallets: boolean;
+  other: boolean;
+}
+
+const PALLET_FORM_ERRORS = new Set(['pallets_invalid', 'pallets_range', 'nothing_to_receive']);
+
+export function v3SaveProblems(errors: unknown, v3Errors: unknown): V3SaveProblems {
+  const lines = new Set<number>();
+  let pallets = false;
+  let other = false;
+  for (const e of [errors, v3Errors]) {
+    if (!e || typeof e !== 'object' || Array.isArray(e)) continue;
+    const o = e as { lines?: unknown; form?: unknown; extras?: unknown };
+    if (o.lines && typeof o.lines === 'object' && !Array.isArray(o.lines)) {
+      for (const k of Object.keys(o.lines)) if (/^\d{1,6}$/.test(k)) lines.add(Number(k));
+    }
+    if (Array.isArray(o.form)) {
+      for (const f of o.form) {
+        if (PALLET_FORM_ERRORS.has(String(f))) pallets = true;
+        else other = true;
+      }
+    }
+    if (o.extras && typeof o.extras === 'object' && Object.keys(o.extras).length) other = true;
+  }
+  const out = [...lines].sort((a, b) => a - b);
+  return { ok: !out.length && !pallets && !other, lines: out, pallets, other };
+}
+
+/** The server's two checks, run on the page before sending, so a save the server would refuse never leaves. */
+export function checkV3BeforeSend(lines: FormLine[], draft: V3Draft, today: string): V3SaveProblems {
+  const answers = v3DraftToAnswers(lines, draft, today);
+  return v3SaveProblems(validateAnswers(lines, answers, today), validateV3(lines, answers, today));
 }
 
 /** A v3 body (`answers.form_version === 3`)? */

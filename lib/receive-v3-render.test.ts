@@ -462,6 +462,10 @@ describe('overlays', () => {
     expect(html).toContain('כמה משטחים?');
     expect(html).toContain('אישור');
     expect(html.match(/<input[^>]*>/)?.[0]).toContain('inputMode="numeric"');
+    expect(html.match(/<button[^>]*>אישור<\/button>/)?.[0]).not.toContain('disabled');
+    // 0 pallets and nothing outside the pallet: אישור cannot be tapped (nothing to receive), as step 1.
+    const none = render(PalletsSheet, { pallets: 0, looseOn: false, looseCount: 0, canConfirm: false, tr, onPallets: noop, onToggleLoose: noop, onEditLoose: noop, onConfirm: noop, onCancel: noop });
+    expect(none.match(/<button[^>]*>אישור<\/button>/)?.[0]).toContain('disabled');
   });
 
   it('pallet list sheet', () => {

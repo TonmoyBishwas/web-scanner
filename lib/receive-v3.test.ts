@@ -3,6 +3,7 @@ import { normalizeFormLines, type FormLine } from './receipt-form';
 import {
   addSplitRowPatch,
   balanceSplit,
+  checkV3BeforeSend,
   dateCheck,
   differsFromNote,
   dottedToIso,
@@ -32,6 +33,7 @@ import {
   splitState,
   startSplitPatch,
   typeDate,
+  v3SaveProblems,
   v3DraftStorageKey,
   type V3Draft,
   type V3LineDraft,
@@ -495,5 +497,32 @@ describe('searchV3 (the prototype filter)', () => {
   it('no typo matching and no line numbers (the shared form search has both)', () => {
     expect(searchV3(LINES, 'פרינר').lines).toEqual([]); // the line says פריניר
     expect(searchV3(LINES, '4').lines.map((l) => l.index)).toEqual(LINES.filter((l) => /4/.test(l.name_he + ' ' + l.code)).map((l) => l.index));
+  });
+});
+
+describe('checkV3BeforeSend / v3SaveProblems (the server checks, run on the page)', () => {
+  const allDated = (pallets: number, extra: Record<number, Partial<V3LineDraft>> = {}, loose: Record<number, number> = {}) => {
+    const patches: Record<number, Partial<V3LineDraft>> = {};
+    for (const l of LINES) patches[l.index] = { expiry: '12.05.2027', ack: true, ...(extra[l.index] ?? {}) };
+    return draftWith(pallets, patches, loose);
+  };
+
+  it('a complete form passes', () => {
+    expect(checkV3BeforeSend(LINES, allDated(1), TODAY)).toEqual({ ok: true, lines: [], pallets: false, other: false });
+  });
+
+  it('0 pallets and nothing outside: the pallet count is the problem, no line', () => {
+    const d = allDated(0, Object.fromEntries(LINES.map((l) => [l.index, { qty: '0', cartons: '0', gap: 'wont' as const }])));
+    expect(checkV3BeforeSend(LINES, d, TODAY)).toMatchObject({ ok: false, lines: [], pallets: true });
+  });
+
+  it('a split that does not add up names its line', () => {
+    const d = allDated(1, { 7: { split: [{ qty: '10', date: '12.05.2027' }, { qty: '2', date: '20.06.2027' }] } });
+    expect(checkV3BeforeSend(LINES, d, TODAY)).toMatchObject({ ok: false, lines: [7], pallets: false });
+  });
+
+  it('reads junk safely', () => {
+    expect(v3SaveProblems(null, undefined)).toEqual({ ok: true, lines: [], pallets: false, other: false });
+    expect(v3SaveProblems({ lines: { x: 1, 3: [] }, form: ['lines_mismatch'] }, 'junk')).toEqual({ ok: false, lines: [3], pallets: false, other: true });
   });
 });

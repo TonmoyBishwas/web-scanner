@@ -84,12 +84,15 @@ export function PalletsSheet({
   onPallets,
   onToggleLoose,
   onEditLoose,
+  canConfirm = true,
   onConfirm,
   onCancel,
 }: {
   pallets: number;
   looseOn: boolean;
   looseCount: number;
+  /** False with 0 pallets and nothing outside the pallet (nothing to receive), as step 1's button. */
+  canConfirm?: boolean;
   tr: Tr;
   onPallets: (n: number) => void;
   onToggleLoose: () => void;
@@ -121,7 +124,16 @@ export function PalletsSheet({
       <button
         type="button"
         onClick={onConfirm}
-        style={{ width: '100%', height: 56, border: 'none', borderRadius: 6, background: P.acc, color: P.accInk, font: font(600, 18) }}
+        disabled={!canConfirm}
+        style={{
+          width: '100%',
+          height: 56,
+          border: 'none',
+          borderRadius: 6,
+          background: canConfirm ? P.acc : P.surf,
+          color: canConfirm ? P.accInk : P.line2,
+          font: font(600, 18),
+        }}
       >
         {tr('receive.v3.confirmBtn')}
       </button>
