@@ -461,6 +461,29 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
     [closeCard, openCard],
   );
 
+  /**
+   * The prototype's maybeCollapse(): 1.4 s from now, close the open card if it
+   * is still that card, still ready, and the worker is not typing in a plain
+   * text field of the list (the gap note); a numeric field just loses focus.
+   */
+  const maybeCollapse = useCallback(() => {
+    const o = openRef.current;
+    if (o === null) return;
+    clearCollapse();
+    collapseTimer.current = window.setTimeout(() => {
+      collapseTimer.current = null;
+      if (openRef.current !== o) return;
+      const ln = linesRef.current.find((l) => l.index === o);
+      const dx = draftRef.current.lines.find((l) => l.index === o);
+      if (!ln || !dx || lineStatusV3(ln, dx, draftRef.current, today) !== 'ready') return;
+      const a = document.activeElement as HTMLInputElement | null;
+      if (a && a.tagName === 'INPUT' && !a.dataset.keyboard && a.type !== 'date' && listRef.current?.contains(a)) return;
+      a?.blur?.();
+      setKbOpen(false);
+      closeCard('card_auto_close');
+    }, V3.AUTO_COLLAPSE_MS);
+  }, [closeCard, today]);
+
   // Auto-collapse (1.4 s after the open card becomes ready) and step 3 reveal.
   const prevOpen = useRef<{ index: number; ready: boolean; expOk: boolean } | null>(null);
   useEffect(() => {
@@ -479,21 +502,8 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
     if (!prev.expOk && expOk) later(() => revealStep3(false));
     if (!ready) return clearCollapse();
     if (prev.ready) return;
-    clearCollapse();
-    const o = open;
-    collapseTimer.current = window.setTimeout(() => {
-      collapseTimer.current = null;
-      if (openRef.current !== o) return;
-      const ln = linesRef.current.find((l) => l.index === o);
-      const dx = draftRef.current.lines.find((l) => l.index === o);
-      if (!ln || !dx || lineStatusV3(ln, dx, draftRef.current, today) !== 'ready') return;
-      const a = document.activeElement as HTMLInputElement | null;
-      if (a && a.tagName === 'INPUT' && !a.dataset.keyboard && a.type !== 'date' && listRef.current?.contains(a)) return;
-      a?.blur?.();
-      setKbOpen(false);
-      closeCard('card_auto_close');
-    }, V3.AUTO_COLLAPSE_MS);
-  }, [open, draft, lines, byIndex, statuses, today, revealStep3, closeCard]);
+    maybeCollapse();
+  }, [open, draft, lines, byIndex, statuses, today, revealStep3, maybeCollapse]);
 
   useEffect(() => () => clearCollapse(), []);
 
@@ -945,7 +955,11 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
             },
             onGap: (g: Gap | null) => patchLine(o, { gap: g, edited: true }),
             onGapNote: (v: string) => patchLine(o, { gapNote: v.slice(0, 500) }),
-            onGapNoteBlur: () => undefined,
+            // As the prototype's gapNoteBlur: a line made complete by its typed reason closes 1.4 s after leaving the field.
+            onGapNoteBlur: () => {
+              const dx = draftRef.current.lines.find((l) => l.index === o);
+              if (dx && lineStatusV3(line, dx, draftRef.current, today) === 'ready') maybeCollapse();
+            },
             onDateType: (raw: string, caret: number | null) => patchLine(o, (x) => ({ expiry: typeDate(raw, x.expiry, caret) })),
             onDatePick: (dotted: string) => patchLine(o, { expiry: dotted, noExpiry: false }),
             onDateFocus: (e: FocusEvent<HTMLInputElement>) => {
