@@ -16,7 +16,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type ReactNode } from 'react';
 import { EXTRA_UNIT_LABELS, closedView, fingerprints, lineFingerprint, type ClosedReason, type ExtraUnit, type Gap, type LineDraft } from '@/lib/receipt-form';
 import type { FormLine } from '@/lib/receipt-form';
-import { searchLines } from '@/lib/receipt-form-search';
 import type { ReceiveEventName } from '@/lib/receive-trace';
 import {
   V3,
@@ -32,6 +31,7 @@ import {
   removeSplitRowPatch,
   resetToNotePatch,
   restoreV3Draft,
+  searchV3,
   serializeV3Draft,
   setCartonsPatch,
   setSplitQtyPatch,
@@ -235,7 +235,7 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
   const remaining = useMemo(() => remainingLines(lines, draft, today), [lines, draft, today]);
   const looseCount = Object.keys(draft.loose).length;
   const looseOn = looseYes || looseCount > 0;
-  const search = useMemo(() => searchLines(lines, query, { allNames: true }), [lines, query]);
+  const search = useMemo(() => searchV3(lines, query), [lines, query]);
 
   // ── Status flow + return to WhatsApp ──
   const bot = useBotReturn(boot.botWaNumber, (how) => step(how === 'redirect' ? 'redirect' : 'close_to_bot'));
@@ -322,7 +322,7 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
         rev,
         lines,
         query,
-        search: { active: search.active, fuzzy: search.fuzzy, lines: search.lines },
+        search: { active: search.active, fuzzy: false, lines: search.lines },
       });
     } catch {
       /* tracing only */

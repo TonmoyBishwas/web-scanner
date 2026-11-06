@@ -21,6 +21,7 @@ import {
   removeSplitRowPatch,
   resetToNotePatch,
   restoreV3Draft,
+  searchV3,
   serializeV3Draft,
   setCartonsPatch,
   setSplitQtyPatch,
@@ -478,5 +479,21 @@ describe('shortSupplierName (header row 1, step 1, status)', () => {
     expect(shortSupplierName('בע"מ')).toBe('בע"מ');
     expect(shortSupplierName('שיווק')).toBe('שיווק');
     expect(shortSupplierName('')).toBe('');
+  });
+});
+
+describe('searchV3 (the prototype filter)', () => {
+  it('every word a plain substring of a name or the code; quotes ignored; empty = all', () => {
+    expect(searchV3(LINES, '').active).toBe(false);
+    expect(searchV3(LINES, '   ').lines).toHaveLength(LINES.length);
+    expect(searchV3(LINES, 'מיץ').lines.map((l) => l.index)).toEqual([7, 8]);
+    expect(searchV3(LINES, 'מיץ ענבים').lines.map((l) => l.index)).toEqual([8]);
+    expect(searchV3(LINES, '92043').lines.map((l) => l.index)).toEqual([16]);
+    expect(searchV3(LINES, 'בדץ').lines).toHaveLength(LINES.length); // בד"ץ with the quote dropped
+  });
+
+  it('no typo matching and no line numbers (the shared form search has both)', () => {
+    expect(searchV3(LINES, 'פרינר').lines).toEqual([]); // the line says פריניר
+    expect(searchV3(LINES, '4').lines.map((l) => l.index)).toEqual(LINES.filter((l) => /4/.test(l.name_he + ' ' + l.code)).map((l) => l.index));
   });
 });

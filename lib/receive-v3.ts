@@ -585,6 +585,30 @@ export function shortSupplierName(full: string): string {
   return (mark + s).trim();
 }
 
+// ── Search (the list and the loose sub-screen) ────────────────────────────
+
+/** The prototype's norm(): quotes and geresh/gershayim out, lower case. */
+const searchNorm = (s: string | null | undefined) => (s ?? '').replace(/["'״׳]/g, '').toLowerCase();
+
+/**
+ * The prototype's filter, exactly: the query split on spaces, and every word
+ * a plain substring of the line's names (as on the note, as printed, the
+ * Priority name) or its code. No typo matching, no line numbers. An empty
+ * query = every line, `active` false.
+ */
+export function searchV3<T extends Pick<FormLine, 'code' | 'name_he' | 'name_en' | 'name_printed' | 'priority_name'>>(
+  lines: T[],
+  query: string,
+): { lines: T[]; active: boolean } {
+  const toks = searchNorm(query).trim().split(/\s+/).filter(Boolean);
+  if (!toks.length) return { lines, active: false };
+  const hit = (l: T) => {
+    const hs = [l.name_he, l.name_en, l.name_printed, l.priority_name].map(searchNorm).join(' ') + ' ' + (l.code ?? '');
+    return toks.every((t) => hs.includes(t));
+  };
+  return { lines: lines.filter(hit), active: true };
+}
+
 // ── Packaging words and the packaging list ────────────────────────────────
 
 /** The package word for n packages: singular for 1, plural otherwise; the generic word when the type is unknown. */

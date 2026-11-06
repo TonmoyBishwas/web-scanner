@@ -7,7 +7,7 @@
  */
 import type { CSSProperties } from 'react';
 import type { FormLine } from '@/lib/receipt-form';
-import { searchLines } from '@/lib/receipt-form-search';
+import { searchV3 } from '@/lib/receive-v3';
 import { CloseButton, V3Icon } from './icons';
 import { SearchField } from './ListHeader';
 import { BARE, P, font } from './tokens';
@@ -46,7 +46,7 @@ const stepBtn: CSSProperties = {
 
 export function LooseScreen(p: LooseScreenProps) {
   const { tr, lang } = p;
-  const found = searchLines(p.lines, p.query, { allNames: true });
+  const found = searchV3(p.lines, p.query);
   const count = Object.keys(p.loose).length;
   return (
     <div data-screen="loose" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
