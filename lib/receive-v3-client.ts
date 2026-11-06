@@ -19,6 +19,7 @@
  * Every result also carries `http` and `error` for the trace.
  */
 import { normalizeFormLines, type FormLine } from './receipt-form';
+import { getReceiptForm, postReceiptForm, type ReceiptFormAnswer } from './receipt-form-client';
 import type { AnswersV3, V3Erp, V3Outcome, V3StatusResponse } from './receive-v3';
 
 export interface V3SubmitMeta {
@@ -75,21 +76,15 @@ export function readSubmitAnswer(http: number, data: unknown): V3SubmitResult {
   return { kind: 'error', reason: 'generic', message, ...meta };
 }
 
-/** POST the answers (the bot is awaited server-side, up to 25 s). */
+/** POST the answers (the bot is awaited server-side, up to 25 s) — the same request as today's form. */
 export async function submitV3(o: { formId: string; exp: string; sig: string; rev: number; answers: AnswersV3 }): Promise<V3SubmitResult> {
-  let res: Response;
+  let a: ReceiptFormAnswer;
   try {
-    res = await fetch(`/api/receipt-form/${encodeURIComponent(o.formId)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ exp: o.exp, sig: o.sig, rev: o.rev, answers: o.answers }),
-      cache: 'no-store',
-    });
+    a = await postReceiptForm(o);
   } catch {
     return { kind: 'error', reason: 'network', message: null, http: null, error: 'network' };
   }
-  const data = await res.json().catch(() => null);
-  return readSubmitAnswer(res.status, data);
+  return readSubmitAnswer(a.status, a.data);
 }
 
 export interface V3PollResult {
@@ -98,6 +93,12 @@ export interface V3PollResult {
   lines: FormLine[];
   closed_reason: string | null;
   newer: { id: string; href: string } | null;
+  /**
+   * features.receive_form_v3 as the server sees it now: true / false, or
+   * null when the answer carries no `features` (then nothing is decided).
+   * The key is sent only when on, so a `features` without it = off.
+   */
+  v3: boolean | null;
 }
 
 /** The poll's answer (pure). Null for anything that is not a good answer. */
@@ -112,15 +113,15 @@ export function readPollAnswer(http: number, data: unknown): V3PollResult | null
     lines: normalizeFormLines(o.lines),
     closed_reason: strOrNull(o.closed_reason),
     newer: newerOf(o.newer),
+    v3: o.features && typeof o.features === 'object' && !Array.isArray(o.features) ? (o.features as Record<string, unknown>).receive_form_v3 === true : null,
   };
 }
 
 /** GET /api/receipt-form/{id}?exp&sig&rev (the 15 s poll); null on a bad link, a blip or offline. */
 export async function pollFormV3(o: { formId: string; exp: string; sig: string; rev: number }): Promise<V3PollResult | null> {
   try {
-    const q = new URLSearchParams({ exp: o.exp, sig: o.sig, rev: String(o.rev) });
-    const res = await fetch(`/api/receipt-form/${encodeURIComponent(o.formId)}?${q.toString()}`, { cache: 'no-store' });
-    return readPollAnswer(res.status, await res.json().catch(() => null));
+    const a = await getReceiptForm(o);
+    return readPollAnswer(a.status, a.data);
   } catch {
     return null;
   }

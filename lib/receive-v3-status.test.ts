@@ -119,8 +119,13 @@ describe('readSubmitAnswer (spec 8.1)', () => {
 describe('readPollAnswer / readStatusAnswer', () => {
   it('poll: a good answer, else null', () => {
     expect(readPollAnswer(200, { ok: true, status: 'open', rev: 2, lines: [], closed_reason: null, newer: null })).toEqual({
-      status: 'open', rev: 2, lines: [], closed_reason: null, newer: null,
+      status: 'open', rev: 2, lines: [], closed_reason: null, newer: null, v3: null,
     });
+    // features.receive_form_v3 is sent only when on: present → true, absent from a features object → false.
+    const open = { ok: true, status: 'open', rev: 2, lines: [] };
+    expect(readPollAnswer(200, { ...open, features: { receive_redesign: false, receive_form_v3: true } })?.v3).toBe(true);
+    expect(readPollAnswer(200, { ...open, features: { receive_redesign: false } })?.v3).toBe(false);
+    expect(readPollAnswer(200, { ...open, features: null })?.v3).toBeNull();
     expect(readPollAnswer(401, { ok: false })).toBeNull();
     expect(readPollAnswer(200, { ok: false })).toBeNull();
   });

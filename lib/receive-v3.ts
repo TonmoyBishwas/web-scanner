@@ -679,6 +679,43 @@ export function v3ToLegacyDraft(draft: V3Draft): FormDraft {
   };
 }
 
+/**
+ * Today's FormDraft as a v3 draft — when the flag is switched on while the
+ * classic form is open (the page reloads into v3 and restores this). Every
+ * typed value is kept: quantity, packages, packaging, the date (ISO → dotted),
+ * no-expiry, the reason and its note, the pallets (capped at 50) and the
+ * extras. What the classic form never asked starts empty: step 1 opens
+ * (stage 'pallets'), no pallet per line, nothing outside the pallet, no split.
+ */
+export function legacyToV3Draft(lines: FormLine[], legacy: FormDraft): V3Draft {
+  const base = initialV3Draft(lines);
+  const byIndex = new Map(legacy.lines.map((l) => [l.index, l]));
+  const p = (legacy.pallets ?? '').trim();
+  const pallets = /^\d{1,3}$/.test(p) ? Math.min(Number(p), V3.MAX_PALLETS) : 0;
+  const lineOf = new Map(lines.map((l) => [l.index, l]));
+  return {
+    ...base,
+    pallets,
+    lines: base.lines.map((b) => {
+      const o = byIndex.get(b.index);
+      if (!o) return b;
+      const d: V3LineDraft = {
+        ...b,
+        qty: o.qty,
+        cartons: o.cartons,
+        packaging: o.packaging,
+        expiry: isoToDotted(o.expiry),
+        noExpiry: o.noExpiry,
+        gap: o.gap,
+        gapNote: o.gapNote,
+      };
+      const line = lineOf.get(b.index);
+      return line && differsFromNote(line, d) ? { ...d, edited: true } : d;
+    }),
+    extras: legacy.extras.slice(0, MAX_EXTRAS),
+  };
+}
+
 // ── Server validation (POST, only for `form_version === 3` bodies) ────────
 
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
