@@ -4,7 +4,7 @@ import { verifyReceiptFormLink } from '@/lib/receipt-form-link';
 import { formRev, normalizeFormLines, parseAnswers, todayInJerusalem, validateAnswers } from '@/lib/receipt-form';
 import { readBotReply } from '@/lib/receipt-form-submit';
 import { formState, loadFormRow, logFormEvent, type FormRow } from '@/lib/receipt-form-server';
-import { receiveFormV3On, receiveRedesignOn } from '@/lib/scanner-flags';
+import { receiveFormV3OnForm, receiveRedesignOn } from '@/lib/scanner-flags';
 import { isV3Answers, validateV3 } from '@/lib/receive-v3';
 
 /**
@@ -104,7 +104,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     }
     const features: Record<string, boolean> = { receive_redesign: await receiveRedesignOn(row.chat_id).catch(() => false) };
     // Added only when on, so a flag-off answer is exactly today's.
-    if (await receiveFormV3On(row.chat_id, row.delivery_id).catch(() => false)) features.receive_form_v3 = true;
+    if (await receiveFormV3OnForm(row).catch(() => false)) features.receive_form_v3 = true;
     return reply(200, { ok: true, ...st, features });
   } catch (error) {
     console.error('[api/receipt-form] GET error:', id, error);

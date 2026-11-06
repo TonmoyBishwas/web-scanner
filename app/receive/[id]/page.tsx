@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { verifyReceiptFormLink } from '@/lib/receipt-form-link';
 import { closedView, type FormLanguage } from '@/lib/receipt-form';
 import { formState, loadFormRow, logFormEvent, replacedFormIds, type FormRow } from '@/lib/receipt-form-server';
-import { receiveFormV3On, receiveRedesignOn } from '@/lib/scanner-flags';
+import { receiveFormV3OnForm, receiveRedesignOn } from '@/lib/scanner-flags';
 import { loadV3Boot } from '@/lib/receive-v3-server';
 import type { ReceiveV3Boot, V3InitialView } from '@/lib/receive-v3';
 import { ReceiveFormV3 } from '@/components/receive/v3/ReceiveFormV3';
@@ -28,13 +28,15 @@ import { FormMoved, ReceiptForm } from './ReceiptForm';
  * row (page 'receive', token = form id).
  *
  * The v3 form (06/11, flag receive_form_v3 for the chat + the supplier VAT,
- * lib/scanner-flags.ts receiveFormV3On): when on, its extra data is loaded
- * (lib/receive-v3-server.ts loadV3Boot) and every state renders the v3
- * design — a done form its status screen, the other closed / in-flight /
- * failed / expired states its notices, an open form the v3 form (handed to
- * ReceiptForm as `v3`, never the 28/10 redesign). Off: exactly as before,
- * and none of those reads happen. A link that fails verification has no row
- * and no flag: always today's page.
+ * Hebrew forms only; lib/scanner-flags.ts receiveFormV3OnForm): when on, its
+ * extra data is loaded (lib/receive-v3-server.ts loadV3Boot) and every state
+ * renders the v3 design — a done form its status screen, the other closed /
+ * in-flight / failed / expired states its notices, an open form the v3 form
+ * (handed to ReceiptForm as `v3`, never the 28/10 redesign). Off: the page
+ * renders exactly as before and loadV3Boot's reads (note photos, tenant
+ * ERP) do not happen; deciding still reads the scanner_flags row (cached
+ * 30 s per instance) and, for a listed chat, the delivery's supplier VAT. A
+ * link that fails verification has no row and no flag: always today's page.
  */
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -139,8 +141,8 @@ export default async function ReceivePage({
   const st = await formState(row);
   const status = st.status;
   const self = `/receive/${id}?${new URLSearchParams({ exp, sig }).toString()}`;
-  // v3 (06/11): on only for a listed chat on a listed supplier; unreadable = off = today's page.
-  const v3: ReceiveV3Boot | null = (await receiveFormV3On(row.chat_id, row.delivery_id).catch(() => false))
+  // v3 (06/11): on only for a Hebrew form of a listed chat on a listed supplier; unreadable = off = today's page.
+  const v3: ReceiveV3Boot | null = (await receiveFormV3OnForm(row).catch(() => false))
     ? await loadV3Boot(row)
     : null;
   await logFormEvent(row, 'receive_open', {

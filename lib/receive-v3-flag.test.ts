@@ -266,6 +266,14 @@ describe('GET /api/receipt-form/{id}: features.receive_form_v3', () => {
     expect(j.features).toEqual({ receive_redesign: false, receive_form_v3: true });
   });
 
+  it('an English-language form keeps today\'s answer (the v3 English is not reviewed), without reading the flag row', async () => {
+    tables.receipt_forms.push(form({ chat_id: '999000000002', language: 'English' }));
+    const j = await (await get()).json();
+    expect(j.features).toEqual({ receive_redesign: false });
+    expect(await flags.receiveFormV3OnForm({ chat_id: '999000000002', delivery_id: 'dlv-bnei-darom', language: 'English' })).toBe(false);
+    expect(await flags.receiveFormV3OnForm({ chat_id: '999000000002', delivery_id: 'dlv-bnei-darom', language: 'Hebrew' })).toBe(true);
+  });
+
   it('a flag row that cannot be read (DB error) is off', async () => {
     // The real row is cached 30 s per instance, so a fresh reader stands in for the failed read.
     const fresh = flags.receiveFormV3Gate(

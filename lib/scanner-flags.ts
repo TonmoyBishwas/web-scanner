@@ -421,3 +421,17 @@ export function receiveFormV3Gate(
 export const receiveFormV3On = receiveFormV3Gate(receiveFormV3Row, receiptSupplierVat, () =>
   parseV3SupplierVats(process.env.RECEIVE_FORM_V3_SUPPLIER_VATS),
 );
+
+/**
+ * The v3 gate for one form: Hebrew forms only, then receiveFormV3On. The v3
+ * English texts are a translation Mevaser has not reviewed (text freeze), so
+ * an English-language form keeps today's page, and its flag row is not read.
+ */
+export async function receiveFormV3OnForm(form: {
+  chat_id: string | number | null | undefined;
+  delivery_id: string | null | undefined;
+  language: string | null | undefined;
+}): Promise<boolean> {
+  if (form.language === 'English') return false;
+  return receiveFormV3On(form.chat_id, form.delivery_id).catch(() => false);
+}

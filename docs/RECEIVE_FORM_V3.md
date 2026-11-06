@@ -8,11 +8,13 @@ is exactly as before.
 
 ## The flag
 
-v3 is on for a form only when **both** hold:
+v3 is on for a form only when **all** hold:
 
-1. `public.scanner_flags` row `flag = 'receive_form_v3'` is on for the form's chat (`enabled_all`,
+1. The form is in Hebrew (`receipt_forms.language` is not `English`). The v3 English texts are a
+   translation Mevaser has not reviewed (text freeze), so an English form keeps today's page.
+2. `public.scanner_flags` row `flag = 'receive_form_v3'` is on for the form's chat (`enabled_all`,
    or `receipt_forms.chat_id` in `chat_ids`). No row, a DB error or a chat not listed = off.
-2. The form's delivery supplier VAT (`deliveries.supplier_vat`) is listed in
+3. The form's delivery supplier VAT (`deliveries.supplier_vat`) is listed in
    `RECEIVE_FORM_V3_SUPPLIER_VATS`. Unset = `570052894` (Bnei Darom). `all` = any supplier.
 
 When both v3 and `receive_redesign` (28/10) are on, v3 wins. The page decides at load. After that:
@@ -31,8 +33,9 @@ When both v3 and `receive_redesign` (28/10) are on, v3 wins. The page decides at
 Caches: the flag row 30 s, a delivery's VAT 10 minutes, so a switch-on reaches an open classic form
 within about 45 s; a switch-off reaches the next page load within about 30 s.
 
-Code: `lib/scanner-flags.ts` (`receiveFormV3On`), read by `app/receive/[id]/page.tsx` and
-`GET /api/receipt-form/{id}` (`features.receive_form_v3: true`, a key added only when on).
+Code: `lib/scanner-flags.ts` (`receiveFormV3OnForm` → `receiveFormV3On`), read by
+`app/receive/[id]/page.tsx` and `GET /api/receipt-form/{id}` (`features.receive_form_v3: true`, a
+key added only when on).
 
 ## Env vars (scanner, Vercel Production; a change needs a redeploy)
 
@@ -68,7 +71,13 @@ form's delivery. Nothing is written.
 
 When the flag is on, the page also loads (read-only): the note photos (`deliveries` +
 `invoice_ocr_results` images on our own Supabase storage only), the tenant's ERP
-(`tenants.erp`; default Priority) and `BOT_WA_NUMBER`. Flag off: none of these reads happen.
+(`tenants.erp`; default Priority) and `BOT_WA_NUMBER`. Flag off: none of these reads happen, and
+the rendered page and API answers are unchanged. What does run with the flag off: deciding it reads
+the `scanner_flags` row on every page open and every 15 s form poll (cached 30 s per server
+instance) and, only for a listed chat on another supplier, `deliveries.supplier_vat` (a found VAT
+is cached 10 minutes); and the v3 code (form, CSS module, Rubik's `@font-face`, not preloaded)
+ships in the receive page's client bundle, unused. Nothing visible changes and Rubik is never
+downloaded.
 
 Both forms send the save and the poll through one helper, `lib/receipt-form-client.ts`
 (`postReceiptForm`, `getReceiptForm`), so v3's POST is byte for byte today's request
