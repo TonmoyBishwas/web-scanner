@@ -25,6 +25,7 @@
  * component and the API route.
  */
 import { validateCartonDates } from './date-validation';
+import type { AnswersV3, LineAnswerV3 } from './receive-v3';
 
 // ── Types (the receipt_forms row) ────────────────────────────────────────
 
@@ -404,12 +405,54 @@ function strOrNull(v: unknown): string | null | undefined {
 }
 
 /**
+ * The v3 form's optional per-line keys (lib/receive-v3.ts, flag
+ * receive_form_v3), shape-checked; undefined = a wrong type (the body is
+ * refused). Absent keys stay absent.
+ */
+function parseV3LineKeys(o: Record<string, unknown>): Partial<LineAnswerV3> | undefined {
+  const out: Partial<LineAnswerV3> = {};
+  if (o.pallet !== undefined) {
+    const p = o.pallet;
+    if (p !== null && p !== 'loose' && !(typeof p === 'number' && Number.isInteger(p))) return undefined;
+    out.pallet = p as number | 'loose' | null;
+  }
+  if (o.loose_qty !== undefined) {
+    const q = o.loose_qty;
+    if (q !== null && !(typeof q === 'number' && Number.isInteger(q))) return undefined;
+    out.loose_qty = q as number | null;
+  }
+  if (o.split_unit !== undefined) {
+    if (o.split_unit !== 'packages' && o.split_unit !== 'qty') return undefined;
+    out.split_unit = o.split_unit;
+  }
+  if (o.splits !== undefined) {
+    if (!Array.isArray(o.splits) || o.splits.length > 3) return undefined;
+    const rows: { qty: number; expiry_date: string }[] = [];
+    for (const s of o.splits) {
+      if (!s || typeof s !== 'object' || Array.isArray(s)) return undefined;
+      const r = s as Record<string, unknown>;
+      if (typeof r.qty !== 'number' || typeof r.expiry_date !== 'string') return undefined;
+      rows.push({ qty: r.qty, expiry_date: r.expiry_date });
+    }
+    out.splits = rows;
+  }
+  return out;
+}
+
+/**
  * Shape-check a request body's `answers`. Wrong TYPES are refused here
  * (null); wrong VALUES are left for `validateAnswers` to report per line.
+ *
+ * A v3 body (`form_version === 3`, flag receive_form_v3) also keeps its
+ * optional keys (per line pallet / loose_qty / split_unit / splits; at the
+ * top form_version and loose_lines), checked for type the same way. Any
+ * other body comes out exactly as before: those keys are dropped.
  */
 export function parseAnswers(raw: unknown): Answers | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const r = raw as Record<string, unknown>;
+  const v3 = r.form_version === 3;
+  if (v3 && r.loose_lines !== undefined && !(typeof r.loose_lines === 'number' && Number.isInteger(r.loose_lines))) return null;
   if (r.pallets !== null && r.pallets !== undefined && typeof r.pallets !== 'number') return null;
   if (!Array.isArray(r.lines) || r.lines.length > 500) return null;
   if (r.extras !== undefined && r.extras !== null && !Array.isArray(r.extras)) return null;
@@ -429,6 +472,8 @@ export function parseAnswers(raw: unknown): Answers | null {
     const gapNote = strOrNull(o.gap_note);
     if (packaging === undefined || expiry === undefined || gap === undefined || gapNote === undefined) return null;
     if (o.no_expiry !== undefined && typeof o.no_expiry !== 'boolean') return null;
+    const v3Keys = v3 ? parseV3LineKeys(o) : null;
+    if (v3Keys === undefined) return null;
     lines.push({
       index: o.index,
       received_qty: o.received_qty,
@@ -438,6 +483,7 @@ export function parseAnswers(raw: unknown): Answers | null {
       no_expiry: o.no_expiry === true,
       gap: gap as Gap | null,
       gap_note: gapNote,
+      ...v3Keys,
     });
   }
 
@@ -449,7 +495,14 @@ export function parseAnswers(raw: unknown): Answers | null {
     extras.push({ name: o.name.trim(), quantity: o.quantity, unit: o.unit as ExtraUnit });
   }
 
-  return { pallets: (r.pallets as number | null | undefined) ?? null, lines, extras };
+  const pallets = (r.pallets as number | null | undefined) ?? null;
+  if (!v3) return { pallets, lines, extras };
+  const looseLines =
+    typeof r.loose_lines === 'number'
+      ? r.loose_lines
+      : (lines as LineAnswerV3[]).filter((l) => l.loose_qty !== undefined && l.loose_qty !== null).length;
+  const parsed: AnswersV3 = { pallets, lines, extras, form_version: 3, loose_lines: looseLines };
+  return parsed;
 }
 
 // ── The DB row → safe shapes (the page) ──────────────────────────────────
