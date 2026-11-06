@@ -45,9 +45,10 @@ The POST body keeps today's keys with today's meaning, so the bot
 adds optional keys the bot ignores:
 
 - per line: `pallet` (1..pallets, `"loose"`, or null for nothing received / a partly loose line
-  with no pallet chosen), `loose_qty` (packages outside the pallet), `split_unit`
-  (`"packages"` | `"qty"`) and `splits` (2–3 rows `{qty, expiry_date}`); a split line's
-  `expiry_date` is its **earliest** split date;
+  with no pallet chosen), `loose_qty` (packages outside the pallet), `split_unit` (always
+  `"qty"`: the rows add up to the line's received quantity, units / kg, as the prototype's
+  splitState; the server still accepts `"packages"`) and `splits` (2–3 rows `{qty, expiry_date}`);
+  a split line's `expiry_date` is its **earliest** split date;
 - top level: `form_version: 3`, `loose_lines`.
 
 `parseAnswers` keeps these keys only when `form_version === 3`; any other body parses exactly as

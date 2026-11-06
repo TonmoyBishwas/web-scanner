@@ -126,12 +126,12 @@ describe('v3DraftToAnswers', () => {
     expect('loose_qty' in l).toBe(false);
   });
 
-  it('splits: rows as numbers + ISO, unit by mode, expiry_date = the earliest', () => {
+  it("splits: rows as numbers + ISO, always in the line's quantity, expiry_date = the earliest", () => {
     const a = v3DraftToAnswers(LINES, FIXTURES[4][1], TODAY);
     expect(a.lines.find((l) => l.index === 1)).toMatchObject({
       expiry_date: '2027-05-12',
       no_expiry: false,
-      split_unit: 'packages',
+      split_unit: 'qty',
       splits: [{ qty: 4, expiry_date: '2027-06-20' }, { qty: 3, expiry_date: '2027-05-12' }],
     });
     expect(a.lines.find((l) => l.index === 5)).toMatchObject({

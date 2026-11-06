@@ -113,7 +113,7 @@ export interface V3Draft {
 }
 
 export interface V3SplitState {
-  /** The basis the rows must add up to (packages, or the quantity for a 'two' line). */
+  /** The basis the rows must add up to: step 1's quantity (splitBasis). */
   total: number;
   sum: number;
   left: number;
@@ -329,12 +329,14 @@ export function dateCheck(value: string, today: string): 'ok' | 'invalid' | 'pas
 // ── Split by expiry ───────────────────────────────────────────────────────
 
 /**
- * What the split rows must add up to [DEFAULT 3]: packages for a 'pack' line
- * (its cartons), the quantity otherwise (= packages on a 'same' line, kg on
- * a weighed one).
+ * What the split rows must add up to: step 1's quantity in the line's own
+ * unit, for every mode — units on a per-pack line, kg on a weighed one, and
+ * on a 'same' line the quantity is the package count. As the prototype's
+ * splitState (`tot = num(l.qty)`): row 1 starts with all of it.
  */
 export function splitBasis(line: FormLine, d: V3LineDraft): number {
-  const n = lineMode(line) === 'pack' ? whole(d.cartons) ?? 0 : parseDecimal(d.qty);
+  void line;
+  const n = parseDecimal(d.qty);
   return Number.isFinite(n) ? n : 0;
 }
 
@@ -640,7 +642,8 @@ export function v3DraftToAnswers(lines: FormLine[], draft: V3Draft, today: strin
       looseLines += 1;
     }
     if (d.split && q > 0) {
-      a.split_unit = lineMode(line) === 'two' ? 'qty' : 'packages';
+      // The rows add up to the line's quantity (splitBasis), never to its packages.
+      a.split_unit = 'qty';
       a.splits = d.split.map((r) => ({ qty: parseDecimal(r.qty), expiry_date: typedIso(r.date) ?? '' }));
     }
     return a;

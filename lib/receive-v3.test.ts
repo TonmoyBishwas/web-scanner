@@ -322,54 +322,57 @@ describe('step 1 edits (spec 7.2)', () => {
 });
 
 describe('split by expiry (spec 7.4)', () => {
-  it('basis: packages for a pack line, the quantity otherwise', () => {
-    expect(splitBasis(L(7), D(draftWith(1), 7))).toBe(3);
+  it("basis: step 1's quantity for every mode (the prototype's splitState tot = qty)", () => {
+    expect(splitBasis(L(7), D(draftWith(1), 7))).toBe(18); // pack: 3 cartons × 6 = 18 units
+    expect(splitBasis(L(7), { ...D(draftWith(1), 7), qty: '17' })).toBe(17); // a typed total
     expect(splitBasis(L(4), D(draftWith(1), 4))).toBe(2);
     expect(splitBasis(L(5), D(draftWith(1), 5))).toBe(20);
   });
 
   it('start: the whole basis on the current date + an empty row, no expiry off', () => {
     const d = { ...D(draftWith(1), 7), expiry: '12.05.2027', noExpiry: true };
-    expect(startSplitPatch(L(7), d)).toEqual({ split: [{ qty: '3', date: '12.05.2027' }, { qty: '', date: '' }], noExpiry: false });
+    expect(startSplitPatch(L(7), d)).toEqual({ split: [{ qty: '18', date: '12.05.2027' }, { qty: '', date: '' }], noExpiry: false });
   });
 
   it('rows after the first re-balance row 1; row 1 does not', () => {
-    const d = { ...D(draftWith(1), 7), split: [{ qty: '3', date: '12.05.2027' }, { qty: '', date: '' }] };
-    const p = setSplitQtyPatch(L(7), d, 1, '1');
-    expect(p.split).toEqual([{ qty: '2', date: '12.05.2027' }, { qty: '1', date: '' }]);
+    const d = { ...D(draftWith(1), 7), split: [{ qty: '18', date: '12.05.2027' }, { qty: '', date: '' }] };
+    const p = setSplitQtyPatch(L(7), d, 1, '6');
+    expect(p.split).toEqual([{ qty: '12', date: '12.05.2027' }, { qty: '6', date: '' }]);
     const p2 = setSplitQtyPatch(L(7), { ...d, split: p.split! }, 0, '5');
-    expect(p2.split).toEqual([{ qty: '5', date: '12.05.2027' }, { qty: '1', date: '' }]);
+    expect(p2.split).toEqual([{ qty: '5', date: '12.05.2027' }, { qty: '6', date: '' }]);
     expect(balanceSplit([{ qty: '0', date: '' }, { qty: '5', date: '' }], 3)[0].qty).toBe('0');
   });
 
   it('state: left, adds up, over, missing, bad date', () => {
     const base = D(draftWith(1), 7);
-    let s = splitState(L(7), { ...base, split: [{ qty: '2', date: '12.05.2027' }, { qty: '', date: '' }] }, TODAY);
-    expect(s).toEqual({ total: 3, sum: 2, left: 1, over: false, missing: true, bad: null });
-    s = splitState(L(7), { ...base, split: [{ qty: '2', date: '12.05.2027' }, { qty: '1', date: '20.06.2027' }] }, TODAY);
-    expect(s).toEqual({ total: 3, sum: 3, left: 0, over: false, missing: false, bad: null });
-    s = splitState(L(7), { ...base, split: [{ qty: '3', date: '12.05.2027' }, { qty: '2', date: '20.06.2027' }] }, TODAY);
+    let s = splitState(L(7), { ...base, split: [{ qty: '12', date: '12.05.2027' }, { qty: '', date: '' }] }, TODAY);
+    expect(s).toEqual({ total: 18, sum: 12, left: 6, over: false, missing: true, bad: null });
+    s = splitState(L(7), { ...base, split: [{ qty: '12', date: '12.05.2027' }, { qty: '6', date: '20.06.2027' }] }, TODAY);
+    expect(s).toEqual({ total: 18, sum: 18, left: 0, over: false, missing: false, bad: null });
+    s = splitState(L(7), { ...base, split: [{ qty: '18', date: '12.05.2027' }, { qty: '2', date: '20.06.2027' }] }, TODAY);
     expect(s.over).toBe(true);
-    s = splitState(L(7), { ...base, split: [{ qty: '2', date: '12.05.2025' }, { qty: '1', date: '31.02.2027' }] }, TODAY);
+    s = splitState(L(7), { ...base, split: [{ qty: '12', date: '12.05.2025' }, { qty: '6', date: '31.02.2027' }] }, TODAY);
     expect(s.bad).toBe('past');
   });
 
   it('expState of a split: over → over, a bad date → its code, missing/left → partial, else ok', () => {
     const base = D(draftWith(1), 7);
-    expect(expState(L(7), { ...base, split: [{ qty: '3', date: '12.05.2027' }, { qty: '2', date: '20.06.2027' }] }, TODAY)).toBe('over');
-    expect(expState(L(7), { ...base, split: [{ qty: '2', date: '01.01.2045' }, { qty: '1', date: '20.06.2027' }] }, TODAY)).toBe('far');
-    expect(expState(L(7), { ...base, split: [{ qty: '2', date: '12.05.2027' }, { qty: '', date: '20.06.2027' }] }, TODAY)).toBe('partial');
-    expect(expState(L(7), { ...base, split: [{ qty: '2', date: '12.05.2027' }, { qty: '1', date: '20.06.2027' }] }, TODAY)).toBe('ok');
+    expect(expState(L(7), { ...base, split: [{ qty: '18', date: '12.05.2027' }, { qty: '2', date: '20.06.2027' }] }, TODAY)).toBe('over');
+    expect(expState(L(7), { ...base, split: [{ qty: '12', date: '01.01.2045' }, { qty: '6', date: '20.06.2027' }] }, TODAY)).toBe('far');
+    expect(expState(L(7), { ...base, split: [{ qty: '12', date: '12.05.2027' }, { qty: '', date: '20.06.2027' }] }, TODAY)).toBe('partial');
+    expect(expState(L(7), { ...base, split: [{ qty: '2', date: '12.05.2027' }, { qty: '1', date: '20.06.2027' }] }, TODAY)).toBe('partial'); // 3 of 18
+    expect(expState(L(7), { ...base, split: [{ qty: '12', date: '12.05.2027' }, { qty: '6', date: '20.06.2027' }] }, TODAY)).toBe('ok');
   });
 
   it('+ row holds what is left (max 3 rows); × to one row ends the split with its date', () => {
-    const d = { ...D(draftWith(1), 9), split: [{ qty: '10', date: '12.05.2027' }, { qty: '1', date: '' }] };
+    // Line 9: 13 cartons × 12 = 156 units; the rows count units.
+    const d = { ...D(draftWith(1), 9), split: [{ qty: '100', date: '12.05.2027' }, { qty: '6', date: '' }] };
     const p = addSplitRowPatch(L(9), d, TODAY);
-    expect(p.split).toEqual([...d.split, { qty: '2', date: '' }]);
+    expect(p.split).toEqual([...d.split, { qty: '50', date: '' }]);
     expect(addSplitRowPatch(L(9), { ...d, split: p.split! }, TODAY)).toEqual({});
     expect(removeSplitRowPatch(L(9), { ...d, split: p.split! }, 1).split).toEqual([
-      { qty: '11', date: '12.05.2027' },
-      { qty: '2', date: '' },
+      { qty: '106', date: '12.05.2027' },
+      { qty: '50', date: '' },
     ]);
     expect(removeSplitRowPatch(L(9), d, 1)).toEqual({ split: null, expiry: '12.05.2027' });
   });

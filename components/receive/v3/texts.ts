@@ -48,9 +48,9 @@ export function amountText(line: FormLine, d: V3LineDraft, n: number, lang: Lang
   return lineMode(line) === 'same' ? pkgText(fmtQty(n), d.packaging, lang) : `${I(fmtQty(n))} ${line.unit_label}`;
 }
 
-/** The split's amount: packages for same / per-pack lines (DEFAULT 3), else the note's unit. */
+/** The split's amount, as the prototype's amt(): the package word on a "same" line, else the note's unit. */
 export function splitAmountText(line: FormLine, d: V3LineDraft, n: number, lang: Lang): string {
-  return lineMode(line) === 'two' ? `${I(fmtQty(n))} ${line.unit_label}` : pkgText(fmtQty(n), d.packaging, lang);
+  return amountText(line, d, n, lang);
 }
 
 export const GAP_KEY: Record<Gap, TranslationKey> = {
