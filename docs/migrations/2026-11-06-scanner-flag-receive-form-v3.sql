@@ -42,8 +42,11 @@ on conflict (flag) do nothing;
 -- Every supplier: set RECEIVE_FORM_V3_SUPPLIER_VATS=all on the scanner's
 -- Vercel project (Production) and redeploy (an env change needs a redeploy).
 --
--- Roll back (everyone back on today's form; a page already open keeps the
--- design it loaded with until it is reloaded):
+-- Roll back (everyone back on today's form). A v3 page already open stays on
+-- v3 until it is reloaded (its saves still go through: the POST takes v3
+-- bodies whatever the flag says); every page opened or reloaded from about
+-- 30 s after the update shows today's form. (A classic page open while the
+-- flag was on may have moved into v3 by then; it too returns on reload.)
 --   update public.scanner_flags set enabled_all = false, chat_ids = '{}', updated_at = now() where flag = 'receive_form_v3';
 --
 -- (A running server instance caches the row for 30 s, and a delivery's

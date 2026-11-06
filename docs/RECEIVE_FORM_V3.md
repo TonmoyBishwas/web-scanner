@@ -15,18 +15,21 @@ v3 is on for a form only when **both** hold:
 2. The form's delivery supplier VAT (`deliveries.supplier_vat`) is listed in
    `RECEIVE_FORM_V3_SUPPLIER_VATS`. Unset = `570052894` (Bnei Darom). `all` = any supplier.
 
-When both v3 and `receive_redesign` (28/10) are on, v3 wins. The page decides at load, then the
-open form follows the flag through its 15 s poll, the way it follows `receive_redesign`, and never
-while the worker is typing (it waits for the next poll):
+When both v3 and `receive_redesign` (28/10) are on, v3 wins. The page decides at load. After that:
 
-- switched **off** under v3: today's form takes over with the v3 draft (`v3ToLegacyDraft`); the
-  v3-only answers (pallet per line, outside the pallet, splits) are dropped;
-- switched **on** under today's form: v3 takes over with the classic draft (`legacyToV3Draft`,
-  step 1 first). A page that loaded with the flag off has no v3 data, so it reloads once (at most
-  once per form per 10 minutes, so a server still saying "off" cannot loop it).
+- switched **on** under today's form: the 15 s poll takes it into v3 with the classic draft
+  (`legacyToV3Draft`, step 1 first), never while the worker is typing. A page that loaded with the
+  flag off has no v3 data, so it reloads once (at most once per form per 10 minutes, so a server
+  still saying "off" cannot loop it);
+- switched **off** under v3: an open v3 form **stays on v3** until it is reloaded. A poll without
+  the key is not proof the flag is off (a flag-row read error is cached as off for 30 s, a failed
+  VAT read is not cached at all, and another server instance can still hold the old row), and
+  flipping on such a blip lost the pallet per line, the splits and the step back to step 1. An open
+  v3 form still saves: the POST takes v3 bodies whatever the flag says. Every new page load (and
+  every reload) follows the flag.
 
-Caches: the flag row 30 s, a delivery's VAT 10 minutes, so a flip reaches an open form within
-about 45 s.
+Caches: the flag row 30 s, a delivery's VAT 10 minutes, so a switch-on reaches an open classic form
+within about 45 s; a switch-off reaches the next page load within about 30 s.
 
 Code: `lib/scanner-flags.ts` (`receiveFormV3On`), read by `app/receive/[id]/page.tsx` and
 `GET /api/receipt-form/{id}` (`features.receive_form_v3: true`, a key added only when on).

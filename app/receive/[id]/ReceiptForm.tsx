@@ -1706,7 +1706,6 @@ function V3Host({
   lines,
   previousFormIds,
   boot,
-  onV3Off,
 }: {
   formId: string;
   exp: string;
@@ -1716,7 +1715,6 @@ function V3Host({
   lines: FormLine[];
   previousFormIds: string[];
   boot: ReceiveV3Boot;
-  onV3Off: (draft: V3Draft, state: { lines: FormLine[]; rev: number }) => void;
 }) {
   const [seen, setSeen] = useState<{ draft: FormDraft; meta: V3DraftMeta }>(() => ({
     draft: v3ToLegacyDraft(initialV3Draft(lines)),
@@ -1752,7 +1750,6 @@ function V3Host({
       initialView={V3_FORM_VIEW}
       trace={rt}
       onDraftChange={onDraftChange}
-      onV3Off={onV3Off}
     />
   );
 }
@@ -1762,12 +1759,18 @@ function V3Host({
  * this chat + supplier) renders the v3 design and wins over `redesign`;
  * without it, today's form exactly as before.
  *
- * The flag is followed live through the 15 s poll, as the 28/10 redesign
- * is, never while the worker is typing (each form waits for the next poll):
- * - off under v3 → today's form, the v3 draft carried over (v3ToLegacyDraft);
- * - on under today's form → into v3 with the draft carried over
- *   (legacyToV3Draft): in place when this page has v3's data, else one
- *   reload (the server renders v3 and it restores the draft).
+ * Switched ON while today's form is open, the 15 s poll takes the form into
+ * v3 with its draft (legacyToV3Draft), never while the worker is typing: in
+ * place when this page has v3's data, else one guarded reload (the server
+ * renders v3 and it restores the draft).
+ *
+ * Switched OFF while v3 is open, the form stays on v3 until the page is
+ * reloaded: an off poll is not proof (a flag-row read error, an uncached
+ * VAT read failing, or another server instance still holding the old row
+ * all drop the key), and flipping on such a blip lost the per-line pallets,
+ * the splits and the step back to step 1. An open v3 form still saves: the
+ * POST takes v3 bodies whatever the flag says. A reload (or the next link)
+ * decides.
  */
 export function ReceiptForm({ v3 = null, ...props }: ClassicProps & { v3?: ReceiveV3Boot | null }) {
   const { formId } = props;
@@ -1776,19 +1779,6 @@ export function ReceiptForm({ v3 = null, ...props }: ClassicProps & { v3?: Recei
   const [live, setLive] = useState<{ lines: FormLine[]; rev: number } | null>(null);
   const lines = live?.lines ?? props.lines;
   const header = useMemo(() => (live ? { ...props.header, rev: live.rev } : props.header), [live, props.header]);
-
-  const toClassic = useCallback(
-    (draft: V3Draft, state: { lines: FormLine[]; rev: number }) => {
-      try {
-        window.localStorage.setItem(draftStorageKey(formId), serializeDraft(v3ToLegacyDraft(draft), state.lines, state.rev));
-      } catch {
-        /* storage blocked: today's form starts from the note */
-      }
-      setLive(state);
-      setMode('classic');
-    },
-    [formId],
-  );
 
   const toV3 = useCallback(
     (h: ClassicHandover): boolean => {
@@ -1820,7 +1810,6 @@ export function ReceiptForm({ v3 = null, ...props }: ClassicProps & { v3?: Recei
         lines={lines}
         previousFormIds={props.previousFormIds ?? []}
         boot={v3}
-        onV3Off={toClassic}
       />
     );
   }
