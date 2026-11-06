@@ -546,6 +546,16 @@ describe('status screen', () => {
     expect(html).not.toMatch(/פריוריטי|Priority|GR|ERP/);
   });
 
+  it('"סגרו" is the prototype\'s markup: a wa.me link with data-href and the window.close() fallback', () => {
+    const html = render(StatusScreen, { ...base, erp: 'priority', botHref: 'https://wa.me/972500000000', flow: flow() });
+    expect(html).toMatch(/<a href="https:\/\/wa\.me\/972500000000" role="button" data-action="open-bot-chat" data-href="https:\/\/wa\.me\/972500000000" data-fallback="window\.close\(\)"[^>]*>סגרו<\/a>/);
+    // No bot number: a button that only closes the tab.
+    const none = render(StatusScreen, { ...base, erp: 'priority', botHref: null, flow: flow() });
+    expect(none).toMatch(/<button type="button" data-action="open-bot-chat" data-fallback="window\.close\(\)"[^>]*>סגרו<\/button>/);
+    const notice = render(NoticeScreen, { kind: 'alreadySaved', redirecting: false, redirectKey: 0, rtl: true, tr, botHref: 'https://wa.me/1', onClose: noop, onRefresh: noop, onOpenNewer: noop });
+    expect(notice).toContain('data-href="https://wa.me/1"');
+  });
+
   it('a reopened done form opens on the status screen', () => {
     const html = form({ kind: 'status' });
     expect(html).toContain('שומר את הקליטה');

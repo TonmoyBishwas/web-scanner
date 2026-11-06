@@ -8,7 +8,7 @@
  */
 import type { TranslationKey } from '@/lib/i18n/server';
 import type { V3NoticeKind } from '@/lib/receive-v3';
-import { RedirectBlock } from './StatusScreen';
+import { BotCloseButton, RedirectBlock } from './StatusScreen';
 import { P, font } from './tokens';
 import type { Tr } from './texts';
 
@@ -31,6 +31,7 @@ export function NoticeScreen({
   redirectKey,
   rtl,
   tr,
+  botHref = null,
   onClose,
   onRefresh,
   onOpenNewer,
@@ -40,6 +41,8 @@ export function NoticeScreen({
   redirectKey: number;
   rtl: boolean;
   tr: Tr;
+  /** `https://wa.me/{n}` for "סגרו" (botChatHref), or null. */
+  botHref?: string | null;
   onClose: () => void;
   onRefresh: () => void;
   onOpenNewer: () => void;
@@ -65,14 +68,17 @@ export function NoticeScreen({
         <p style={{ margin: 0, font: font(400, 17, 1.5), color: P.ink2, textWrap: 'pretty' }}>{tr(x.b)}</p>
         <div style={{ marginTop: 12 }}>{redirecting && <RedirectBlock redirectKey={redirectKey} rtl={rtl} tr={tr} />}</div>
       </div>
-      <button
-        type="button"
-        onClick={act}
-        data-action={x.btn ? undefined : 'open-bot-chat'}
-        style={{ height: 56, flex: 'none', border: 'none', borderRadius: 6, background: P.acc, color: P.accInk, font: font(600, 18) }}
-      >
-        {tr(x.btn ?? 'receive.v3.closeLink')}
-      </button>
+      {x.btn ? (
+        <button
+          type="button"
+          onClick={act}
+          style={{ height: 56, flex: 'none', border: 'none', borderRadius: 6, background: P.acc, color: P.accInk, font: font(600, 18) }}
+        >
+          {tr(x.btn)}
+        </button>
+      ) : (
+        <BotCloseButton href={botHref} label={tr('receive.v3.closeLink')} onClose={onClose} />
+      )}
     </div>
   );
 }

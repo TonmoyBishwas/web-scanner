@@ -64,7 +64,7 @@ import { StepPallets } from './StepPallets';
 import { BARE, I, P, UNDERLINE, font, type KbHandlers } from './tokens';
 import { langOf, makeTr, pkgText } from './texts';
 import { useBackStack } from './useBackStack';
-import { useBotReturn } from './useBotReturn';
+import { botChatHref, useBotReturn } from './useBotReturn';
 import css from './v3.module.css';
 
 // ── Props ────────────────────────────────────────────────────────────────
@@ -1041,6 +1041,7 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
         redirectKey={bot.redirectKey}
         rtl={rtl}
         tr={tr}
+        botHref={botChatHref(boot.botWaNumber)}
         onClose={bot.openBotChat}
         onRefresh={() => window.location.reload()}
         onOpenNewer={() => (newer ? goToNewer(newer) : bot.openBotChat())}
@@ -1060,6 +1061,7 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
         redirectKey={bot.redirectKey}
         rtl={rtl}
         tr={tr}
+        botHref={botChatHref(boot.botWaNumber)}
         onClose={bot.openBotChat}
       />
     );

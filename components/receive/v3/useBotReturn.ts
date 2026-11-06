@@ -6,9 +6,10 @@
  * `startRedirect()` shows "תודה! חוזרים לוואטסאפ…" with the 3 s bar, then
  * opens the chat. Opening = `https://wa.me/{botWaNumber}` (no text); if the
  * page is still visible 800 ms later (no WhatsApp, blocked) `window.close()`;
- * if still here, the redirect text and bar go away and "סגרו" stays. With no
- * number, `window.close()` directly, same fallback. "סגרו" cancels the timer
- * and opens the chat at once.
+ * if that did not close the tab (`window.closed` still false — a tab the
+ * script did not open), the redirect text and bar go away AT ONCE and
+ * "סגרו" stays. With no number, `window.close()` directly, same fallback.
+ * "סגרו" cancels the timer and opens the chat at once.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { V3 } from '@/lib/receive-v3';
@@ -47,6 +48,17 @@ export function useBotReturn(botWaNumber: string | null, onOpen?: (how: 'redirec
       window.close();
     } catch {
       /* not a script-opened window */
+    }
+    // A refused close leaves window.closed false right away: drop the redirect text now.
+    let closed = false;
+    try {
+      closed = window.closed === true;
+    } catch {
+      closed = false;
+    }
+    if (!closed && stillHere()) {
+      setRedirecting(false);
+      return;
     }
     later(V3.CLOSE_FALLBACK_MS, () => {
       if (stillHere()) setRedirecting(false);
@@ -102,4 +114,10 @@ export function useBotReturn(botWaNumber: string | null, onOpen?: (how: 'redirec
   useEffect(() => clear, [clear]);
 
   return { redirecting, redirectKey, startRedirect, openBotChat, cancel };
+}
+
+/** The bot chat's link for "סגרו" (`https://wa.me/{digits}`), or null with no number. */
+export function botChatHref(botWaNumber: string | null): string | null {
+  const digits = (botWaNumber ?? '').replace(/\D/g, '');
+  return digits ? `https://wa.me/${digits}` : null;
 }

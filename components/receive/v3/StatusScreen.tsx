@@ -295,6 +295,48 @@ function Connector({ look, still }: { look: 'done' | 'active' | 'wait'; still: b
   );
 }
 
+/**
+ * "סגרו" (to the bot's chat), marked up as the prototype's button
+ * (`data-action="open-bot-chat" data-href="https://wa.me/…" data-fallback="window.close()"`).
+ * With a bot number it is a real link to the chat, so it works even before
+ * the page's script runs; the tap is still handled by `onClose` (the trace,
+ * then wa.me, then the window.close() fallback).
+ */
+export function BotCloseButton({ href, label, onClose }: { href: string | null; label: string; onClose: () => void }) {
+  const style = {
+    height: 56,
+    flex: 'none',
+    border: 'none',
+    borderRadius: 6,
+    background: P.acc,
+    color: P.accInk,
+    font: font(600, 18),
+  } as const;
+  if (!href) {
+    return (
+      <button type="button" onClick={onClose} data-action="open-bot-chat" data-fallback="window.close()" style={style}>
+        {label}
+      </button>
+    );
+  }
+  return (
+    <a
+      href={href}
+      role="button"
+      onClick={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
+      data-action="open-bot-chat"
+      data-href={href}
+      data-fallback="window.close()"
+      style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}
+    >
+      {label}
+    </a>
+  );
+}
+
 export interface StatusScreenProps {
   supplier: string;
   invoiceNumber: string;
@@ -304,6 +346,8 @@ export interface StatusScreenProps {
   redirectKey: number;
   rtl: boolean;
   tr: Tr;
+  /** `https://wa.me/{n}` (botChatHref), or null: "סגרו" then only closes the tab. */
+  botHref?: string | null;
   onClose: () => void;
 }
 
@@ -381,14 +425,7 @@ export function StatusScreen(p: StatusScreenProps) {
       </div>
       <div style={{ marginTop: 24 }}>{p.redirecting && <RedirectBlock redirectKey={p.redirectKey} rtl={p.rtl} tr={tr} />}</div>
       <div style={{ flex: 1 }} />
-      <button
-        type="button"
-        onClick={p.onClose}
-        data-action="open-bot-chat"
-        style={{ height: 56, flex: 'none', border: 'none', borderRadius: 6, background: P.acc, color: P.accInk, font: font(600, 18) }}
-      >
-        {tr('receive.v3.closeLink')}
-      </button>
+      <BotCloseButton href={p.botHref ?? null} label={tr('receive.v3.closeLink')} onClose={p.onClose} />
     </div>
   );
 }
