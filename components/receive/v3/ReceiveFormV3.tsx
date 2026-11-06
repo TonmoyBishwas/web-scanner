@@ -1201,13 +1201,17 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
               />
             );
           })}
+          {/* As drawn: the heading and the rows sit straight in the list, no card around them. */}
           {!search.active && tab === 'done' && draft.extras.length > 0 && (
-            <div data-part="extras" style={{ flex: 'none', background: P.bg, border: `1px solid ${P.line}`, borderRadius: 6 }}>
-              <div style={{ padding: '16px 16px 4px', font: font(600, 15), color: P.ink }}>{tr('receive.v3.extrasTitle')}</div>
+            <>
+              <div data-part="extras" style={{ flex: 'none', padding: '16px 16px 4px', font: font(600, 15), color: P.ink }}>
+                {tr('receive.v3.extrasTitle')}
+              </div>
               {draft.extras.map((x) => (
                 <div
                   key={x.key}
-                  style={{ minHeight: 60, padding: '0 16px', borderBottom: `1px solid ${P.line}`, display: 'flex', alignItems: 'center', gap: 8 }}
+                  data-extra=""
+                  style={{ minHeight: 60, flex: 'none', padding: '0 16px', borderBottom: `1px solid ${P.line}`, display: 'flex', alignItems: 'center', gap: 10 }}
                 >
                   <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
                     <span style={{ font: font(500, 17), color: P.ink }}>{x.name}</span>
@@ -1219,13 +1223,13 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
                       commit({ ...draftRef.current, extras: draftRef.current.extras.filter((e) => e.key !== x.key) });
                       emit('receive_extra', { v: 3, action: 'remove' });
                     }}
-                    style={{ ...BARE, ...UNDERLINE, height: 48, padding: '0 4px', font: font(500, 16), flex: 'none' }}
+                    style={{ ...BARE, ...UNDERLINE, height: 48, padding: '0 4px', font: font(500, 16), flex: 'none', whiteSpace: 'nowrap' }}
                   >
                     {tr('receive.v3.remove')}
                   </button>
                 </div>
               ))}
-            </div>
+            </>
           )}
           {shown.length === 0 && (
             <div style={{ padding: '20px 16px 4px', flex: 'none' }}>
