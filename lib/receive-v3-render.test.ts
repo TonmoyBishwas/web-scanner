@@ -8,6 +8,7 @@ vi.mock('@/components/receive/v3/font', () => ({ rubik: { variable: 'v3font', cl
 import { BottomBar } from '@/components/receive/v3/BottomBar';
 import { ConfirmScreen } from '@/components/receive/v3/ConfirmScreen';
 import { LineCard, type OpenCardApi } from '@/components/receive/v3/LineCard';
+import { V3Icon, type V3IconName } from '@/components/receive/v3/icons';
 import { HeaderRow, SearchRow, TabToggle } from '@/components/receive/v3/ListHeader';
 import { LooseScreen } from '@/components/receive/v3/LooseScreen';
 import { NotePhotoViewer } from '@/components/receive/v3/NotePhotoViewer';
@@ -606,5 +607,22 @@ describe('v3 uses only its own texts', () => {
     );
     const hits = foreign.filter(([, v]) => all.includes(v)).map(([k]) => k);
     expect(hits).toEqual([]);
+  });
+});
+
+describe('icons', () => {
+  it("the prototype's filled Material Icons Round glyphs (inline SVG, currentColor), never stroked outline icons", () => {
+    const names: V3IconName[] = [
+      'remove', 'add', 'arrow_back', 'arrow_forward', 'close', 'search', 'check_box', 'check_box_outline_blank',
+      'description', 'inventory_2', 'expand_more', 'calendar_month', 'check',
+    ];
+    for (const name of names) {
+      const html = render(V3Icon, { name, size: 22 });
+      expect(html).toContain(`data-icon="${name}"`);
+      expect(html).toContain('fill="currentColor"');
+      expect(html).toContain('viewBox="0 0 24 24"');
+      expect(html).not.toContain('stroke');
+      expect(html).not.toContain('lucide');
+    }
   });
 });
