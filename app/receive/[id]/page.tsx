@@ -1,8 +1,12 @@
+import type { ComponentProps } from 'react';
 import type { Metadata } from 'next';
 import { verifyReceiptFormLink } from '@/lib/receipt-form-link';
 import { closedView, type FormLanguage } from '@/lib/receipt-form';
 import { formState, loadFormRow, logFormEvent, replacedFormIds, type FormRow } from '@/lib/receipt-form-server';
-import { receiveRedesignOn } from '@/lib/scanner-flags';
+import { receiveFormV3On, receiveRedesignOn } from '@/lib/scanner-flags';
+import { loadV3Boot } from '@/lib/receive-v3-server';
+import type { ReceiveV3Boot, V3InitialView } from '@/lib/receive-v3';
+import { ReceiveFormV3 } from '@/components/receive/v3/ReceiveFormV3';
 import { isFinalStatus, isInFlightStatus } from '@/lib/receipt-form-submit';
 import { t, type TranslationKey } from '@/lib/i18n/server';
 import { FormMoved, ReceiptForm } from './ReceiptForm';
@@ -23,6 +27,15 @@ import { FormMoved, ReceiptForm } from './ReceiptForm';
  * receipt was cancelled", ops_duplicate → "closed as a duplicate", finished in
  * the chat (or no reason) → "already saved". Every open is one scanner_events
  * row (page 'receive', token = form id).
+ *
+ * The v3 form (06/11, flag receive_form_v3 for the chat + the supplier VAT,
+ * lib/scanner-flags.ts receiveFormV3On): when on, its extra data is loaded
+ * (lib/receive-v3-server.ts loadV3Boot) and every state renders the v3
+ * design — a done form its status screen, the other closed / in-flight /
+ * failed / expired states its notices, an open form the v3 form (handed to
+ * ReceiptForm as `v3`, never the 28/10 redesign). Off: exactly as before,
+ * and none of those reads happen. A link that fails verification has no row
+ * and no flag: always today's page.
  */
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -127,10 +140,57 @@ export default async function ReceivePage({
   const st = await formState(row);
   const status = st.status;
   const self = `/receive/${id}?${new URLSearchParams({ exp, sig }).toString()}`;
+  // v3 (06/11): on only for a listed chat on a listed supplier; unreadable = off = today's page.
+  const v3: ReceiveV3Boot | null = (await receiveFormV3On(row.chat_id, row.delivery_id).catch(() => false))
+    ? await loadV3Boot(row)
+    : null;
   await logFormEvent(row, 'receive_open', {
     status, rev: st.rev, line_count: st.line_count, closed_reason: st.closed_reason,
     newer: st.newer?.id ?? null, expired: st.expired,
+    ...(v3 ? { v3: 3 } : {}),
   });
+
+  if (v3) {
+    const v3Page = (initialView: V3InitialView, previousFormIds: string[] = []) => (
+      <ReceiveFormV3
+        formId={id}
+        exp={exp}
+        sig={sig}
+        language={language}
+        header={st.header}
+        lines={st.lines}
+        previousFormIds={previousFormIds}
+        boot={v3}
+        initialView={initialView}
+      />
+    );
+    if (status === 'done') return v3Page({ kind: 'status' });
+    if (isFinalStatus(status)) {
+      const view = closedView(status, st.closed_reason);
+      if (view === 'replaced') return v3Page({ kind: 'notice', notice: 'replaced', newer: st.newer });
+      if (view === 'cancelled') return v3Page({ kind: 'notice', notice: 'cancelled' });
+      if (view === 'duplicate') return v3Page({ kind: 'notice', notice: 'duplicate' });
+      return v3Page({ kind: 'notice', notice: 'alreadySaved' });
+    }
+    if (isInFlightStatus(status)) return v3Page({ kind: 'notice', notice: 'beingSaved' });
+    if (status !== 'open') return v3Page({ kind: 'notice', notice: 'failed' });
+    if (st.expired) return v3Page({ kind: 'notice', notice: 'linkInvalid' });
+    // An open form: ReceiptForm renders the v3 form when handed `v3` (the
+    // integrator's step); the 28/10 redesign is never on together with v3.
+    const previous = await replacedFormIds(row).catch(() => [] as string[]);
+    const props: ComponentProps<typeof ReceiptForm> & { v3?: ReceiveV3Boot | null } = {
+      formId: id,
+      exp,
+      sig,
+      language,
+      header: st.header,
+      lines: st.lines,
+      previousFormIds: previous,
+      redesign: false,
+      v3,
+    };
+    return <ReceiptForm {...props} />;
+  }
 
   if (isFinalStatus(status)) {
     const view = closedView(status, st.closed_reason);
