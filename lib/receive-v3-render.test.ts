@@ -336,6 +336,11 @@ describe('list', () => {
     const one = render(HeaderRow, { supplier: 'x', invoiceNumber: '1', pallets: 1, hasPhoto: false, tr, onNotePhoto: noop, onPallets: noop });
     expect(one).toContain('aria-label="משטח אחד"');
     expect(one).not.toContain('צילום התעודה');
+    // A long supplier name shrinks with "…"; the note number never does (the test note's name ran under the badge).
+    const [supplierSpan, noteSpan] = html.split('<span').slice(1, 3);
+    expect(supplierSpan).toContain('text-overflow:ellipsis');
+    expect(supplierSpan).toContain('min-width:0');
+    expect(noteSpan).toContain('flex:none');
   });
 
   it('search row (always visible) and the toggle', () => {

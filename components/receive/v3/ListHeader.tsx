@@ -47,8 +47,11 @@ export function HeaderRow({
       style={{ height: 52, flex: 'none', display: 'flex', alignItems: 'center', gap: 8, paddingInline: '16px 12px' }}
     >
       <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 6, whiteSpace: 'nowrap' }}>
-        <span style={{ flex: 'none', font: font(600, 17), color: P.ink }}>{supplier}</span>
-        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', font: font(400, 15), color: P.ink2 }}>
+        {/* A long supplier name (e.g. the full legal name) ends in "…" instead of running under the buttons. */}
+        <span style={{ flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', font: font(600, 17), color: P.ink }}>
+          {supplier}
+        </span>
+        <span style={{ flex: 'none', font: font(400, 15), color: P.ink2 }}>
           {tr('receive.v3.headNote', { n: I(invoiceNumber) })}
         </span>
       </div>
