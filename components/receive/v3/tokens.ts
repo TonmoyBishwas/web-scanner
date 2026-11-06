@@ -46,9 +46,15 @@ export const EO = 'cubic-bezier(.2,.8,.2,1)';
 /** Rubik (next/font, `--font-v3`), with the system fallback. */
 export const FAMILY = "var(--font-v3), 'Rubik', system-ui, sans-serif";
 
-/** The CSS `font` shorthand as the prototype writes it: `font(500, 15)` = "500 15px Rubik". */
+/**
+ * The CSS `font` shorthand as the prototype writes it: `font(500, 15)` = "500 15px Rubik".
+ * A line height under 4 is a ratio (`17px/1.4`), a larger one pixels (`13px/22px`).
+ */
 export function font(weight: 400 | 500 | 600 | 700, size: number, lineHeight?: number | string): string {
-  const lh = lineHeight === undefined ? '' : `/${typeof lineHeight === 'number' ? `${lineHeight}px` : lineHeight}`;
+  const lh =
+    lineHeight === undefined
+      ? ''
+      : `/${typeof lineHeight === 'number' ? (lineHeight < 4 ? String(lineHeight) : `${lineHeight}px`) : lineHeight}`;
   return `${weight} ${size}px${lh} ${FAMILY}`;
 }
 
