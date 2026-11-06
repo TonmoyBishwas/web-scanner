@@ -4,7 +4,8 @@ import { verifyReceiptFormLink } from '@/lib/receipt-form-link';
 import { formRev, normalizeFormLines, parseAnswers, todayInJerusalem, validateAnswers } from '@/lib/receipt-form';
 import { readBotReply } from '@/lib/receipt-form-submit';
 import { formState, loadFormRow, logFormEvent, type FormRow } from '@/lib/receipt-form-server';
-import { receiveRedesignOn } from '@/lib/scanner-flags';
+import { receiveFormV3On, receiveRedesignOn } from '@/lib/scanner-flags';
+import { isV3Answers, validateV3 } from '@/lib/receive-v3';
 
 /**
  * GET /api/receipt-form/{id}?exp&sig[&rev]
@@ -13,7 +14,9 @@ import { receiveRedesignOn } from '@/lib/scanner-flags';
  * notes, 20/10): {ok, status, rev, line_count, lines, header, closed_reason,
  * newer, expired, features}. `features.receive_redesign` = the form's
  * redesign flag for the form's chat (public.scanner_flags, 28/10; any error
- * is false). `newer` = {id, href}, a signed link to the form that
+ * is false). `features.receive_form_v3: true` is added ONLY when the v3 form
+ * (06/11, lib/scanner-flags.ts receiveFormV3On) is on for this form — off,
+ * the answer is byte for byte as before. `newer` = {id, href}, a signed link to the form that
  * replaced this one (lib/receipt-form-server.ts). `rev` = what the page has;
  * a poll that finds the row moved on (new lines, closed, saved elsewhere) is
  * recorded in scanner_events — an unchanged poll is not. 401 link_invalid;
@@ -30,7 +33,9 @@ import { receiveRedesignOn } from '@/lib/scanner-flags';
  *     BEFORE validation, so the page merges the new lines instead of showing a
  *     generic "invalid". A page without `rev` (loaded before 20/10) skips this;
  *  3. the answers are checked with lib/receipt-form.ts — the same rules the
- *     page shows live (422 {error:'invalid', errors} otherwise);
+ *     page shows live (422 {error:'invalid', errors} otherwise); a v3 body
+ *     (`answers.form_version === 3`, whatever the flag says now) is also
+ *     checked with lib/receive-v3.ts validateV3 (422 adds `v3_errors`);
  *  4. the row moves open → submitted in ONE conditional update (status still
  *     'open', not expired, and `header.rev` unchanged). 0 rows → 409 with the
  *     current status (+ closed_reason / newer for a closed form): a second
@@ -97,7 +102,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         closed_reason: st.closed_reason, newer: st.newer?.id ?? null,
       });
     }
-    const features = { receive_redesign: await receiveRedesignOn(row.chat_id).catch(() => false) };
+    const features: Record<string, boolean> = { receive_redesign: await receiveRedesignOn(row.chat_id).catch(() => false) };
+    // Added only when on, so a flag-off answer is exactly today's.
+    if (await receiveFormV3On(row.chat_id, row.delivery_id).catch(() => false)) features.receive_form_v3 = true;
     return reply(200, { ok: true, ...st, features });
   } catch (error) {
     console.error('[api/receipt-form] GET error:', id, error);
@@ -145,7 +152,18 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       await log('receive_submit', { outcome: 'bad_answers' });
       return reply(400, { ok: false, error: 'bad_answers' });
     }
-    const check = validateAnswers(lines, answers, todayInJerusalem());
+    const today = todayInJerusalem();
+    const check = validateAnswers(lines, answers, today);
+    if (isV3Answers(answers)) {
+      const v3Check = validateV3(lines, answers, today);
+      if (!check.ok || !v3Check.ok) {
+        await log('receive_submit', {
+          outcome: 'invalid', rev: rowRev, form: check.form, lines: Object.keys(check.lines).length,
+          v3: 3, v3_form: v3Check.form, v3_lines: Object.keys(v3Check.lines).length,
+        });
+        return reply(422, { ok: false, error: 'invalid', errors: check, v3_errors: v3Check });
+      }
+    }
     if (!check.ok) {
       await log('receive_submit', { outcome: 'invalid', rev: rowRev, form: check.form, lines: Object.keys(check.lines).length });
       return reply(422, { ok: false, error: 'invalid', errors: check });

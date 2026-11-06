@@ -353,3 +353,71 @@ export async function topBarDeleteOnlyOn(chatId: string | number | null | undefi
     return false;
   }
 }
+
+/**
+ * The non-meat receive form v3 (Claude Design, approved by Mevaser 01/11;
+ * lib/receive-v3.ts, docs/RECEIVE_FORM_V3.md). On for a form only when BOTH
+ * hold: the row 'receive_form_v3' is on for the form's chat, and the form's
+ * delivery supplier VAT (deliveries.supplier_vat) is listed in
+ * RECEIVE_FORM_V3_SUPPLIER_VATS. A missing row, a missing table or any DB
+ * error is OFF. v3 wins over 'receive_redesign' when both are on.
+ */
+export const receiveFormV3Row = flagRow('receive_form_v3');
+
+/** Bnei Darom (שיווק והפצה בני דרום אגש"ח בע"מ): the supplier v3 starts with. */
+export const RECEIVE_FORM_V3_DEFAULT_VATS: readonly string[] = ['570052894'];
+
+/**
+ * RECEIVE_FORM_V3_SUPPLIER_VATS: comma-separated VATs, trimmed, empty entries
+ * dropped; unset or empty → Bnei Darom; the single value `all` (any case) =
+ * any supplier, a null VAT included.
+ */
+export function parseV3SupplierVats(env: string | null | undefined): readonly string[] | 'all' {
+  const raw = String(env ?? '').trim();
+  if (raw.toLowerCase() === 'all') return 'all';
+  const vats = raw.split(',').map((v) => v.trim()).filter(Boolean);
+  return vats.length ? vats : RECEIVE_FORM_V3_DEFAULT_VATS;
+}
+
+/**
+ * The flag row AND the delivery's supplier VAT, the VAT cached per delivery
+ * for `vatTtlMs` (only a found, non-null VAT, as shortSerialGate). With
+ * `all` the VAT is not read at all. A missing delivery id, a null VAT, a
+ * failed read or any throw is off (unless `all`).
+ */
+export function receiveFormV3Gate(
+  row: () => Promise<ScannerFlagRow | null>,
+  lookupVat: (deliveryId: string) => Promise<string | null>,
+  vats: () => readonly string[] | 'all',
+  vatTtlMs = 10 * 60_000,
+  now: () => number = () => Date.now(),
+): (chatId: string | number | null | undefined, deliveryId: string | null | undefined) => Promise<boolean> {
+  const cache = new Map<string, { vat: string; at: number }>();
+  return async (chatId, deliveryId) => {
+    try {
+      if (!flagEnabledFor(await row(), chatId)) return false;
+      const list = vats();
+      if (list === 'all') return true;
+      const delivery = String(deliveryId ?? '').trim();
+      if (!delivery) return false;
+      const hit = cache.get(delivery);
+      let vat: string | null;
+      if (hit && now() - hit.at < vatTtlMs) {
+        vat = hit.vat;
+      } else {
+        const raw = await lookupVat(delivery);
+        vat = raw == null ? null : String(raw).trim() || null;
+        if (vat) cache.set(delivery, { vat, at: now() });
+        else cache.delete(delivery);
+      }
+      return !!vat && list.includes(vat);
+    } catch {
+      return false;
+    }
+  };
+}
+
+/** The receive form v3 for this chat + delivery; off when anything cannot be read, never a throw. */
+export const receiveFormV3On = receiveFormV3Gate(receiveFormV3Row, receiptSupplierVat, () =>
+  parseV3SupplierVats(process.env.RECEIVE_FORM_V3_SUPPLIER_VATS),
+);

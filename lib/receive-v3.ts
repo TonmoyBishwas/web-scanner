@@ -710,7 +710,8 @@ export function validateV3(lines: FormLine[], answers: AnswersV3, today: string)
         if (!hasLoose) errs.push('pallet_missing');
       } else if (p === 'loose') {
         // fine
-      } else if (!isInt(p) || p < 1 || !palletsOk || p > (pallets as number)) {
+      } else if (!isInt(p) || p < 1 || (palletsOk && p > (pallets as number))) {
+        // (A bad pallet count is the form's error, not every line's.)
         errs.push('pallet_out_of_range');
       }
     }
