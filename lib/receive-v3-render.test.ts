@@ -280,7 +280,8 @@ describe('step 1 · pallets', () => {
     const html = form({ kind: 'form' });
     expect(html).toContain('dir="rtl"');
     expect(html).toContain('קליטת סחורה');
-    expect(html).toContain(HEADER.supplier);
+    expect(html).toContain('>בני דרום<'); // the short name, as the prototype
+    expect(html).not.toContain('אגש"ח');
     expect(html).toContain('תעודה 88010195 · 4 שורות');
     expect(html).toContain('כמה משטחים?');
     expect(html).toContain('aria-label="משטח אחד פחות"');
@@ -330,18 +331,20 @@ describe('step 1 · pallets', () => {
 
 describe('list', () => {
   it('header row: supplier, note number, note photo and the pallets badge', () => {
-    const html = render(HeaderRow, { supplier: HEADER.supplier, invoiceNumber: HEADER.invoice_number, pallets: 2, hasPhoto: true, tr, onNotePhoto: noop, onPallets: noop });
+    const html = render(HeaderRow, { supplier: 'בני דרום', invoiceNumber: HEADER.invoice_number, pallets: 2, tr, onNotePhoto: noop, onPallets: noop });
+    expect(html).toContain('>בני דרום<');
     expect(html).toContain('· תעודה 88010195');
     expect(html).toContain('aria-label="צילום התעודה"');
     expect(html).toContain('aria-label="2 משטחים"');
-    const one = render(HeaderRow, { supplier: 'x', invoiceNumber: '1', pallets: 1, hasPhoto: false, tr, onNotePhoto: noop, onPallets: noop });
+    const one = render(HeaderRow, { supplier: 'x', invoiceNumber: '1', pallets: 1, tr, onNotePhoto: noop, onPallets: noop });
     expect(one).toContain('aria-label="משטח אחד"');
-    expect(one).not.toContain('צילום התעודה');
-    // A long supplier name shrinks with "…"; the note number never does (the test note's name ran under the badge).
+    // Both icon buttons are always there, as drawn (no photo = the viewer's empty page).
+    expect(one).toContain('aria-label="צילום התעודה"');
+    // As the prototype: the supplier keeps its width (flex:none), the note text gets the "…".
     const [supplierSpan, noteSpan] = html.split('<span').slice(1, 3);
-    expect(supplierSpan).toContain('text-overflow:ellipsis');
-    expect(supplierSpan).toContain('min-width:0');
-    expect(noteSpan).toContain('flex:none');
+    expect(supplierSpan).toContain('flex:none');
+    expect(noteSpan).toContain('text-overflow:ellipsis');
+    expect(noteSpan).toContain('min-width:0');
   });
 
   it('search row (always visible) and the toggle', () => {

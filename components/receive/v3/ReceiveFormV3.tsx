@@ -35,6 +35,7 @@ import {
   serializeV3Draft,
   setCartonsPatch,
   setSplitQtyPatch,
+  shortSupplierName,
   shouldAutoOpenPalletList,
   startSplitPatch,
   typeDate,
@@ -1000,12 +1001,12 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
     </div>
   );
 
+  const supplierShort = shortSupplierName(header.supplier);
   const headerRow = (
     <HeaderRow
-      supplier={header.supplier}
+      supplier={supplierShort}
       invoiceNumber={header.invoice_number}
       pallets={draft.pallets}
-      hasPhoto={boot.notePhotos.length > 0}
       tr={tr}
       onNotePhoto={() => {
         setViewer(true);
@@ -1037,7 +1038,7 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
   if (screen === 'status') {
     body = (
       <StatusScreen
-        supplier={header.supplier}
+        supplier={supplierShort}
         invoiceNumber={header.invoice_number}
         erp={boot.erp}
         flow={flow}

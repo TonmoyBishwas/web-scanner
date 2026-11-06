@@ -6,7 +6,7 @@
  * `PalletStepper` and `LooseCheck` are shared with the pallets sheet (5.7).
  */
 import type { ChangeEvent, CSSProperties, FocusEvent } from 'react';
-import { V3 } from '@/lib/receive-v3';
+import { V3, shortSupplierName } from '@/lib/receive-v3';
 import type { FormHeader } from '@/lib/receipt-form';
 import { ForwardIcon, V3Icon } from './icons';
 import { BARE, I, P, UNDERLINE, font } from './tokens';
@@ -165,7 +165,7 @@ export function StepPallets(p: StepPalletsProps) {
     <div data-screen="pallets" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '24px 20px 20px' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingBottom: 16, borderBottom: `1px solid ${P.line}` }}>
         <div style={{ font: font(500, 15), color: P.ink2 }}>{tr('receive.v3.receiving')}</div>
-        <div style={{ font: font(600, 24), color: P.ink }}>{p.header.supplier}</div>
+        <div style={{ font: font(600, 24), color: P.ink }}>{shortSupplierName(p.header.supplier)}</div>
         <div style={{ font: font(400, 16), color: P.ink2 }}>
           {tr('receive.v3.noteLines', { n: I(p.header.invoice_number), k: I(p.lineCount) })}
         </div>

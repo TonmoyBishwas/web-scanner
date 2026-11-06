@@ -25,6 +25,7 @@ import {
   setCartonsPatch,
   setSplitQtyPatch,
   shortBy,
+  shortSupplierName,
   shouldAutoOpenPalletList,
   splitBasis,
   splitState,
@@ -460,5 +461,22 @@ describe('draft persistence (spec 6.6)', () => {
     const m = mergeV3Draft(d, null, LINES.slice(0, 10));
     expect(m.draft.loose).toEqual({ 1: 2 });
     expect(m.draft.lines).toHaveLength(10);
+  });
+});
+
+describe('shortSupplierName (header row 1, step 1, status)', () => {
+  it("the prototype's short name from the full legal name", () => {
+    expect(shortSupplierName('שיווק והפצה בני דרום אגש"ח בע"מ')).toBe('בני דרום');
+    expect(shortSupplierName('שיווק והפצה בני דרום אגש״ח בע״מ')).toBe('בני דרום');
+    expect(shortSupplierName('🧪 בדיקה / TEST · שיווק והפצה בני דרום אגש"ח בע"מ')).toBe('🧪 בני דרום');
+    expect(shortSupplierName('מיטב תעשיות מזון (1990) בע"מ')).toBe('מיטב תעשיות מזון');
+    expect(shortSupplierName('Acme Foods Ltd.')).toBe('Acme Foods');
+    expect(shortSupplierName('תלמה')).toBe('תלמה');
+  });
+
+  it('never leaves nothing', () => {
+    expect(shortSupplierName('בע"מ')).toBe('בע"מ');
+    expect(shortSupplierName('שיווק')).toBe('שיווק');
+    expect(shortSupplierName('')).toBe('');
   });
 });

@@ -553,6 +553,38 @@ export function shortBy(line: FormLine, d: V3LineDraft): number {
   return isShort(line, q) ? round3(line.qty - q) : 0;
 }
 
+// ── The supplier's short name (header, step 1, status) ────────────────────
+
+/** Legal forms dropped from a supplier's name: בע"מ, אגש"ח, ש"מ, (1990), Ltd… */
+const LEGAL_FORM = /(^|[\s,(])(בע["״׳'`]?מ|אגש["״׳'`]?ח|ש["״׳'`]?מ|ltd\.?|limited|inc\.?|\(\d{4}\))(?=$|[\s,.)])/giu;
+/** Trade words that open a legal name before the brand: "שיווק והפצה בני דרום" → "בני דרום". */
+const TRADE_PREFIX = /^(שיווק\s+והפצה|יבוא\s+ושיווק|יבוא\s+והפצה|שיווק|הפצה|יבוא)\s+/u;
+/** The bot's test-delivery marker ("🧪 בדיקה / TEST · …"): kept as the emoji alone. */
+const TEST_MARK = /^🧪[^·]*·\s*/u;
+
+/**
+ * The supplier as the prototype names it ("בני דרום"), from the note's full
+ * legal name ('שיווק והפצה בני דרום אגש"ח בע"מ'): legal forms and the
+ * opening trade words dropped. Anything that would leave nothing returns the
+ * name as given. Display only; nothing is matched or stored by it.
+ */
+export function shortSupplierName(full: string): string {
+  let s = (full ?? '').trim();
+  let mark = '';
+  const t = TEST_MARK.exec(s);
+  if (t) {
+    mark = '🧪 ';
+    s = s.slice(t[0].length);
+  }
+  const whole = s;
+  for (let i = 0; i < 3; i++) s = s.replace(LEGAL_FORM, '$1');
+  s = s.replace(/[\s,.\-–—]+$/u, '').replace(/\s{2,}/g, ' ').trim();
+  const brand = s.replace(TRADE_PREFIX, '').trim();
+  if (brand.length >= 2) s = brand;
+  if (!s) s = whole;
+  return (mark + s).trim();
+}
+
 // ── Packaging words and the packaging list ────────────────────────────────
 
 /** The package word for n packages: singular for 1, plural otherwise; the generic word when the type is unknown. */

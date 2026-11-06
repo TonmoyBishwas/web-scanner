@@ -16,15 +16,14 @@ export function HeaderRow({
   supplier,
   invoiceNumber,
   pallets,
-  hasPhoto,
   tr,
   onNotePhoto,
   onPallets,
 }: {
+  /** The short name (shortSupplierName), as the prototype's "בני דרום". */
   supplier: string;
   invoiceNumber: string;
   pallets: number;
-  hasPhoto: boolean;
   tr: Tr;
   onNotePhoto: () => void;
   onPallets: () => void;
@@ -47,20 +46,20 @@ export function HeaderRow({
       style={{ height: 52, flex: 'none', display: 'flex', alignItems: 'center', gap: 8, paddingInline: '16px 12px' }}
     >
       <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 6, whiteSpace: 'nowrap' }}>
-        {/* A long supplier name (e.g. the full legal name) ends in "…" instead of running under the buttons. */}
-        <span style={{ flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', font: font(600, 17), color: P.ink }}>
+        {/* As the prototype: the (short) supplier keeps its width, the note text gets the "…". The cap only
+            bites on a name that is long even when shortened, so it can never push the buttons off. */}
+        <span style={{ flex: 'none', maxWidth: '75%', overflow: 'hidden', textOverflow: 'ellipsis', font: font(600, 17), color: P.ink }}>
           {supplier}
         </span>
-        <span style={{ flex: 'none', font: font(400, 15), color: P.ink2 }}>
+        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', font: font(400, 15), color: P.ink2 }}>
           {tr('receive.v3.headNote', { n: I(invoiceNumber) })}
         </span>
       </div>
       <div style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 2, marginInlineEnd: -6 }}>
-        {hasPhoto && (
-          <button type="button" onClick={onNotePhoto} aria-label={tr('receive.v3.notePhoto')} title={tr('receive.v3.notePhoto')} style={btn}>
-            <V3Icon name="description" size={22} />
-          </button>
-        )}
+        {/* Always shown, as drawn; with no stored photo it opens the viewer's empty page (still with ×). */}
+        <button type="button" onClick={onNotePhoto} aria-label={tr('receive.v3.notePhoto')} title={tr('receive.v3.notePhoto')} style={btn}>
+          <V3Icon name="description" size={22} />
+        </button>
         <button type="button" onClick={onPallets} aria-label={palAria} title={palAria} style={btn}>
           <V3Icon name="inventory_2" size={22} />
           <span
