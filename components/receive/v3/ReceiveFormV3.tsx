@@ -90,6 +90,12 @@ export interface V3DraftMeta {
 export type ReceiveFormV3AllProps = ReceiveFormV3Props & {
   trace?: V3Trace | null;
   onDraftChange?: (draft: V3Draft, meta: V3DraftMeta) => void;
+  /**
+   * The poll saw the flag off (features without receive_form_v3) while the
+   * form is open and nothing is being typed: the integrator switches to
+   * today's form with this draft. Absent = the flag is not followed live.
+   */
+  onV3Off?: (draft: V3Draft, state: { lines: FormLine[]; rev: number }) => void;
 };
 
 type Screen = 'pallets' | 'loose' | 'list' | 'confirm' | 'status' | 'notice';
@@ -141,7 +147,7 @@ function later(fn: () => void): void {
 // ── The form ─────────────────────────────────────────────────────────────
 
 export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
-  const { formId, exp, sig, language, header, boot, initialView, previousFormIds, trace, onDraftChange } = props;
+  const { formId, exp, sig, language, header, boot, initialView, previousFormIds, trace, onDraftChange, onV3Off } = props;
   const lang = langOf(language);
   const rtl = lang === 'he';
   const tr = useMemo(() => makeTr(language), [language]);
@@ -303,8 +309,10 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
 
   // ── The integrator's trace feed ──
   const onDraftChangeRef = useRef(onDraftChange);
+  const onV3OffRef = useRef(onV3Off);
   useEffect(() => {
     onDraftChangeRef.current = onDraftChange;
+    onV3OffRef.current = onV3Off;
   });
   useEffect(() => {
     try {
@@ -729,6 +737,14 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
     if (!r || sending.current || !isFormScreen(screenRef.current)) return;
     if (r.status === 'open') {
       if (r.rev > revRef.current) applyLines(r.lines, r.rev);
+      // The flag switched off: hand the draft to today's form, as the 28/10
+      // redesign flips — never while the worker is typing (the next poll does it).
+      const el = document.activeElement;
+      const typing = !!el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA');
+      if (r.v3 === false && !typing && onV3OffRef.current) {
+        step('v3', { on: false, at: 'poll' });
+        onV3OffRef.current(draftRef.current, { lines: linesRef.current, rev: revRef.current });
+      }
       return;
     }
     if (r.status === 'submitted' || r.status === 'processing') return;
@@ -737,7 +753,7 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
       return showNotice('failed');
     }
     onNotOpen(r.status, r.closed_reason, r.newer, 'poll');
-  }, [applyLines, emit, exp, formId, onNotOpen, showNotice, sig]);
+  }, [applyLines, emit, exp, formId, onNotOpen, showNotice, sig, step]);
 
   useEffect(() => {
     if (initialView.kind !== 'form') return;

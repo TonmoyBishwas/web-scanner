@@ -71,6 +71,18 @@ import {
 import { CompactLineCard } from '@/components/receive/CompactLineCard';
 import { ExpiryWalk } from '@/components/receive/ExpiryWalk';
 import { walkOrder, walkProgress, walkStart, isDated } from '@/lib/receive-walk';
+import { getReceiptForm, postReceiptForm } from '@/lib/receipt-form-client';
+import {
+  initialV3Draft,
+  legacyToV3Draft,
+  serializeV3Draft,
+  v3DraftStorageKey,
+  v3ToLegacyDraft,
+  type ReceiveV3Boot,
+  type V3Draft,
+  type V3InitialView,
+} from '@/lib/receive-v3';
+import { ReceiveFormV3, type V3DraftMeta } from '@/components/receive/v3/ReceiveFormV3';
 
 type Phase =
   | { kind: 'editing' }
@@ -571,16 +583,14 @@ export function FormMoved({
   );
 }
 
-export function ReceiptForm({
-  formId,
-  exp,
-  sig,
-  language,
-  header,
-  lines: initialLines,
-  previousFormIds = [],
-  redesign = false,
-}: {
+/** What the classic form hands over when the v3 flag is switched on under it. */
+interface ClassicHandover {
+  draft: FormDraft;
+  lines: FormLine[];
+  rev: number;
+}
+
+interface ClassicProps {
   formId: string;
   exp: string;
   sig: string;
@@ -594,6 +604,26 @@ export function ReceiptForm({
    * chat): compact cards + the expiry walk. Off = the form exactly as before.
    */
   redesign?: boolean;
+}
+
+/** Today's form (classic, or the 28/10 redesign); exactly as before v3. */
+function ClassicReceiptForm({
+  formId,
+  exp,
+  sig,
+  language,
+  header,
+  lines: initialLines,
+  previousFormIds = [],
+  redesign = false,
+  onV3On,
+}: ClassicProps & {
+  /**
+   * The poll saw features.receive_form_v3 = true (06/11): the wrapper takes
+   * the draft over to v3. Returns false when it will not switch (then
+   * nothing is traced). Never called while the flag is off.
+   */
+  onV3On?: (h: ClassicHandover) => boolean;
 }) {
   useLangDir(language);
   const tr: Tr = useCallback((k, v) => t(language, k, v), [language]);
@@ -641,6 +671,10 @@ export function ReceiptForm({
   phaseRef.current = phase;
   const redesignRef = useRef(redesignOn);
   redesignRef.current = redesignOn;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const onV3OnRef = useRef(onV3On);
+  onV3OnRef.current = onV3On;
 
   const today = todayInJerusalem();
 
@@ -729,10 +763,9 @@ export function ReceiptForm({
     const p = phaseRef.current.kind;
     if (sending.current || (p !== 'editing' && p !== 'error')) return;
     try {
-      const q = new URLSearchParams({ exp, sig, rev: String(revRef.current) });
-      const res = await fetch(`/api/receipt-form/${encodeURIComponent(formId)}?${q.toString()}`, { cache: 'no-store' });
+      const res = await getReceiptForm({ formId, exp, sig, rev: revRef.current });
       if (!res.ok) return; // a bad link / blip: the next poll or the submit says so
-      const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+      const data = res.data;
       if (!data || data.ok !== true || sending.current) return;
       const status = String(data.status ?? '');
       const features = data.features as Record<string, unknown> | null | undefined;
@@ -752,6 +785,17 @@ export function ReceiptForm({
         rt.event('receive_step', { step: 'redesign', on: features.receive_redesign, at: 'poll' });
         setRedesignOn(features.receive_redesign);
         if (!features.receive_redesign) setWalk(null);
+      }
+      // The v3 form (06/11, flag receive_form_v3) switched on while this form
+      // is open: the key is sent only when on, so flag off never gets here.
+      // Like the redesign flip it waits while the worker is typing; the draft
+      // goes along (ReceiptForm below).
+      if (!typing && status === 'open' && features && features.receive_form_v3 === true && onV3OnRef.current) {
+        const h: ClassicHandover = { draft: draftRef.current, lines: linesRef.current, rev: revRef.current };
+        if (onV3OnRef.current(h)) {
+          rt.event('receive_step', { step: 'v3', on: true, at: 'poll' });
+          return;
+        }
       }
       if (status === 'open') {
         const nextRev = Number(data.rev);
@@ -1008,13 +1052,8 @@ export function ReceiptForm({
     setPhase({ kind: 'submitting' });
     const started = rt.saveAttempt({ rev: pageRev, auto_resend: !retry });
     try {
-      const res = await fetch(`/api/receipt-form/${encodeURIComponent(formId)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ exp, sig, rev: pageRev, answers }),
-        cache: 'no-store',
-      });
-      const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+      const res = await postReceiptForm({ formId, exp, sig, rev: pageRev, answers });
+      const data = res.data;
       if (res.ok && data?.ok === true) {
         rt.saveDone(started, true, { http: res.status, saved_lines: data.saved_lines ?? null });
         clearStoredDraft();
@@ -1626,4 +1665,164 @@ export function ReceiptForm({
       </footer>
     </main>
   );
+}
+
+// ── The v3 form (06/11, flag receive_form_v3) ───────────────────────────
+
+/** The open form, as ReceiveFormV3 starts it (a constant, so the memo below holds). */
+const V3_FORM_VIEW: V3InitialView = { kind: 'form' };
+
+/** No re-render of the v3 form when only the trace's copy of its draft changes. */
+const MemoReceiveFormV3 = memo(ReceiveFormV3);
+
+/** A reload into v3 at most once per form per 10 minutes (a server that still says "off" never loops it). */
+const V3_RELOAD_GAP_MS = 10 * 60_000;
+
+function v3ReloadAllowed(formId: string): boolean {
+  const key = `receipt-form-v3-reload:${formId}`;
+  try {
+    const last = Number(window.sessionStorage.getItem(key));
+    if (Number.isFinite(last) && last > 0 && Date.now() - last < V3_RELOAD_GAP_MS) return false;
+    window.sessionStorage.setItem(key, String(Date.now()));
+    return true;
+  } catch {
+    return false; // no session storage: no automatic reload, the next open shows v3
+  }
+}
+
+/**
+ * The v3 form plus today's trace: useReceiveTrace runs on the legacy view of
+ * the v3 draft (v3ToLegacyDraft, spec 6.8), so field edits, validation and
+ * saves are traced as today. Submit, poll, status screen and the return to
+ * WhatsApp are ReceiveFormV3's own (same POST / GET as today's form, through
+ * lib/receipt-form-client.ts).
+ */
+function V3Host({
+  formId,
+  exp,
+  sig,
+  language,
+  header,
+  lines,
+  previousFormIds,
+  boot,
+  onV3Off,
+}: {
+  formId: string;
+  exp: string;
+  sig: string;
+  language: FormLanguage;
+  header: FormHeader;
+  lines: FormLine[];
+  previousFormIds: string[];
+  boot: ReceiveV3Boot;
+  onV3Off: (draft: V3Draft, state: { lines: FormLine[]; rev: number }) => void;
+}) {
+  const [seen, setSeen] = useState<{ draft: FormDraft; meta: V3DraftMeta }>(() => ({
+    draft: v3ToLegacyDraft(initialV3Draft(lines)),
+    meta: { restored: false, rev: header.rev, lines, query: '', search: { active: false, fuzzy: false, lines: [] } },
+  }));
+  const check = useMemo(
+    () => validateAnswers(seen.meta.lines, draftToAnswers(seen.meta.lines, seen.draft), boot.today),
+    [seen, boot.today],
+  );
+  const rt = useReceiveTrace({
+    formId,
+    exp,
+    sig,
+    lines: seen.meta.lines,
+    draft: seen.draft,
+    lineErrors: check.lines,
+    formErrors: check.form,
+    restored: seen.meta.restored,
+    query: seen.meta.query,
+    search: seen.meta.search,
+  });
+  const onDraftChange = useCallback((d: V3Draft, meta: V3DraftMeta) => setSeen({ draft: v3ToLegacyDraft(d), meta }), []);
+  return (
+    <MemoReceiveFormV3
+      formId={formId}
+      exp={exp}
+      sig={sig}
+      language={language}
+      header={header}
+      lines={lines}
+      previousFormIds={previousFormIds}
+      boot={boot}
+      initialView={V3_FORM_VIEW}
+      trace={rt}
+      onDraftChange={onDraftChange}
+      onV3Off={onV3Off}
+    />
+  );
+}
+
+/**
+ * The open receive form. `v3` (page.tsx, only when receive_form_v3 is on for
+ * this chat + supplier) renders the v3 design and wins over `redesign`;
+ * without it, today's form exactly as before.
+ *
+ * The flag is followed live through the 15 s poll, as the 28/10 redesign
+ * is, never while the worker is typing (each form waits for the next poll):
+ * - off under v3 → today's form, the v3 draft carried over (v3ToLegacyDraft);
+ * - on under today's form → into v3 with the draft carried over
+ *   (legacyToV3Draft): in place when this page has v3's data, else one
+ *   reload (the server renders v3 and it restores the draft).
+ */
+export function ReceiptForm({ v3 = null, ...props }: ClassicProps & { v3?: ReceiveV3Boot | null }) {
+  const { formId } = props;
+  const [mode, setMode] = useState<'v3' | 'classic'>(v3 ? 'v3' : 'classic');
+  /** Lines / rev from the form that was showing before a switch (a page may have been added). */
+  const [live, setLive] = useState<{ lines: FormLine[]; rev: number } | null>(null);
+  const lines = live?.lines ?? props.lines;
+  const header = useMemo(() => (live ? { ...props.header, rev: live.rev } : props.header), [live, props.header]);
+
+  const toClassic = useCallback(
+    (draft: V3Draft, state: { lines: FormLine[]; rev: number }) => {
+      try {
+        window.localStorage.setItem(draftStorageKey(formId), serializeDraft(v3ToLegacyDraft(draft), state.lines, state.rev));
+      } catch {
+        /* storage blocked: today's form starts from the note */
+      }
+      setLive(state);
+      setMode('classic');
+    },
+    [formId],
+  );
+
+  const toV3 = useCallback(
+    (h: ClassicHandover): boolean => {
+      if (!v3 && !v3ReloadAllowed(formId)) return false;
+      try {
+        window.localStorage.setItem(v3DraftStorageKey(formId), serializeV3Draft(legacyToV3Draft(h.lines, h.draft), h.lines, h.rev));
+      } catch {
+        /* storage blocked: v3 starts from the note */
+      }
+      if (v3) {
+        setLive({ lines: h.lines, rev: h.rev });
+        setMode('v3');
+      } else {
+        window.location.reload();
+      }
+      return true;
+    },
+    [formId, v3],
+  );
+
+  if (mode === 'v3' && v3) {
+    return (
+      <V3Host
+        formId={formId}
+        exp={props.exp}
+        sig={props.sig}
+        language={props.language}
+        header={header}
+        lines={lines}
+        previousFormIds={props.previousFormIds ?? []}
+        boot={v3}
+        onV3Off={toClassic}
+      />
+    );
+  }
+  return <ClassicReceiptForm {...props} header={header} lines={lines} onV3On={toV3} />;
 }

@@ -1,4 +1,3 @@
-import type { ComponentProps } from 'react';
 import type { Metadata } from 'next';
 import { verifyReceiptFormLink } from '@/lib/receipt-form-link';
 import { closedView, type FormLanguage } from '@/lib/receipt-form';
@@ -175,21 +174,22 @@ export default async function ReceivePage({
     if (isInFlightStatus(status)) return v3Page({ kind: 'notice', notice: 'beingSaved' });
     if (status !== 'open') return v3Page({ kind: 'notice', notice: 'failed' });
     if (st.expired) return v3Page({ kind: 'notice', notice: 'linkInvalid' });
-    // An open form: ReceiptForm renders the v3 form when handed `v3` (the
-    // integrator's step); the 28/10 redesign is never on together with v3.
+    // An open form: ReceiptForm renders the v3 form when handed `v3`; the
+    // 28/10 redesign is never on together with v3.
     const previous = await replacedFormIds(row).catch(() => [] as string[]);
-    const props: ComponentProps<typeof ReceiptForm> & { v3?: ReceiveV3Boot | null } = {
-      formId: id,
-      exp,
-      sig,
-      language,
-      header: st.header,
-      lines: st.lines,
-      previousFormIds: previous,
-      redesign: false,
-      v3,
-    };
-    return <ReceiptForm {...props} />;
+    return (
+      <ReceiptForm
+        formId={id}
+        exp={exp}
+        sig={sig}
+        language={language}
+        header={st.header}
+        lines={st.lines}
+        previousFormIds={previous}
+        redesign={false}
+        v3={v3}
+      />
+    );
   }
 
   if (isFinalStatus(status)) {
