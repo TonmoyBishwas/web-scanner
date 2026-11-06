@@ -102,7 +102,6 @@ export function ExpiryStep(p: ExpiryStepProps) {
         <button
           type="button"
           onClick={openCalendar}
-          disabled={d.noExpiry}
           aria-label={tr('receive.v3.openCalendar')}
           title={tr('receive.v3.openCalendar')}
           style={{ ...BARE, width: 40, height: 64, flex: 'none', color: P.ink2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}

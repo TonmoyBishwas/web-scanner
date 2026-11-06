@@ -390,6 +390,21 @@ describe('list', () => {
     for (const t of nums) expect(t).toMatch(/inputMode="(numeric|decimal)"/);
   });
 
+  it('nothing arrived (quantity 0): the pallet step shows no chooser [INFERRED]', () => {
+    const d = draftWith({ 4: { qty: '0', cartons: '0', gap: 'wont' } }, { pallets: 2 });
+    const html = card(4, d, API);
+    expect(html).toContain('משטח');
+    expect(html).not.toContain('בחירה');
+    expect(html).not.toContain('role="listbox" aria-label="משטח"');
+  });
+
+  it('the calendar stays tappable under "אין תוקף", as drawn (a picked date clears it)', () => {
+    const html = card(4, draftWith({ 4: { noExpiry: true } }), API);
+    const cal = html.match(/<button[^>]*aria-label="פתיחת לוח שנה"[^>]*>/)?.[0] ?? '';
+    expect(cal).not.toBe('');
+    expect(cal).not.toContain('disabled');
+  });
+
   it('open card, pack mode: packages + the units total link', () => {
     const html = card(3, draftWith(), API);
     expect(html).toContain('aria-label="מספר אריזות"');

@@ -236,6 +236,7 @@ function OpenBody({
           <PalletStep
             state={rubricState(rail.s3, rail.active === 3)}
             isSet={value !== null}
+            none={v === 'none'}
             name={palletName(line, d, draft, tr)}
             open={api.palletListOpen}
             pallets={draft.pallets}

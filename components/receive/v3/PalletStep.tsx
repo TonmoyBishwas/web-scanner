@@ -17,6 +17,11 @@ export interface PalletStepProps {
   state: RubricState;
   /** The pallet is set (a number, loose, or "nothing arrived"). */
   isSet: boolean;
+  /**
+   * Nothing arrived (quantity 0): no pallet is needed [INFERRED], so the step
+   * shows its label only — no "בחירה", no list.
+   */
+  none?: boolean;
   /** `משטח 2` / `מחוץ למשטח` / `1 מחוץ למשטח`; '' when not set. */
   name: string;
   /** The inline list is open. */
@@ -42,19 +47,19 @@ export function PalletStep(p: PalletStepProps) {
   const labelRow = (
     <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px 10px', minHeight: 22 }}>
       <RubricLabel state={p.state}>{tr('receive.v3.stepPallet')}</RubricLabel>
-      {p.open && (
+      {p.open && !p.none && (
         <CloseButton
           label={tr('receive.v3.close')}
           onClick={p.onClose}
           style={{ marginBlock: -11, marginInlineStart: 'auto', marginInlineEnd: 0 }}
         />
       )}
-      {!p.open && !p.isSet && (
+      {!p.open && !p.none && !p.isSet && (
         <button type="button" onClick={p.onChange} style={{ ...link, ...UNDERLINE }}>
           {tr('receive.v3.choose')}
         </button>
       )}
-      {!p.open && p.isSet && (
+      {!p.open && !p.none && p.isSet && (
         <button type="button" onClick={p.onChange} style={link}>
           {p.name ? `${p.name} · ` : ''}
           <span style={UNDERLINE}>{tr('receive.v3.change')}</span>
@@ -65,7 +70,7 @@ export function PalletStep(p: PalletStepProps) {
 
   return (
     <Rubric n={3} state={p.state} label={labelRow} connector={false} gap={2}>
-      {p.open && (
+      {p.open && !p.none && (
         <div role="listbox" aria-label={tr('receive.v3.stepPallet')} style={{ display: 'flex', flexDirection: 'column', borderTop: `1px solid ${P.line}` }}>
           {opts.map((o) => {
             const on = p.value === o.v;
