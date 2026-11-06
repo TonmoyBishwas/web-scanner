@@ -15,8 +15,18 @@ v3 is on for a form only when **both** hold:
 2. The form's delivery supplier VAT (`deliveries.supplier_vat`) is listed in
    `RECEIVE_FORM_V3_SUPPLIER_VATS`. Unset = `570052894` (Bnei Darom). `all` = any supplier.
 
-When both v3 and `receive_redesign` (28/10) are on, v3 wins. A page decides at load; a flip while a
-page is open applies on the next reload. Caches: the flag row 30 s, a delivery's VAT 10 minutes.
+When both v3 and `receive_redesign` (28/10) are on, v3 wins. The page decides at load, then the
+open form follows the flag through its 15 s poll, the way it follows `receive_redesign`, and never
+while the worker is typing (it waits for the next poll):
+
+- switched **off** under v3: today's form takes over with the v3 draft (`v3ToLegacyDraft`); the
+  v3-only answers (pallet per line, outside the pallet, splits) are dropped;
+- switched **on** under today's form: v3 takes over with the classic draft (`legacyToV3Draft`,
+  step 1 first). A page that loaded with the flag off has no v3 data, so it reloads once (at most
+  once per form per 10 minutes, so a server still saying "off" cannot loop it).
+
+Caches: the flag row 30 s, a delivery's VAT 10 minutes, so a flip reaches an open form within
+about 45 s.
 
 Code: `lib/scanner-flags.ts` (`receiveFormV3On`), read by `app/receive/[id]/page.tsx` and
 `GET /api/receipt-form/{id}` (`features.receive_form_v3: true`, a key added only when on).
@@ -55,6 +65,20 @@ form's delivery. Nothing is written.
 When the flag is on, the page also loads (read-only): the note photos (`deliveries` +
 `invoice_ocr_results` images on our own Supabase storage only), the tenant's ERP
 (`tenants.erp`; default Priority) and `BOT_WA_NUMBER`. Flag off: none of these reads happen.
+
+Both forms send the save and the poll through one helper, `lib/receipt-form-client.ts`
+(`postReceiptForm`, `getReceiptForm`), so v3's POST is byte for byte today's request
+`{exp, sig, rev, answers}`; v3 reads the answer with `readSubmitAnswer` (409 `lines_changed` merges
+the new lines and, when nothing new arrived, sends once more on the new rev, as today; 422 →
+the error sheet; closed / in-flight / failed / expired → the matching notice). A save goes to the
+status screen, which polls the status endpoint, then returns to WhatsApp.
+
+Wiring: `app/receive/[id]/ReceiptForm.tsx` renders `ReceiveFormV3` when page.tsx hands it `v3`
+(the boot data) and today's form otherwise; the v3 form is traced with today's `useReceiveTrace`
+on the legacy view of its draft. Flag-off proof: `lib/receipt-form-flag-off.test.ts` renders
+ReceiptForm for the Bnei Darom test note and compares it byte for byte with the markup of
+origin/preview 177d411 (classic and 28/10 redesign). Rubik is not preloaded, so a flag-off page
+never downloads it.
 
 Files: `lib/receive-v3.ts` (types + pure logic), `lib/receive-v3-client.ts`,
 `lib/receive-v3-status.ts`, `lib/receive-v3-server.ts`, `app/api/receipt-form/[id]/status/route.ts`,
