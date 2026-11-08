@@ -34,6 +34,12 @@
  *
  * Every field change is traced (`identical_*`, 26/10): the 25/10 roulade form
  * took 70 s from open to save and the trace could not say where.
+ *
+ * `cartonLabels` false (scanner flag `carton_labels` off for the chat —
+ * lib/label-switches.ts, Mevaser 05/11): no "each gets a unique barcode"
+ * hint, the total line says "N will be added" (never "N labels will be
+ * saved"), and Save says the approved "add N cartons". What is saved is
+ * unchanged. Absent = as today.
  */
 
 import { useRef, useState } from 'react';
@@ -46,6 +52,7 @@ import { useT } from '@/lib/i18n';
 import { identicalLabelPayload, labelsToSave, postIdenticalLabels, type IdenticalForm } from '@/lib/identical-boxes';
 import { toIsoDate, isoToDdmmyyyy } from '@/lib/expiry';
 import { labelPrintingEnabled } from '@/lib/label-printing';
+import { cartonSaveKey, identicalTotalKey } from '@/lib/label-switches';
 import { validateCartonDates } from '@/lib/date-validation';
 import { localIsoDate } from '@/lib/edit-panel-state';
 import { batchIdForPayload } from '@/lib/label-batches';
@@ -110,6 +117,8 @@ interface IdenticalBoxesFormProps {
    * sample row and closes this form — there is no second screen.
    */
   onCreated: (labels: CartonLabel[], form: IdenticalForm) => void;
+  /** Carton-label wording shown (see the file comment). Default true: as today. */
+  cartonLabels?: boolean;
 }
 
 export interface ProductOption {
@@ -124,6 +133,7 @@ const PRINTING = labelPrintingEnabled();
 
 export function IdenticalBoxesForm({
   token, palletNumber, sample, anotherOf, weightDoubt, listed: listedProp, lineBoxes, skuMismatch, productChoice, onBack, onCreated,
+  cartonLabels = true,
 }: IdenticalBoxesFormProps) {
   const tr = useT();
   const { toast, showToast } = useToast();
@@ -164,6 +174,8 @@ export function IdenticalBoxesForm({
   const typed = Math.min(Math.max(parseInt(quantity, 10) || 0, 0), 500);
   // What is saved: the total less what is already listed (or the count as typed).
   const count = totalMode ? labelsToSave(typed, listed) : typed;
+  // "save N labels", or "add N cartons" with carton labels off.
+  const saveLabel = cartonSaveKey(count, cartonLabels, 'identical');
   const minTyped = totalMode ? listed + 1 : 1;
   const weightKg = Number(weight);
   const weightOk = Number.isFinite(weightKg) && weightKg > 0 && weightKg <= 2000;
@@ -343,13 +355,13 @@ export function IdenticalBoxesForm({
                 ? tr('identical.totalHint', { listed })
                 : count === 0
                 ? tr('identical.allListed', { listed })
-                : tr(anotherOf ? 'identical.willAdd' : 'identical.willSave', { add: count, listed })}
+                : tr(identicalTotalKey(!!anotherOf, cartonLabels), { add: count, listed })}
             </p>
-          ) : (
+          ) : cartonLabels ? (
             <p className="text-[10.5px] font-semibold text-ink-muted mt-[6px] mx-[2px] leading-[1.45]">
               {tr('identical.quantityHint')}
             </p>
-          )}
+          ) : null}
           {!!lineBoxes && lineBoxes > listed && typed !== lineBoxes && (
             // The note's figure, one tap — never filled in for him.
             <button
@@ -460,7 +472,7 @@ export function IdenticalBoxesForm({
           className="w-full h-[50px] rounded-[12px] bg-brand text-white text-[14px] font-black flex items-center justify-center gap-2 disabled:opacity-50"
         >
           <MI name="save" size={20} />
-          {saving ? tr('carton.saving') : count === 1 ? tr('identical.saveOne') : tr('identical.save', { count })}
+          {saving ? tr('carton.saving') : tr(saveLabel.key, saveLabel.params)}
         </button>
       </div>
 

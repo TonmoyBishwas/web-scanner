@@ -29,6 +29,11 @@
  * (one or more, split by carton) — no weight, no production date — and Save
  * mints one label per carton through `units.onCreated`. Without `units` the
  * screen is exactly what it was.
+ *
+ * `cartonLabels` false (scanner flag `carton_labels` off for the chat —
+ * lib/label-switches.ts, Mevaser 05/11): no "each carton gets its own label
+ * with a unique barcode" hint, and Save says the approved "add N cartons"
+ * instead of "save N labels". What is saved is unchanged. Absent = as today.
  */
 
 import { useMemo, useRef, useState } from 'react';
@@ -40,6 +45,7 @@ import { Toast, useToast } from './Toast';
 import { useT } from '@/lib/i18n';
 import { normalizeString } from '@/lib/string-utils';
 import { labelPrintingEnabled } from '@/lib/label-printing';
+import { cartonSaveKey } from '@/lib/label-switches';
 import { batchIdForPayload } from '@/lib/label-batches';
 import { validateCartonDates } from '@/lib/date-validation';
 import { localIsoDate } from '@/lib/edit-panel-state';
@@ -151,6 +157,8 @@ interface CartonCreatorProps {
   onCreated?: (count: number, batchId: string | null, labels: CartonLabel[]) => void;
   /** Units mode (loose pile, flag on). Absent: kg only, as before. */
   units?: CartonUnitsMode;
+  /** Carton-label wording shown (see the file comment). Default true: as today. */
+  cartonLabels?: boolean;
 }
 
 type Step = 'item' | 'form';
@@ -173,7 +181,7 @@ function unitsStart(units: CartonUnitsMode | undefined, item: CartonItemOption |
   };
 }
 
-export function CartonCreator({ token, items, palletNumber, notCountedWarning = false, countOnSave = false, preset, onList, onBack, onCreated, units }: CartonCreatorProps) {
+export function CartonCreator({ token, items, palletNumber, notCountedWarning = false, countOnSave = false, preset, onList, onBack, onCreated, units, cartonLabels = true }: CartonCreatorProps) {
   const tr = useT();
   const { toast, showToast } = useToast();
 
@@ -214,6 +222,8 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
   }, [items, query]);
 
   const count = Math.min(Math.max(parseInt(quantity, 10) || 0, 0), 500);
+  // The kg Save's wording: "save N labels", or "add N cartons" with carton labels off.
+  const kgSave = cartonSaveKey(count, cartonLabels, 'carton');
   // The picked item's cartons already on the open list (read live: the
   // camera is paused under this screen, so it holds still while he types).
   const listed = selected ? onList?.(selected) ?? null : null;
@@ -631,9 +641,11 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
                   <MI name="add" size={22} />
                 </button>
               </div>
-              <p className="text-[10.5px] font-semibold text-ink-muted mt-[6px] mx-[2px] leading-[1.45]">
-                {tr('carton.quantityHint')}
-              </p>
+              {cartonLabels && (
+                <p className="text-[10.5px] font-semibold text-ink-muted mt-[6px] mx-[2px] leading-[1.45]">
+                  {tr('carton.quantityHint')}
+                </p>
+              )}
               {preset?.lineTotal ? (
                 <p className="text-[10.5px] font-semibold text-ink-muted mt-[2px] mx-[2px] leading-[1.45]">
                   {tr('carton.lineTotalHint', { total: preset.lineTotal })}
@@ -796,9 +808,7 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
                 ? tr('carton.saving')
                 : unitsOn
                   ? uCount === 1 ? tr('carton.unitsSaveOne') : tr('carton.unitsSave', { n: uCount })
-                  : count === 1
-                  ? tr('carton.saveOne')
-                  : tr('carton.save', { count })}
+                  : tr(kgSave.key, kgSave.params)}
             </button>
           </div>
         </>

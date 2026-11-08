@@ -118,9 +118,11 @@ function formatQty(qty: number, unit: string): string {
 interface DocumentsBrowserProps {
   token: string;
   onBack: () => void;
+  /** Passed to the pallet hand-off (PalletsBrowser `lpnSticker`). Default true. */
+  lpnSticker?: boolean;
 }
 
-export function DocumentsBrowser({ token, onBack }: DocumentsBrowserProps) {
+export function DocumentsBrowser({ token, onBack, lpnSticker = true }: DocumentsBrowserProps) {
   const tr = useT();
   const isHe = useContext(LanguageContext) === 'Hebrew';
   const { toast, showToast } = useToast();
@@ -569,7 +571,7 @@ export function DocumentsBrowser({ token, onBack }: DocumentsBrowserProps) {
 
       {/* Pallet hand-off */}
       {palletId && (
-        <PalletsBrowser token={token} initialPalletId={palletId} onBack={() => setPalletId(null)} />
+        <PalletsBrowser token={token} initialPalletId={palletId} onBack={() => setPalletId(null)} lpnSticker={lpnSticker} />
       )}
 
       <Toast toast={toast} />

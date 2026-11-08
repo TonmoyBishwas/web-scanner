@@ -7,6 +7,10 @@
  * status filters + text search, camera scan-to-find (box barcode or LPN QR),
  * and a read-only per-pallet detail view with a sticker link.
  *
+ * `lpnSticker` false (scanner flag `lpn_labels` off for the chat —
+ * lib/label-switches.ts, 05/11): no "Open sticker" in the detail view. The
+ * LPN, the scan-to-find by its QR and the sticker page itself are unchanged.
+ *
  * Data comes from GET /api/pallets and /api/pallets/detail, both guarded by
  * the page's live session token.
  */
@@ -100,9 +104,11 @@ interface PalletsBrowserProps {
   onBack: () => void;
   /** Open straight into this pallet's detail (documents-archive hand-off). */
   initialPalletId?: string;
+  /** The LPN sticker link shown (see the file comment). Default true: as today. */
+  lpnSticker?: boolean;
 }
 
-export function PalletsBrowser({ token, onBack, initialPalletId }: PalletsBrowserProps) {
+export function PalletsBrowser({ token, onBack, initialPalletId, lpnSticker = true }: PalletsBrowserProps) {
   const tr = useT();
   const language = useContext(LanguageContext);
   const { toast, showToast } = useToast();
@@ -509,8 +515,9 @@ export function PalletsBrowser({ token, onBack, initialPalletId }: PalletsBrowse
                 </div>
               ))}
 
-              {/* Sticker link (loose pallets have no printed sticker) */}
-              {detail.card.pallet_type !== 'Loose' && (
+              {/* Sticker link (loose pallets have no printed sticker; none
+                  with lpn_labels off) */}
+              {lpnSticker && detail.card.pallet_type !== 'Loose' && (
                 <button
                   onClick={() => openSticker(detail.card.lpn)}
                   className="mt-1 mb-3 flex items-center justify-center gap-2 px-4 py-[12px] rounded-[12px] border border-line bg-tile text-[13px] font-extrabold text-ink-inverse"

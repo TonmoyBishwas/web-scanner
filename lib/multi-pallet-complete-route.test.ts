@@ -28,6 +28,10 @@ vi.mock('@/lib/server-events', () => ({
     return null;
   },
 }));
+// no_hand_codes (05/11): off unless a test turns it on; the real reader
+// would ask the database.
+let noHandCodes = false;
+vi.mock('@/lib/scanner-flags', () => ({ noHandCodesOn: async () => noHandCodes }));
 vi.mock('next/server', async (orig) => ({
   ...(await orig<typeof import('next/server')>()),
   after: (fn: () => unknown) => { void fn(); },
@@ -66,6 +70,7 @@ beforeEach(() => {
   savedBotUrl = process.env.TELEGRAM_BOT_WEBHOOK_URL;
   process.env.TELEGRAM_BOT_WEBHOOK_URL = 'http://bot.test';
   botCalls.length = 0;
+  noHandCodes = false;
   sessions.clear();
   sessions.set(`pallet:multi:${TOKEN}`, {
     token: TOKEN, chat_id: '1', pallet_count: 2, loose_box_count: 0, current_pallet: 1,
@@ -175,5 +180,89 @@ describe('multi-pallet-complete: the single-item question on 2 weightless-label 
     expect(sent.ocr_box_weight).toBe(8);
     expect(sent.calculated_total_weight).toBe(400);
     expect(sent.verified_scan_count).toBe(2);
+  });
+});
+
+describe('multi-pallet-complete: no_hand_codes (05/11)', () => {
+  const nobc = box('NOBC-S03-P1-3', { sku: '', item_name_hebrew: CHICKEN.item_name_hebrew, item_name: CHICKEN.item_name_english, weight: 12.4, expiry: '2027-10-22' });
+  type Sent = { barcode: string; sku: string; barcode_source?: string; barcode_format_ok?: boolean | null };
+
+  it('off: a carton booked without a barcode still goes as its NOBC- marker', async () => {
+    const { status } = await complete([chicken(1, 12.2), nobc, salmon(1)]);
+    expect(status).toBe(200);
+    const sent = botCalls[0].body.scanned_boxes as Sent[];
+    const row = sent.find((b) => b.barcode.startsWith('NOBC-'))!;
+    expect(row.barcode_source).toBe('minted');
+  });
+
+  it('on: it goes with no barcode and no barcode_source (pending); the real codes and the count are untouched', async () => {
+    noHandCodes = true;
+    const manual = box('MANUAL-1793781692727-4v2wvr', { sku: 'MANUAL-1793781692727-4v2wvr', item_name_hebrew: SALMON.item_name_hebrew, item_name: SALMON.item_name_english, weight: 15, expiry: '2027-10-22' });
+    const { status } = await complete([chicken(1, 12.2), nobc, salmon(1), manual]);
+    expect(status).toBe(200);
+    const body = botCalls[0].body;
+    const sent = body.scanned_boxes as Sent[];
+    expect(sent).toHaveLength(4);
+    expect(body.verified_scan_count).toBe(4);
+    const blank = sent.filter((b) => b.barcode === '');
+    expect(blank).toHaveLength(2);
+    for (const b of blank) {
+      expect(b.sku).toBe('');
+      expect(b.barcode_source).toBeUndefined();
+      expect(b.barcode_format_ok).toBeUndefined();
+    }
+    expect(sent.some((b) => /^(MANUAL|NOBC)-/.test(b.barcode))).toBe(false);
+    const items = body.items as Item[];
+    expect(items.find((i) => i.item_code === CHICKEN.item_code)!.box_count).toBe(2);
+    expect(items.find((i) => i.item_code === SALMON.item_code)!.box_count).toBe(2);
+    // The real codes keep their provenance.
+    expect(sent.find((b) => b.barcode === chicken(1, 12.2).barcode)!.barcode_source).toBe('scan');
+  });
+
+  it('on: a uniform pallet with a no-barcode sample still books 2 samples + the declared 50', async () => {
+    noHandCodes = true;
+    const TURKEY = { item_code: '2465', item_name_hebrew: 'הודו טחון 500 גרם', item_name_english: '', quantity_kg: 800 };
+    sessions.set(`pallet:multi:${TOKEN}`, {
+      ...(sessions.get(`pallet:multi:${TOKEN}`) as Record<string, unknown>),
+      ocr_data: [TURKEY],
+    });
+    const real = box('1024650100100001670708241', { item_name_hebrew: TURKEY.item_name_hebrew, weight: 8, expiry: '2027-02-26' });
+    const pending = box('NOBC-S03-P1-2', { sku: '', item_name_hebrew: TURKEY.item_name_hebrew, weight: 8, expiry: '2027-02-26' });
+    const name_key = groupKeyForBox(real);
+    const res = await route.POST(new NextRequest('http://scanner.test/api/multi-pallet-complete', {
+      method: 'POST',
+      body: JSON.stringify({
+        token: TOKEN, scanned_boxes: [real, pending], box_count: 50, pallet_number: 1,
+        uniform_groups: [{ name_key, total_count: 50, avg_weight: 8 }],
+      }),
+    } as never));
+    expect(res.status).toBe(200);
+    const sent = botCalls[0].body;
+    expect(sent.pallet_type).toBe('single');
+    expect(sent.box_count).toBe(50);
+    expect(sent.calculated_total_weight).toBe(400);
+    expect(sent.verified_scan_count).toBe(2);
+    expect((sent.scanned_boxes as Sent[]).map((b) => b.barcode)).toEqual([real.barcode, '']);
+  });
+
+  it('on: a Type A non-meat sample captured by photo goes with no code', async () => {
+    noHandCodes = true;
+    const RICE = { item_code: '500', item_name_hebrew: 'אורז', item_name_english: 'Rice', quantity_kg: 100, box_count: 10, unit_weight_kg: 10 };
+    sessions.set(`pallet:multi:${TOKEN}`, {
+      ...(sessions.get(`pallet:multi:${TOKEN}`) as Record<string, unknown>),
+      category: 'non_meat', ocr_data: [RICE],
+    });
+    const { nonMeatItemKey } = await import('@/lib/nonmeat-key');
+    const res = await route.POST(new NextRequest('http://scanner.test/api/multi-pallet-complete', {
+      method: 'POST',
+      body: JSON.stringify({
+        token: TOKEN, pallet_number: 1,
+        nonmeat_items: [{ item_key: nonMeatItemKey(RICE), box_count: 10, sample_barcode: 'MANUAL-1-0' }],
+      }),
+    } as never));
+    expect(res.status).toBe(200);
+    const sent = botCalls[0].body;
+    const json = JSON.stringify(sent);
+    expect(json.includes('MANUAL-')).toBe(false);
   });
 });

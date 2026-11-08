@@ -221,3 +221,21 @@ describe('POST /api/carton-labels in units (27/10)', () => {
     expect(ids()).toEqual(['1', '2', '3', '4', '5', '7', '9']);
   });
 });
+
+describe('POST /api/carton-labels: no_hand_codes (05/11)', () => {
+  it('the edit panel mint (origin receiving) is refused 403 with the flag on: nothing minted', async () => {
+    // The flag is read only for a 'receiving' mint, and cached per server
+    // instance — this is the file's only such call, so the row below is
+    // the one it reads.
+    db.scanner_flags = [{ flag: 'no_hand_codes', enabled_all: true, chat_ids: [] }];
+    const res = await labelsRoute.POST(req('/api/carton-labels', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: 'tokA', item_name_hebrew: 'הודו טחון 500 גרם', quantity: 1, pallet_number: 1, origin: 'receiving', weight_kg: 8,
+      }),
+    }));
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe('no_hand_codes');
+    expect(ids()).toEqual(['1', '2', '3', '4', '5', '7', '9']);
+  });
+});

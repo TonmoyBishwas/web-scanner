@@ -239,3 +239,42 @@ describe('POST /api/carton-labels — a units save', () => {
     expect(db.carton_labels.every((l) => !('units_per_carton' in l) && l.weight_kg === 12.5)).toBe(true);
   });
 });
+
+describe('GET /api/multi-pallet-session label switches + top_bar_delete_only (05/11)', () => {
+  const get = async (token: string) => (await sessionRoute.GET(req(`/api/multi-pallet-session?token=${token}`))).json();
+
+  it('no rows: nothing added, the features exactly as before', async () => {
+    expect((await get('tokT')).features).toEqual({ units_mode: true });
+    expect((await get('tokR')).features).toEqual({ units_mode: false });
+  });
+
+  it('scanner_flags unreadable: the label switches stay as today (absent), the delete flag off', async () => {
+    missingTable = 'scanner_flags';
+    expect((await get('tokT')).features).toEqual({ units_mode: false });
+  });
+
+  it('the current tenant rows (carton_labels off, lpn_labels on): only carton_labels: false', async () => {
+    db.scanner_flags.push(
+      { flag: 'carton_labels', enabled_all: false, chat_ids: [] },
+      { flag: 'lpn_labels', enabled_all: true, chat_ids: [] },
+    );
+    expect((await get('tokT')).features).toEqual({ units_mode: true, carton_labels: false });
+    expect((await get('tokR')).features).toEqual({ units_mode: false, carton_labels: false });
+  });
+
+  it('a row on for listed chats: off for every other chat', async () => {
+    db.scanner_flags.push(
+      { flag: 'carton_labels', enabled_all: false, chat_ids: ['999000000001'] },
+      { flag: 'lpn_labels', enabled_all: false, chat_ids: ['999000000001'] },
+    );
+    expect((await get('tokT')).features).toEqual({ units_mode: true });
+    expect((await get('tokR')).features).toEqual({ units_mode: false, carton_labels: false, lpn_labels: false });
+  });
+
+  it('top_bar_delete_only: present only for the chats it is on for', async () => {
+    db.scanner_flags.push({ flag: 'top_bar_delete_only', enabled_all: false, chat_ids: ['999000000001'] });
+    expect((await get('tokT')).features).toEqual({ units_mode: true, top_bar_delete_only: true });
+    expect((await get('tokR')).features).toEqual({ units_mode: false });
+    expect(db.scan_sessions[0].data).not.toHaveProperty('features');
+  });
+});
