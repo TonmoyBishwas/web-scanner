@@ -34,6 +34,17 @@ function reply(status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status, headers: NO_STORE });
 }
 
+/**
+ * The scanner build that served this page (2026-11-10), added to each
+ * receive_load row so a bug report can be matched to the deploy that had it:
+ * Vercel's short commit sha and environment ('production' / 'preview').
+ */
+function buildTag(): { build: string | null; deploy: string | null } {
+  const sha = (process.env.VERCEL_GIT_COMMIT_SHA ?? '').trim();
+  const env = (process.env.VERCEL_ENV ?? '').trim();
+  return { build: sha ? sha.slice(0, 7) : null, deploy: env || null };
+}
+
 function receiveTraceDisabled(): boolean {
   const v = (process.env.RECEIVE_TRACE_DISABLED ?? '').trim().toLowerCase();
   return v !== '' && v !== '0' && v !== 'false' && v !== 'off';
@@ -84,7 +95,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         seq,
         kind,
         event,
-        data: e.data === undefined ? null : packEventData(e.data),
+        data: event === 'receive_load' && e.data && typeof e.data === 'object' && !Array.isArray(e.data)
+          ? packEventData({ ...(e.data as Record<string, unknown>), ...buildTag() })
+          : e.data === undefined ? null : packEventData(e.data),
       }];
     });
     if (rows.length === 0) return reply(200, { accepted: 0, enabled: true });

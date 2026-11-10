@@ -48,6 +48,7 @@ import {
   type ReceiveFormV3Props,
   type V3Draft,
   type V3LineDraft,
+  type V3SplitRow,
   type V3LineStatus,
   type V3NoticeKind,
   type V3SaveProblems,
@@ -252,6 +253,41 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
     [emit],
   );
 
+  // Every error sheet and notice screen the worker saw (2026-11-10): the
+  // trail showed the save outcome but not what was on his screen.
+  useEffect(() => {
+    if (error) emit('receive_error_shown', { v: 3, text: error.text, retry: error.retry });
+  }, [error, emit]);
+  useEffect(() => {
+    if (screen === 'notice') emit('receive_notice', { v: 3, notice });
+  }, [screen, notice, emit]);
+
+  // Split (several expiry dates on one line) edits, once the typing settles:
+  // the classic trace has no field for them, so they were not recorded.
+  const splitTimers = useRef(new Map<number, number>());
+  const traceSplit = useCallback(
+    (index: number, rows: V3SplitRow[] | null) => {
+      const timers = splitTimers.current;
+      const prev = timers.get(index);
+      if (prev !== undefined) window.clearTimeout(prev);
+      const fire = () => {
+        timers.delete(index);
+        step('split_edit', {
+          line: index,
+          rows: rows ? rows.length : 0,
+          split: rows ? rows.slice(0, 12).map((r) => ({ qty: r.qty, date: r.date })) : null,
+        });
+      };
+      if (!rows) return fire();
+      timers.set(index, window.setTimeout(fire, 1200));
+    },
+    [step],
+  );
+  useEffect(() => {
+    const timers = splitTimers.current;
+    return () => timers.forEach((t) => window.clearTimeout(t));
+  }, []);
+
   // ── Derived ──
   const byIndex = useMemo(() => new Map(draft.lines.map((d) => [d.index, d])), [draft.lines]);
   const statuses = useMemo(() => {
@@ -366,6 +402,13 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
       const patch = typeof p === 'function' ? p(x) : p;
       if (!Object.keys(patch).length) return;
       commit({ ...cur, lines: cur.lines.map((l) => (l.index === index ? { ...l, ...patch } : l)) });
+      if (patch.split !== undefined) {
+        try {
+          traceSplit(index, patch.split);
+        } catch {
+          /* tracing only */
+        }
+      }
       const lp = legacyPatch(patch);
       if (Object.keys(lp).length) {
         try {
@@ -375,7 +418,7 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
         }
       }
     },
-    [commit],
+    [commit, traceSplit],
   );
 
   const setPallets = useCallback(
@@ -664,7 +707,8 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
     setLooseSnap(null);
     setLooseQuery('');
     setScreen(looseFrom);
-    step('loose_confirm', { lines: Object.keys(draftRef.current.loose).length });
+    const loose = draftRef.current.loose;
+    step('loose_confirm', { lines: Object.keys(loose).length, loose: Object.fromEntries(Object.entries(loose).slice(0, 60)) });
   }, [looseFrom, step]);
 
   const cancelPalletsSheet = useCallback(() => {

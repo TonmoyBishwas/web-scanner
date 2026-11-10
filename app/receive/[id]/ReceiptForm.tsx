@@ -1735,6 +1735,7 @@ function V3Host({
     restored: seen.meta.restored,
     query: seen.meta.query,
     search: seen.meta.search,
+    form: 'v3',
   });
   const onDraftChange = useCallback((d: V3Draft, meta: V3DraftMeta) => setSeen({ draft: v3ToLegacyDraft(d), meta }), []);
   return (
