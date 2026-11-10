@@ -583,15 +583,15 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
   }, []);
 
   // Android's "hide keyboard" keeps the field focused: when the viewport is back to full height, let go of it.
-  const kbView = useRef<KbViewport>({ base: 0, shrunk: false });
+  const kbView = useRef<KbViewport>({ base: 0, shrunk: false, width: 0 });
   useEffect(() => {
     const vv = typeof window === 'undefined' ? null : window.visualViewport;
     if (!vv) return;
-    kbView.current = { base: vv.height, shrunk: false };
+    kbView.current = { base: vv.height, shrunk: false, width: vv.width };
     const onResize = () => {
       const a = document.activeElement as HTMLElement | null;
       const typing = !!(a && a.dataset?.keyboard && listRef.current?.contains(a));
-      const r = kbViewportStep(kbView.current, vv.height, typing);
+      const r = kbViewportStep(kbView.current, vv.height, vv.width, typing);
       kbView.current = r.next;
       if (r.closed) closeKeyboard();
     };
@@ -1060,8 +1060,16 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
             onToggleNoExpiry: () => patchLine(o, (x) => ({ noExpiry: !x.noExpiry })),
             onStartSplit: () => patchLine(o, (x) => startSplitPatch(line, x)),
             onSplitQty: (k: number, v: string) => patchLine(o, (x) => setSplitQtyPatch(line, x, k, v.replace(/[^\d.,]/g, '').slice(0, 12))),
-            onSplitType: (k: number, raw: string, caret: number | null) =>
-              patchLine(o, (x) => ({ split: (x.split ?? []).map((r, j) => (j === k ? { ...r, date: typeDate(raw, r.date, caret) } : r)) })),
+            onSplitType: (k: number, raw: string, caret: number | null) => {
+              const x = draftRef.current.lines.find((l) => l.index === o);
+              if (!x) return;
+              const before = x.split?.[k]?.date ?? '';
+              const after = typeDate(raw, before, caret);
+              const split = (x.split ?? []).map((r, j) => (j === k ? { ...r, date: after } : r));
+              patchLine(o, { split });
+              // The date that makes the whole split add up closes the keyboard, as a single date does.
+              if (dateJustCompleted(before, after, today) && expState(line, { ...x, split }, today) === 'ok') closeKeyboard();
+            },
             onSplitBlur: (k: number) => {
               patchLine(o, (x) => {
                 const rows = x.split ?? [];

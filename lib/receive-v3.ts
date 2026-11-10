@@ -347,10 +347,11 @@ export function dateJustCompleted(before: string, after: string, today: string):
   return after !== before && dateCheck(after, today) === 'ok';
 }
 
-/** Tallest visual viewport seen, and whether the keyboard was seen up since the number field took focus. */
+/** Tallest visual viewport seen at this width, and whether the keyboard was seen up since the number field took focus. */
 export interface KbViewport {
   base: number;
   shrunk: boolean;
+  width: number;
 }
 
 /**
@@ -359,11 +360,13 @@ export interface KbViewport {
  * step hidden. `closed` = the keyboard was seen up and the viewport is back
  * to full height while the number field still has focus.
  */
-export function kbViewportStep(s: KbViewport, height: number, typing: boolean): { next: KbViewport; closed: boolean } {
+export function kbViewportStep(s: KbViewport, height: number, width: number, typing: boolean): { next: KbViewport; closed: boolean } {
+  // Rotated or resized: start again from this height (never a close).
+  if (width !== s.width) return { next: { base: height, shrunk: false, width }, closed: false };
   const base = Math.max(s.base, height);
-  if (!typing) return { next: { base, shrunk: false }, closed: false };
-  if (height < base - V3.KB_VIEWPORT_PX) return { next: { base, shrunk: true }, closed: false };
-  return { next: { base, shrunk: false }, closed: s.shrunk };
+  if (!typing) return { next: { base, shrunk: false, width }, closed: false };
+  if (height < base - V3.KB_VIEWPORT_PX) return { next: { base, shrunk: true, width }, closed: false };
+  return { next: { base, shrunk: false, width }, closed: s.shrunk };
 }
 
 // ── Split by expiry ───────────────────────────────────────────────────────

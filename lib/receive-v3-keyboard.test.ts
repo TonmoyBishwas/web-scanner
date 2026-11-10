@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { V3, dateJustCompleted, kbViewportStep, typeDate, type KbViewport } from './receive-v3';
+import { V3, dateJustCompleted, expState, initialV3Draft, kbViewportStep, typeDate, type KbViewport } from './receive-v3';
+import { normalizeFormLines } from './receipt-form';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 /**
  * David, Bnei Darom 10/11: the pallet step hides while a number field has
@@ -48,10 +51,11 @@ describe('dateJustCompleted (the 8th digit closes the keyboard)', () => {
 
 describe('kbViewportStep (Android hides the keyboard, the field keeps focus)', () => {
   const H = 695;
-  const run = (seq: [number, boolean][], s0: KbViewport = { base: H, shrunk: false }) => {
+  const W = 384;
+  const run = (seq: ([number, boolean] | [number, boolean, number])[], s0: KbViewport = { base: H, shrunk: false, width: W }) => {
     let s = s0;
-    return seq.map(([h, typing]) => {
-      const r = kbViewportStep(s, h, typing);
+    return seq.map(([h, typing, w]) => {
+      const r = kbViewportStep(s, h, w ?? s.width, typing);
       s = r.next;
       return r.closed;
     });
@@ -75,11 +79,43 @@ describe('kbViewportStep (Android hides the keyboard, the field keeps focus)', (
   });
 
   it('the tallest viewport is the base (address bar hidden later)', () => {
-    const r = kbViewportStep({ base: 600, shrunk: false }, 656, false);
+    const r = kbViewportStep({ base: 600, shrunk: false, width: W }, 656, W, false);
     expect(r.next.base).toBe(656);
   });
 
-  it('landscape (shorter than the portrait base) never closes it by mistake', () => {
-    expect(run([[360, true], [200, true], [360, true]])).toEqual([false, false, false]);
+  it('rotating starts again from the new height: never a close mid-typing', () => {
+    const land: KbViewport = { base: 304, shrunk: false, width: 695 };
+    // opened in landscape, keyboard up, rotated to portrait with the keyboard still up
+    expect(run([[110, true], [395, true, W], [395, true]], land)).toEqual([false, false, false]);
+  });
+
+  it('opened in portrait, used in landscape: hide-keyboard is caught there too', () => {
+    expect(run([[304, false, 695], [110, true], [304, true]])).toEqual([false, false, true]);
+  });
+});
+
+describe('split by expiry: the date that makes the split add up closes the keyboard', () => {
+  const GET = JSON.parse(readFileSync(path.resolve(__dirname, '../test/fixtures/receive_form_get_bnei_darom.json'), 'utf8')) as { lines: unknown };
+  const LINES = normalizeFormLines(GET.lines);
+  const D0 = initialV3Draft(LINES);
+  const line = LINES.find((l) => l.needs_expiry && !l.weighed && Number(D0.lines.find((x) => x.index === l.index)?.qty) >= 2) ?? LINES[0];
+  const d0 = D0.lines.find((x) => x.index === line.index)!;
+  const total = Number(d0.qty);
+  const closes = (rows: { qty: string; date: string }[], k: number, before: string) => {
+    const d = { ...d0, split: rows };
+    return dateJustCompleted(before, rows[k].date, TODAY) && expState(line, d, TODAY) === 'ok';
+  };
+
+  it('row 1 complete, row 2 still empty: keyboard stays (he goes on to row 2)', () => {
+    expect(closes([{ qty: '1', date: '01.06.2027' }, { qty: String(total - 1), date: '' }], 0, '01.06.202')).toBe(false);
+  });
+
+  it('the last date that makes it add up: keyboard closes', () => {
+    expect(closes([{ qty: '1', date: '01.06.2027' }, { qty: String(total - 1), date: '01.07.2027' }], 1, '01.07.202')).toBe(true);
+  });
+
+  it('adds up to less than the quantity: keyboard stays', () => {
+    expect(total).toBeGreaterThanOrEqual(2);
+    expect(closes([{ qty: '1', date: '01.06.2027' }, { qty: '0', date: '01.07.2027' }], 1, '01.07.202')).toBe(false);
   });
 });
