@@ -264,12 +264,12 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
 
   // Split (several expiry dates on one line) edits, once the typing settles:
   // the classic trace has no field for them, so they were not recorded.
-  const splitTimers = useRef(new Map<number, number>());
+  const splitTimers = useRef(new Map<number, { timer: number; fire: () => void }>());
   const traceSplit = useCallback(
     (index: number, rows: V3SplitRow[] | null) => {
       const timers = splitTimers.current;
       const prev = timers.get(index);
-      if (prev !== undefined) window.clearTimeout(prev);
+      if (prev !== undefined) window.clearTimeout(prev.timer);
       const fire = () => {
         timers.delete(index);
         step('split_edit', {
@@ -279,13 +279,31 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
         });
       };
       if (!rows) return fire();
-      timers.set(index, window.setTimeout(fire, 1200));
+      timers.set(index, { timer: window.setTimeout(fire, 1200), fire });
     },
     [step],
   );
+  // A pending edit is sent, not dropped, when the phone locks or the page
+  // goes (registered before the trace hook's own listeners, so it rides
+  // their beacon).
   useEffect(() => {
     const timers = splitTimers.current;
-    return () => timers.forEach((t) => window.clearTimeout(t));
+    const flush = () => {
+      for (const p of [...timers.values()]) {
+        window.clearTimeout(p.timer);
+        p.fire();
+      }
+    };
+    const onHidden = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    document.addEventListener('visibilitychange', onHidden);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onHidden);
+      window.removeEventListener('pagehide', flush);
+      flush();
+    };
   }, []);
 
   // ── Derived ──
