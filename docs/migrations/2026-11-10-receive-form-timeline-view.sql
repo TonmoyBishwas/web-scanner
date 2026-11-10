@@ -16,10 +16,28 @@ select
   f.header->>'supplier'                  as supplier,
   f.chat_id,
   f.status                               as form_status,
+  -- Per page load, not per form (a form opened in v3 and later in the
+  -- classic form keeps each load's own version): a browser row is v3 when its
+  -- load has a v3 row (receive_load form 'v3', or any v:3 step/save row); a
+  -- server row (load_id 'server': receive_open / receive_submit / polls) when
+  -- its own data says v3 or the browser load just before it was v3.
   case
-    when exists (select 1 from scanner_events o
-                 where o.page = 'receive' and o.token = f.id::text
-                   and (o.data ? 'v3' or o.data->>'v' = '3' or o.data->>'form' = 'v3'))
+    when coalesce(e.load_id, 'server') <> 'server' then
+      case when exists (
+        select 1 from scanner_events o
+        where o.page = 'receive' and o.token = e.token and o.load_id = e.load_id
+          and (o.data->>'v' = '3' or o.data->>'form' = 'v3'))
+        then 'v3' else 'classic' end
+    when e.data ? 'v3' or e.data->>'v' = '3' then 'v3'
+    when exists (
+      select 1 from scanner_events o
+      where o.page = 'receive' and o.token = e.token
+        and o.load_id = (
+          select p.load_id from scanner_events p
+          where p.page = 'receive' and p.token = e.token
+            and coalesce(p.load_id, 'server') <> 'server' and p.ts <= e.ts
+          order by p.ts desc limit 1)
+        and (o.data->>'v' = '3' or o.data->>'form' = 'v3'))
       then 'v3'
     else 'classic'
   end                                    as form_version,
