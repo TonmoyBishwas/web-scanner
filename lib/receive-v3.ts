@@ -64,6 +64,8 @@ export const V3 = {
   HEADER_COLLAPSE_AT: 24,
   HEADER_EXPAND_AT: 4,
   SWIPE_MIN_PX: 40,
+  /** The visual viewport this much below its tallest = the phone's keyboard is up. */
+  KB_VIEWPORT_PX: 150,
 } as const;
 
 /** The answers' marker for a v3 body (`answers.form_version`). */
@@ -332,6 +334,36 @@ export function dateCheck(value: string, today: string): 'ok' | 'invalid' | 'pas
   if (e === 'expiry_too_far') return 'far';
   if (e) return 'invalid';
   return 'ok';
+}
+
+/**
+ * The keystroke that made the date field a whole valid date (8 digits, or 6
+ * that typeDate expanded). The keyboard then closes so the pallet step, hidden
+ * while a number field has focus (6.2), shows and its list can open by itself
+ * (6.4). Without it the worker had to close and reopen the card to reach the
+ * pallet (David, Bnei Darom 10/11: 40 of 41 lines).
+ */
+export function dateJustCompleted(before: string, after: string, today: string): boolean {
+  return after !== before && dateCheck(after, today) === 'ok';
+}
+
+/** Tallest visual viewport seen, and whether the keyboard was seen up since the number field took focus. */
+export interface KbViewport {
+  base: number;
+  shrunk: boolean;
+}
+
+/**
+ * One visual-viewport resize. Android's own "hide keyboard" leaves the field
+ * focused, so the form still thought the keyboard was up and kept the pallet
+ * step hidden. `closed` = the keyboard was seen up and the viewport is back
+ * to full height while the number field still has focus.
+ */
+export function kbViewportStep(s: KbViewport, height: number, typing: boolean): { next: KbViewport; closed: boolean } {
+  const base = Math.max(s.base, height);
+  if (!typing) return { next: { base, shrunk: false }, closed: false };
+  if (height < base - V3.KB_VIEWPORT_PX) return { next: { base, shrunk: true }, closed: false };
+  return { next: { base, shrunk: false }, closed: s.shrunk };
 }
 
 // ── Split by expiry ───────────────────────────────────────────────────────

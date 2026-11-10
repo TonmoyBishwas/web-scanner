@@ -21,10 +21,12 @@ import {
   V3,
   addSplitRowPatch,
   checkV3BeforeSend,
+  dateJustCompleted,
   dottedToIso,
   expState,
   expandDate,
   initialV3Draft,
+  kbViewportStep,
   lineStatusV3,
   mergeV3Draft,
   palletOf,
@@ -42,6 +44,7 @@ import {
   typeDate,
   v3DraftStorageKey,
   v3DraftToAnswers,
+  type KbViewport,
   type ReceiveFormV3Props,
   type V3Draft,
   type V3LineDraft,
@@ -570,6 +573,32 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
     [],
   );
 
+  /** Close the phone's keyboard now: the focused number field loses focus and the pallet step shows. */
+  const closeKeyboard = useCallback(() => {
+    const a = document.activeElement as HTMLElement | null;
+    if (a && a.dataset?.keyboard) a.blur();
+    if (kbTimer.current !== null) window.clearTimeout(kbTimer.current);
+    kbTimer.current = null;
+    setKbOpen(false);
+  }, []);
+
+  // Android's "hide keyboard" keeps the field focused: when the viewport is back to full height, let go of it.
+  const kbView = useRef<KbViewport>({ base: 0, shrunk: false });
+  useEffect(() => {
+    const vv = typeof window === 'undefined' ? null : window.visualViewport;
+    if (!vv) return;
+    kbView.current = { base: vv.height, shrunk: false };
+    const onResize = () => {
+      const a = document.activeElement as HTMLElement | null;
+      const typing = !!(a && a.dataset?.keyboard && listRef.current?.contains(a));
+      const r = kbViewportStep(kbView.current, vv.height, typing);
+      kbView.current = r.next;
+      if (r.closed) closeKeyboard();
+    };
+    vv.addEventListener('resize', onResize);
+    return () => vv.removeEventListener('resize', onResize);
+  }, [closeKeyboard]);
+
   // ── Pallets ──
   const pickPallet = useCallback(
     (index: number, v: PalletPick) => {
@@ -1010,7 +1039,12 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
               const dx = draftRef.current.lines.find((l) => l.index === o);
               if (dx && lineStatusV3(line, dx, draftRef.current, today) === 'ready') maybeCollapse();
             },
-            onDateType: (raw: string, caret: number | null) => patchLine(o, (x) => ({ expiry: typeDate(raw, x.expiry, caret) })),
+            onDateType: (raw: string, caret: number | null) => {
+              const before = draftRef.current.lines.find((l) => l.index === o)?.expiry ?? '';
+              const after = typeDate(raw, before, caret);
+              patchLine(o, { expiry: after });
+              if (dateJustCompleted(before, after, today)) closeKeyboard();
+            },
             onDatePick: (dotted: string) => patchLine(o, { expiry: dotted, noExpiry: false }),
             onDateFocus: (e: FocusEvent<HTMLInputElement>) => {
               patchLine(o, (x) => (x.ack ? {} : { ack: true }));
