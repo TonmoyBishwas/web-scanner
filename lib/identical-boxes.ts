@@ -21,6 +21,7 @@ import { isMintedLabelBarcode } from './label-batches';
 import { isNoBarcodeId } from './no-barcode';
 import { barcodeCarriesWeight } from './barcode-weight';
 import { weightSourceOf, copyWeightTyped, weightChanged, type WeightSource } from './weight-source';
+import { WEIGHT_RATIO_LIMIT } from './weight-sanity';
 
 /**
  * May "All boxes identical" be offered on this row (its row actions, the
@@ -181,16 +182,25 @@ export function expandIdenticalBoxes<T extends SampleRow>(
  * True when the form's weight should become the source carton's own: the
  * worker confirmed the weight on screen (`weight_confirmed`), the source's
  * weight is the label OCR's reading as read (not its barcode's, not typed,
- * not a copy — lib/weight-source.ts 'label_ocr'), and the form weight
- * differs from it.
+ * not a copy — lib/weight-source.ts 'label_ocr') and the worker never
+ * reviewed it (`weight_checked`: he saved it in the edit panel), and the form
+ * weight differs from it — and either the form saves more than one carton
+ * (`saved`, the labels it mints: he gave one weight for a batch the source
+ * is one of, 79 on IN26014927), or the reading is implausible beside the
+ * typed figure (lib/weight-sanity.ts WEIGHT_RATIO_LIMIT, 2.5 vs 10). One
+ * more carton at a weight near the source's is a different carton weighing
+ * its own (review, 11/11): the source keeps its reading.
  */
 export function sourceTakesFormWeight(
-  source: Parameters<typeof weightSourceOf>[0],
+  source: Parameters<typeof weightSourceOf>[0] & { weight_checked?: boolean },
   form: Pick<IdenticalForm, 'weight' | 'weight_confirmed'>,
+  saved: number,
 ): boolean {
   if (!form.weight_confirmed || !(form.weight > 0)) return false;
-  if (weightSourceOf(source) !== 'label_ocr') return false;
-  return weightChanged(form.weight, Number(source.weight));
+  if (source.weight_checked || weightSourceOf(source) !== 'label_ocr') return false;
+  const read = Number(source.weight);
+  if (!weightChanged(form.weight, read)) return false;
+  return saved > 1 || form.weight > read * WEIGHT_RATIO_LIMIT || form.weight * WEIGHT_RATIO_LIMIT < read;
 }
 
 /**
@@ -201,8 +211,8 @@ export function sourceTakesFormWeight(
  */
 export function applyFormWeightToSource<R extends Parameters<typeof weightSourceOf>[0] & {
   weight_checked?: boolean; weight_suspect?: unknown;
-}>(rows: ReadonlyArray<R>, sourceBarcode: string, form: Pick<IdenticalForm, 'weight' | 'weight_confirmed'>): R[] {
-  return rows.map((r) => (r.barcode === sourceBarcode && sourceTakesFormWeight(r, form)
+}>(rows: ReadonlyArray<R>, sourceBarcode: string, form: Pick<IdenticalForm, 'weight' | 'weight_confirmed'>, saved: number): R[] {
+  return rows.map((r) => (r.barcode === sourceBarcode && sourceTakesFormWeight(r, form, saved)
     ? { ...r, weight: form.weight, weight_typed: true, weight_checked: true, weight_suspect: undefined }
     : r));
 }

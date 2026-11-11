@@ -313,10 +313,10 @@ export async function glattCodeMatchOn(chatId: string | number | null | undefine
 /**
  * "Different carton?" / identical save keeps the source carton's weight in
  * step (11/11, Asher Shahar IN26014927): when the worker saves a weight in
- * the form other than the source carton's label-OCR reading, the source
- * carton takes that weight too, as typed (lib/identical-boxes.ts
- * sourceTakesFormWeight). A missing row is OFF; the source keeps its
- * reading as before.
+ * the form other than the source carton's label-OCR reading, for a batch or
+ * over an implausible reading he never reviewed, the source carton takes
+ * that weight too, as typed (lib/identical-boxes.ts sourceTakesFormWeight).
+ * A missing row is OFF; the source keeps its reading as before.
  */
 export const identicalSourceWeightRow = flagRow('identical_source_weight');
 

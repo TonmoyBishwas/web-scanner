@@ -4,7 +4,7 @@ import { getRedisClient, sessionStorage } from '@/lib/redis';
 import { t } from '@/lib/i18n/server';
 import type { MultiPalletSession, MultiPalletBoxScan, Language } from '@/types';
 import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
-import { cartonOwnCodes, matchInvoiceItem, rowCartonCodes, type InvoiceMatchOptions } from '@/lib/invoice-match';
+import { cartonOwnCodes, matchInvoiceItem, rowCartonCodes, snapGlattByOwnCode, type InvoiceMatchOptions } from '@/lib/invoice-match';
 import { parseGlattCode } from '@/lib/carton-barcode';
 import { nonMeatItemKey } from '@/lib/nonmeat-key';
 import { markDone, isComplete } from '@/lib/pallet-slots';
@@ -104,7 +104,8 @@ function findInvoiceItemCode(
   // own Glatt codes — none from a carton whose product the worker settled
   // (cartonOwnCodes) — then the names, never onto a line other cartons'
   // Glatt codes already are. Glatt codes only: the 12+ digit code step stays
-  // off here, as before.
+  // off here, as before. Each carton was already put on its own code's line
+  // (snapGlattByOwnCode), so a group's codes are one line's or none.
   const codes = glatt
     ? glatt.boxes.flatMap((b) => cartonOwnCodes(b)).filter((c) => parseGlattCode(c))
     : undefined;
@@ -616,6 +617,13 @@ export async function POST(request: NextRequest) {
     if (snap.snapped.length) {
       console.warn(`[multi-pallet-complete] named ${snap.snapped.length} nameless box(es) by code on ${session.document_number} P${palletNumber}: ${snap.snapped.join(', ')}`);
       scanned_boxes = snap.boxes;
+    }
+    // glatt_code_match: each carton by its own code before grouping, never
+    // the group's pooled codes (review 11/11). Off: nothing changes.
+    const glattSnap = snapGlattByOwnCode(scanned_boxes, session.ocr_data, glattMatch);
+    if (glattSnap.snapped.length) {
+      console.warn(`[multi-pallet-complete] renamed ${glattSnap.snapped.length} Glatt box(es) by own code on ${session.document_number} P${palletNumber}: ${glattSnap.snapped.join(', ')}`);
+      scanned_boxes = glattSnap.boxes;
     }
 
     // Worker-accepted AI merges (originalKey → canonicalKey).

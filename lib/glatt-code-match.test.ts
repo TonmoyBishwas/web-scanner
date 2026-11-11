@@ -6,6 +6,7 @@ import {
   matchInvoiceItem,
   matchInvoiceItemByCode,
   rowCartonCodes,
+  snapGlattByOwnCode,
   type InvoiceItem,
 } from './invoice-match';
 
@@ -119,7 +120,10 @@ describe('glatt_code_match on: a Glatt code on no line falls back by name', () =
     const got = matchInvoiceItem(line('5035').item_name_hebrew, '', GLATT_NOTE, [C05076_AS_5035], {
       ...ON, sessionCodes: [C05035, C05076_AS_5035],
     });
-    expect(got?.item_code).not.toBe('5035');
+    // Only 05035 counted so far: the name ladder over the lines left, whose
+    // first schnitzel line is 1510. Which line is right takes the other
+    // lines' cartons counted (the next test).
+    expect(got?.item_code).toBe('1510');
   });
 
   it('with the whole note counted, the only schnitzel line left is 5075', () => {
@@ -140,6 +144,47 @@ describe('glatt_code_match on: a Glatt code on no line falls back by name', () =
     expect(glattFallbackLines(['7290002195832012570130622102027'], GLATT_NOTE, { ...ON, sessionCodes: [C05035] })).toBe(GLATT_NOTE);
     expect(glattFallbackLines([C05086_RIGHT], GLATT_NOTE, { ...ON, sessionCodes: [C05035] })).toBe(GLATT_NOTE);
     expect(glattFallbackLines([C05076_AS_5035], GLATT_NOTE, { sessionCodes: [C05035] })).toBe(GLATT_NOTE);
+  });
+});
+
+describe('snapGlattByOwnCode (the completion route, per carton)', () => {
+  const row = (barcode: string, code: string, over: Record<string, unknown> = {}) => ({
+    barcode, item_name: '', item_name_hebrew: line(code).item_name_hebrew, ...over,
+  });
+  const whole = [C01510, C01565, C05035, '1050451100101003067880306', C05086_RIGHT];
+
+  it('off: every row is the same object', () => {
+    const rows = [row(C05086_WRONG, '1510')];
+    expect(snapGlattByOwnCode(rows, GLATT_NOTE, undefined).boxes[0]).toBe(rows[0]);
+    expect(snapGlattByOwnCode(rows, GLATT_NOTE, { sessionCodes: whole }).boxes[0]).toBe(rows[0]);
+  });
+
+  it("a carton named as another line takes its own code's line", () => {
+    const { boxes, snapped } = snapGlattByOwnCode([row(C05086_WRONG, '1510')], GLATT_NOTE, { ...ON, sessionCodes: whole });
+    expect(boxes[0].item_name_hebrew).toBe(line('5086').item_name_hebrew);
+    expect(snapped).toEqual([C05086_WRONG]);
+  });
+
+  it('a 05076 carton named as 1510 beside 01510 cartons goes to 5075, the 01510 cartons stay', () => {
+    const rows = [row(C05076_AS_5035, '1510'), row(C01510, '1510')];
+    const { boxes, snapped } = snapGlattByOwnCode(rows, GLATT_NOTE, { ...ON, sessionCodes: [...whole, C05076_AS_5035] });
+    expect(boxes[0].item_name_hebrew).toBe(line('5075').item_name_hebrew);
+    expect(boxes[1]).toBe(rows[1]);
+    expect(snapped).toEqual([C05076_AS_5035]);
+  });
+
+  it("untouched: a name that already is its code's line, a settled product, no Glatt code, no name, no line left", () => {
+    const rows = [
+      row(C05035, '5035'),
+      row(C05086_WRONG, '1510', { named_by_worker: true }),
+      row('7290002195832012570130622102027', '1510'),
+      { barcode: C05086_WRONG, item_name: '', item_name_hebrew: '' },
+    ];
+    const { boxes, snapped } = snapGlattByOwnCode(rows, GLATT_NOTE, { ...ON, sessionCodes: whole });
+    boxes.forEach((b, i) => expect(b).toBe(rows[i]));
+    expect(snapped).toEqual([]);
+    const one = [row(C05076_AS_5035, '5035')];
+    expect(snapGlattByOwnCode(one, [line('5035')], { ...ON, sessionCodes: [C05035] }).boxes[0]).toBe(one[0]);
   });
 });
 

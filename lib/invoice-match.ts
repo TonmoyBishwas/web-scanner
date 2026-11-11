@@ -221,6 +221,39 @@ export function glattFallbackLines(
 }
 
 /**
+ * The completion route's per-carton pass for glatt_code_match (review,
+ * 11/11): each named Glatt carton whose own codes (cartonOwnCodes — none once
+ * the worker settled its product) give a line by matchInvoiceItem other than
+ * the one its name alone gives takes that line's names, before anything is
+ * grouped. The page names a carton once, when its read comes back, with the
+ * cartons on the session then: a 05076 carton (no line) read before any 01510
+ * carton was named as 1510, and grouped by name with the 01510 cartons it
+ * rode onto 1510. Here every carton of the pallet is in `sessionCodes`, so
+ * it goes to a line of its own (or keeps its name when none is left: by name,
+ * as with the flag off). Flag off, every row is the same object.
+ */
+export function snapGlattByOwnCode<T extends { barcode: string; source_barcode?: string; named_by_worker?: boolean; item_name?: string; item_name_hebrew?: string }>(
+  boxes: T[],
+  invoiceItems: InvoiceItem[] | undefined,
+  opts: InvoiceMatchOptions | undefined,
+): { boxes: T[]; snapped: string[] } {
+  const snapped: string[] = [];
+  if (!opts?.glattCodeMatch || !invoiceItems?.length) return { boxes, snapped };
+  const out = boxes.map((b) => {
+    const he = b.item_name_hebrew || '';
+    const en = b.item_name || '';
+    if (!he.trim() && !en.trim()) return b;
+    const codes = cartonOwnCodes(b).filter((c) => parseGlattCode(c));
+    if (codes.length === 0) return b;
+    const line = matchInvoiceItem(he, en, invoiceItems, codes, opts);
+    if (!line || matchInvoiceItem(he, en, invoiceItems)?.item_code === line.item_code) return b;
+    snapped.push(b.barcode);
+    return { ...b, item_name: line.item_name_english || '', item_name_hebrew: line.item_name_hebrew || '' };
+  });
+  return { boxes: out, snapped };
+}
+
+/**
  * The codes `sessionCodes` takes from scan rows: each row's barcode and the
  * supplier code a minted label stands in for. The page and the completion
  * route both add these to the session's booked barcodes

@@ -3388,12 +3388,13 @@ export default function PalletVerifyPage({
     // identical_source_weight (11/11, IN26014927): "Different carton?" saved
     // at a weight he typed over the source carton's label reading (2.5 kg
     // inner-bag label, 10 kg typed for 80) — the source takes it too, as
-    // typed (lib/identical-boxes.ts sourceTakesFormWeight). Decided out here,
+    // typed, for a batch or an implausible reading, never one he reviewed
+    // (lib/identical-boxes.ts sourceTakesFormWeight). Decided out here,
     // not in the updater, so the trace is not doubled. Off: as before.
     const sourceRow = target.anotherOf && sessionRef.current?.features?.identical_source_weight
       ? (target.loose ? looseBoxesRef.current : scannedBoxesRef.current).find((b) => b.barcode === target.box.barcode)
       : undefined;
-    const reweighSource = !!sourceRow && sourceTakesFormWeight(sourceRow, form);
+    const reweighSource = !!sourceRow && sourceTakesFormWeight(sourceRow, form, labels.length);
     if (reweighSource && sourceRow) {
       trace('ui', 'identical_source_weight', { barcode: sourceRow.barcode, from: sourceRow.weight, to: form.weight, loose: target.loose });
     }
@@ -3407,7 +3408,7 @@ export default function PalletVerifyPage({
       if (target.anotherOf) {
         // identical_source_weight (11/11): a weight he typed over the
         // carton's label reading is that carton's weight too (decided above).
-        const base = reweighSource ? applyFormWeightToSource(prev, target.box.barcode, form) : prev;
+        const base = reweighSource ? applyFormWeightToSource(prev, target.box.barcode, form, labels.length) : prev;
         const settled = form.weight_confirmed
           ? acceptDoubts(base, new Set(base.filter((b) => b.barcode === target.box.barcode
               && Math.abs(b.weight - form.weight) < 0.001).map((b) => b.barcode)))
