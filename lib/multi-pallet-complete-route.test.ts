@@ -31,7 +31,9 @@ vi.mock('@/lib/server-events', () => ({
 // no_hand_codes (05/11): off unless a test turns it on; the real reader
 // would ask the database.
 let noHandCodes = false;
-vi.mock('@/lib/scanner-flags', () => ({ noHandCodesOn: async () => noHandCodes }));
+// glatt_code_match (11/11): likewise off unless a test turns it on.
+let glattCodeMatch = false;
+vi.mock('@/lib/scanner-flags', () => ({ noHandCodesOn: async () => noHandCodes, glattCodeMatchOn: async () => glattCodeMatch }));
 vi.mock('next/server', async (orig) => ({
   ...(await orig<typeof import('next/server')>()),
   after: (fn: () => unknown) => { void fn(); },
@@ -71,6 +73,7 @@ beforeEach(() => {
   process.env.TELEGRAM_BOT_WEBHOOK_URL = 'http://bot.test';
   botCalls.length = 0;
   noHandCodes = false;
+  glattCodeMatch = false;
   sessions.clear();
   sessions.set(`pallet:multi:${TOKEN}`, {
     token: TOKEN, chat_id: '1', pallet_count: 2, loose_box_count: 0, current_pallet: 1,
@@ -264,5 +267,66 @@ describe('multi-pallet-complete: no_hand_codes (05/11)', () => {
     const sent = botCalls[0].body;
     const json = JSON.stringify(sent);
     expect(json.includes('MANUAL-')).toBe(false);
+  });
+});
+
+describe('multi-pallet-complete: glatt_code_match (11/11, MB Glatt 261064790)', () => {
+  const L1510 = { item_code: '1510', item_name_hebrew: 'שניצל עוף פרוס 100-מוסדי-קפוא', item_name_english: '', quantity_kg: 100 };
+  const L5035 = { item_code: '5035', item_name_hebrew: 'שניצל עוף אמיתי-120 גרם', item_name_english: '', quantity_kg: 100 };
+  const L5086 = { item_code: '5086', item_name_hebrew: 'כדורי עוף-ת. הזנה', item_name_english: '', quantity_kg: 100 };
+  const glatt = (code: string, name: string, kg: number, over: Record<string, unknown> = {}) =>
+    box(code, { item_name_hebrew: name, weight: kg, expiry: '2027-02-26', ...over });
+  // Two real 05086 cartons, sent under the 1510 line's name (what the page
+  // snapped them to by name), beside a real 05035 carton.
+  const wrong = [
+    glatt('1050861100101014067939346', L1510.item_name_hebrew, 10.14),
+    glatt('1050861100101011067939359', L1510.item_name_hebrew, 10.11),
+  ];
+  const seed = () => sessions.set(`pallet:multi:${TOKEN}`, {
+    ...(sessions.get(`pallet:multi:${TOKEN}`) as Record<string, unknown>),
+    ocr_data: [L1510, L5035, L5086],
+  });
+  const items = () => (botCalls[0].body.items as Item[]) ?? [{ item_code: botCalls[0].body.item_code as string } as Item];
+
+  it('off: the group goes by its name, as before (1510)', async () => {
+    seed();
+    const { status } = await complete([...wrong, glatt('1050351100101011067952479', L5035.item_name_hebrew, 10.11)]);
+    expect(status).toBe(200);
+    expect(items().map((i) => i.item_code).sort()).toEqual(['1510', '5035']);
+  });
+
+  it("on: the group's own Glatt code names its line (5086)", async () => {
+    seed();
+    glattCodeMatch = true;
+    const { status } = await complete([...wrong, glatt('1050351100101011067952479', L5035.item_name_hebrew, 10.11)]);
+    expect(status).toBe(200);
+    expect(items().map((i) => i.item_code).sort()).toEqual(['5035', '5086']);
+  });
+
+  it("on: a carton the worker settled himself (named_by_worker) keeps its name's line", async () => {
+    seed();
+    glattCodeMatch = true;
+    const settled = wrong.map((b) => ({ ...b, named_by_worker: true }));
+    const { status } = await complete([...settled, glatt('1050351100101011067952479', L5035.item_name_hebrew, 10.11)]);
+    expect(status).toBe(200);
+    expect(items().map((i) => i.item_code).sort()).toEqual(['1510', '5035']);
+  });
+
+  it('on: a 05076 carton (no line) named as 5035 never lands on 5035 once a 05035 carton is booked', async () => {
+    const fresh = sessions.get(`pallet:multi:${TOKEN}`) as Record<string, unknown>;
+    const setup = () => sessions.set(`pallet:multi:${TOKEN}`, {
+      ...fresh, ocr_data: [L1510, L5035, L5086],
+      completed_pallets: [{ pallet_number: 2, lpn: 'LPN-X-P2', pallet_type: 'single', box_count: 1, barcodes: ['1050351100101011067952479'] }],
+    });
+    const c05076 = () => [glatt('1050761100101017067924891', L5035.item_name_hebrew, 10.17)];
+    setup();
+    await complete(c05076());
+    expect(items()[0].item_code).toBe('5035'); // off: by the name, as before
+    botCalls.length = 0;
+    glattCodeMatch = true;
+    setup();
+    const { status } = await complete(c05076());
+    expect(status).toBe(200);
+    expect(items()[0].item_code).not.toBe('5035');
   });
 });

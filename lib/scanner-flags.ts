@@ -292,6 +292,44 @@ export async function noHandCodesOn(chatId: string | number | null | undefined):
 }
 
 /**
+ * A Glatt carton's own item code decides its invoice line (11/11, MB Glatt
+ * 261064790): the 5-digit item code a Glatt 25-digit code carries is
+ * compared with the lines' short codes (lib/invoice-match.ts
+ * matchGlattItemCode), where today only 12+ digit codes are. Read by the
+ * session GET (`features.glatt_code_match`) and the pallet completion route.
+ * A missing row is OFF; lines are then matched exactly as before.
+ */
+export const glattCodeMatchRow = flagRow('glatt_code_match');
+
+/** glatt_code_match for this chat; off when the flag cannot be read, never a throw. */
+export async function glattCodeMatchOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await glattCodeMatchRow(), chatId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * "Different carton?" / identical save keeps the source carton's weight in
+ * step (11/11, Asher Shahar IN26014927): when the worker saves a weight in
+ * the form other than the source carton's label-OCR reading, the source
+ * carton takes that weight too, as typed (lib/identical-boxes.ts
+ * sourceTakesFormWeight). A missing row is OFF; the source keeps its
+ * reading as before.
+ */
+export const identicalSourceWeightRow = flagRow('identical_source_weight');
+
+/** identical_source_weight for this chat; off when the flag cannot be read, never a throw. */
+export async function identicalSourceWeightOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await identicalSourceWeightRow(), chatId);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * A DEFAULT-ON switch for this chat (lib/label-switches.ts): no row, an
  * unreadable row or a failed read is ON — today's behaviour — so a switch
  * that hides something can never hide it because the flag could not be read.

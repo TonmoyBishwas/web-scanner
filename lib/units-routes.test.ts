@@ -192,6 +192,22 @@ describe('GET /api/multi-pallet-session features.identical_no_serial / ocr_netwo
   });
 });
 
+describe('GET /api/multi-pallet-session features.glatt_code_match / identical_source_weight (11/11)', () => {
+  const get = async (token: string) => (await sessionRoute.GET(req(`/api/multi-pallet-session?token=${token}`))).json();
+
+  it('no flag rows: absent, the features exactly as before', async () => {
+    expect((await get('tokT')).features).toEqual({ units_mode: true });
+    expect((await get('tokR')).features).toEqual({ units_mode: false });
+  });
+
+  it('a row on for the chat: present and true; another chat: absent', async () => {
+    db.scanner_flags.push({ flag: 'glatt_code_match', enabled_all: false, chat_ids: ['999000000001'] });
+    db.scanner_flags.push({ flag: 'identical_source_weight', enabled_all: false, chat_ids: ['999000000001'] });
+    expect((await get('tokT')).features).toEqual({ units_mode: true, glatt_code_match: true, identical_source_weight: true });
+    expect((await get('tokR')).features).toEqual({ units_mode: false });
+  });
+});
+
 describe('POST /api/carton-labels — a units save', () => {
   const units = {
     token: 'tokT', origin: 'new_carton', pallet_number: 0, item_code: 'KK117', item_name_hebrew: 'מנה',

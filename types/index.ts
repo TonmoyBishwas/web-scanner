@@ -411,6 +411,13 @@ export interface MultiPalletSession {
     /** No per-carton Delete; the top bar's Delete chip only
      *  (lib/label-switches.ts). Present only when on. */
     top_bar_delete_only?: boolean;
+    /** A Glatt carton's own 5-digit item code decides its invoice line
+     *  (lib/invoice-match.ts matchGlattItemCode). Present only when on. */
+    glatt_code_match?: boolean;
+    /** "Different carton?" save: a form weight other than the source
+     *  carton's label-OCR reading is written onto the source carton too, as
+     *  typed (lib/identical-boxes.ts sourceTakesFormWeight). Present only when on. */
+    identical_source_weight?: boolean;
   };
   receipt_id?: string;
   completed_pallets: Array<{

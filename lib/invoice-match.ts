@@ -11,7 +11,8 @@
  *   0. the carton's own code (`codes`, optional): an invoice item code of 12+
  *      digits that IS the carton's barcode, or its GS1 prefix — the label
  *      says which product it is, whatever name the OCR read (19/10 incident
- *      below, matchInvoiceItemByCode)
+ *      below, matchInvoiceItemByCode); with `glatt_code_match` on, also a
+ *      Glatt 25-digit code's 5-digit item code (11/11, matchGlattItemCode)
  *   1. exact normalized Hebrew, then exact normalized English
  *   2. first-Hebrew-word prefix (invoice OCR sometimes captures a shorter form)
  *   3. fuzzy: normalized Levenshtein similarity ≥ FUZZY_THRESHOLD
@@ -23,6 +24,7 @@
  * (e.g. a loose / unlisted box) — callers then keep the raw OCR name.
  */
 import { normalizeString } from './string-utils';
+import { parseGlattCode } from './carton-barcode';
 
 export interface InvoiceItem {
   item_code: string;
@@ -63,6 +65,19 @@ function similarity(a: string, b: string): number {
 }
 
 /**
+ * Switches for the code step (11/11). Absent or `glattCodeMatch` false:
+ * exactly the ladder as before.
+ */
+export interface InvoiceMatchOptions {
+  /** scanner_flags 'glatt_code_match': a Glatt carton's own item code decides its line. */
+  glattCodeMatch?: boolean;
+  /** Every carton code the session holds (booked pallets, loose pile, the
+   *  open lists): a Glatt carton on no line never falls back by name to a
+   *  line those cartons' Glatt codes already are (glattFallbackLines). */
+  sessionCodes?: Iterable<string | null | undefined>;
+}
+
+/**
  * Find the invoice item best matching the given OCR'd names. Returns the
  * matched line or null. Pure + deterministic so it can run client-side
  * (pallet-verify snap) and server-side (multi-pallet-complete) identically.
@@ -74,15 +89,16 @@ export function matchInvoiceItem(
   /** The carton's own codes (barcode, the supplier code a label stands in
    *  for, OCR'd printed digits) — step 0. Omitted: names only, as before. */
   codes?: ReadonlyArray<string | null | undefined>,
+  opts?: InvoiceMatchOptions,
 ): InvoiceItem | null {
   if (!invoiceItems || invoiceItems.length === 0) return null;
 
   // 0. the carton's own code
   if (codes) {
-    const byCode = matchInvoiceItemByCode(codes, invoiceItems);
+    const byCode = matchInvoiceItemByCode(codes, invoiceItems, opts);
     if (byCode) return byCode;
   }
-  return matchInvoiceItemByName(nameHebrew, nameEnglish, invoiceItems);
+  return matchInvoiceItemByName(nameHebrew, nameEnglish, glattFallbackLines(codes, invoiceItems, opts));
 }
 
 /**
@@ -110,8 +126,16 @@ const codeDigits = (v: unknown) => String(v ?? '').replace(/\D/g, '');
 export function matchInvoiceItemByCode(
   codes: ReadonlyArray<string | null | undefined>,
   invoiceItems: InvoiceItem[] | undefined,
+  opts?: InvoiceMatchOptions,
 ): InvoiceItem | null {
   if (!invoiceItems || invoiceItems.length === 0) return null;
+  const long = matchLongCode(codes, invoiceItems);
+  if (long || !opts?.glattCodeMatch) return long;
+  return matchGlattItemCode(codes, invoiceItems);
+}
+
+/** The 12+ digit rule of matchInvoiceItemByCode. */
+function matchLongCode(codes: ReadonlyArray<string | null | undefined>, invoiceItems: InvoiceItem[]): InvoiceItem | null {
   const own = codes.map(codeDigits).filter((c) => c.length >= MIN_CODE_DIGITS);
   if (own.length === 0) return null;
   let hit: InvoiceItem | null = null;
@@ -124,6 +148,91 @@ export function matchInvoiceItemByCode(
     hit ??= line;
   }
   return hit;
+}
+
+const noLeadingZeros = (s: string) => s.replace(/^0+/, '');
+
+/** The 5-digit item codes (leading zeros stripped) of the valid Glatt codes among `codes`. */
+function glattItemsOf(codes: Iterable<string | null | undefined>): Set<string> {
+  const out = new Set<string>();
+  for (const c of codes) {
+    const g = parseGlattCode(c);
+    const item = g ? noLeadingZeros(g.item) : '';
+    if (item) out.add(item);
+  }
+  return out;
+}
+
+/** An invoice line's item code as a Glatt item code compares: digits, leading zeros stripped. */
+const lineGlattCode = (line: InvoiceItem) => noLeadingZeros(codeDigits(line.item_code));
+
+/**
+ * glatt_code_match (11/11): the invoice line whose item code IS the item
+ * code a Glatt 25-digit carton code carries (lib/carton-barcode.ts
+ * parseGlattCode, chars 2–6: `1|05086|110010|1011|067939359` → 5086), both
+ * sides with leading zeros stripped, compared exactly. Null when no line
+ * has it, or when the carton's codes point at two different lines.
+ *
+ * Why (MB Glatt 261064790, 11/11): MIN_CODE_DIGITS keeps a 4–5 digit line
+ * code out of matchInvoiceItemByCode, so the box-OCR name decided — and it
+ * named a neighbouring product: 14 cartons (05086 → 1510, 05076 → 1510 /
+ * 1565 / 5035) were booked under lines other cartons' codes already were.
+ * Here the code is a fixed field of a fixed shape, not a prefix found by
+ * chance, so a short code is safe to compare.
+ */
+export function matchGlattItemCode(
+  codes: ReadonlyArray<string | null | undefined>,
+  invoiceItems: InvoiceItem[] | undefined,
+): InvoiceItem | null {
+  if (!invoiceItems || invoiceItems.length === 0) return null;
+  const own = glattItemsOf(codes);
+  if (own.size === 0) return null;
+  let hit: InvoiceItem | null = null;
+  for (const line of invoiceItems) {
+    const code = lineGlattCode(line);
+    if (!code || !own.has(code)) continue;
+    // Two lines with one code (a multi-invoice delivery) are one product.
+    if (hit && lineGlattCode(hit) !== code) return null;
+    hit ??= line;
+  }
+  return hit;
+}
+
+/**
+ * The lines the name ladder may pick for a carton (glatt_code_match, 11/11).
+ * A carton whose own Glatt item code is on no line (05076 on 261064790)
+ * still goes by its name, but never to a line whose code is the Glatt item
+ * code of other cartons in the session — that line is demonstrably another
+ * product. Flag off, no Glatt code of its own, or a code some line has
+ * (an ambiguous code match): every line, as before.
+ */
+export function glattFallbackLines(
+  codes: ReadonlyArray<string | null | undefined> | undefined,
+  invoiceItems: InvoiceItem[],
+  opts?: InvoiceMatchOptions,
+): InvoiceItem[] {
+  if (!opts?.glattCodeMatch || !codes || !opts.sessionCodes) return invoiceItems;
+  const own = glattItemsOf(codes);
+  if (own.size === 0 || invoiceItems.some((l) => own.has(lineGlattCode(l)))) return invoiceItems;
+  const taken = glattItemsOf(opts.sessionCodes);
+  for (const c of own) taken.delete(c);
+  if (taken.size === 0) return invoiceItems;
+  return invoiceItems.filter((l) => !taken.has(lineGlattCode(l)));
+}
+
+/**
+ * The codes `sessionCodes` takes from scan rows: each row's barcode and the
+ * supplier code a minted label stands in for. The page and the completion
+ * route both add these to the session's booked barcodes
+ * (lib/label-batches.ts sessionBookedBarcodes).
+ */
+export function rowCartonCodes(rows: Iterable<{ barcode?: string | null; source_barcode?: string | null }>): string[] {
+  const out: string[] = [];
+  for (const r of rows) {
+    if (r.barcode) out.push(r.barcode);
+    if (r.source_barcode) out.push(r.source_barcode);
+  }
+  return out;
 }
 
 /**
@@ -156,8 +265,9 @@ export function invoiceNameConflict(
   nameEnglish: string | undefined,
   invoiceItems: InvoiceItem[] | undefined,
   codes: ReadonlyArray<string | null | undefined>,
+  opts?: InvoiceMatchOptions,
 ): { byCode: InvoiceItem; byName: InvoiceItem } | null {
-  const byCode = matchInvoiceItemByCode(codes, invoiceItems);
+  const byCode = matchInvoiceItemByCode(codes, invoiceItems, opts);
   if (!byCode) return null;
   const hasHebrew = /[א-ת]/.test(nameHebrew ?? '');
   const byName = matchInvoiceItemByName(nameHebrew, hasHebrew ? '' : nameEnglish, invoiceItems ?? []);

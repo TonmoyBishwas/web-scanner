@@ -4,7 +4,8 @@ import { getRedisClient, sessionStorage } from '@/lib/redis';
 import { t } from '@/lib/i18n/server';
 import type { MultiPalletSession, MultiPalletBoxScan, Language } from '@/types';
 import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
-import { matchInvoiceItem } from '@/lib/invoice-match';
+import { cartonOwnCodes, matchInvoiceItem, rowCartonCodes, type InvoiceMatchOptions } from '@/lib/invoice-match';
+import { parseGlattCode } from '@/lib/carton-barcode';
 import { nonMeatItemKey } from '@/lib/nonmeat-key';
 import { markDone, isComplete } from '@/lib/pallet-slots';
 import { isSplitSession, splitStateOf, applySplitState } from '@/lib/session-mode';
@@ -18,7 +19,7 @@ import { snapNamelessByCode } from '@/lib/failed-read';
 import { rawOcrWeightKg } from '@/lib/barcode-weight';
 import { barcodeProvenance } from '@/lib/barcode-provenance';
 import { weightSourceOf } from '@/lib/weight-source';
-import { noHandCodesOn } from '@/lib/scanner-flags';
+import { glattCodeMatchOn, noHandCodesOn } from '@/lib/scanner-flags';
 import { pendingBarcodes, pendingSampleBarcode } from '@/lib/no-hand-codes';
 
 const SESSION_TTL = 7200;
@@ -94,9 +95,20 @@ function findInvoiceItemCode(
   sampleNameHebrew: string,
   sampleNameEnglish: string,
   invoiceItems: MultiPalletSession['ocr_data'] | undefined,
+  /** glatt_code_match (11/11): the group's cartons and the match options.
+   *  Absent (flag off): names only, as before. */
+  glatt?: { boxes: MultiPalletBoxScan[]; opts: InvoiceMatchOptions },
 ): string {
   void groupKey; // grouping is name-based; kept for call-site stability
-  return matchInvoiceItem(sampleNameHebrew, sampleNameEnglish, invoiceItems)?.item_code || '';
+  // The page's rule (lib/invoice-match.ts matchGlattItemCode): the group's
+  // own Glatt codes — none from a carton whose product the worker settled
+  // (cartonOwnCodes) — then the names, never onto a line other cartons'
+  // Glatt codes already are. Glatt codes only: the 12+ digit code step stays
+  // off here, as before.
+  const codes = glatt
+    ? glatt.boxes.flatMap((b) => cartonOwnCodes(b)).filter((c) => parseGlattCode(c))
+    : undefined;
+  return matchInvoiceItem(sampleNameHebrew, sampleNameEnglish, invoiceItems, codes, glatt?.opts)?.item_code || '';
 }
 
 /**
@@ -593,7 +605,14 @@ export async function POST(request: NextRequest) {
     // its group, and the bot attached it to no line — lib/failed-read.ts).
     // The page now holds such a row; this covers any path that still sends
     // one (the soft force-confirm, a page cached before the fix).
-    const snap = snapNamelessByCode(scanned_boxes, session.ocr_data);
+    // glatt_code_match (11/11): a Glatt carton's own item code names its
+    // line, here as on the page (lib/invoice-match.ts). The codes the
+    // fallback must not land on: this pallet's cartons and the session's
+    // booked ones. Off: undefined, every match exactly as before.
+    const glattMatch: InvoiceMatchOptions | undefined = (await glattCodeMatchOn(session.chat_id))
+      ? { glattCodeMatch: true, sessionCodes: [...sessionBookedBarcodes(session), ...rowCartonCodes(scanned_boxes)] }
+      : undefined;
+    const snap = snapNamelessByCode(scanned_boxes, session.ocr_data, glattMatch);
     if (snap.snapped.length) {
       console.warn(`[multi-pallet-complete] named ${snap.snapped.length} nameless box(es) by code on ${session.document_number} P${palletNumber}: ${snap.snapped.join(', ')}`);
       scanned_boxes = snap.boxes;
@@ -661,6 +680,7 @@ export async function POST(request: NextRequest) {
           itemNameHebrew,
           itemNameEnglish,
           session.ocr_data,
+          glattMatch && { boxes: itemBoxes, opts: glattMatch },
         );
 
         return {
@@ -753,6 +773,7 @@ export async function POST(request: NextRequest) {
         itemNameHebrew,
         itemNameEnglish,
         session.ocr_data,
+        glattMatch && { boxes: itemBoxes, opts: glattMatch },
       );
 
       webhookPayload = {

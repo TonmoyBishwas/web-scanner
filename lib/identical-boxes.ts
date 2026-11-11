@@ -20,7 +20,7 @@ import type { CartonLabel, MultiPalletBoxScan } from '@/types';
 import { isMintedLabelBarcode } from './label-batches';
 import { isNoBarcodeId } from './no-barcode';
 import { barcodeCarriesWeight } from './barcode-weight';
-import { weightSourceOf, copyWeightTyped, type WeightSource } from './weight-source';
+import { weightSourceOf, copyWeightTyped, weightChanged, type WeightSource } from './weight-source';
 
 /**
  * May "All boxes identical" be offered on this row (its row actions, the
@@ -170,6 +170,41 @@ export function expandIdenticalBoxes<T extends SampleRow>(
     weight_copied_from: copiedFrom,
     weight_typed: copyWeightTyped(form.weight, sample) || undefined,
   }));
+}
+
+/**
+ * identical_source_weight (11/11, Asher Shahar IN26014927): on the
+ * "Different carton?" save the worker typed 10 kg for 80 identical cartons;
+ * the 79 copies got 10 kg, but the source carton kept its label reading,
+ * 2.5 kg (the inner bag's label), and the line booked 792.5 kg, not 800.
+ *
+ * True when the form's weight should become the source carton's own: the
+ * worker confirmed the weight on screen (`weight_confirmed`), the source's
+ * weight is the label OCR's reading as read (not its barcode's, not typed,
+ * not a copy — lib/weight-source.ts 'label_ocr'), and the form weight
+ * differs from it.
+ */
+export function sourceTakesFormWeight(
+  source: Parameters<typeof weightSourceOf>[0],
+  form: Pick<IdenticalForm, 'weight' | 'weight_confirmed'>,
+): boolean {
+  if (!form.weight_confirmed || !(form.weight > 0)) return false;
+  if (weightSourceOf(source) !== 'label_ocr') return false;
+  return weightChanged(form.weight, Number(source.weight));
+}
+
+/**
+ * The list with the source carton (by barcode) at the form's weight, marked
+ * as the edit panel marks a weight the worker typed: `weight_typed`,
+ * `weight_checked`, no doubt left. Every other row, and the source when
+ * sourceTakesFormWeight says no, is the same object.
+ */
+export function applyFormWeightToSource<R extends Parameters<typeof weightSourceOf>[0] & {
+  weight_checked?: boolean; weight_suspect?: unknown;
+}>(rows: ReadonlyArray<R>, sourceBarcode: string, form: Pick<IdenticalForm, 'weight' | 'weight_confirmed'>): R[] {
+  return rows.map((r) => (r.barcode === sourceBarcode && sourceTakesFormWeight(r, form)
+    ? { ...r, weight: form.weight, weight_typed: true, weight_checked: true, weight_suspect: undefined }
+    : r));
 }
 
 /** The fields the dedup bookkeeping below reads off a list row. */
