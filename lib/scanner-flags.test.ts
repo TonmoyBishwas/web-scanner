@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('./supabase', () => ({
   supabase: { from: () => { throw new Error('no database in tests'); } },
 }));
-import { cachedFlagRow, cartonLabelsOn, defaultOnFlagFor, flagEnabledFor, identicalNoSerialOn, lpnLabelsOn, topBarDeleteOnlyOn, manualCaptureReviewOn, manualTargetHintOn, noHandCodesOn, ocrNetworkNoticeOn, shortSerialGate } from './scanner-flags';
+import { cachedFlagRow, cartonLabelsOn, defaultOnFlagFor, flagEnabledFor, identicalNoSerialOn, lpnLabelsOn, topBarDeleteOnlyOn, manualCaptureReviewOn, manualTargetHintOn, noHandCodesOn, ocrNetworkNoticeOn, shortSerialGate, weightRatioOverKgNameOn } from './scanner-flags';
 
 describe('flagEnabledFor', () => {
   it('on for everyone', () => {
@@ -137,6 +137,12 @@ describe('ocrNetworkNoticeOn', () => {
 describe('noHandCodesOn', () => {
   it('is off, never a throw, when the flag cannot be read', async () => {
     await expect(noHandCodesOn('972544965384')).resolves.toBe(false);
+  });
+});
+
+describe('weightRatioOverKgNameOn', () => {
+  it('is off, never a throw, when the flag cannot be read', async () => {
+    await expect(weightRatioOverKgNameOn('972544965384')).resolves.toBe(false);
   });
 });
 

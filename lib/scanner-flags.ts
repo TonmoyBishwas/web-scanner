@@ -330,6 +330,25 @@ export async function identicalSourceWeightOn(chatId: string | number | null | u
 }
 
 /**
+ * A weight 3x off its item's median is doubted even when a name states it
+ * in kg (12/11, Asher Shahar IN26014927 / IN26014515: the peas carton's
+ * inner-bag label, 2.5 kg, beside 10 kg cartons; lib/weight-sanity.ts
+ * findWeightSuspects `ratioOverKgName`). The ratio doubt then holds the
+ * confirm until the worker opens the carton (lib/failed-read.ts
+ * isOpenRatioDoubt). A missing row is OFF; the check is then exactly as before.
+ */
+export const weightRatioOverKgNameRow = flagRow('weight_ratio_over_kg_name');
+
+/** weight_ratio_over_kg_name for this chat; off when the flag cannot be read, never a throw. */
+export async function weightRatioOverKgNameOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await weightRatioOverKgNameRow(), chatId);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * A DEFAULT-ON switch for this chat (lib/label-switches.ts): no row, an
  * unreadable row or a failed read is ON — today's behaviour — so a switch
  * that hides something can never hide it because the flag could not be read.

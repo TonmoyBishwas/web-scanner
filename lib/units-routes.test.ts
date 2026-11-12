@@ -208,6 +208,26 @@ describe('GET /api/multi-pallet-session features.glatt_code_match / identical_so
   });
 });
 
+describe('GET /api/multi-pallet-session features.weight_ratio_over_kg_name (12/11)', () => {
+  const get = async (token: string) => (await sessionRoute.GET(req(`/api/multi-pallet-session?token=${token}`))).json();
+
+  it('no flag row: absent, the features exactly as before', async () => {
+    expect((await get('tokT')).features).toEqual({ units_mode: true });
+    expect((await get('tokR')).features).toEqual({ units_mode: false });
+  });
+
+  it('a row on for the chat: present and true; another chat: absent', async () => {
+    db.scanner_flags.push({ flag: 'weight_ratio_over_kg_name', enabled_all: false, chat_ids: ['999000000001'] });
+    expect((await get('tokT')).features).toEqual({ units_mode: true, weight_ratio_over_kg_name: true });
+    expect((await get('tokR')).features).toEqual({ units_mode: false });
+  });
+
+  it('a row that is on for nobody: absent', async () => {
+    db.scanner_flags.push({ flag: 'weight_ratio_over_kg_name', enabled_all: false, chat_ids: [] });
+    expect((await get('tokT')).features).toEqual({ units_mode: true });
+  });
+});
+
 describe('POST /api/carton-labels — a units save', () => {
   const units = {
     token: 'tokT', origin: 'new_carton', pallet_number: 0, item_code: 'KK117', item_name_hebrew: 'מנה',

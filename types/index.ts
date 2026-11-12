@@ -418,6 +418,10 @@ export interface MultiPalletSession {
      *  carton's label-OCR reading is written onto the source carton too, as
      *  typed (lib/identical-boxes.ts sourceTakesFormWeight). Present only when on. */
     identical_source_weight?: boolean;
+    /** A weight 3x off its item's median is a ratio doubt even when a name
+     *  states it in kg (lib/weight-sanity.ts findWeightSuspects
+     *  `ratioOverKgName`). Present only when on. */
+    weight_ratio_over_kg_name?: boolean;
   };
   receipt_id?: string;
   completed_pallets: Array<{

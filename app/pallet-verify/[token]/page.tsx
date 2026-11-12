@@ -252,12 +252,15 @@ interface BoxScan extends MultiPalletBoxScan {
 function flagSuspectWeights(
   list: BoxScan[],
   extraNames: Record<string, Array<string | null | undefined>> = {},
+  /** weight_ratio_over_kg_name (12/11): findWeightSuspects `ratioOverKgName`. */
+  opts: { ratioOverKgName?: boolean } = {},
 ): BoxScan[] {
   // A weight read from the carton's barcode is not a guess from the sticker:
   // it still counts towards the item's median, it is never itself doubted.
   const suspects = findWeightSuspects(
     list.map((b) => (b.barcode_filled && 'weight' in b.barcode_filled ? { ...b, weight_checked: true } : b)),
     extraNames,
+    opts,
   );
   if (!suspects.length) return list;
   const by = new Map(suspects.map((x) => [x.barcode, x]));
@@ -266,6 +269,15 @@ function flagSuspectWeights(
     if (!x || b.weight_suspect) return b;
     return { ...b, weight_suspect: { typical: x.typical, reason: x.reason, name: x.name } };
   });
+}
+
+/**
+ * weight_ratio_over_kg_name (12/11, IN26014927): the weight check's switch,
+ * read from the session at each check (the checks run in state updaters).
+ * Off: as before.
+ */
+function weightCheckOpts(session: MultiPalletSession | null | undefined): { ratioOverKgName: boolean } {
+  return { ratioOverKgName: !!session?.features?.weight_ratio_over_kg_name };
 }
 
 type Tr = (k: Parameters<typeof t>[1], v?: Parameters<typeof t>[2]) => string;
@@ -2614,7 +2626,7 @@ export default function PalletVerifyPage({
                 : undefined,
             };
           });
-          const checked = flagSuspectWeights(updated, { [resolvedBarcode]: [rawHe, rawEn] });
+          const checked = flagSuspectWeights(updated, { [resolvedBarcode]: [rawHe, rawEn] }, weightCheckOpts(sessionRef.current));
           setDetectedType(detectType(checked, acceptedMerges));
           // Check if the box that just finished OCR triggers a uniform-pair prompt.
           maybeTriggerUniformPrompt(checked, resolvedBarcode);
@@ -3413,11 +3425,13 @@ export default function PalletVerifyPage({
           ? acceptDoubts(base, new Set(base.filter((b) => b.barcode === target.box.barcode
               && Math.abs(b.weight - form.weight) < 0.001).map((b) => b.barcode)))
           : base;
-        return flagSuspectWeights([...settled, ...rows]);
+        return flagSuspectWeights([...settled, ...rows], {}, weightCheckOpts(sessionRef.current));
       }
       const idx = prev.findIndex((b) => b.barcode === target.box.barcode);
       return flagSuspectWeights(
         idx === -1 ? [...prev, ...rows] : [...prev.slice(0, idx), ...rows, ...prev.slice(idx + 1)],
+        {},
+        weightCheckOpts(sessionRef.current),
       );
     };
     if (target.replaces) (target.loose ? looseProcessedRef : processedRef).current.delete(target.replaces);
@@ -5045,7 +5059,7 @@ export default function PalletVerifyPage({
               // See the pallet phase: the OCR's own weight, set here only.
               ocr_weight: rawOcrWeightKg(data.ocr_data.ocr_weight_kg),
             };
-          }), { [resolvedBarcode]: [data.ocr_data.product_name_hebrew, data.ocr_data.product_name_english] });
+          }), { [resolvedBarcode]: [data.ocr_data.product_name_hebrew, data.ocr_data.product_name_english] }, weightCheckOpts(sessionRef.current));
         });
       })
       .catch((err) => {

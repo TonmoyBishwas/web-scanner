@@ -26,6 +26,16 @@
  *     the median of 3+ is a majority, so one bad read cannot hide the others
  *     or drag them into a flag. On 1,219 booked cartons only the 120 kg one
  *     fails this.
+ *
+ * `ratioOverKgName` (scanner flag `weight_ratio_over_kg_name`, 12/11): the
+ * kg agreement no longer spares a carton from rule 2. Asher Shahar
+ * IN26014927 (11/11) and IN26014515 (04/11): peas line "אפונה תפ' 10 ק"ג
+ * (4*2.5 ק"ג)" (peas 10 kg, 4 bags of 2.5 kg). The label read was the inner
+ * bag's 2.5 kg; the name states 2.5 as kg, so the carton was never doubted
+ * beside 79 (86 + 3) cartons at 10 kg, and the line booked 792.5 (892.5) kg.
+ * A weight 3x off the item's median is a ratio doubt even when a name says
+ * that number in kg; the name rule still never fires on it. Off (the
+ * default): exactly as before.
  */
 import { groupKeyForBox, type GroupableBox } from './group-key';
 
@@ -125,6 +135,7 @@ export interface WeightSuspect {
 export function findWeightSuspects<B extends WeighedBox>(
   boxes: B[],
   extraNames: Record<string, Array<string | null | undefined>> = {},
+  opts: { ratioOverKgName?: boolean } = {},
 ): WeightSuspect[] {
   const out: WeightSuspect[] = [];
   const groups = new Map<string, B[]>();
@@ -137,8 +148,9 @@ export function findWeightSuspects<B extends WeighedBox>(
   for (const b of boxes) {
     if (b.weight_checked || !(b.weight > 0) || (b.ocr_status && b.ocr_status !== 'done')) continue;
     const extra = extraNames[b.barcode] ?? [];
-    if (weightStatedAsKg(b.weight, [b.item_name_hebrew, b.item_name, ...extra])) continue;
-    const name = nameWithWeight(b.weight, [b.item_name_hebrew, ...extra]);
+    const statedAsKg = weightStatedAsKg(b.weight, [b.item_name_hebrew, b.item_name, ...extra]);
+    if (statedAsKg && !opts.ratioOverKgName) continue;
+    const name = statedAsKg ? undefined : nameWithWeight(b.weight, [b.item_name_hebrew, ...extra]);
     if (name !== undefined) {
       out.push({ barcode: b.barcode, weight: b.weight, reason: 'name_number', name });
       continue;
