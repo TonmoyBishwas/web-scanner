@@ -35,7 +35,8 @@
  * beside 79 (86 + 3) cartons at 10 kg, and the line booked 792.5 (892.5) kg.
  * A weight 3x off the item's median is a ratio doubt even when a name says
  * that number in kg; the name rule still never fires on it. Off (the
- * default): exactly as before.
+ * default): exactly as before. It only asks the worker: Save with 2.5 kg
+ * unchanged still books 2.5 (lib/scanner-flags.ts weightRatioOverKgNameRow).
  */
 import { groupKeyForBox, type GroupableBox } from './group-key';
 

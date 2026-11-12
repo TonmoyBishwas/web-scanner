@@ -336,6 +336,14 @@ export async function identicalSourceWeightOn(chatId: string | number | null | u
  * findWeightSuspects `ratioOverKgName`). The ratio doubt then holds the
  * confirm until the worker opens the carton (lib/failed-read.ts
  * isOpenRatioDoubt). A missing row is OFF; the check is then exactly as before.
+ *
+ * A partial safeguard, not the fix (review 12/11): the doubt's text
+ * (palletVerify.weightSuspectRatio) says a sticker reading the same weight
+ * means it is right, and the inner bag's sticker does say 2.5 kg, so Save in
+ * the edit panel with nothing changed settles it at 2.5 (lib/weight-check.test.ts).
+ * Not on for this case until Mevaser settles that wording; if it goes on
+ * before, turn identical_source_weight on with it (that writes the typed
+ * 10 kg onto the source carton without the text).
  */
 export const weightRatioOverKgNameRow = flagRow('weight_ratio_over_kg_name');
 

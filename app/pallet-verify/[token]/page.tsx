@@ -56,7 +56,6 @@ import {
   asNewCartonRows,
   groupSkuMismatch,
   sourceSku,
-  applyFormWeightToSource,
   sourceTakesFormWeight,
   type IdenticalForm,
 } from '@/lib/identical-boxes';
@@ -93,7 +92,7 @@ import { firstRealCodeMissingWeight, realCodeMissingWeight } from '@/lib/no-hand
 import { manualTargetDigits, noteShortRead, targetVerdict, type ShortReadNote } from '@/lib/manual-target';
 import { resolveEditIdentity } from '@/lib/edit-identity';
 import { useBackClose } from '@/lib/use-back-close';
-import { findWeightSuspects } from '@/lib/weight-sanity';
+import { flagSuspectWeights, replaceIdenticalSample, weightCheckOpts } from '@/lib/weight-check';
 import { acceptDoubts, releaseDoubtHold, sharedDoubt, weightDoubts } from '@/lib/weight-review';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback, scanAlreadyCountedFeedback } from '@/lib/scan-feedback';
@@ -242,44 +241,6 @@ interface BoxScan extends MultiPalletBoxScan {
 // Digits-only normaliser for comparing the full printed barcode number across
 // bar-scanned and OCR-captured boxes (NOT the 13-digit SKU, which repeats
 // across every box of one product).
-/**
- * Flag every carton on the list whose weight looks wrong (lib/weight-sanity.ts)
- * — a new read can also expose an earlier one, e.g. a first carton read as
- * 120 kg once three real 12 kg ones are in. Only ever ADDS a doubt, and never
- * touches needs_review (lib/weight-review.ts); a ratio doubt holds through
- * blocksConfirm instead (lib/failed-read.ts).
- */
-function flagSuspectWeights(
-  list: BoxScan[],
-  extraNames: Record<string, Array<string | null | undefined>> = {},
-  /** weight_ratio_over_kg_name (12/11): findWeightSuspects `ratioOverKgName`. */
-  opts: { ratioOverKgName?: boolean } = {},
-): BoxScan[] {
-  // A weight read from the carton's barcode is not a guess from the sticker:
-  // it still counts towards the item's median, it is never itself doubted.
-  const suspects = findWeightSuspects(
-    list.map((b) => (b.barcode_filled && 'weight' in b.barcode_filled ? { ...b, weight_checked: true } : b)),
-    extraNames,
-    opts,
-  );
-  if (!suspects.length) return list;
-  const by = new Map(suspects.map((x) => [x.barcode, x]));
-  return list.map((b) => {
-    const x = by.get(b.barcode);
-    if (!x || b.weight_suspect) return b;
-    return { ...b, weight_suspect: { typical: x.typical, reason: x.reason, name: x.name } };
-  });
-}
-
-/**
- * weight_ratio_over_kg_name (12/11, IN26014927): the weight check's switch,
- * read from the session at each check (the checks run in state updaters).
- * Off: as before.
- */
-function weightCheckOpts(session: MultiPalletSession | null | undefined): { ratioOverKgName: boolean } {
-  return { ratioOverKgName: !!session?.features?.weight_ratio_over_kg_name };
-}
-
 type Tr = (k: Parameters<typeof t>[1], v?: Parameters<typeof t>[2]) => string;
 
 /**
@@ -3410,30 +3371,12 @@ export default function PalletVerifyPage({
     if (reweighSource && sourceRow) {
       trace('ui', 'identical_source_weight', { barcode: sourceRow.barcode, from: sourceRow.weight, to: form.weight, loose: target.loose });
     }
-    const replaceSample = (prevAll: BoxScan[]): BoxScan[] => {
-      // The photo row a twin from the edit panel takes the place of.
-      const prev = target.replaces ? prevAll.filter((b) => b.barcode !== target.replaces) : prevAll;
-      // "Different carton?": the carton it was copied from is a counted
-      // carton of its own and stays; the new one joins the end of the list.
-      // The form showed that carton's doubted weight and the worker saved it
-      // unchanged: the doubt is settled for it too.
-      if (target.anotherOf) {
-        // identical_source_weight (11/11): a weight he typed over the
-        // carton's label reading is that carton's weight too (decided above).
-        const base = reweighSource ? applyFormWeightToSource(prev, target.box.barcode, form, labels.length) : prev;
-        const settled = form.weight_confirmed
-          ? acceptDoubts(base, new Set(base.filter((b) => b.barcode === target.box.barcode
-              && Math.abs(b.weight - form.weight) < 0.001).map((b) => b.barcode)))
-          : base;
-        return flagSuspectWeights([...settled, ...rows], {}, weightCheckOpts(sessionRef.current));
-      }
-      const idx = prev.findIndex((b) => b.barcode === target.box.barcode);
-      return flagSuspectWeights(
-        idx === -1 ? [...prev, ...rows] : [...prev.slice(0, idx), ...rows, ...prev.slice(idx + 1)],
-        {},
-        weightCheckOpts(sessionRef.current),
-      );
-    };
+    // The sample row replaced by the new rows, then the weight check over the
+    // list (lib/weight-check.ts); the switch is read when the updater runs.
+    const replaceSample = (prevAll: BoxScan[]): BoxScan[] => replaceIdenticalSample(prevAll, {
+      sourceBarcode: target.box.barcode, anotherOf: !!target.anotherOf, replaces: target.replaces,
+      rows, form, saved: labels.length, reweighSource, opts: weightCheckOpts(sessionRef.current),
+    });
     if (target.replaces) (target.loose ? looseProcessedRef : processedRef).current.delete(target.replaces);
     if (target.loose) {
       for (const r of rows) looseProcessedRef.current.add(r.barcode);
