@@ -4,7 +4,7 @@
  * that runs it — out of app/pallet-verify/[token]/page.tsx so the switch's
  * wiring is tested (review 12/11). The page owns the rows; these are pure.
  */
-import { applyFormWeightToSource, type IdenticalForm } from './identical-boxes';
+import { applyFormWeightToSource, applyNoteChoiceToSource, type IdenticalForm } from './identical-boxes';
 import { findWeightSuspects, type WeighedBox } from './weight-sanity';
 import { acceptDoubts, type DoubtedRow } from './weight-review';
 import type { BarcodeFilled } from './barcode-reconcile';
@@ -69,6 +69,10 @@ export interface IdenticalSave<R> {
   /** identical_source_weight (11/11): the source takes the form's weight
    *  (decided by the page, lib/identical-boxes.ts sourceTakesFormWeight). */
   reweighSource: boolean;
+  /** copy_note_weight_check (15/11): the source takes the weight the worker
+   *  settled on in the note question (decided by the page,
+   *  lib/identical-boxes.ts sourceTakesNoteChoice). Wins over `reweighSource`. */
+  reweighByNote?: boolean;
   opts: WeightCheckOpts;
 }
 
@@ -89,7 +93,10 @@ export function replaceIdenticalSample<R extends CheckedRow & { needs_review?: b
   if (s.anotherOf) {
     // identical_source_weight (11/11): a weight he typed over the
     // carton's label reading is that carton's weight too (`reweighSource`).
-    const base = s.reweighSource ? applyFormWeightToSource(prev, s.sourceBarcode, s.form, s.saved) : prev;
+    // copy_note_weight_check (15/11): or the weight he settled on when the
+    // save was held against the note — the note's, or one he typed.
+    const base = s.reweighByNote ? applyNoteChoiceToSource(prev, s.sourceBarcode, s.form)
+      : s.reweighSource ? applyFormWeightToSource(prev, s.sourceBarcode, s.form, s.saved) : prev;
     const settled = s.form.weight_confirmed
       ? acceptDoubts(base, new Set(base.filter((b) => b.barcode === s.sourceBarcode
           && Math.abs(b.weight - s.form.weight) < 0.001).map((b) => b.barcode)))

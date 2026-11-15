@@ -357,6 +357,26 @@ export async function weightRatioOverKgNameOn(chatId: string | number | null | u
 }
 
 /**
+ * The copy form checks the weight against the note (15/11, Baladi
+ * IN264207398): a "Different carton?" / identical save that would copy a
+ * weight off the note's per-carton weight onto 2+ cartons (by more than 3%,
+ * 2 kg or more in all) waits for the worker to book the note's weight, keep
+ * the weight shown or type one, and the "Different carton?" source carton
+ * takes the weight he settled on (lib/copy-note-weight.ts). Its texts are
+ * PROPOSED (text freeze). A missing row is OFF; the save is exactly as before.
+ */
+export const copyNoteWeightCheckRow = flagRow('copy_note_weight_check');
+
+/** copy_note_weight_check for this chat; off when the flag cannot be read, never a throw. */
+export async function copyNoteWeightCheckOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await copyNoteWeightCheckRow(), chatId);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * A DEFAULT-ON switch for this chat (lib/label-switches.ts): no row, an
  * unreadable row or a failed read is ON — today's behaviour — so a switch
  * that hides something can never hide it because the flag could not be read.

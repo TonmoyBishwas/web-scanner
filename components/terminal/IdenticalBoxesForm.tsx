@@ -40,15 +40,24 @@
  * hint, the total line says "N will be added" (never "N labels will be
  * saved"), and Save says the approved "add N cartons". What is saved is
  * unchanged. Absent = as today.
+ *
+ * `noteCartonKgOf` (scanner flag `copy_note_weight_check`, 15/11, Baladi
+ * IN264207398): Save that would copy a weight off the note's per-carton
+ * weight onto 2+ cartons (lib/copy-note-weight.ts copyNoteWeightGap) asks
+ * first: book the note's weight, keep this one, or type one. The answer
+ * goes to the page on the form (`note_choice`, `weight_from_note`) and to
+ * the trace (`copy_note_weight_ask` / `copy_note_weight_choice`). Its texts
+ * are PROPOSED (text freeze). Absent = as today.
  */
 
-import { useRef, useState } from 'react';
+import { useContext, useRef, useState } from 'react';
 import { MI } from './MI';
 import { ScreenOverlay } from './ScreenOverlay';
 import { CalendarPicker } from './CalendarPicker';
 import { CartonSticker } from './CartonSticker';
 import { Toast, useToast } from './Toast';
-import { useT } from '@/lib/i18n';
+import { LanguageContext, useT } from '@/lib/i18n';
+import { copyNoteText, copyNoteWeightGap, type CopyNoteChoice, type CopyNoteGap } from '@/lib/copy-note-weight';
 import { identicalLabelPayload, labelsToSave, postIdenticalLabels, type IdenticalForm } from '@/lib/identical-boxes';
 import { toIsoDate, isoToDdmmyyyy } from '@/lib/expiry';
 import { labelPrintingEnabled } from '@/lib/label-printing';
@@ -119,6 +128,12 @@ interface IdenticalBoxesFormProps {
   onCreated: (labels: CartonLabel[], form: IdenticalForm) => void;
   /** Carton-label wording shown (see the file comment). Default true: as today. */
   cartonLabels?: boolean;
+  /**
+   * copy_note_weight_check (15/11): the note's weight of one carton of an
+   * invoice line, by item code (null: unknown). Absent: the switch is off
+   * and Save is as today.
+   */
+  noteCartonKgOf?: (itemCode: string | null) => number | null;
 }
 
 export interface ProductOption {
@@ -133,9 +148,10 @@ const PRINTING = labelPrintingEnabled();
 
 export function IdenticalBoxesForm({
   token, palletNumber, sample, anotherOf, weightDoubt, listed: listedProp, lineBoxes, skuMismatch, productChoice, onBack, onCreated,
-  cartonLabels = true,
+  cartonLabels = true, noteCartonKgOf,
 }: IdenticalBoxesFormProps) {
   const tr = useT();
+  const lang = useContext(LanguageContext);
   const { toast, showToast } = useToast();
 
   // Cartons of this kind already on the list. A twin's original always is.
@@ -158,11 +174,19 @@ export function IdenticalBoxesForm({
   const batchIdsRef = useRef(new Map<string, string>());
   // The weight as last traced: it is traced when the field is left, not per key.
   const tracedWeightRef = useRef(weight);
+  // copy_note_weight_check: the save held for the note question, the weight
+  // he chose to keep (asked once per weight), and whether he chose to type.
+  const [noteAsk, setNoteAsk] = useState<CopyNoteGap | null>(null);
+  const [keptWeight, setKeptWeight] = useState<number | null>(null);
+  const [choseType, setChoseType] = useState(false);
+  const weightInputRef = useRef<HTMLInputElement>(null);
 
   const traceField = (event: string, data: Record<string, unknown>) =>
     trace('ui', event, { barcode: sample.barcode, ...data });
   const changeQuantity = (value: string, how: 'minus' | 'plus' | 'typed' | 'invoice') => {
     setQuantity(value);
+    // A note question asked for another count no longer stands.
+    setNoteAsk(null);
     traceField('identical_count', { how, value });
   };
   const changeDate = (field: DateField, value: string) => {
@@ -217,10 +241,49 @@ export function IdenticalBoxesForm({
     pallet_number: palletNumber,
   };
 
-  async function handleSave() {
+  // The note's per-carton weight for the line this save books on.
+  const noteKg = noteCartonKgOf ? noteCartonKgOf(itemCode) : null;
+
+  function handleSave() {
     if (!canSave) return;
+    if (noteCartonKgOf && !(keptWeight !== null && Math.abs(keptWeight - weightKg) < 0.001)) {
+      const gap = copyNoteWeightGap({ weight: weightKg, copies: count, noteKg });
+      if (gap) {
+        traceField('copy_note_weight_ask', {
+          weight: gap.weight, note_kg: gap.noteKg, copies: gap.copies, rel: Math.round(gap.rel * 1000) / 1000, kg_impact: gap.kgImpact,
+        });
+        setNoteAsk(gap);
+        return;
+      }
+    }
+    void save(weightKg, choseType ? 'type' : undefined);
+  }
+
+  function answerNote(choice: CopyNoteChoice) {
+    if (!noteAsk) return;
+    traceField('copy_note_weight_choice', {
+      choice, weight: noteAsk.weight, note_kg: noteAsk.noteKg, copies: noteAsk.copies, kg_impact: noteAsk.kgImpact,
+    });
+    const asked = noteAsk;
+    setNoteAsk(null);
+    if (choice === 'note') {
+      setWeight(String(asked.noteKg));
+      void save(asked.noteKg, 'note');
+    } else if (choice === 'keep') {
+      setKeptWeight(asked.weight);
+      void save(asked.weight, 'keep');
+    } else {
+      // He types the weight off the carton; Save asks again if it is still off.
+      setChoseType(true);
+      setWeight('');
+      weightInputRef.current?.focus();
+    }
+  }
+
+  async function save(saveKg: number, noteChoice?: CopyNoteChoice) {
     traceField('identical_save', {
-      count, typed, listed, weight: weightKg, production_date: productionDate, expiry: expiryDate,
+      count, typed, listed, weight: saveKg, production_date: productionDate, expiry: expiryDate,
+      ...(noteChoice ? { note_kg: noteKg, note_choice: noteChoice } : {}),
     });
     setSaving(true);
     try {
@@ -232,7 +295,7 @@ export function IdenticalBoxesForm({
         itemCode,
         itemNameHebrew: nameHe,
         itemNameEnglish: nameEn,
-        weightKg,
+        weightKg: saveKg,
         quantity: count,
         productionDate,
         expiryDate,
@@ -244,7 +307,7 @@ export function IdenticalBoxesForm({
         return;
       }
       onCreated(result.labels, {
-        weight: weightKg,
+        weight: saveKg,
         // ISO, like every scan row. This line used to write DD/MM/YYYY, which
         // the bot stored as box_expiry NULL — see lib/expiry.ts.
         expiry: expiryDate || '',
@@ -254,6 +317,9 @@ export function IdenticalBoxesForm({
         weight_confirmed: true,
         // He picked the other product in "which product?".
         item: chosen && pick === 1 ? chosen : undefined,
+        // copy_note_weight_check: what he answered when the save was held.
+        ...(noteChoice ? { note_choice: noteChoice } : {}),
+        ...(noteChoice === 'note' ? { weight_from_note: true } : {}),
       });
     } finally {
       setSaving(false);
@@ -301,7 +367,10 @@ export function IdenticalBoxesForm({
                 <button
                   key={i}
                   type="button"
-                  onClick={() => setPick(i as 0 | 1)}
+                  onClick={() => {
+                    setPick(i as 0 | 1);
+                    setNoteAsk(null);
+                  }}
                   aria-pressed={pick === i}
                   className={`flex-1 min-w-0 min-h-[44px] px-2 py-2 rounded-[11px] text-[12px] font-extrabold leading-tight text-center ${
                     pick === i ? 'bg-brand text-white' : 'bg-tile border border-line-strong text-ink-inverse'
@@ -379,8 +448,12 @@ export function IdenticalBoxesForm({
         <div>
           <div className={fieldLabel}>{tr('carton.weight')}</div>
           <input
+            ref={weightInputRef}
             value={weight}
-            onChange={(e) => setWeight(e.target.value.replace(/[^\d.]/g, '').slice(0, 7))}
+            onChange={(e) => {
+              setWeight(e.target.value.replace(/[^\d.]/g, '').slice(0, 7));
+              setNoteAsk(null);
+            }}
             onBlur={() => {
               if (weight === tracedWeightRef.current) return;
               tracedWeightRef.current = weight;
@@ -466,14 +539,44 @@ export function IdenticalBoxesForm({
       </div>
 
       <div className="flex-none px-3 py-[11px] border-t border-line bg-header safe-bottom">
-        <button
-          onClick={handleSave}
-          disabled={!canSave}
-          className="w-full h-[50px] rounded-[12px] bg-brand text-white text-[14px] font-black flex items-center justify-center gap-2 disabled:opacity-50"
-        >
-          <MI name="save" size={20} />
-          {saving ? tr('carton.saving') : tr(saveLabel.key, saveLabel.params)}
-        </button>
+        {noteAsk ? (
+          // copy_note_weight_check: the save waits for one answer (PROPOSED texts).
+          <div role="alertdialog" className="flex flex-col gap-2">
+            <p className="flex items-start gap-[6px] text-[12px] font-extrabold text-warn-weak-ink leading-[1.45]">
+              <MI name="report_problem" size={16} className="flex-none mt-[1px]" />
+              <span className="min-w-0">{copyNoteText(lang, 'ask', { note: noteAsk.noteKg, w: noteAsk.weight })}</span>
+            </p>
+            <button
+              onClick={() => answerNote('note')}
+              className="w-full min-h-[48px] rounded-[12px] bg-brand text-white text-[13.5px] font-black px-3"
+            >
+              {copyNoteText(lang, 'note', { note: noteAsk.noteKg, w: noteAsk.weight })}
+            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => answerNote('keep')}
+                className="flex-1 min-w-0 min-h-[46px] rounded-[12px] bg-tile border border-line-strong text-ink-inverse text-[12.5px] font-extrabold px-2"
+              >
+                {copyNoteText(lang, 'keep', { note: noteAsk.noteKg, w: noteAsk.weight })}
+              </button>
+              <button
+                onClick={() => answerNote('type')}
+                className="flex-1 min-w-0 min-h-[46px] rounded-[12px] bg-tile border border-line-strong text-ink-inverse text-[12.5px] font-extrabold px-2"
+              >
+                {copyNoteText(lang, 'type', { note: noteAsk.noteKg, w: noteAsk.weight })}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={handleSave}
+            disabled={!canSave}
+            className="w-full h-[50px] rounded-[12px] bg-brand text-white text-[14px] font-black flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            <MI name="save" size={20} />
+            {saving ? tr('carton.saving') : tr(saveLabel.key, saveLabel.params)}
+          </button>
+        )}
       </div>
 
       {calendarFor ? (

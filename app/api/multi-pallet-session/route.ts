@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nanoid } from 'nanoid';
 import { getRedisClient, touchSession } from '@/lib/redis';
-import { cameraShortSerialOn, cartonLabelsOn, glattCodeMatchOn, identicalNoSerialOn, identicalSourceWeightOn, lpnLabelsOn, manualCaptureReviewOn, manualTargetHintOn, noHandCodesOn, ocrNetworkNoticeOn, topBarDeleteOnlyOn, typedNearMatchOn, uniformAfterCountOn, unitsModeOn, weightRatioOverKgNameOn } from '@/lib/scanner-flags';
+import { cameraShortSerialOn, cartonLabelsOn, copyNoteWeightCheckOn, glattCodeMatchOn, identicalNoSerialOn, identicalSourceWeightOn, lpnLabelsOn, manualCaptureReviewOn, manualTargetHintOn, noHandCodesOn, ocrNetworkNoticeOn, topBarDeleteOnlyOn, typedNearMatchOn, uniformAfterCountOn, unitsModeOn, weightRatioOverKgNameOn } from '@/lib/scanner-flags';
 import type { MultiPalletSession } from '@/types';
 
 const SESSION_TTL = 7200; // 2 hours
@@ -149,6 +149,8 @@ export async function GET(request: NextRequest) {
       ...((await identicalSourceWeightOn(session.chat_id)) ? { identical_source_weight: true } : {}),
       // weight_ratio_over_kg_name (12/11): present only when on.
       ...((await weightRatioOverKgNameOn(session.chat_id)) ? { weight_ratio_over_kg_name: true } : {}),
+      // copy_note_weight_check (15/11): present only when on.
+      ...((await copyNoteWeightCheckOn(session.chat_id)) ? { copy_note_weight_check: true } : {}),
     };
     return NextResponse.json({ ...session, features });
   } catch (error) {

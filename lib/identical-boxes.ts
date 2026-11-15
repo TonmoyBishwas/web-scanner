@@ -22,6 +22,7 @@ import { isNoBarcodeId } from './no-barcode';
 import { barcodeCarriesWeight } from './barcode-weight';
 import { weightSourceOf, copyWeightTyped, weightChanged, type WeightSource } from './weight-source';
 import { WEIGHT_RATIO_LIMIT } from './weight-sanity';
+import type { CopyNoteChoice } from './copy-note-weight';
 
 /**
  * May "All boxes identical" be offered on this row (its row actions, the
@@ -89,6 +90,14 @@ export interface IdenticalForm {
    * sample's own names.
    */
   item?: { item_code: string; item_name_hebrew: string; item_name_english: string };
+  /**
+   * copy_note_weight_check (15/11, IN264207398): the worker's answer when the
+   * save was held because its weight is off the note's per-carton weight
+   * (lib/copy-note-weight.ts). Absent: not asked (switch off, or no gap).
+   */
+  note_choice?: CopyNoteChoice;
+  /** He booked the note's per-carton weight (`note_choice` 'note'): weight_source 'note_avg'. */
+  weight_from_note?: boolean;
 }
 
 export interface MintedLabelRef {
@@ -169,7 +178,10 @@ export function expandIdenticalBoxes<T extends SampleRow>(
     // sample's own source, and whether the form changed it (its barcode's
     // own weight, the one-tap twin's figure, is not a change).
     weight_copied_from: copiedFrom,
-    weight_typed: copyWeightTyped(form.weight, sample) || undefined,
+    // The note's weight, picked in the note question (15/11): not typed, and
+    // never a sample's earlier note pick carried onto a weight of its own.
+    weight_from_note: form.weight_from_note ? true : undefined,
+    weight_typed: (!form.weight_from_note && copyWeightTyped(form.weight, sample)) || undefined,
   }));
 }
 
@@ -215,6 +227,42 @@ export function applyFormWeightToSource<R extends Parameters<typeof weightSource
   return rows.map((r) => (r.barcode === sourceBarcode && sourceTakesFormWeight(r, form, saved)
     ? { ...r, weight: form.weight, weight_typed: true, weight_checked: true, weight_suspect: undefined }
     : r));
+}
+
+/**
+ * copy_note_weight_check (15/11, IN264207398): after the note question the
+ * "Different carton?" source carton takes the weight the worker settled on
+ * — the note's, or one he typed — so pallet 1 does not keep its 10.5 kg
+ * reading among 59 cartons at 10. His answer is the latest word on the
+ * item's weight, so a reading he saved earlier in the edit panel takes it
+ * too. Never a carton whose own barcode gives its weight, never a units
+ * carton, never on "keep" (the weight is the source's own).
+ */
+export function sourceTakesNoteChoice(
+  source: Parameters<typeof weightSourceOf>[0],
+  form: Pick<IdenticalForm, 'weight' | 'note_choice'>,
+): boolean {
+  if (form.note_choice !== 'note' && form.note_choice !== 'type') return false;
+  if (!(form.weight > 0) || !weightChanged(form.weight, Number(source.weight))) return false;
+  const src = weightSourceOf(source);
+  return src !== 'label_barcode' && src !== 'units';
+}
+
+/**
+ * The list with the source carton at the answered weight: the note's
+ * (`weight_from_note`, weight_source 'note_avg') or typed (`weight_typed`),
+ * checked, no doubt left. Every other row, and the source when
+ * sourceTakesNoteChoice says no, is the same object.
+ */
+export function applyNoteChoiceToSource<R extends Parameters<typeof weightSourceOf>[0] & {
+  weight_checked?: boolean; weight_suspect?: unknown; weight_from_note?: boolean;
+}>(rows: ReadonlyArray<R>, sourceBarcode: string, form: Pick<IdenticalForm, 'weight' | 'note_choice' | 'weight_from_note'>): R[] {
+  return rows.map((r) => {
+    if (r.barcode !== sourceBarcode || !sourceTakesNoteChoice(r, form)) return r;
+    return form.weight_from_note
+      ? { ...r, weight: form.weight, weight_from_note: true, weight_typed: undefined, weight_checked: true, weight_suspect: undefined }
+      : { ...r, weight: form.weight, weight_from_note: undefined, weight_typed: true, weight_checked: true, weight_suspect: undefined };
+  });
 }
 
 /** The fields the dedup bookkeeping below reads off a list row. */

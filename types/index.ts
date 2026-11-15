@@ -335,6 +335,9 @@ export interface MultiPalletBoxScan {
   /** A copy (identical / twin / New carton): the weight source of the carton it was copied from. */
   weight_copied_from?: 'label_ocr' | 'label_barcode' | 'typed' | 'twin_copy' | 'identical_copy'
     | 'note_avg' | 'units' | 'unknown';
+  /** The note's per-carton weight, booked in the copy form's note question
+   *  (copy_note_weight_check, lib/copy-note-weight.ts): weight_source 'note_avg'. */
+  weight_from_note?: boolean;
 }
 
 export interface MultiPalletSession {
@@ -422,6 +425,10 @@ export interface MultiPalletSession {
      *  states it in kg (lib/weight-sanity.ts findWeightSuspects
      *  `ratioOverKgName`). Present only when on. */
     weight_ratio_over_kg_name?: boolean;
+    /** The "Different carton?" / identical save is held when it would copy
+     *  a weight off the note's per-carton weight onto 2+ cartons
+     *  (lib/copy-note-weight.ts). Present only when on. */
+    copy_note_weight_check?: boolean;
   };
   receipt_id?: string;
   completed_pallets: Array<{

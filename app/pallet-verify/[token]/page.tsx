@@ -57,6 +57,7 @@ import {
   groupSkuMismatch,
   sourceSku,
   sourceTakesFormWeight,
+  sourceTakesNoteChoice,
   type IdenticalForm,
 } from '@/lib/identical-boxes';
 import { weightChanged } from '@/lib/weight-source';
@@ -93,6 +94,7 @@ import { manualTargetDigits, noteShortRead, targetVerdict, type ShortReadNote } 
 import { resolveEditIdentity } from '@/lib/edit-identity';
 import { useBackClose } from '@/lib/use-back-close';
 import { flagSuspectWeights, replaceIdenticalSample, weightCheckOpts } from '@/lib/weight-check';
+import { notePerCartonKg } from '@/lib/copy-note-weight';
 import { acceptDoubts, releaseDoubtHold, sharedDoubt, weightDoubts } from '@/lib/weight-review';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback, scanAlreadyCountedFeedback } from '@/lib/scan-feedback';
@@ -3368,14 +3370,26 @@ export default function PalletVerifyPage({
       ? (target.loose ? looseBoxesRef.current : scannedBoxesRef.current).find((b) => b.barcode === target.box.barcode)
       : undefined;
     const reweighSource = !!sourceRow && sourceTakesFormWeight(sourceRow, form, labels.length);
-    if (reweighSource && sourceRow) {
+    // copy_note_weight_check (15/11, IN264207398): the save was held against
+    // the note and he settled on the note's weight or typed one — the source
+    // carton takes it too (lib/identical-boxes.ts sourceTakesNoteChoice), so
+    // the pallet does not keep its 10.5 kg reading among cartons at 10.
+    const noteSourceRow = target.anotherOf && form.note_choice && sessionRef.current?.features?.copy_note_weight_check
+      ? (target.loose ? looseBoxesRef.current : scannedBoxesRef.current).find((b) => b.barcode === target.box.barcode)
+      : undefined;
+    const reweighByNote = !!noteSourceRow && sourceTakesNoteChoice(noteSourceRow, form);
+    if (reweighByNote && noteSourceRow) {
+      trace('ui', 'copy_note_weight_source', {
+        barcode: noteSourceRow.barcode, from: noteSourceRow.weight, to: form.weight, choice: form.note_choice, loose: target.loose,
+      });
+    } else if (reweighSource && sourceRow) {
       trace('ui', 'identical_source_weight', { barcode: sourceRow.barcode, from: sourceRow.weight, to: form.weight, loose: target.loose });
     }
     // The sample row replaced by the new rows, then the weight check over the
     // list (lib/weight-check.ts); the switch is read when the updater runs.
     const replaceSample = (prevAll: BoxScan[]): BoxScan[] => replaceIdenticalSample(prevAll, {
       sourceBarcode: target.box.barcode, anotherOf: !!target.anotherOf, replaces: target.replaces,
-      rows, form, saved: labels.length, reweighSource, opts: weightCheckOpts(sessionRef.current),
+      rows, form, saved: labels.length, reweighSource, reweighByNote, opts: weightCheckOpts(sessionRef.current),
     });
     if (target.replaces) (target.loose ? looseProcessedRef : processedRef).current.delete(target.replaces);
     if (target.loose) {
@@ -4376,6 +4390,14 @@ export default function PalletVerifyPage({
           ? Number(lines.find((l) => line && String(l.item_code ?? '') === String(line.item_code ?? ''))?.box_count) || null
           : null;
         const other = groupSkuMismatch(box, list, keyOf);
+        // copy_note_weight_check (15/11, IN264207398): the note's weight of
+        // one carton of the line the save books on (the "which product?"
+        // pick's own line). Absent with the switch off: the save as before.
+        const noteCartonKgOf = session?.features?.copy_note_weight_check
+          ? (code: string | null) => (code
+            ? notePerCartonKg(lines.find((l) => String(l.item_code ?? '') === code))
+            : null)
+          : undefined;
         return (
           <IdenticalBoxesForm
             token={token}
@@ -4393,6 +4415,7 @@ export default function PalletVerifyPage({
             anotherOf={identicalFor.anotherOf}
             listed={identicalFor.listed}
             lineBoxes={lineBoxes}
+            noteCartonKgOf={noteCartonKgOf}
             skuMismatch={other ? { own: sourceSku(box.barcode), other } : undefined}
             productChoice={box.name_conflict
               ? {
