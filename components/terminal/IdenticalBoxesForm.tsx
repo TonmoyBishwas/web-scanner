@@ -57,7 +57,7 @@ import { CalendarPicker } from './CalendarPicker';
 import { CartonSticker } from './CartonSticker';
 import { Toast, useToast } from './Toast';
 import { LanguageContext, useT } from '@/lib/i18n';
-import { copyNoteText, copyNoteWeightGap, type CopyNoteChoice, type CopyNoteGap } from '@/lib/copy-note-weight';
+import { copyNoteAnswerFor, copyNoteSaveStep, copyNoteText, type CopyNoteAnswer, type CopyNoteChoice, type CopyNoteGap } from '@/lib/copy-note-weight';
 import { identicalLabelPayload, labelsToSave, postIdenticalLabels, type IdenticalForm } from '@/lib/identical-boxes';
 import { toIsoDate, isoToDdmmyyyy } from '@/lib/expiry';
 import { labelPrintingEnabled } from '@/lib/label-printing';
@@ -174,11 +174,10 @@ export function IdenticalBoxesForm({
   const batchIdsRef = useRef(new Map<string, string>());
   // The weight as last traced: it is traced when the field is left, not per key.
   const tracedWeightRef = useRef(weight);
-  // copy_note_weight_check: the save held for the note question, the weight
-  // he chose to keep (asked once per weight), and whether he chose to type.
+  // copy_note_weight_check: the save held for the note question, and his
+  // answer (asked once per weight; a retried save carries it again).
   const [noteAsk, setNoteAsk] = useState<CopyNoteGap | null>(null);
-  const [keptWeight, setKeptWeight] = useState<number | null>(null);
-  const [choseType, setChoseType] = useState(false);
+  const [noteAnswer, setNoteAnswer] = useState<CopyNoteAnswer | null>(null);
   const weightInputRef = useRef<HTMLInputElement>(null);
 
   const traceField = (event: string, data: Record<string, unknown>) =>
@@ -246,35 +245,39 @@ export function IdenticalBoxesForm({
 
   function handleSave() {
     if (!canSave) return;
-    if (noteCartonKgOf && !(keptWeight !== null && Math.abs(keptWeight - weightKg) < 0.001)) {
-      const gap = copyNoteWeightGap({ weight: weightKg, copies: count, noteKg });
-      if (gap) {
-        traceField('copy_note_weight_ask', {
-          weight: gap.weight, note_kg: gap.noteKg, copies: gap.copies, rel: Math.round(gap.rel * 1000) / 1000, kg_impact: gap.kgImpact,
-        });
-        setNoteAsk(gap);
-        return;
-      }
+    if (!noteCartonKgOf) {
+      void save(weightKg);
+      return;
     }
-    void save(weightKg, choseType ? 'type' : undefined);
+    const step = copyNoteSaveStep({ weight: weightKg, copies: count, noteKg, answer: noteAnswer });
+    if ('ask' in step) {
+      const gap = step.ask;
+      traceField('copy_note_weight_ask', {
+        weight: gap.weight, note_kg: gap.noteKg, copies: gap.copies, rel: Math.round(gap.rel * 1000) / 1000, kg_impact: gap.kgImpact,
+      });
+      setNoteAsk(gap);
+      return;
+    }
+    void save(weightKg, step.save);
   }
 
   function answerNote(choice: CopyNoteChoice) {
-    if (!noteAsk) return;
+    if (!noteAsk || saving) return;
     traceField('copy_note_weight_choice', {
       choice, weight: noteAsk.weight, note_kg: noteAsk.noteKg, copies: noteAsk.copies, kg_impact: noteAsk.kgImpact,
     });
     const asked = noteAsk;
     setNoteAsk(null);
-    if (choice === 'note') {
+    const answer = copyNoteAnswerFor(choice, asked, sample.weight);
+    setNoteAnswer(answer);
+    if (answer.choice === 'note') {
       setWeight(String(asked.noteKg));
       void save(asked.noteKg, 'note');
-    } else if (choice === 'keep') {
-      setKeptWeight(asked.weight);
-      void save(asked.weight, 'keep');
+    } else if (answer.weight !== null) {
+      // "Keep": 'keep', or 'type' when the weight kept is one he typed.
+      void save(asked.weight, answer.choice);
     } else {
       // He types the weight off the carton; Save asks again if it is still off.
-      setChoseType(true);
       setWeight('');
       weightInputRef.current?.focus();
     }
@@ -369,7 +372,9 @@ export function IdenticalBoxesForm({
                   type="button"
                   onClick={() => {
                     setPick(i as 0 | 1);
+                    // Another line: another note weight, the answer no longer stands.
                     setNoteAsk(null);
+                    setNoteAnswer(null);
                   }}
                   aria-pressed={pick === i}
                   className={`flex-1 min-w-0 min-h-[44px] px-2 py-2 rounded-[11px] text-[12px] font-extrabold leading-tight text-center ${

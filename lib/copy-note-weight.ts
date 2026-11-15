@@ -54,6 +54,26 @@ export function notePerCartonKg(line: NoteLine | null | undefined): number | nul
   return Math.round((kg / boxes) * 1000) / 1000;
 }
 
+/**
+ * The note's per-carton weight for an item code over all the note's lines
+ * (review 15/11): a code on two lines (a multi-invoice delivery, or one note
+ * listing the item twice) gives their common weight, and null when they
+ * disagree, so a save is never held against the other line's carton.
+ * Lines without both figures say nothing either way.
+ */
+export function noteCartonKgForCode(
+  lines: ReadonlyArray<NoteLine & { item_code?: string | number | null }> | null | undefined,
+  code: string | null | undefined,
+): number | null {
+  if (!code || !lines) return null;
+  const kgs = lines
+    .filter((l) => String(l.item_code ?? '') === code)
+    .map((l) => notePerCartonKg(l))
+    .filter((kg): kg is number => kg !== null);
+  if (kgs.length === 0) return null;
+  return kgs.every((kg) => Math.abs(kg - kgs[0]) < 0.001) ? kgs[0] : null;
+}
+
 export interface CopyNoteGap {
   /** The note's per-carton weight. */
   noteKg: number;
@@ -87,6 +107,41 @@ export function copyNoteWeightGap(a: { weight: number; copies: number; noteKg: n
 
 /** The worker's answer, kept on the form and traced (`copy_note_weight_choice`). */
 export type CopyNoteChoice = 'note' | 'keep' | 'type';
+
+/**
+ * His answer as the form keeps it: the choice and the weight it settled
+ * (null for 'type', which settles nothing until he types).
+ */
+export interface CopyNoteAnswer { choice: CopyNoteChoice; weight: number | null }
+
+/**
+ * The answer a button gives (review 15/11). "Keep" on a weight that is not
+ * the source carton's own (he typed it, then kept it when asked again) is
+ * his typed weight, so the source takes it like any other 'type'.
+ */
+export function copyNoteAnswerFor(choice: CopyNoteChoice, gap: CopyNoteGap, sampleWeight: number): CopyNoteAnswer {
+  if (choice === 'note') return { choice, weight: gap.noteKg };
+  if (choice === 'type') return { choice, weight: null };
+  return { choice: Math.abs(gap.weight - Number(sampleWeight)) >= 0.001 ? 'type' : 'keep', weight: gap.weight };
+}
+
+/**
+ * What Save does (review 15/11): ask, or save with the answer to carry.
+ * A weight he already answered for saves with that answer again, so a save
+ * retried after a failed POST still books the note's weight as `note_avg`
+ * and still reweighs the source carton; any other weight is checked afresh,
+ * and after "type" a weight within the note carries 'type'.
+ */
+export function copyNoteSaveStep(a: {
+  weight: number; copies: number; noteKg: number | null | undefined; answer: CopyNoteAnswer | null;
+}): { ask: CopyNoteGap } | { save: CopyNoteChoice | undefined } {
+  if (a.answer && a.answer.weight !== null && Math.abs(a.answer.weight - a.weight) < 0.001) {
+    return { save: a.answer.choice };
+  }
+  const gap = copyNoteWeightGap(a);
+  if (gap) return { ask: gap };
+  return { save: a.answer ? 'type' : undefined };
+}
 
 // PROPOSED (text freeze, Mevaser 20/10): none of these is approved yet. They
 // show only with scanner flag copy_note_weight_check on. {note} = the note's

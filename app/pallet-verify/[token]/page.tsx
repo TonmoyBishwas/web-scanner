@@ -94,7 +94,7 @@ import { manualTargetDigits, noteShortRead, targetVerdict, type ShortReadNote } 
 import { resolveEditIdentity } from '@/lib/edit-identity';
 import { useBackClose } from '@/lib/use-back-close';
 import { flagSuspectWeights, replaceIdenticalSample, weightCheckOpts } from '@/lib/weight-check';
-import { notePerCartonKg } from '@/lib/copy-note-weight';
+import { noteCartonKgForCode } from '@/lib/copy-note-weight';
 import { acceptDoubts, releaseDoubtHold, sharedDoubt, weightDoubts } from '@/lib/weight-review';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback, scanAlreadyCountedFeedback } from '@/lib/scan-feedback';
@@ -4392,11 +4392,10 @@ export default function PalletVerifyPage({
         const other = groupSkuMismatch(box, list, keyOf);
         // copy_note_weight_check (15/11, IN264207398): the note's weight of
         // one carton of the line the save books on (the "which product?"
-        // pick's own line). Absent with the switch off: the save as before.
+        // pick's own line; a code on two lines that disagree: none). Absent
+        // with the switch off: the save as before.
         const noteCartonKgOf = session?.features?.copy_note_weight_check
-          ? (code: string | null) => (code
-            ? notePerCartonKg(lines.find((l) => String(l.item_code ?? '') === code))
-            : null)
+          ? (code: string | null) => noteCartonKgForCode(lines, code)
           : undefined;
         return (
           <IdenticalBoxesForm

@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
-  COPY_NOTE_WEIGHT_TEXT, copyNoteText, copyNoteWeightGap, notePerCartonKg,
+  COPY_NOTE_WEIGHT_TEXT, copyNoteAnswerFor, copyNoteSaveStep, copyNoteText, copyNoteWeightGap, noteCartonKgForCode, notePerCartonKg,
 } from './copy-note-weight';
+import { cartonOwnCodes, matchInvoiceItem } from './invoice-match';
 import {
   applyNoteChoiceToSource, expandIdenticalBoxes, sourceTakesFormWeight, sourceTakesNoteChoice, type IdenticalForm,
 } from './identical-boxes';
@@ -38,7 +39,8 @@ const form = (weight: number, extra: Partial<IdenticalForm> = {}): IdenticalForm
 
 /** The page's "Different carton?" save: copies at the form weight, the source reweighed by the note answer. */
 function differentCarton(src: Row, copies: number, f: IdenticalForm): Row[] {
-  const rows = expandIdenticalBoxes(src, labels(copies), f);
+  // As the page: a "Different carton?" copy is a twin (handleIdenticalCreated).
+  const rows = expandIdenticalBoxes(src, labels(copies), f).map((r) => ({ ...r, twin: true }));
   return replaceIdenticalSample<Row>([src], {
     sourceBarcode: SRC, anotherOf: true, rows, form: f, saved: copies,
     reweighSource: false, reweighByNote: sourceTakesNoteChoice(src, f), opts: {},
@@ -155,7 +157,8 @@ describe('the source carton takes the answered weight', () => {
     const list = differentCarton(src, 59, f);
     expect(total(list)).toBe(630);
     expect(list[0]).toBe(src);
-    expect(list.slice(1).every((r) => weightSourceOf(r) === 'identical_copy')).toBe(true);
+    // twin_copy, as box_inventory holds for these 59 today.
+    expect(list.slice(1).every((r) => weightSourceOf(r) === 'twin_copy')).toBe(true);
   });
 
   it('no answer (switch off, or no gap): exactly as before', () => {
@@ -200,5 +203,74 @@ describe('the PROPOSED texts', () => {
       .toBe('The note says 10 kg a carton, this says 10.5 kg. Which weight to book?');
     expect(copyNoteText('Hebrew', 'note', { note: 12.455, w: 13 })).toBe('לרשום 12.455 ק"ג (לפי התעודה)');
     expect(copyNoteText('Hebrew', 'keep', { note: 10, w: 16 })).toBe('להשאיר 16 ק"ג');
+  });
+});
+
+describe('review 15/11', () => {
+  // The session's own lines (scan_sessions BZMt00q0IXGUZOS5rsspY).
+  const SESSION_LINES = [
+    { item_code: '7290003670444', item_name_english: '', item_name_hebrew: "שווקיים עוף בינוני קפוא תפז' ע", quantity_kg: 1239.93, box_count: 84, unit_weight_kg: 0 },
+    { item_code: '90300662', item_name_english: '', item_name_hebrew: NAME, quantity_kg: 900, box_count: 90, unit_weight_kg: 0 },
+  ];
+
+  it('IN264207398 replay: the carton finds its line as the page does, the note says 10 kg, both saves are held', () => {
+    for (const [weight, typed] of [[10.5, 60], [16, 30]] as const) {
+      const src = source(weight);
+      const line = matchInvoiceItem(src.item_name_hebrew, src.item_name, SESSION_LINES, cartonOwnCodes(src));
+      expect(line?.item_code).toBe('90300662');
+      const noteKg = noteCartonKgForCode(SESSION_LINES, line!.item_code);
+      expect(noteKg).toBe(10);
+      const step = copyNoteSaveStep({ weight, copies: typed - 1, noteKg, answer: null });
+      expect('ask' in step && step.ask.copies).toBe(typed - 1);
+    }
+  });
+
+  it('a code on two lines: their common weight, none when they disagree', () => {
+    // HkhrfV6AchNhMQVi23k-P: 90300680 on two lines, 600/60 and 100/10.
+    expect(noteCartonKgForCode([{ ...LINE, item_code: 'X', quantity_kg: 600, box_count: 60 }, { ...LINE, item_code: 'X', quantity_kg: 100, box_count: 10 }], 'X')).toBe(10);
+    // The first line used to win: 20 kg cartons of the second line were held against 10.
+    expect(noteCartonKgForCode([{ ...LINE, item_code: 'X', quantity_kg: 600, box_count: 60 }, { ...LINE, item_code: 'X', quantity_kg: 100, box_count: 5 }], 'X')).toBeNull();
+    // A line without figures says nothing either way.
+    expect(noteCartonKgForCode([{ ...LINE, item_code: 'X', box_count: undefined }, { ...LINE, item_code: 'X' }], 'X')).toBe(10);
+    expect(noteCartonKgForCode([LINE], null)).toBeNull();
+    expect(noteCartonKgForCode([LINE], 'other')).toBeNull();
+    expect(noteCartonKgForCode(undefined, '90300662')).toBeNull();
+  });
+
+  it('a save retried after a failed POST keeps his "book the note" answer (note_avg, the source reweighed)', () => {
+    const asked = copyNoteWeightGap({ weight: 10.5, copies: 59, noteKg: 10 })!;
+    const answer = copyNoteAnswerFor('note', asked, 10.5);
+    // The field now shows 10; the old Save found no gap and saved with no answer.
+    expect(copyNoteSaveStep({ weight: 10, copies: 59, noteKg: 10, answer })).toEqual({ save: 'note' });
+  });
+
+  it('"keep" on the source\'s own weight is keep, and asked once per weight', () => {
+    const asked = copyNoteWeightGap({ weight: 10.5, copies: 59, noteKg: 10 })!;
+    const answer = copyNoteAnswerFor('keep', asked, 10.5);
+    expect(answer).toEqual({ choice: 'keep', weight: 10.5 });
+    expect(copyNoteSaveStep({ weight: 10.5, copies: 59, noteKg: 10, answer })).toEqual({ save: 'keep' });
+    // Another weight is checked afresh.
+    expect('ask' in copyNoteSaveStep({ weight: 16, copies: 59, noteKg: 10, answer })).toBe(true);
+  });
+
+  it('"type", then 11 typed and kept when asked again: the source takes 11 (was left at 16)', () => {
+    const first = copyNoteWeightGap({ weight: 16, copies: 29, noteKg: 10 })!;
+    expect(copyNoteAnswerFor('type', first, 16)).toEqual({ choice: 'type', weight: null });
+    const again = copyNoteSaveStep({ weight: 11, copies: 29, noteKg: 10, answer: { choice: 'type', weight: null } });
+    expect('ask' in again).toBe(true);
+    const kept = copyNoteAnswerFor('keep', (again as { ask: typeof first }).ask, 16);
+    expect(kept).toEqual({ choice: 'type', weight: 11 });
+    const list = differentCarton(source(16), 29, form(11, { note_choice: kept.choice }));
+    expect(total(list)).toBe(330);
+    expect(weightSourceOf(list[0])).toBe('typed');
+  });
+
+  it('"type", then a weight within the note: saved as typed, no second question', () => {
+    expect(copyNoteSaveStep({ weight: 10.1, copies: 29, noteKg: 10, answer: { choice: 'type', weight: null } })).toEqual({ save: 'type' });
+  });
+
+  it('never asked: no answer carried', () => {
+    expect(copyNoteSaveStep({ weight: 10, copies: 59, noteKg: 10, answer: null })).toEqual({ save: undefined });
+    expect(copyNoteSaveStep({ weight: 16, copies: 29, noteKg: null, answer: null })).toEqual({ save: undefined });
   });
 });
