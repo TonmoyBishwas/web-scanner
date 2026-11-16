@@ -377,6 +377,23 @@ export async function copyNoteWeightCheckOn(chatId: string | number | null | und
 }
 
 /**
+ * A finger on a list too short to show a carton row raises the bottom sheet
+ * to tall (16/11, David, Baladi IN264208817: the list at mid was a ~25px
+ * strip on his phone and he scrolled it blind; lib/sheet-list-rise.ts). No
+ * new text. A missing row is OFF; the sheet moves only by its handle, as today.
+ */
+export const sheetListRiseRow = flagRow('sheet_list_rise');
+
+/** sheet_list_rise for this chat; off when the flag cannot be read, never a throw. */
+export async function sheetListRiseOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await sheetListRiseRow(), chatId);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * A DEFAULT-ON switch for this chat (lib/label-switches.ts): no row, an
  * unreadable row or a failed read is ON — today's behaviour — so a switch
  * that hides something can never hide it because the flag could not be read.

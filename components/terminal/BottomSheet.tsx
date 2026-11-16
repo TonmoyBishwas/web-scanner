@@ -12,6 +12,7 @@ import {
 } from 'react';
 import { useT } from '@/lib/i18n';
 import { trace } from '@/lib/scanner-trace';
+import { shouldRaiseOnList } from '@/lib/sheet-list-rise';
 
 export interface BottomSheetHandle {
   /** Animate to a snap index (0 = peek, 1 = mid, 2 = tall) */
@@ -33,6 +34,10 @@ interface BottomSheetProps {
   children: ReactNode;
   /** Names this sheet in the trace (drawer_drag / list_scroll); 26/10. */
   traceName?: string;
+  /** scanner flag sheet_list_rise (16/11): a pull on the list or the tool
+   *  dock raises the sheet to tall while the list is too short to show a
+   *  carton row (lib/sheet-list-rise.ts). Off = the handle alone moves it. */
+  riseOnListPull?: boolean;
 }
 
 /** list_scroll is recorded once the list rests this long… */
@@ -92,7 +97,7 @@ const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : use
 // drags (pointer capture) and a clean tap cycles mid → tall → peek.
 // Mount inside a `relative` container that fills the camera region.
 export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(function BottomSheet(
-  { snapFractions = DEFAULT_SNAPS, initialSnap = 1, toolbar, footer, children, traceName = 'sheet' },
+  { snapFractions = DEFAULT_SNAPS, initialSnap = 1, toolbar, footer, children, traceName = 'sheet', riseOnListPull = false },
   ref,
 ) {
   const tr = useT();
@@ -378,6 +383,53 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
       if (timer) clearTimeout(timer);
     };
   }, [traceName]);
+
+  // sheet_list_rise (16/11, IN264208817): a pull on the list or the tool dock
+  // raises the sheet while the list is too short to show a row. Native,
+  // passive touch listeners on purpose: the list keeps its own scrolling
+  // (nothing is prevented), and the footer — the swipe-to-confirm — and the
+  // handle (its own gesture above) are never watched.
+  useEffect(() => {
+    if (!riseOnListPull) return;
+    const surfaces = [scrollRef.current, toolbarRef.current].filter((el): el is HTMLDivElement => !!el);
+    if (!surfaces.length) return;
+    let start: { x: number; y: number } | null = null;
+    const onStart = (e: TouchEvent) => {
+      const t = e.touches[0];
+      start = e.touches.length === 1 && t ? { x: t.clientX, y: t.clientY } : null;
+    };
+    const onMove = (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (!start || !t) return;
+      const listPx = scrollRef.current?.clientHeight ?? 0;
+      const from = snapIndexRef.current;
+      if (!shouldRaiseOnList({
+        on: true, side: Boolean(sideRef.current), snap: from, listPx,
+        travelY: start.y - t.clientY, travelX: start.x - t.clientX,
+      })) return;
+      start = null; // once per touch
+      settle(2);
+      trace('ui', 'sheet_list_rise', { sheet: traceName, from, list_px: listPx });
+    };
+    const onEnd = () => {
+      start = null;
+    };
+    for (const el of surfaces) {
+      el.addEventListener('touchstart', onStart, { passive: true });
+      el.addEventListener('touchmove', onMove, { passive: true });
+      el.addEventListener('touchend', onEnd, { passive: true });
+      el.addEventListener('touchcancel', onEnd, { passive: true });
+    }
+    return () => {
+      for (const el of surfaces) {
+        el.removeEventListener('touchstart', onStart);
+        el.removeEventListener('touchmove', onMove);
+        el.removeEventListener('touchend', onEnd);
+        el.removeEventListener('touchcancel', onEnd);
+      }
+    };
+    // hasToolbar / side: re-attach when the dock or the layout changes.
+  }, [riseOnListPull, settle, traceName, hasToolbar, side]);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {

@@ -6252,6 +6252,7 @@ export default function PalletVerifyPage({
           <BottomSheet
             ref={looseSheetRef}
             traceName="loose"
+            riseOnListPull={!!session?.features?.sheet_list_rise}
             toolbar={
               <ToolDock
                 chips={buildDockChips({
@@ -6843,6 +6844,7 @@ export default function PalletVerifyPage({
         <BottomSheet
           ref={sheetRef}
           traceName="pallet"
+          riseOnListPull={!!session?.features?.sheet_list_rise}
           toolbar={
             <ToolDock
               chips={buildDockChips({

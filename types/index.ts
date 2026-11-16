@@ -429,6 +429,10 @@ export interface MultiPalletSession {
      *  a weight off the note's per-carton weight onto 2+ cartons
      *  (lib/copy-note-weight.ts). Present only when on. */
     copy_note_weight_check?: boolean;
+    /** A pull on the list or the tool dock raises the bottom sheet to tall
+     *  while the list is too short to show a carton row
+     *  (lib/sheet-list-rise.ts). Present only when on. */
+    sheet_list_rise?: boolean;
   };
   receipt_id?: string;
   completed_pallets: Array<{
