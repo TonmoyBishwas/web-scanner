@@ -41,19 +41,36 @@ export interface ListRiseInput {
   snap: number;
   /** The list area's visible height (scroll area clientHeight, padding included). */
   listPx: number;
-  /** Vertical finger travel since the touch began, px (either direction). */
+  /** The list's full content height (scroll area scrollHeight). No more than
+   *  listPx = nothing hidden (no cartons yet, or a filter matching none):
+   *  raising would only cover the camera. */
+  contentPx: number;
+  /** Vertical finger travel since the touch began, px; positive = finger
+   *  moved up. Either direction at mid; at peek only up (a downward swipe
+   *  there means "out of the way", never "cover the camera"). */
   travelY: number;
   /** Horizontal finger travel since the touch began, px. */
   travelX: number;
 }
 
 /** Whether this move on the list / tool dock raises the sheet to tall. */
-export function shouldRaiseOnList({ on, side, snap, listPx, travelY, travelX }: ListRiseInput): boolean {
+export function shouldRaiseOnList({ on, side, snap, listPx, contentPx, travelY, travelX }: ListRiseInput): boolean {
   if (!on || side) return false;
   if (snap >= TALL) return false;
   const dy = Math.abs(travelY);
   if (dy <= LIST_RISE_SLOP_PX) return false;
   // Sideways first = the dock's chip row scrolling, not a pull.
   if (Math.abs(travelX) > dy) return false;
+  if (snap <= 0 && travelY < 0) return false;
+  if (contentPx <= listPx + 1) return false;
   return listPx < LIST_RISE_MAX_PX;
+}
+
+/**
+ * The finger has left the tap slop in some direction: the caller decides
+ * once, here, and keeps that answer for the rest of the touch, so a sideways
+ * chip swipe that later curves upward is still a sideways swipe.
+ */
+export function pastListRiseSlop(travelY: number, travelX: number): boolean {
+  return Math.max(Math.abs(travelY), Math.abs(travelX)) > LIST_RISE_SLOP_PX;
 }

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { LIST_RISE_MAX_PX, shouldRaiseOnList } from './sheet-list-rise';
+import { LIST_RISE_MAX_PX, pastListRiseSlop, shouldRaiseOnList } from './sheet-list-rise';
 
 // IN264208817 pallet 2 (16/11): mid snap on a 392×850 phone; the list area
 // (filter row + a ~25px strip) between the tool dock and swipe-to-confirm.
-const david = { on: true, side: false, snap: 1, listPx: 87, travelY: 40, travelX: 0 };
+// 30 cartons: the content runs far past the strip.
+const david = { on: true, side: false, snap: 1, listPx: 87, contentPx: 30 * 64 + 66, travelY: 40, travelX: 0 };
 
 describe('shouldRaiseOnList (sheet_list_rise)', () => {
   it('raises the sheet when he pulls on the strip at mid', () => {
@@ -44,5 +45,24 @@ describe('shouldRaiseOnList (sheet_list_rise)', () => {
     expect(shouldRaiseOnList({ ...david, listPx: LIST_RISE_MAX_PX })).toBe(false);
     expect(shouldRaiseOnList({ ...david, listPx: 220 })).toBe(false);
     expect(shouldRaiseOnList({ ...david, listPx: LIST_RISE_MAX_PX - 1 })).toBe(true);
+  });
+
+  it('nothing hidden (no cartons yet, or a filter matching none): the camera stays', () => {
+    expect(shouldRaiseOnList({ ...david, contentPx: 87 })).toBe(false);
+    expect(shouldRaiseOnList({ ...david, contentPx: 56 })).toBe(false);
+    expect(shouldRaiseOnList({ ...david, snap: 0, listPx: 12, contentPx: 12 })).toBe(false);
+    expect(shouldRaiseOnList({ ...david, contentPx: 87 + 64 })).toBe(true);
+  });
+
+  it('at peek only an upward pull raises it; a downward swipe on the dock does not', () => {
+    expect(shouldRaiseOnList({ ...david, snap: 0, listPx: 12, travelY: -40 })).toBe(false);
+    expect(shouldRaiseOnList({ ...david, snap: 0, listPx: 12, travelY: 40 })).toBe(true);
+  });
+
+  it('the decision is taken once the finger leaves the slop', () => {
+    expect(pastListRiseSlop(8, 0)).toBe(false);
+    expect(pastListRiseSlop(-3, 2)).toBe(false);
+    expect(pastListRiseSlop(0, 9)).toBe(true);
+    expect(pastListRiseSlop(-9, 0)).toBe(true);
   });
 });

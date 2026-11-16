@@ -12,7 +12,7 @@ import {
 } from 'react';
 import { useT } from '@/lib/i18n';
 import { trace } from '@/lib/scanner-trace';
-import { shouldRaiseOnList } from '@/lib/sheet-list-rise';
+import { pastListRiseSlop, shouldRaiseOnList } from '@/lib/sheet-list-rise';
 
 export interface BottomSheetHandle {
   /** Animate to a snap index (0 = peek, 1 = mid, 2 = tall) */
@@ -402,11 +402,17 @@ export const BottomSheet = forwardRef<BottomSheetHandle, BottomSheetProps>(funct
       const t = e.touches[0];
       if (!start || !t) return;
       const listPx = scrollRef.current?.clientHeight ?? 0;
+      const contentPx = scrollRef.current?.scrollHeight ?? 0;
       const from = snapIndexRef.current;
+      const travelY = start.y - t.clientY;
+      const travelX = start.x - t.clientX;
       if (!shouldRaiseOnList({
-        on: true, side: Boolean(sideRef.current), snap: from, listPx,
-        travelY: start.y - t.clientY, travelX: start.x - t.clientX,
-      })) return;
+        on: true, side: Boolean(sideRef.current), snap: from, listPx, contentPx, travelY, travelX,
+      })) {
+        // Decided once the finger leaves the slop: no for the rest of this touch.
+        if (pastListRiseSlop(travelY, travelX)) start = null;
+        return;
+      }
       start = null; // once per touch
       settle(2);
       trace('ui', 'sheet_list_rise', { sheet: traceName, from, list_px: listPx });
