@@ -89,6 +89,8 @@ import type { ReadPolicy } from '@/lib/barcode-frame';
 import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
 import { cartonsOnListFor, listAboveTotal, newCartonQuantity, type ListAboveTotal } from '@/lib/count-check';
 import { freeNoBarcodeId, isNoBarcodeId, provisionalAtBooking, unreadDigitsOutcome } from '@/lib/no-barcode';
+import { decodePhotoReads, nobcPhotoSerial } from '@/lib/nobc-photo-decode';
+import { creatorExpiryPrefill } from '@/lib/creator-expiry';
 import { firstRealCodeMissingWeight, realCodeMissingWeight } from '@/lib/no-hand-codes';
 import { manualTargetDigits, noteShortRead, targetVerdict, type ShortReadNote } from '@/lib/manual-target';
 import { resolveEditIdentity } from '@/lib/edit-identity';
@@ -2336,13 +2338,20 @@ export default function PalletVerifyPage({
     // manual_target_hint: the label this capture was meant to show (none
     // with the flag off — the body is then exactly as before).
     const target = manual ? manualTargetRef.current.get(lookupKey) ?? null : null;
+    // nobc_photo_decode (18/11, Well Done 48971): a photo capture is read by
+    // the Code 128 reader beside the label reader, so a capture that would
+    // be booked NOBC- can be booked under its one serial instead. Null with
+    // the flag off: the photo is never decoded.
+    const photoDecode = manual && sessionRef.current?.features?.nobc_photo_decode ? decodePhotoReads(imageData) : null;
     return fetch('/api/multi-pallet-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey, candidates, token, target_digits: target ?? undefined }),
     })
       .then((r) => r.json())
-      .then((data) => {
+      .then((json) => (photoDecode ? photoDecode.then((reads) => ({ json, reads: reads as string[] | null })) : { json, reads: null as string[] | null }))
+      .then(({ json, reads: photoReads }) => {
+        let data = json;
         // A read came back: a label-read outage is over (ocr_network_notice).
         if (data?.success) endOcrOutage(ocrOutageRef.current);
         if (lateReadDropped(lookupKey, 'pallet', !!(data?.success && data.ocr_data))) return;
@@ -2362,12 +2371,35 @@ export default function PalletVerifyPage({
         // the decoder read too (Wall Dan 408274, 25/10 — it used to become
         // NOBC-…, and a second photo of it a second carton). Decided once,
         // out here, so the notice and the updater below agree.
-        const ownDigits = manual && data?.success && data.ocr_data
+        const digitsIdentify = manual && data?.success && data.ocr_data
           ? targetCheck === 'match' || (targetCheck === 'none' && printedDigitsIdentifyCarton(
               digitsOnly(data.ocr_data.barcode_digits), decodedShortRef.current,
               sessionRef.current?.ocr_data, scannedBoxesRef.current.map((b) => b.barcode),
             ))
           : false;
+        // nobc_photo_decode (18/11): a capture about to be booked NOBC- whose
+        // photo shows exactly one serial the camera would accept is booked
+        // under it, as if the label reader had printed it — so the camera's
+        // later read of the same sticker is "already on the list"
+        // (lib/nobc-photo-decode.ts). Anything else: NOBC- as today.
+        const photoSerial = photoReads && !digitsIdentify && targetCheck === 'none' && data?.success && data.ocr_data
+          && unreadDigitsOutcome({
+            nameHebrew: data.ocr_data.product_name_hebrew,
+            nameEnglish: data.ocr_data.product_name_english,
+            weightKg: data.ocr_data.weight_kg,
+          }, { holdForReview: !!sessionRef.current?.features?.manual_capture_review }) === 'book_without_barcode'
+          ? {
+              serial: nobcPhotoSerial(photoReads, (v) => serialAccepted(v, false), data.ocr_data.barcode_digits),
+            }
+          : null;
+        if (photoSerial) {
+          trace('ui', 'nobc_photo_decode', {
+            provisional: lookupKey, reads: photoReads, digits: digitsOnly(data.ocr_data.barcode_digits),
+            serial: photoSerial.serial ?? undefined, outcome: photoSerial.serial ? 'serial' : 'nobc',
+          });
+          if (photoSerial.serial) data = { ...data, ocr_data: { ...data.ocr_data, barcode_digits: photoSerial.serial } };
+        }
+        const ownDigits = digitsIdentify || !!photoSerial?.serial;
         // A manual capture whose printed digits are a carton already on the
         // list: drop the provisional row and SAY so, naming the carton the
         // photo actually shows. Decided out here, not in the updater below (a
@@ -4143,6 +4175,21 @@ export default function PalletVerifyPage({
   }
 
   /**
+   * creator_expiry_prefill (18/11, Well Done 48936): New carton's expiry
+   * opens on the expiry of the item's cartons on the open list — the most
+   * common, on a tie the last scanned (lib/creator-expiry.ts). Never the
+   * weight. Undefined with the flag off: the expiry opens blank as today.
+   */
+  const cartonExpiryFor = session?.features?.creator_expiry_prefill
+    ? (item: CartonItemOption) => creatorExpiryPrefill(
+        item.item_code,
+        looseCartonPhase ? looseBoxes : scannedBoxes,
+        session?.ocr_data ?? [],
+        localIsoDate(),
+      )
+    : undefined;
+
+  /**
    * New carton in units (lib/units-cartons.ts): the loose pile only, and only
    * while the session's chat has `units_mode` on. Off, the creator is the kg
    * one it always was.
@@ -4319,6 +4366,8 @@ export default function PalletVerifyPage({
           // Q5 (client 2026-10-13): counted now, at the typed weight.
           countOnSave
           onList={cartonOnList}
+          // creator_expiry_prefill (18/11): absent with the flag off.
+          expiryFor={cartonExpiryFor}
           // carton_labels off (05/11): no label wording on the form.
           cartonLabels={cartonLabels}
           units={cartonUnits}
@@ -4872,13 +4921,17 @@ export default function PalletVerifyPage({
   function runLooseOcr(lookupKey: string, imageData: string, manual = false): Promise<void> {
     // manual_target_hint — see runOcr.
     const target = manual ? manualTargetRef.current.get(lookupKey) ?? null : null;
+    // nobc_photo_decode — see runOcr.
+    const photoDecode = manual && sessionRef.current?.features?.nobc_photo_decode ? decodePhotoReads(imageData) : null;
     return fetch('/api/multi-pallet-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey, token, target_digits: target ?? undefined }),
     })
       .then((r) => r.json())
-      .then((data) => {
+      .then((json) => (photoDecode ? photoDecode.then((reads) => ({ json, reads: reads as string[] | null })) : { json, reads: null as string[] | null }))
+      .then(({ json, reads: photoReads }) => {
+        let data = json;
         // A read came back — see runOcr.
         if (data?.success) endOcrOutage(ocrOutageRef.current);
         if (lateReadDropped(lookupKey, 'loose', !!(data?.success && data.ocr_data))) return;
@@ -4892,12 +4945,31 @@ export default function PalletVerifyPage({
           });
         }
         // Printed digits that identify the carton — see runOcr.
-        const ownDigits = manual && data?.success && data.ocr_data
+        const digitsIdentify = manual && data?.success && data.ocr_data
           ? targetCheck === 'match' || (targetCheck === 'none' && printedDigitsIdentifyCarton(
               digitsOnly(data.ocr_data.barcode_digits), decodedShortRef.current,
               sessionRef.current?.ocr_data, looseBoxesRef.current.map((b) => b.barcode),
             ))
           : false;
+        // nobc_photo_decode — see runOcr (the loose list's serials).
+        const photoSerial = photoReads && !digitsIdentify && targetCheck === 'none' && data?.success && data.ocr_data
+          && unreadDigitsOutcome({
+            nameHebrew: data.ocr_data.product_name_hebrew,
+            nameEnglish: data.ocr_data.product_name_english,
+            weightKg: data.ocr_data.weight_kg,
+          }, { holdForReview: !!sessionRef.current?.features?.manual_capture_review }) === 'book_without_barcode'
+          ? {
+              serial: nobcPhotoSerial(photoReads, (v) => serialAccepted(v, true), data.ocr_data.barcode_digits),
+            }
+          : null;
+        if (photoSerial) {
+          trace('ui', 'nobc_photo_decode', {
+            provisional: lookupKey, reads: photoReads, digits: digitsOnly(data.ocr_data.barcode_digits),
+            serial: photoSerial.serial ?? undefined, outcome: photoSerial.serial ? 'serial' : 'nobc', loose: true,
+          });
+          if (photoSerial.serial) data = { ...data, ocr_data: { ...data.ocr_data, barcode_digits: photoSerial.serial } };
+        }
+        const ownDigits = digitsIdentify || !!photoSerial?.serial;
         // A capture of a carton already on the loose list — see runOcr.
         if (manual && data?.success && data.ocr_data) {
           const digits = digitsOnly(data.ocr_data.barcode_digits);

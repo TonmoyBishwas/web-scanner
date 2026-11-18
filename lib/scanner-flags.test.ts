@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('./supabase', () => ({
   supabase: { from: () => { throw new Error('no database in tests'); } },
 }));
-import { cachedFlagRow, cartonLabelsOn, defaultOnFlagFor, flagEnabledFor, identicalNoSerialOn, lpnLabelsOn, topBarDeleteOnlyOn, manualCaptureReviewOn, manualTargetHintOn, noHandCodesOn, ocrNetworkNoticeOn, shortSerialGate, weightRatioOverKgNameOn } from './scanner-flags';
+import { cachedFlagRow, cartonLabelsOn, creatorExpiryPrefillOn, defaultOnFlagFor, flagEnabledFor, identicalNoSerialOn, lpnLabelsOn, topBarDeleteOnlyOn, manualCaptureReviewOn, manualTargetHintOn, noHandCodesOn, nobcPhotoDecodeOn, ocrNetworkNoticeOn, shortSerialGate, weightRatioOverKgNameOn } from './scanner-flags';
 
 describe('flagEnabledFor', () => {
   it('on for everyone', () => {
@@ -143,6 +143,13 @@ describe('noHandCodesOn', () => {
 describe('weightRatioOverKgNameOn', () => {
   it('is off, never a throw, when the flag cannot be read', async () => {
     await expect(weightRatioOverKgNameOn('972544965384')).resolves.toBe(false);
+  });
+});
+
+describe('nobcPhotoDecodeOn / creatorExpiryPrefillOn (18/11)', () => {
+  it('are off, never a throw, when the flag cannot be read', async () => {
+    await expect(nobcPhotoDecodeOn('999000000001')).resolves.toBe(false);
+    await expect(creatorExpiryPrefillOn('999000000001')).resolves.toBe(false);
   });
 });
 

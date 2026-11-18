@@ -433,6 +433,13 @@ export interface MultiPalletSession {
      *  while the list is too short to show a carton row
      *  (lib/sheet-list-rise.ts). Present only when on. */
     sheet_list_rise?: boolean;
+    /** A photo capture with no digits read is decoded by the Code 128
+     *  reader before it is booked NOBC-; exactly one accepted serial books
+     *  it under that serial (lib/nobc-photo-decode.ts). Present only when on. */
+    nobc_photo_decode?: boolean;
+    /** New carton's expiry opens on the item's cartons' expiry on the list
+     *  (lib/creator-expiry.ts). Never the weight. Present only when on. */
+    creator_expiry_prefill?: boolean;
   };
   receipt_id?: string;
   completed_pallets: Array<{

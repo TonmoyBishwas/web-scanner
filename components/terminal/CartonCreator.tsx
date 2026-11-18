@@ -34,9 +34,14 @@
  * lib/label-switches.ts, Mevaser 05/11): no "each carton gets its own label
  * with a unique barcode" hint, and Save says the approved "add N cartons"
  * instead of "save N labels". What is saved is unchanged. Absent = as today.
+ *
+ * `expiryFor` (scanner flag `creator_expiry_prefill`, 18/11 — lib/creator-
+ * expiry.ts): the kg form's expiry opens on the expiry of the item's cartons
+ * already on the list; the worker can change or clear it. Never the weight.
+ * Absent = the expiry opens blank, as today.
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { MI } from './MI';
 import { ScreenOverlay } from './ScreenOverlay';
 import { CalendarPicker } from './CalendarPicker';
@@ -159,6 +164,12 @@ interface CartonCreatorProps {
   units?: CartonUnitsMode;
   /** Carton-label wording shown (see the file comment). Default true: as today. */
   cartonLabels?: boolean;
+  /**
+   * creator_expiry_prefill (18/11): the expiry (ISO) the kg form opens on
+   * for an item — its cartons' on the open list (lib/creator-expiry.ts) — or
+   * null for blank. Absent (flag off): blank, as today. Never a weight.
+   */
+  expiryFor?: (item: CartonItemOption) => string | null;
 }
 
 type Step = 'item' | 'form';
@@ -181,7 +192,7 @@ function unitsStart(units: CartonUnitsMode | undefined, item: CartonItemOption |
   };
 }
 
-export function CartonCreator({ token, items, palletNumber, notCountedWarning = false, countOnSave = false, preset, onList, onBack, onCreated, units, cartonLabels = true }: CartonCreatorProps) {
+export function CartonCreator({ token, items, palletNumber, notCountedWarning = false, countOnSave = false, preset, onList, onBack, onCreated, units, cartonLabels = true, expiryFor }: CartonCreatorProps) {
   const tr = useT();
   const { toast, showToast } = useToast();
 
@@ -192,7 +203,17 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
   const [quantity, setQuantity] = useState(String(preset?.quantity && preset.quantity > 0 ? preset.quantity : 1));
   const [weight, setWeight] = useState(preset?.weight && preset.weight > 0 ? String(preset.weight) : '');
   const [productionDate, setProductionDate] = useState('');
-  const [expiryDate, setExpiryDate] = useState('');
+  // creator_expiry_prefill: a preset opens on its item's expiry (computed
+  // once, at mount). `prefilledExpiry` is the value last filled in for him,
+  // so picking another item replaces only that, never a date he typed.
+  const [initialExpiry] = useState(() => (preset && expiryFor ? expiryFor(preset.item) ?? '' : ''));
+  const [expiryDate, setExpiryDate] = useState(initialExpiry);
+  const prefilledExpiry = useRef(initialExpiry);
+  useEffect(() => {
+    if (initialExpiry) trace('ui', 'carton_expiry_prefill', { item_code: preset?.item.item_code, expiry: initialExpiry, preset: true });
+    // Once, for the expiry the screen opened on (a preset remounts it: its key).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [notes, setNotes] = useState('');
   const [printBarcode, setPrintBarcode] = useState(true);
   const [calendarFor, setCalendarFor] = useState<DateField | null>(null);
@@ -237,6 +258,14 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
     const ctx = onList?.(item);
     trace('ui', 'carton_item_pick', { item_code: item.item_code, listed: ctx?.total ?? 0 });
     if (ctx && ctx.total > 0) setQuantity(String(ctx.quantity));
+    if (expiryFor && (expiryDate === '' || expiryDate === prefilledExpiry.current)) {
+      // creator_expiry_prefill: this item's expiry, or blank for an item
+      // with none on the list (the last item's prefill is not carried over).
+      const next = expiryFor(item) ?? '';
+      prefilledExpiry.current = next;
+      setExpiryDate(next);
+      if (next) trace('ui', 'carton_expiry_prefill', { item_code: item.item_code, expiry: next });
+    }
     if (units) {
       // Another item opens on its own unit and numbers.
       const u = unitsStart(units, item);

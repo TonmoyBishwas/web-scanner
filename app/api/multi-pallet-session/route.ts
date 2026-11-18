@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nanoid } from 'nanoid';
 import { getRedisClient, touchSession } from '@/lib/redis';
-import { cameraShortSerialOn, cartonLabelsOn, copyNoteWeightCheckOn, glattCodeMatchOn, identicalNoSerialOn, identicalSourceWeightOn, lpnLabelsOn, manualCaptureReviewOn, manualTargetHintOn, noHandCodesOn, ocrNetworkNoticeOn, sheetListRiseOn, topBarDeleteOnlyOn, typedNearMatchOn, uniformAfterCountOn, unitsModeOn, weightRatioOverKgNameOn } from '@/lib/scanner-flags';
+import { cameraShortSerialOn, cartonLabelsOn, copyNoteWeightCheckOn, creatorExpiryPrefillOn, glattCodeMatchOn, identicalNoSerialOn, identicalSourceWeightOn, lpnLabelsOn, manualCaptureReviewOn, manualTargetHintOn, noHandCodesOn, nobcPhotoDecodeOn, ocrNetworkNoticeOn, sheetListRiseOn, topBarDeleteOnlyOn, typedNearMatchOn, uniformAfterCountOn, unitsModeOn, weightRatioOverKgNameOn } from '@/lib/scanner-flags';
 import type { MultiPalletSession } from '@/types';
 
 const SESSION_TTL = 7200; // 2 hours
@@ -153,6 +153,9 @@ export async function GET(request: NextRequest) {
       ...((await copyNoteWeightCheckOn(session.chat_id)) ? { copy_note_weight_check: true } : {}),
       // sheet_list_rise (16/11): present only when on.
       ...((await sheetListRiseOn(session.chat_id)) ? { sheet_list_rise: true } : {}),
+      // nobc_photo_decode and creator_expiry_prefill (18/11): present only when on.
+      ...((await nobcPhotoDecodeOn(session.chat_id)) ? { nobc_photo_decode: true } : {}),
+      ...((await creatorExpiryPrefillOn(session.chat_id)) ? { creator_expiry_prefill: true } : {}),
     };
     return NextResponse.json({ ...session, features });
   } catch (error) {

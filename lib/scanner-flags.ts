@@ -394,6 +394,42 @@ export async function sheetListRiseOn(chatId: string | number | null | undefined
 }
 
 /**
+ * A photo capture the label reader found no digits on is decoded by the
+ * edge-to-edge Code 128 reader before it is booked NOBC- (18/11, Well Done
+ * 48971: the same sticker's serial, read later by the camera, counted the
+ * carton twice). Exactly one serial the camera would accept → booked under
+ * it; else NOBC- as today (lib/nobc-photo-decode.ts). No new text. A missing
+ * row is OFF; the photo is then never decoded.
+ */
+export const nobcPhotoDecodeRow = flagRow('nobc_photo_decode');
+
+/** nobc_photo_decode for this chat; off when the flag cannot be read, never a throw. */
+export async function nobcPhotoDecodeOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await nobcPhotoDecodeRow(), chatId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * New carton opens its expiry on the expiry of the item's cartons already on
+ * the list (18/11, Well Done 48936; lib/creator-expiry.ts): the most common,
+ * on a tie the last scanned. Never the weight. No new text. A missing row is
+ * OFF; the expiry then opens blank as today.
+ */
+export const creatorExpiryPrefillRow = flagRow('creator_expiry_prefill');
+
+/** creator_expiry_prefill for this chat; off when the flag cannot be read, never a throw. */
+export async function creatorExpiryPrefillOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await creatorExpiryPrefillRow(), chatId);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * A DEFAULT-ON switch for this chat (lib/label-switches.ts): no row, an
  * unreadable row or a failed read is ON — today's behaviour — so a switch
  * that hides something can never hide it because the flag could not be read.
