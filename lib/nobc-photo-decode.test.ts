@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { encodeCode128 } from './code128';
 import { cameraSerialAccepted } from './carton-barcode';
-import { nobcPhotoSerial, photoCodeReads, PHOTO_DECODE_MAX } from './nobc-photo-decode';
+import { nobcPhotoDecision, nobcPhotoSerial, photoCodeReads, PHOTO_DECODE_MAX } from './nobc-photo-decode';
 
 /**
  * Clean Code 128 symbols stacked in one grey image (3 px per module, each
@@ -79,11 +79,40 @@ describe('nobcPhotoSerial (nobc_photo_decode, 18/11)', () => {
     expect(nobcPhotoSerial(['628936', '409251'], accept, '')).toBe('409251');
   });
 
-  it('a serial already on the list still counts as accepted (the page then reports it as already counted)', () => {
+  it('a serial already on the list still passes the camera rule (the listed check is in nobcPhotoDecision)', () => {
     const accept = (v: string) => cameraSerialAccepted(v, [], ['409251']);
     expect(nobcPhotoSerial(['409251'], accept, '')).toBe('409251');
     // …and a neighbour already on the list beside it makes two: NOBC-.
     expect(nobcPhotoSerial(['409251', '409252'], accept, '')).toBeNull();
+  });
+});
+
+describe('nobcPhotoDecision: a serial already on the list (review 18/11)', () => {
+  const listedSet = new Set(['410405', '410410']);
+  const listed = (v: string) => listedSet.has(v);
+
+  it("a listed serial the label reader did not print is a neighbour's sticker: NOBC- as today, never a drop", () => {
+    // 48745 P1-2: the photo showed only already-counted neighbours.
+    expect(nobcPhotoDecision(['410405'], serialOnly, '', listed)).toEqual({ serial: null, outcome: 'listed' });
+    expect(nobcPhotoDecision(['410405'], serialOnly, '4104', listed)).toEqual({ serial: null, outcome: 'listed' });
+  });
+
+  it('a listed serial the label reader printed too is that carton (the page then reports it as already counted)', () => {
+    expect(nobcPhotoDecision(['410405'], serialOnly, '410405', listed)).toEqual({ serial: '410405', outcome: 'serial' });
+  });
+
+  it('a serial not on the list yet — the bug being fixed — is still taken', () => {
+    expect(nobcPhotoDecision(['410407'], serialOnly, '', listed)).toEqual({ serial: '410407', outcome: 'serial' });
+  });
+
+  it('a listed neighbour beside another serial is still two in view', () => {
+    expect(nobcPhotoDecision(['410405', '410407'], serialOnly, '', listed)).toEqual({ serial: null, outcome: 'several' });
+  });
+
+  it('the reasons', () => {
+    expect(nobcPhotoDecision([], serialOnly, '').outcome).toBe('none');
+    expect(nobcPhotoDecision(['412924'], serialOnly, '412925').outcome).toBe('other_digits');
+    expect(nobcPhotoSerial(['410405'], serialOnly, '', listed)).toBeNull();
   });
 });
 

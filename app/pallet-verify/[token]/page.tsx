@@ -89,7 +89,7 @@ import type { ReadPolicy } from '@/lib/barcode-frame';
 import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
 import { cartonsOnListFor, listAboveTotal, newCartonQuantity, type ListAboveTotal } from '@/lib/count-check';
 import { freeNoBarcodeId, isNoBarcodeId, provisionalAtBooking, unreadDigitsOutcome } from '@/lib/no-barcode';
-import { decodePhotoReads, nobcPhotoSerial } from '@/lib/nobc-photo-decode';
+import { decodePhotoReads, nobcPhotoDecision } from '@/lib/nobc-photo-decode';
 import { creatorExpiryPrefill } from '@/lib/creator-expiry';
 import { firstRealCodeMissingWeight, realCodeMissingWeight } from '@/lib/no-hand-codes';
 import { manualTargetDigits, noteShortRead, targetVerdict, type ShortReadNote } from '@/lib/manual-target';
@@ -2341,8 +2341,11 @@ export default function PalletVerifyPage({
     // nobc_photo_decode (18/11, Well Done 48971): a photo capture is read by
     // the Code 128 reader beside the label reader, so a capture that would
     // be booked NOBC- can be booked under its one serial instead. Null with
-    // the flag off: the photo is never decoded.
-    const photoDecode = manual && sessionRef.current?.features?.nobc_photo_decode ? decodePhotoReads(imageData) : null;
+    // the flag off: the photo is never decoded. Only where camera_short_serial
+    // is on too: elsewhere no read could be accepted (serialAccepted), so the
+    // decode would only spend the phone's time.
+    const photoDecode = manual && sessionRef.current?.features?.nobc_photo_decode && sessionRef.current?.features?.camera_short_serial
+      ? decodePhotoReads(imageData) : null;
     return fetch('/api/multi-pallet-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2388,14 +2391,21 @@ export default function PalletVerifyPage({
             nameEnglish: data.ocr_data.product_name_english,
             weightKg: data.ocr_data.weight_kg,
           }, { holdForReview: !!sessionRef.current?.features?.manual_capture_review }) === 'book_without_barcode'
-          ? {
-              serial: nobcPhotoSerial(photoReads, (v) => serialAccepted(v, false), data.ocr_data.barcode_digits),
-            }
+          // A serial already on this pallet's list (or a teammate's pallet)
+          // is taken only when the label reader printed it too: otherwise it
+          // is most likely a neighbour's sticker in the photo, and booking
+          // under it would drop this carton as "already counted".
+          ? nobcPhotoDecision(photoReads, (v) => serialAccepted(v, false), data.ocr_data.barcode_digits, (v) => {
+              const s = sessionRef.current;
+              return processedRef.current.has(v)
+                || findCountedCartonByDigits(scannedBoxesRef.current, v, lookupKey) !== null
+                || (!!s && findDuplicateOwner(s, v, currentPalletRef.current) !== null);
+            })
           : null;
         if (photoSerial) {
           trace('ui', 'nobc_photo_decode', {
             provisional: lookupKey, reads: photoReads, digits: digitsOnly(data.ocr_data.barcode_digits),
-            serial: photoSerial.serial ?? undefined, outcome: photoSerial.serial ? 'serial' : 'nobc',
+            serial: photoSerial.serial ?? undefined, outcome: photoSerial.outcome,
           });
           if (photoSerial.serial) data = { ...data, ocr_data: { ...data.ocr_data, barcode_digits: photoSerial.serial } };
         }
@@ -4922,7 +4932,8 @@ export default function PalletVerifyPage({
     // manual_target_hint — see runOcr.
     const target = manual ? manualTargetRef.current.get(lookupKey) ?? null : null;
     // nobc_photo_decode — see runOcr.
-    const photoDecode = manual && sessionRef.current?.features?.nobc_photo_decode ? decodePhotoReads(imageData) : null;
+    const photoDecode = manual && sessionRef.current?.features?.nobc_photo_decode && sessionRef.current?.features?.camera_short_serial
+      ? decodePhotoReads(imageData) : null;
     return fetch('/api/multi-pallet-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -4958,14 +4969,16 @@ export default function PalletVerifyPage({
             nameEnglish: data.ocr_data.product_name_english,
             weightKg: data.ocr_data.weight_kg,
           }, { holdForReview: !!sessionRef.current?.features?.manual_capture_review }) === 'book_without_barcode'
-          ? {
-              serial: nobcPhotoSerial(photoReads, (v) => serialAccepted(v, true), data.ocr_data.barcode_digits),
-            }
+          // A serial already on the loose list — see runOcr.
+          ? nobcPhotoDecision(photoReads, (v) => serialAccepted(v, true), data.ocr_data.barcode_digits, (v) => (
+              looseProcessedRef.current.has(v)
+              || findCountedCartonByDigits(looseBoxesRef.current, v, lookupKey) !== null
+            ))
           : null;
         if (photoSerial) {
           trace('ui', 'nobc_photo_decode', {
             provisional: lookupKey, reads: photoReads, digits: digitsOnly(data.ocr_data.barcode_digits),
-            serial: photoSerial.serial ?? undefined, outcome: photoSerial.serial ? 'serial' : 'nobc', loose: true,
+            serial: photoSerial.serial ?? undefined, outcome: photoSerial.outcome, loose: true,
           });
           if (photoSerial.serial) data = { ...data, ocr_data: { ...data.ocr_data, barcode_digits: photoSerial.serial } };
         }

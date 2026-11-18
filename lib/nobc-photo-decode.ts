@@ -16,7 +16,9 @@
  * later camera read is "already on the list". None, or two or more (a
  * neighbouring carton's sticker in view, as on 48971's photo: 412916 and
  * 412924), and the carton is booked NOBC- exactly as today. A label reading
- * of 6+ digits that names another number also keeps NOBC-.
+ * of 6+ digits that names another number also keeps NOBC-, and so does a
+ * serial already on the list that the label reader did not print (a
+ * neighbour's sticker — see nobcPhotoDecision).
  *
  * Only the NOBC- outcome is touched: digits the label reader read, a held
  * capture (manual_capture_review) and a capture sent to review are not.
@@ -40,28 +42,55 @@ export function photoCodeReads(img: ScanImage): string[] {
   return scanCode128(img, { max: PHOTO_DECODE_MAX }).map((r) => r.value);
 }
 
+/** Why a photo was (or was not) given a serial — the `nobc_photo_decode` trace. */
+export type NobcPhotoOutcome = 'serial' | 'none' | 'several' | 'other_digits' | 'listed';
+
 /**
  * The serial to book a would-be NOBC- photo capture under, or null (NOBC- as
- * today):
+ * today), with the reason:
  *  * the reads the camera would accept as a carton serial (`accept`),
- *    distinct, must be exactly one;
+ *    distinct, must be exactly one ('none' / 'several');
  *  * the label reader's printed digits must not name another number
- *    (cameraSerialOcrVerdict 'other'); none, fewer than 6 or the same
- *    number is fine.
+ *    (cameraSerialOcrVerdict 'other' → 'other_digits'); none, fewer than 6
+ *    or the same number is fine;
+ *  * `listed` (review 18/11): a serial already on the list (or a teammate's
+ *    pallet) is taken only when the label reader printed that same number.
+ *    The photo of a carton whose own sticker would not read often shows a
+ *    NEIGHBOUR's sticker instead (48745 P1-2: 410405 and 410410, both
+ *    already counted; 48651 P1-7, 48936 P1-9 the same), and booking under
+ *    it would DROP the photographed carton as "already counted" — no
+ *    "different carton?" offer exists for a serial, so the carton would be
+ *    lost. The bug being fixed (photo first, camera later) never has the
+ *    serial on the list yet, so nothing it needs is refused ('listed').
  */
-export function nobcPhotoSerial(
+export function nobcPhotoDecision(
   reads: readonly string[] | null | undefined,
   accept: (value: string) => boolean,
   ocrDigits: string | null | undefined,
-): string | null {
+  listed?: (serial: string) => boolean,
+): { serial: string | null; outcome: NobcPhotoOutcome } {
   const accepted = new Set<string>();
   for (const raw of reads ?? []) {
     const v = String(raw ?? '').trim();
     if (v && accept(v)) accepted.add(v);
   }
-  if (accepted.size !== 1) return null;
+  if (accepted.size === 0) return { serial: null, outcome: 'none' };
+  if (accepted.size > 1) return { serial: null, outcome: 'several' };
   const [serial] = accepted;
-  return cameraSerialOcrVerdict(serial, ocrDigits) === 'other' ? null : serial;
+  const verdict = cameraSerialOcrVerdict(serial, ocrDigits);
+  if (verdict === 'other') return { serial: null, outcome: 'other_digits' };
+  if (verdict !== 'agrees' && listed?.(serial)) return { serial: null, outcome: 'listed' };
+  return { serial, outcome: 'serial' };
+}
+
+/** nobcPhotoDecision's serial alone. */
+export function nobcPhotoSerial(
+  reads: readonly string[] | null | undefined,
+  accept: (value: string) => boolean,
+  ocrDigits: string | null | undefined,
+  listed?: (serial: string) => boolean,
+): string | null {
+  return nobcPhotoDecision(reads, accept, ocrDigits, listed).serial;
 }
 
 /** The photo's pixels, or null when the browser cannot draw it. */
