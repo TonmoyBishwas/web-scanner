@@ -398,9 +398,15 @@ export async function postIdenticalLabels(
  * there is nothing to count: no label, or a label with no positive weight
  * (the bot books no box without a weight, so such a carton must not look
  * counted). One save = one form, so every label of the batch shares it.
+ *
+ * `noteChoice` (copy_note_weight_check, 19/11): the worker's answer when New
+ * carton held the save against the note (lib/copy-note-weight.ts
+ * creatorNoteSaveStep). 'note' marks the rows `weight_from_note`, weight
+ * source 'note_avg', as the copy form's answer does. Absent: the form as before.
  */
 export function newCartonBatch(
   labels: ReadonlyArray<Pick<CartonLabel, 'barcode' | 'batch_id' | 'weight_kg' | 'expiry_date' | 'production_date' | 'item_name_hebrew' | 'item_name_english'>>,
+  noteChoice?: CopyNoteChoice,
 ): { sample: MultiPalletBoxScan; refs: MintedLabelRef[]; form: IdenticalForm } | null {
   if (labels.length === 0) return null;
   if (labels.some((l) => !(Number(l.weight_kg) > 0))) return null;
@@ -424,6 +430,8 @@ export function newCartonBatch(
       production_date: first.production_date || '',
       // The worker typed this weight in New carton.
       weight_confirmed: true,
+      ...(noteChoice ? { note_choice: noteChoice } : {}),
+      ...(noteChoice === 'note' ? { weight_from_note: true } : {}),
     },
   };
 }

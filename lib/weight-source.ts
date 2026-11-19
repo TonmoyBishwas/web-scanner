@@ -22,8 +22,9 @@
  *  - `label_ocr`      — the label reading, as read;
  *  - `note_avg`       — set by the route itself for damaged-sticker samples,
  *                       and the note's per-carton weight the worker booked
- *                       in the copy form's note question (15/11,
- *                       copy_note_weight_check: `weight_from_note`);
+ *                       in the copy form's or New carton's note question
+ *                       (15/11 and 19/11, copy_note_weight_check:
+ *                       `weight_from_note`);
  *  - `unknown`        — nothing tells.
  */
 import { barcodeWeight } from './barcode-weight';
@@ -94,8 +95,9 @@ function filledFromBarcode(row: WeightSourceRow): boolean {
 export function weightSourceOf(row: WeightSourceRow): WeightSource {
   if ((Number(row.units) || 0) > 0) return 'units';
   // New carton: its rows also go through expandIdenticalBoxes (as minted
-  // copies of an empty sample), so this comes before the copy rule.
-  if (row.new_carton) return 'typed';
+  // copies of an empty sample), so this comes before the copy rule. The
+  // note's weight, booked in its note question (19/11), is the note's.
+  if (row.new_carton) return row.weight_from_note && !row.weight_typed && !barcodeBacked(row) ? 'note_avg' : 'typed';
   if (row.weight_from_note && !row.weight_typed && !barcodeBacked(row)) return 'note_avg';
   if (row.minted || row.twin) {
     if (barcodeBacked(row)) return 'label_barcode';

@@ -40,7 +40,8 @@ export const COPY_NOTE_WEIGHT_MIN_KG = 2;
 /** A save of fewer copies is one carton weighing its own: never asked. */
 export const COPY_NOTE_WEIGHT_MIN_COPIES = 2;
 
-type NoteLine = Pick<MultiPalletSession['ocr_data'][number], 'quantity_kg' | 'box_count' | 'unit'>;
+// Partial: New carton's own line type (CartonItemOption) leaves both figures optional.
+type NoteLine = Partial<Pick<MultiPalletSession['ocr_data'][number], 'quantity_kg' | 'box_count' | 'unit'>>;
 
 /**
  * The note's weight of one carton of a line: its kg over its cartons, to the
@@ -141,6 +142,54 @@ export function copyNoteSaveStep(a: {
   const gap = copyNoteWeightGap(a);
   if (gap) return { ask: gap };
   return { save: a.answer ? 'type' : undefined };
+}
+
+// ─── New carton (19/11) ───
+//
+// Glatt note 261066779, item 5086 meatballs, 10.13 kg a carton on the note:
+// David saved New carton with 28 cartons and 28 in the weight (meant as the
+// count, or the carton total) at 11:35:03, and the 28 cartons were counted
+// at 28 kg each, 784 kg for ~284. New carton mints every carton at the one
+// weight typed, a copy of a weight onto N cartons like the identical save,
+// so the same question holds it: same switch, same thresholds, same texts.
+
+/** The fields of an invoice line New carton books onto (components/terminal/CartonCreator.tsx). */
+type CreatorLine = NoteLine & { item_code?: string | number | null };
+
+/**
+ * The note's per-carton weight of the line New carton books onto: by its
+ * item code over all the note's lines, as the copy form reads it
+ * (noteCartonKgForCode: a code on two lines that disagree says nothing), and
+ * a line with no code by its own figures. A units line never has one.
+ */
+export function creatorNoteCartonKg(
+  lines: ReadonlyArray<CreatorLine> | null | undefined,
+  item: CreatorLine | null | undefined,
+): number | null {
+  if (!item || (item.unit && item.unit !== 'kg')) return null;
+  const code = item.item_code === null || item.item_code === undefined ? '' : String(item.item_code);
+  return code ? noteCartonKgForCode(lines, code) : notePerCartonKg(item);
+}
+
+/**
+ * What New carton's Save does: ask, or save with the answer to carry
+ * (copyNoteSaveStep, every carton of the save a copy at the typed weight).
+ * Never asked with the switch off (`noteCartonKgOf` absent), in units mode,
+ * or for an empty weight; one carton never (COPY_NOTE_WEIGHT_MIN_COPIES).
+ */
+export function creatorNoteSaveStep<I>(a: {
+  noteCartonKgOf: ((item: I) => number | null) | undefined;
+  item: I | null | undefined;
+  /** The weight field as typed ('' = none). */
+  weight: string | number;
+  cartons: number;
+  unitsMode?: boolean;
+  answer: CopyNoteAnswer | null;
+}): { ask: CopyNoteGap } | { save: CopyNoteChoice | undefined } {
+  if (!a.noteCartonKgOf || a.unitsMode || a.item === null || a.item === undefined) return { save: undefined };
+  const weight = Number(a.weight);
+  if (!(weight > 0)) return { save: undefined };
+  return copyNoteSaveStep({ weight, copies: a.cartons, noteKg: a.noteCartonKgOf(a.item), answer: a.answer });
 }
 
 // PROPOSED (text freeze, Mevaser 20/10): none of these is approved yet. They

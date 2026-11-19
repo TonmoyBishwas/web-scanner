@@ -57,7 +57,8 @@ import { CalendarPicker } from './CalendarPicker';
 import { CartonSticker } from './CartonSticker';
 import { Toast, useToast } from './Toast';
 import { LanguageContext, useT } from '@/lib/i18n';
-import { copyNoteAnswerFor, copyNoteSaveStep, copyNoteText, type CopyNoteAnswer, type CopyNoteChoice, type CopyNoteGap } from '@/lib/copy-note-weight';
+import { CopyNoteAsk } from './CopyNoteAsk';
+import { copyNoteAnswerFor, copyNoteSaveStep, type CopyNoteAnswer, type CopyNoteChoice, type CopyNoteGap } from '@/lib/copy-note-weight';
 import { identicalLabelPayload, labelsToSave, postIdenticalLabels, type IdenticalForm } from '@/lib/identical-boxes';
 import { toIsoDate, isoToDdmmyyyy } from '@/lib/expiry';
 import { labelPrintingEnabled } from '@/lib/label-printing';
@@ -546,32 +547,7 @@ export function IdenticalBoxesForm({
       <div className="flex-none px-3 py-[11px] border-t border-line bg-header safe-bottom">
         {noteAsk ? (
           // copy_note_weight_check: the save waits for one answer (PROPOSED texts).
-          <div role="alertdialog" className="flex flex-col gap-2">
-            <p className="flex items-start gap-[6px] text-[12px] font-extrabold text-warn-weak-ink leading-[1.45]">
-              <MI name="report_problem" size={16} className="flex-none mt-[1px]" />
-              <span className="min-w-0">{copyNoteText(lang, 'ask', { note: noteAsk.noteKg, w: noteAsk.weight })}</span>
-            </p>
-            <button
-              onClick={() => answerNote('note')}
-              className="w-full min-h-[48px] rounded-[12px] bg-brand text-white text-[13.5px] font-black px-3"
-            >
-              {copyNoteText(lang, 'note', { note: noteAsk.noteKg, w: noteAsk.weight })}
-            </button>
-            <div className="flex gap-2">
-              <button
-                onClick={() => answerNote('keep')}
-                className="flex-1 min-w-0 min-h-[46px] rounded-[12px] bg-tile border border-line-strong text-ink-inverse text-[12.5px] font-extrabold px-2"
-              >
-                {copyNoteText(lang, 'keep', { note: noteAsk.noteKg, w: noteAsk.weight })}
-              </button>
-              <button
-                onClick={() => answerNote('type')}
-                className="flex-1 min-w-0 min-h-[46px] rounded-[12px] bg-tile border border-line-strong text-ink-inverse text-[12.5px] font-extrabold px-2"
-              >
-                {copyNoteText(lang, 'type', { note: noteAsk.noteKg, w: noteAsk.weight })}
-              </button>
-            </div>
-          </div>
+          <CopyNoteAsk lang={lang} ask={noteAsk} onAnswer={answerNote} />
         ) : (
           <button
             onClick={handleSave}

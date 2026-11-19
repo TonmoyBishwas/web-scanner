@@ -96,7 +96,7 @@ import { manualTargetDigits, noteShortRead, targetVerdict, type ShortReadNote } 
 import { resolveEditIdentity } from '@/lib/edit-identity';
 import { useBackClose } from '@/lib/use-back-close';
 import { flagSuspectWeights, replaceIdenticalSample, weightCheckOpts } from '@/lib/weight-check';
-import { noteCartonKgForCode } from '@/lib/copy-note-weight';
+import { creatorNoteCartonKg, noteCartonKgForCode } from '@/lib/copy-note-weight';
 import { acceptDoubts, releaseDoubtHold, sharedDoubt, weightDoubts } from '@/lib/weight-review';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback, scanAlreadyCountedFeedback } from '@/lib/scan-feedback';
@@ -4378,6 +4378,11 @@ export default function PalletVerifyPage({
           onList={cartonOnList}
           // creator_expiry_prefill (18/11): absent with the flag off.
           expiryFor={cartonExpiryFor}
+          // copy_note_weight_check (19/11, Glatt 261066779): the note's weight
+          // of one carton of the picked line. Absent with the switch off.
+          noteCartonKgOf={session?.features?.copy_note_weight_check
+            ? (item: CartonItemOption) => creatorNoteCartonKg(session?.ocr_data, item)
+            : undefined}
           // carton_labels off (05/11): no label wording on the form.
           cartonLabels={cartonLabels}
           units={cartonUnits}
@@ -4386,12 +4391,14 @@ export default function PalletVerifyPage({
             setShowCartonCreator(false);
             setCartonPreset(null);
           }}
-          onCreated={(count, batchId, labels) => {
+          onCreated={(count, batchId, labels, noteChoice) => {
             // Back to the scanner, no Labels screen (SCN-18).
             setShowCartonCreator(false);
             if (cartonPreset) shortCodeSavedItemsRef.current.add(String(cartonPreset.item.item_code ?? ''));
             setCartonPreset(null);
-            const batch = newCartonBatch(labels);
+            // copy_note_weight_check: his answer to the note question, if asked
+            // ('note' books the rows as the note's weight, weight_source note_avg).
+            const batch = newCartonBatch(labels, noteChoice);
             if (batch) {
               // Q5: one row per saved label on the open list, through the
               // same path as an identical batch (dedup set, uniform retract,

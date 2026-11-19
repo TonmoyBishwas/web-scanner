@@ -39,15 +39,25 @@
  * expiry.ts): the kg form's expiry opens on the expiry of the item's cartons
  * already on the list; the worker can change or clear it. Never the weight.
  * Absent = the expiry opens blank, as today.
+ *
+ * `noteCartonKgOf` (scanner flag `copy_note_weight_check`, 19/11, Glatt
+ * 261066779): a kg Save of 2+ cartons at a weight off the note's per-carton
+ * weight (lib/copy-note-weight.ts creatorNoteSaveStep) asks first, in the
+ * copy form's words (CopyNoteAsk): book the note's weight, keep this one, or
+ * type one. The answer goes to the page (`onCreated`'s `noteChoice`) and to
+ * the trace (`copy_note_weight_ask` / `copy_note_weight_choice`). Absent =
+ * Save as today.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { MI } from './MI';
 import { ScreenOverlay } from './ScreenOverlay';
 import { CalendarPicker } from './CalendarPicker';
 import { CartonSticker } from './CartonSticker';
+import { CopyNoteAsk } from './CopyNoteAsk';
 import { Toast, useToast } from './Toast';
-import { useT } from '@/lib/i18n';
+import { LanguageContext, useT } from '@/lib/i18n';
+import { copyNoteAnswerFor, creatorNoteSaveStep, type CopyNoteAnswer, type CopyNoteChoice, type CopyNoteGap } from '@/lib/copy-note-weight';
 import { normalizeString } from '@/lib/string-utils';
 import { labelPrintingEnabled } from '@/lib/label-printing';
 import { cartonSaveKey } from '@/lib/label-switches';
@@ -158,8 +168,10 @@ interface CartonCreatorProps {
   onList?: (item: CartonItemOption) => CartonOnList | null;
   onBack: () => void;
   /** Fired after the batch is saved — the page closes this screen. `labels`
-   *  = the saved rows as the server returned them (may be empty). */
-  onCreated?: (count: number, batchId: string | null, labels: CartonLabel[]) => void;
+   *  = the saved rows as the server returned them (may be empty).
+   *  `noteChoice`: his answer when the save was held against the note
+   *  (`noteCartonKgOf`); not passed when nothing was asked. */
+  onCreated?: (count: number, batchId: string | null, labels: CartonLabel[], noteChoice?: CopyNoteChoice) => void;
   /** Units mode (loose pile, flag on). Absent: kg only, as before. */
   units?: CartonUnitsMode;
   /** Carton-label wording shown (see the file comment). Default true: as today. */
@@ -170,6 +182,12 @@ interface CartonCreatorProps {
    * null for blank. Absent (flag off): blank, as today. Never a weight.
    */
   expiryFor?: (item: CartonItemOption) => string | null;
+  /**
+   * copy_note_weight_check (19/11): the note's weight of one carton of the
+   * picked line (lib/copy-note-weight.ts creatorNoteCartonKg; null: none).
+   * Absent: the switch is off and Save is as today.
+   */
+  noteCartonKgOf?: (item: CartonItemOption) => number | null;
 }
 
 type Step = 'item' | 'form';
@@ -192,8 +210,9 @@ function unitsStart(units: CartonUnitsMode | undefined, item: CartonItemOption |
   };
 }
 
-export function CartonCreator({ token, items, palletNumber, notCountedWarning = false, countOnSave = false, preset, onList, onBack, onCreated, units, cartonLabels = true, expiryFor }: CartonCreatorProps) {
+export function CartonCreator({ token, items, palletNumber, notCountedWarning = false, countOnSave = false, preset, onList, onBack, onCreated, units, cartonLabels = true, expiryFor, noteCartonKgOf }: CartonCreatorProps) {
   const tr = useT();
+  const lang = useContext(LanguageContext);
   const { toast, showToast } = useToast();
 
   const [step, setStep] = useState<Step>(preset ? 'form' : 'item');
@@ -231,6 +250,16 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
   // attempt saved instead of minting a second one — and a save for another
   // item or count (the worker went back and changed it) gets its own.
   const batchIdsRef = useRef(new Map<string, string>());
+  // copy_note_weight_check: the save held for the note question, and his
+  // answer (asked once per weight; a retried save carries it again).
+  const [noteAsk, setNoteAsk] = useState<CopyNoteGap | null>(null);
+  const [noteAnswer, setNoteAnswer] = useState<CopyNoteAnswer | null>(null);
+  const weightInputRef = useRef<HTMLInputElement>(null);
+  // A count or a weight other than the one asked about: the question no longer stands.
+  const changeQuantity = (value: string) => {
+    setQuantity(value);
+    setNoteAsk(null);
+  };
 
   const filtered = useMemo(() => {
     const q = normalizeString(query.trim());
@@ -258,6 +287,9 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
     const ctx = onList?.(item);
     trace('ui', 'carton_item_pick', { item_code: item.item_code, listed: ctx?.total ?? 0 });
     if (ctx && ctx.total > 0) setQuantity(String(ctx.quantity));
+    // Another line: another note weight, the answer no longer stands.
+    setNoteAsk(null);
+    setNoteAnswer(null);
     if (expiryFor && (expiryDate === '' || expiryDate === prefilledExpiry.current)) {
       // creator_expiry_prefill: this item's expiry, or blank for an item
       // with none on the list (the last item's prefill is not carried over).
@@ -293,6 +325,7 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
     if (to === mode) return;
     trace('ui', 'units_mode_toggle', { to });
     setMode(to);
+    setNoteAsk(null);
   }
 
   async function handleUnitsSave() {
@@ -382,6 +415,46 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
       blocked: saveBlock,
     }));
     if (!selected || saveBlock) return;
+    // copy_note_weight_check: every carton of this save gets the one weight
+    // typed — held for the note question when it is off the note's.
+    const step = creatorNoteSaveStep({ noteCartonKgOf, item: selected, weight, cartons: count, answer: noteAnswer });
+    if ('ask' in step) {
+      const gap = step.ask;
+      trace('ui', 'copy_note_weight_ask', {
+        origin: 'new_carton', item_code: selected.item_code ?? null,
+        weight: gap.weight, note_kg: gap.noteKg, copies: gap.copies, rel: Math.round(gap.rel * 1000) / 1000, kg_impact: gap.kgImpact,
+      });
+      setNoteAsk(gap);
+      return;
+    }
+    return save(weight ? Number(weight) : null, step.save);
+  }
+
+  function answerNote(choice: CopyNoteChoice) {
+    if (!noteAsk || saving) return;
+    trace('ui', 'copy_note_weight_choice', {
+      origin: 'new_carton', item_code: selected?.item_code ?? null,
+      choice, weight: noteAsk.weight, note_kg: noteAsk.noteKg, copies: noteAsk.copies, kg_impact: noteAsk.kgImpact,
+    });
+    const asked = noteAsk;
+    setNoteAsk(null);
+    // No source carton here: "keep" is the weight he typed, kept.
+    const answer = copyNoteAnswerFor(choice, asked, asked.weight);
+    setNoteAnswer(answer);
+    if (answer.choice === 'note') {
+      setWeight(String(asked.noteKg));
+      void save(asked.noteKg, 'note');
+    } else if (answer.weight !== null) {
+      void save(asked.weight, answer.choice);
+    } else {
+      // He types the weight again; Save asks again if it is still off.
+      setWeight('');
+      weightInputRef.current?.focus();
+    }
+  }
+
+  async function save(weightKg: number | null, noteChoice?: CopyNoteChoice) {
+    if (!selected) return;
     setSaving(true);
     try {
       const payload = {
@@ -389,7 +462,7 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
         item_code: selected.item_code ?? null,
         item_name_hebrew: selected.item_name_hebrew ?? null,
         item_name_english: selected.item_name_english ?? null,
-        weight_kg: weight ? Number(weight) : null,
+        weight_kg: weightKg,
         quantity: count,
         production_date: productionDate || null,
         expiry_date: expiryDate || null,
@@ -413,7 +486,8 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
         return;
       }
       const labels: CartonLabel[] = Array.isArray(data.labels) ? data.labels : [];
-      onCreated?.(labels.length || count, data.batch_id ?? null, labels);
+      if (noteChoice) onCreated?.(labels.length || count, data.batch_id ?? null, labels, noteChoice);
+      else onCreated?.(labels.length || count, data.batch_id ?? null, labels);
     } catch {
       trace('ui', 'carton_save_fail', { status: 'network' });
       showToast(tr('carton.error'), 'error', '#ef8a8a');
@@ -650,7 +724,7 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
               )}
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setQuantity(String(Math.max(1, count - 1)))}
+                  onClick={() => changeQuantity(String(Math.max(1, count - 1)))}
                   className={`${tile} w-[52px] h-[52px] flex items-center justify-center text-ink-inverse`}
                   aria-label="-"
                 >
@@ -658,12 +732,12 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
                 </button>
                 <input
                   value={quantity}
-                  onChange={e => setQuantity(e.target.value.replace(/\D/g, '').slice(0, 3))}
+                  onChange={e => changeQuantity(e.target.value.replace(/\D/g, '').slice(0, 3))}
                   inputMode="numeric"
                   className={`${tile} flex-1 min-w-0 h-[52px] text-center bg-tile outline-none text-[20px] font-extrabold text-ink-inverse font-mono`}
                 />
                 <button
-                  onClick={() => setQuantity(String(Math.min(500, count + 1)))}
+                  onClick={() => changeQuantity(String(Math.min(500, count + 1)))}
                   className={`${tile} w-[52px] h-[52px] flex items-center justify-center text-ink-inverse`}
                   aria-label="+"
                 >
@@ -698,8 +772,12 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
                 {!countOnSave && <span className="text-ink-muted font-bold">· {tr('carton.optional')}</span>}
               </div>
               <input
+                ref={weightInputRef}
                 value={weight}
-                onChange={e => setWeight(e.target.value.replace(/[^\d.]/g, '').slice(0, 7))}
+                onChange={e => {
+                  setWeight(e.target.value.replace(/[^\d.]/g, '').slice(0, 7));
+                  setNoteAsk(null);
+                }}
                 inputMode="decimal"
                 dir="ltr"
                 placeholder="0.00"
@@ -826,6 +904,10 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
                 <span className="min-w-0">{tr('carton.notCountedWarning')}</span>
               </p>
             )}
+            {!unitsOn && noteAsk ? (
+              // copy_note_weight_check: the save waits for one answer (PROPOSED texts).
+              <CopyNoteAsk lang={lang} ask={noteAsk} onAnswer={answerNote} />
+            ) : (
             <button
               onClick={handleSave}
               disabled={saving}
@@ -839,6 +921,7 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
                   ? uCount === 1 ? tr('carton.unitsSaveOne') : tr('carton.unitsSave', { n: uCount })
                   : tr(kgSave.key, kgSave.params)}
             </button>
+            )}
           </div>
         </>
       )}

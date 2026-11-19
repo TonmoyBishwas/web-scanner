@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  COPY_NOTE_WEIGHT_TEXT, copyNoteAnswerFor, copyNoteSaveStep, copyNoteText, copyNoteWeightGap, noteCartonKgForCode, notePerCartonKg,
+  COPY_NOTE_WEIGHT_TEXT, copyNoteAnswerFor, copyNoteSaveStep, copyNoteText, copyNoteWeightGap, creatorNoteCartonKg, creatorNoteSaveStep,
+  noteCartonKgForCode, notePerCartonKg,
 } from './copy-note-weight';
 import { cartonOwnCodes, matchInvoiceItem } from './invoice-match';
 import {
@@ -272,5 +273,71 @@ describe('review 15/11', () => {
   it('never asked: no answer carried', () => {
     expect(copyNoteSaveStep({ weight: 10, copies: 59, noteKg: 10, answer: null })).toEqual({ save: undefined });
     expect(copyNoteSaveStep({ weight: 16, copies: 29, noteKg: null, answer: null })).toEqual({ save: undefined });
+  });
+});
+
+/**
+ * New carton (19/11, Glatt 261066779): item 5086 meatballs, the note's
+ * 10.13 kg a carton; David saved 28 cartons at 28 kg each (784 kg for ~284).
+ */
+describe('creatorNoteSaveStep — New carton', () => {
+  const MEATBALLS = { item_code: '5086', unit: 'kg' as const, quantity_kg: 283.64, box_count: 28 };
+  const SOUP = { item_code: '7001', unit: 'units' as const, quantity_kg: 40, box_count: 4 };
+  const LINES = [MEATBALLS, SOUP];
+  const on = (item: typeof MEATBALLS | typeof SOUP) => creatorNoteCartonKg(LINES, item);
+  const step = (weight: string | number, cartons: number, o: { item?: typeof MEATBALLS | typeof SOUP; off?: boolean; unitsMode?: boolean } = {}) =>
+    creatorNoteSaveStep({ noteCartonKgOf: o.off ? undefined : on, item: o.item ?? MEATBALLS, weight, cartons, unitsMode: o.unitsMode, answer: null });
+
+  it('the line the creator books onto: 283.64 kg / 28 cartons = 10.13', () => {
+    expect(creatorNoteCartonKg(LINES, MEATBALLS)).toBe(10.13);
+    // A line with no code: its own figures.
+    expect(creatorNoteCartonKg(LINES, { quantity_kg: 120, box_count: 12 })).toBe(10);
+    // A code on two lines that disagree: none, as the copy form.
+    expect(creatorNoteCartonKg([MEATBALLS, { ...MEATBALLS, quantity_kg: 100, box_count: 5 }], MEATBALLS)).toBeNull();
+    expect(creatorNoteCartonKg(LINES, SOUP)).toBeNull();
+    expect(creatorNoteCartonKg(LINES, null)).toBeNull();
+  });
+
+  it('28 cartons × 28 kg against 10.13 asks (500 kg off)', () => {
+    const s = step('28', 28);
+    expect('ask' in s).toBe(true);
+    const gap = (s as { ask: NonNullable<ReturnType<typeof copyNoteWeightGap>> }).ask;
+    expect(gap).toMatchObject({ noteKg: 10.13, weight: 28, copies: 28, kgImpact: 500.36 });
+  });
+
+  it('28 cartons × 10.1 kg does not ask (0.3% off)', () => {
+    expect(step('10.1', 28)).toEqual({ save: undefined });
+    expect(step(10.13, 28)).toEqual({ save: undefined });
+  });
+
+  it('one carton never asks', () => {
+    expect(step('28', 1)).toEqual({ save: undefined });
+    expect(step('28', 0)).toEqual({ save: undefined });
+  });
+
+  it('a units line never asks, nor the units mode', () => {
+    expect(step('28', 28, { item: SOUP })).toEqual({ save: undefined });
+    expect(step('28', 28, { unitsMode: true })).toEqual({ save: undefined });
+  });
+
+  it('switch off (no noteCartonKgOf) never asks', () => {
+    expect(step('28', 28, { off: true })).toEqual({ save: undefined });
+    expect(step('2.8', 500, { off: true })).toEqual({ save: undefined });
+  });
+
+  it('an empty weight never asks (the label-only screen saves none)', () => {
+    expect(step('', 28)).toEqual({ save: undefined });
+  });
+
+  it('after an answer: the note\'s weight saves as note; another weight off asks again', () => {
+    const gap = (step('28', 28) as { ask: NonNullable<ReturnType<typeof copyNoteWeightGap>> }).ask;
+    const note = copyNoteAnswerFor('note', gap, gap.weight);
+    expect(creatorNoteSaveStep({ noteCartonKgOf: on, item: MEATBALLS, weight: '10.13', cartons: 28, answer: note })).toEqual({ save: 'note' });
+    const keep = copyNoteAnswerFor('keep', gap, gap.weight);
+    expect(keep).toEqual({ choice: 'keep', weight: 28 });
+    expect(creatorNoteSaveStep({ noteCartonKgOf: on, item: MEATBALLS, weight: '28', cartons: 28, answer: keep })).toEqual({ save: 'keep' });
+    const typed = copyNoteAnswerFor('type', gap, gap.weight);
+    expect('ask' in creatorNoteSaveStep({ noteCartonKgOf: on, item: MEATBALLS, weight: '2.8', cartons: 28, answer: typed })).toBe(true);
+    expect(creatorNoteSaveStep({ noteCartonKgOf: on, item: MEATBALLS, weight: '10.1', cartons: 28, answer: typed })).toEqual({ save: 'type' });
   });
 });

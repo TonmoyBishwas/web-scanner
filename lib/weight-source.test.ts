@@ -21,6 +21,14 @@ describe('weightSourceOf', () => {
       weight_copied_from: 'label_ocr' })).toBe('typed');
   });
 
+  it('a New carton booked at the note\'s weight in its note question is note_avg; edited after, typed (19/11)', () => {
+    expect(weightSourceOf({ barcode: MINTED, weight: 10.13, new_carton: true, minted: true, weight_from_note: true,
+      weight_copied_from: 'unknown' })).toBe('note_avg');
+    expect(weightSourceOf({ barcode: MINTED, weight: 10.5, new_carton: true, minted: true, weight_from_note: true,
+      weight_typed: true })).toBe('typed');
+    expect(weightSourceOf({ barcode: MINTED, weight: 0, units: 3, new_carton: true, weight_from_note: true })).toBe('units');
+  });
+
   it('a typed weight the 31-digit barcode confirms is label_barcode', () => {
     expect(weightSourceOf({ barcode: GS31, weight: 12.46, weight_typed: true, ocr_weight: 4.38 })).toBe('label_barcode');
     expect(weightSourceOf({ barcode: GS31, weight: 12.47, weight_typed: true })).toBe('label_barcode');

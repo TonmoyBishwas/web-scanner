@@ -224,6 +224,21 @@ describe('Q5 — a New carton counted at its saved weight', () => {
     expect(dedupCodes(rows)).toEqual(['2826101300000001', '2826101300000002']);
   });
 
+  it('copy_note_weight_check (19/11): the note question\'s answer rides on the form; none = the form as before', () => {
+    const labels = [label('2826101300000001', 10.13), label('2826101300000002', 10.13)];
+    expect(newCartonBatch(labels)!.form).toEqual({ weight: 10.13, expiry: '2027-01-31', production_date: '2026-10-10', weight_confirmed: true });
+    expect(newCartonBatch(labels, undefined)).toEqual(newCartonBatch(labels));
+    expect(newCartonBatch(labels, 'note')!.form).toEqual({
+      weight: 10.13, expiry: '2027-01-31', production_date: '2026-10-10', weight_confirmed: true, note_choice: 'note', weight_from_note: true,
+    });
+    expect(newCartonBatch(labels, 'keep')!.form).toEqual({
+      weight: 10.13, expiry: '2027-01-31', production_date: '2026-10-10', weight_confirmed: true, note_choice: 'keep',
+    });
+    const b = newCartonBatch(labels, 'note')!;
+    const rows = asNewCartonRows(expandIdenticalBoxes({ ...b.sample, ocr_status: 'done' }, b.refs, b.form));
+    expect(rows.map((r) => [r.weight_from_note, r.weight_typed, (r as { weight_checked?: boolean }).weight_checked])).toEqual([[true, undefined, true], [true, undefined, true]]);
+  });
+
   it('counts nothing when a label has no weight, or nothing was saved', () => {
     expect(newCartonBatch([label('2826101300000001', null)])).toBeNull();
     expect(newCartonBatch([label('2826101300000001', 0)])).toBeNull();
