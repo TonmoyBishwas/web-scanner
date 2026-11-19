@@ -59,6 +59,7 @@ import { t } from './i18n';
 import { copyNoteText, creatorNoteCartonKg } from './copy-note-weight';
 import { asNewCartonRows, expandIdenticalBoxes, newCartonBatch } from './identical-boxes';
 import { weightSourceOf } from './weight-source';
+import { localIsoDate } from './edit-panel-state';
 import type { CartonLabel } from '@/types';
 
 type Props = ComponentProps<typeof CartonCreator>;
@@ -153,7 +154,26 @@ function screen(props: Partial<Props> = {}) {
     if (!i) throw new Error(`no ${mode} input`);
     return i as ReactElement<{ value: string; onChange: (e: { target: { value: string } }) => void }>;
   };
+  const hasIcon = (node: ReactNode, name: string): boolean => walk(node).some((e) => (e.props as { name?: string }).name === name);
   return {
+    /** Tap a date field (0 = production, 1 = expiry): its calendar opens. */
+    openDate: (i: 0 | 1) => {
+      const dates = buttons().filter((b) => hasIcon(b.props.children, 'event'));
+      dates[i].props.onClick?.();
+    },
+    /** OK on the open calendar with this day. */
+    pickDate: (iso: string) => {
+      const cal = els().find((e) => typeof (e.props as { onPick?: unknown }).onPick === 'function');
+      if (!cal) throw new Error('no calendar open');
+      (cal.props as { onPick: (iso: string) => void }).onPick(iso);
+    },
+    /** An icon-only button, by its aria-label. */
+    tapLabel: async (aria: string) => {
+      const b = buttons().find((x) => (x.props as { 'aria-label'?: string })['aria-label'] === aria);
+      if (!b) throw new Error(`no button labelled "${aria}"`);
+      await b.props.onClick?.();
+      await settle();
+    },
     text: () => textOf(render()),
     has: (text: string) => buttons().some((x) => textOf(x.props.children).includes(text)),
     tap: async (text: string) => { await button(text).props.onClick?.(); await settle(); },
@@ -355,5 +375,75 @@ describe('New carton, switch on — Glatt 261066779, 5086 meatballs, 10.13 kg a 
     expect(s.has('לרשום 10.13 ק"ג (לפי התעודה)')).toBe(true);
     expect(s.has('להשאיר 28 ק"ג')).toBe(true);
     expect(s.has('להקליד משקל')).toBe(true);
+  });
+});
+
+// Review 19/11: an answer saves without Save's tap, so Save's date guards must
+// still hold — a date changed (or today moved) under the question never
+// books 28 cartons on an expiry Save refuses.
+const dayFromToday = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return localIsoDate(d); };
+
+describe('New carton, switch on — the question never gets past Save\'s date checks', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('an expiry on/before today picked under the question takes it away; Save then refuses the date', async () => {
+    const s = await meatballs28('28');
+    expect(s.text()).toContain(ask(28));
+    s.openDate(1);
+    s.pickDate(dayFromToday(-1));
+    expect(s.text()).not.toContain(ask(28));
+    expect(s.has(btn('note', 28))).toBe(false);
+    expect(s.text()).toContain(t('English', 'dates.expiryNotFuture'));
+    await s.tap(save(28));
+    expect(fetchBodies).toHaveLength(0);
+    expect(created).toHaveLength(0);
+    expect(events('carton_save_tap').at(-1)?.blocked).toBe('date');
+  });
+
+  it('a valid expiry picked under the question takes it away too; Save asks again, then saves on the answer', async () => {
+    const s = await meatballs28('28');
+    s.openDate(1);
+    s.pickDate(dayFromToday(30));
+    expect(s.has(btn('note', 28))).toBe(false);
+    await s.tap(save(28));
+    expect(events('copy_note_weight_ask')).toHaveLength(2);
+    await s.tap(btn('note', 28));
+    expect(fetchBodies).toHaveLength(1);
+    expect(fetchBodies[0]).toMatchObject({ weight_kg: 10.13, quantity: 28, expiry_date: dayFromToday(30) });
+  });
+
+  it('a preset carton whose required expiry is cleared under the question: no save, Save refuses it', async () => {
+    const s = screen({ ...ON, preset: { item: MEATBALLS, quantity: 28, weight: 28 } });
+    s.openDate(1);
+    s.pickDate(dayFromToday(30));
+    await s.tap(save(28));
+    expect(s.text()).toContain(ask(28));
+    await s.tapLabel(t('English', 'terminal.clearExpiry'));
+    expect(s.has(btn('keep', 28))).toBe(false);
+    await s.tap(save(28));
+    expect(fetchBodies).toHaveLength(0);
+    expect(events('carton_save_tap').at(-1)?.blocked).toBe('expiry');
+  });
+
+  it('today moves past the expiry while the question shows: the answer saves nothing, Save refuses the date', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 10, 19, 23, 50));
+    const s = screen(ON);
+    await s.pick('כדורי בשר');
+    s.type('numeric', '28');
+    s.type('decimal', '28');
+    s.openDate(1);
+    s.pickDate('2026-11-20');
+    await s.tap(save(28));
+    expect(s.text()).toContain(ask(28));
+    vi.setSystemTime(new Date(2026, 10, 20, 0, 10));
+    await s.tap(btn('note', 28));
+    expect(fetchBodies).toHaveLength(0);
+    expect(created).toHaveLength(0);
+    expect(events('copy_note_weight_choice').at(-1)).toMatchObject({ choice: 'note', blocked: 'date' });
+    expect(s.has(save(28))).toBe(true);
+    await s.tap(save(28));
+    expect(fetchBodies).toHaveLength(0);
+    expect(events('carton_save_tap').at(-1)?.blocked).toBe('date');
   });
 });

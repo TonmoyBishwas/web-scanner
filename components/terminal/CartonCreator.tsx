@@ -260,6 +260,15 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
     setQuantity(value);
     setNoteAsk(null);
   };
+  // A date changed under the question: Save checks the dates again first.
+  const changeProduction = (value: string) => {
+    setProductionDate(value);
+    setNoteAsk(null);
+  };
+  const changeExpiry = (value: string) => {
+    setExpiryDate(value);
+    setNoteAsk(null);
+  };
 
   const filtered = useMemo(() => {
     const q = normalizeString(query.trim());
@@ -432,12 +441,18 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
 
   function answerNote(choice: CopyNoteChoice) {
     if (!noteAsk || saving) return;
+    // The answer saves without Save's tap: the dates Save checks must still
+    // pass (today may have moved past the expiry since it asked). Refused,
+    // the question goes and Save shows why.
+    const blocked = dateError ? 'date' : expiryMissing ? 'expiry' : null;
     trace('ui', 'copy_note_weight_choice', {
       origin: 'new_carton', item_code: selected?.item_code ?? null,
       choice, weight: noteAsk.weight, note_kg: noteAsk.noteKg, copies: noteAsk.copies, kg_impact: noteAsk.kgImpact,
+      ...(blocked ? { blocked } : {}),
     });
     const asked = noteAsk;
     setNoteAsk(null);
+    if (blocked) return;
     // No source carton here: "keep" is the weight he typed, kept.
     const answer = copyNoteAnswerFor(choice, asked, asked.weight);
     setNoteAnswer(answer);
@@ -788,8 +803,8 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
             {/* Dates */}
             <div className="flex gap-2">
               {([
-                { field: 'production' as DateField, label: tr('carton.production'), value: productionDate, clear: () => setProductionDate(''), clearLabel: tr('terminal.clearProduction') },
-                { field: 'expiry' as DateField, label: tr('carton.expiry'), value: expiryDate, clear: () => setExpiryDate(''), clearLabel: tr('terminal.clearExpiry') },
+                { field: 'production' as DateField, label: tr('carton.production'), value: productionDate, clear: () => changeProduction(''), clearLabel: tr('terminal.clearProduction') },
+                { field: 'expiry' as DateField, label: tr('carton.expiry'), value: expiryDate, clear: () => changeExpiry(''), clearLabel: tr('terminal.clearExpiry') },
               ]).map(d => {
                 const bad = d.field === 'expiry' && !!dateError;
                 return (
@@ -935,8 +950,8 @@ export function CartonCreator({ token, items, palletNumber, notCountedWarning = 
           requirePick
           onPick={iso => {
             trace('ui', 'carton_date_pick', { field: calendarFor, value: iso });
-            if (calendarFor === 'production') setProductionDate(iso);
-            else setExpiryDate(iso);
+            if (calendarFor === 'production') changeProduction(iso);
+            else changeExpiry(iso);
             setCalendarFor(null);
           }}
           onClose={() => setCalendarFor(null)}
