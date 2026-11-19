@@ -20,7 +20,10 @@
  *  - `label_barcode`  — the carton's own barcode weight (31-digit / Glatt),
  *                       or a figure it confirms within 0.011 kg;
  *  - `label_ocr`      — the label reading, as read;
- *  - `note_avg`       — set by the route itself for damaged-sticker samples;
+ *  - `note_avg`       — set by the route itself for damaged-sticker samples,
+ *                       and the note's per-carton weight the worker booked
+ *                       in the copy form's note question (15/11,
+ *                       copy_note_weight_check: `weight_from_note`);
  *  - `unknown`        — nothing tells.
  */
 import { barcodeWeight } from './barcode-weight';
@@ -53,6 +56,10 @@ export interface WeightSourceRow {
   barcode_filled?: unknown;
   /** The sticker OCR's own weight reading, before any override. */
   ocr_weight?: number | null;
+  /** The note's per-carton weight, booked in the copy form's note question
+   *  (lib/identical-boxes.ts). An edit that changes the weight sets
+   *  weight_typed, and the weight is then the worker's. */
+  weight_from_note?: boolean;
 }
 
 /** A weight the worker changed: 1 g or more apart (float noise aside: 10.106 − 10.105 is 0.00099…). */
@@ -89,6 +96,7 @@ export function weightSourceOf(row: WeightSourceRow): WeightSource {
   // New carton: its rows also go through expandIdenticalBoxes (as minted
   // copies of an empty sample), so this comes before the copy rule.
   if (row.new_carton) return 'typed';
+  if (row.weight_from_note && !row.weight_typed && !barcodeBacked(row)) return 'note_avg';
   if (row.minted || row.twin) {
     if (barcodeBacked(row)) return 'label_barcode';
     const from = row.weight_copied_from;

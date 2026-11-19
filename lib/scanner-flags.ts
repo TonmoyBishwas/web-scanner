@@ -292,6 +292,144 @@ export async function noHandCodesOn(chatId: string | number | null | undefined):
 }
 
 /**
+ * A Glatt carton's own item code decides its invoice line (11/11, MB Glatt
+ * 261064790): the 5-digit item code a Glatt 25-digit code carries is
+ * compared with the lines' short codes (lib/invoice-match.ts
+ * matchGlattItemCode), where today only 12+ digit codes are. Read by the
+ * session GET (`features.glatt_code_match`) and the pallet completion route.
+ * A missing row is OFF; lines are then matched exactly as before.
+ */
+export const glattCodeMatchRow = flagRow('glatt_code_match');
+
+/** glatt_code_match for this chat; off when the flag cannot be read, never a throw. */
+export async function glattCodeMatchOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await glattCodeMatchRow(), chatId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * "Different carton?" / identical save keeps the source carton's weight in
+ * step (11/11, Asher Shahar IN26014927): when the worker saves a weight in
+ * the form other than the source carton's label-OCR reading, for a batch or
+ * over an implausible reading he never reviewed, the source carton takes
+ * that weight too, as typed (lib/identical-boxes.ts sourceTakesFormWeight).
+ * A missing row is OFF; the source keeps its reading as before.
+ */
+export const identicalSourceWeightRow = flagRow('identical_source_weight');
+
+/** identical_source_weight for this chat; off when the flag cannot be read, never a throw. */
+export async function identicalSourceWeightOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await identicalSourceWeightRow(), chatId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A weight 3x off its item's median is doubted even when a name states it
+ * in kg (12/11, Asher Shahar IN26014927 / IN26014515: the peas carton's
+ * inner-bag label, 2.5 kg, beside 10 kg cartons; lib/weight-sanity.ts
+ * findWeightSuspects `ratioOverKgName`). The ratio doubt then holds the
+ * confirm until the worker opens the carton (lib/failed-read.ts
+ * isOpenRatioDoubt). A missing row is OFF; the check is then exactly as before.
+ *
+ * A partial safeguard, not the fix (review 12/11): the doubt's text
+ * (palletVerify.weightSuspectRatio) says a sticker reading the same weight
+ * means it is right, and the inner bag's sticker does say 2.5 kg, so Save in
+ * the edit panel with nothing changed settles it at 2.5 (lib/weight-check.test.ts).
+ * Not on for this case until Mevaser settles that wording; if it goes on
+ * before, turn identical_source_weight on with it (that writes the typed
+ * 10 kg onto the source carton without the text).
+ */
+export const weightRatioOverKgNameRow = flagRow('weight_ratio_over_kg_name');
+
+/** weight_ratio_over_kg_name for this chat; off when the flag cannot be read, never a throw. */
+export async function weightRatioOverKgNameOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await weightRatioOverKgNameRow(), chatId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The copy form checks the weight against the note (15/11, Baladi
+ * IN264207398): a "Different carton?" / identical save that would copy a
+ * weight off the note's per-carton weight onto 2+ cartons (by more than 3%,
+ * 2 kg or more in all) waits for the worker to book the note's weight, keep
+ * the weight shown or type one, and the "Different carton?" source carton
+ * takes the weight he settled on (lib/copy-note-weight.ts). Its texts are
+ * PROPOSED (text freeze). A missing row is OFF; the save is exactly as before.
+ */
+export const copyNoteWeightCheckRow = flagRow('copy_note_weight_check');
+
+/** copy_note_weight_check for this chat; off when the flag cannot be read, never a throw. */
+export async function copyNoteWeightCheckOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await copyNoteWeightCheckRow(), chatId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A finger on a list too short to show a carton row raises the bottom sheet
+ * to tall (16/11, David, Baladi IN264208817: the list at mid was a ~25px
+ * strip on his phone and he scrolled it blind; lib/sheet-list-rise.ts). No
+ * new text. A missing row is OFF; the sheet moves only by its handle, as today.
+ */
+export const sheetListRiseRow = flagRow('sheet_list_rise');
+
+/** sheet_list_rise for this chat; off when the flag cannot be read, never a throw. */
+export async function sheetListRiseOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await sheetListRiseRow(), chatId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A photo capture the label reader found no digits on is decoded by the
+ * edge-to-edge Code 128 reader before it is booked NOBC- (18/11, Well Done
+ * 48971: the same sticker's serial, read later by the camera, counted the
+ * carton twice). Exactly one serial the camera would accept → booked under
+ * it; else NOBC- as today (lib/nobc-photo-decode.ts). No new text. A missing
+ * row is OFF; the photo is then never decoded.
+ */
+export const nobcPhotoDecodeRow = flagRow('nobc_photo_decode');
+
+/** nobc_photo_decode for this chat; off when the flag cannot be read, never a throw. */
+export async function nobcPhotoDecodeOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await nobcPhotoDecodeRow(), chatId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * New carton opens its expiry on the expiry of the item's cartons already on
+ * the list (18/11, Well Done 48936; lib/creator-expiry.ts): the most common,
+ * on a tie the last scanned. Never the weight. No new text. A missing row is
+ * OFF; the expiry then opens blank as today.
+ */
+export const creatorExpiryPrefillRow = flagRow('creator_expiry_prefill');
+
+/** creator_expiry_prefill for this chat; off when the flag cannot be read, never a throw. */
+export async function creatorExpiryPrefillOn(chatId: string | number | null | undefined): Promise<boolean> {
+  try {
+    return flagEnabledFor(await creatorExpiryPrefillRow(), chatId);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * A DEFAULT-ON switch for this chat (lib/label-switches.ts): no row, an
  * unreadable row or a failed read is ON — today's behaviour — so a switch
  * that hides something can never hide it because the flag could not be read.

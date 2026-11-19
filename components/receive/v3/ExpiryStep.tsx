@@ -6,7 +6,7 @@
  * hidden native date input, "אין תוקף", "פיצול לפי תוקף"; or, when split,
  * 2–3 rows of quantity + date with the running balance.
  */
-import { useRef, type ChangeEvent, type FocusEvent } from 'react';
+import { useRef, type ChangeEvent, type FocusEvent, type KeyboardEvent } from 'react';
 import { fmtQty, type FormLine } from '@/lib/receipt-form';
 import { V3, dateCheck, splitState, type V3LineDraft } from '@/lib/receive-v3';
 import { V3Icon } from './icons';
@@ -14,6 +14,11 @@ import { BARE, I, P, UNDERLINE, font, numInput } from './tokens';
 import { dateErrorText, num, splitAmountText, type Lang, type Tr } from './texts';
 
 const digitsOf = (v: string) => (v || '').replace(/\D/g, '');
+
+/** The keyboard's Enter/"Go" key closes it: the field loses focus (a 6-digit date expands on blur). */
+const blurOnEnter = (e: KeyboardEvent<HTMLInputElement>) => {
+  if (e.key === 'Enter') e.currentTarget.blur();
+};
 
 export interface ExpiryStepProps {
   line: FormLine;
@@ -78,6 +83,7 @@ export function ExpiryStep(p: ExpiryStepProps) {
           autoComplete="off"
           value={d.expiry}
           onChange={(e) => p.onType(e.target.value, e.target.selectionStart)}
+          onKeyDown={blurOnEnter}
           onFocus={p.onFocus}
           onBlur={p.onBlur}
           disabled={d.noExpiry}
@@ -203,6 +209,7 @@ function SplitRows(p: ExpiryStepProps) {
             <input
               value={r.date}
               onChange={(e) => p.onSplitType(k, e.target.value, e.target.selectionStart)}
+              onKeyDown={blurOnEnter}
               onFocus={p.onFocus}
               onBlur={() => p.onSplitBlur(k)}
               inputMode="numeric"

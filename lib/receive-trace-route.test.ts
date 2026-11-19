@@ -119,4 +119,23 @@ describe('POST /api/receipt-form/{id}/events', () => {
     const ts = Date.parse(String(tables.scanner_events[0].ts));
     expect(Math.abs(ts - Date.now())).toBeLessThan(5_000);
   });
+
+  it('receive_load carries the build that served the page; other events do not (10/11)', async () => {
+    vi.stubEnv('VERCEL_GIT_COMMIT_SHA', 'c40d2501234567890abcdef');
+    vi.stubEnv('VERCEL_ENV', 'production');
+    try {
+      await post({
+        exp: EXP, sig: SIG, load_id: 'l',
+        events: [ev('receive_load', { kind: 'lifecycle', data: { form: 'v3', build: 'fake' } }), ev('receive_tab', { seq: 1 })],
+      });
+      expect(tables.scanner_events[0].data).toEqual({ form: 'v3', build: 'c40d250', deploy: 'production' });
+      expect(tables.scanner_events[1].data).toEqual({ line: 2 });
+      vi.stubEnv('VERCEL_GIT_COMMIT_SHA', '');
+      vi.stubEnv('VERCEL_ENV', '');
+      await post({ exp: EXP, sig: SIG, load_id: 'l2', events: [ev('receive_load', { kind: 'lifecycle', data: { form: 'classic' } })] });
+      expect(tables.scanner_events[2].data).toEqual({ form: 'classic', build: null, deploy: null });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });

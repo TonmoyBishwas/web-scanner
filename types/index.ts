@@ -335,6 +335,9 @@ export interface MultiPalletBoxScan {
   /** A copy (identical / twin / New carton): the weight source of the carton it was copied from. */
   weight_copied_from?: 'label_ocr' | 'label_barcode' | 'typed' | 'twin_copy' | 'identical_copy'
     | 'note_avg' | 'units' | 'unknown';
+  /** The note's per-carton weight, booked in the copy form's note question
+   *  (copy_note_weight_check, lib/copy-note-weight.ts): weight_source 'note_avg'. */
+  weight_from_note?: boolean;
 }
 
 export interface MultiPalletSession {
@@ -411,6 +414,32 @@ export interface MultiPalletSession {
     /** No per-carton Delete; the top bar's Delete chip only
      *  (lib/label-switches.ts). Present only when on. */
     top_bar_delete_only?: boolean;
+    /** A Glatt carton's own 5-digit item code decides its invoice line
+     *  (lib/invoice-match.ts matchGlattItemCode). Present only when on. */
+    glatt_code_match?: boolean;
+    /** "Different carton?" save: a form weight other than the source
+     *  carton's label-OCR reading is written onto the source carton too, as
+     *  typed (lib/identical-boxes.ts sourceTakesFormWeight). Present only when on. */
+    identical_source_weight?: boolean;
+    /** A weight 3x off its item's median is a ratio doubt even when a name
+     *  states it in kg (lib/weight-sanity.ts findWeightSuspects
+     *  `ratioOverKgName`). Present only when on. */
+    weight_ratio_over_kg_name?: boolean;
+    /** The "Different carton?" / identical save is held when it would copy
+     *  a weight off the note's per-carton weight onto 2+ cartons
+     *  (lib/copy-note-weight.ts). Present only when on. */
+    copy_note_weight_check?: boolean;
+    /** A pull on the list or the tool dock raises the bottom sheet to tall
+     *  while the list is too short to show a carton row
+     *  (lib/sheet-list-rise.ts). Present only when on. */
+    sheet_list_rise?: boolean;
+    /** A photo capture with no digits read is decoded by the Code 128
+     *  reader before it is booked NOBC-; exactly one accepted serial books
+     *  it under that serial (lib/nobc-photo-decode.ts). Present only when on. */
+    nobc_photo_decode?: boolean;
+    /** New carton's expiry opens on the item's cartons' expiry on the list
+     *  (lib/creator-expiry.ts). Never the weight. Present only when on. */
+    creator_expiry_prefill?: boolean;
   };
   receipt_id?: string;
   completed_pallets: Array<{

@@ -31,7 +31,9 @@ vi.mock('@/lib/server-events', () => ({
 // no_hand_codes (05/11): off unless a test turns it on; the real reader
 // would ask the database.
 let noHandCodes = false;
-vi.mock('@/lib/scanner-flags', () => ({ noHandCodesOn: async () => noHandCodes }));
+// glatt_code_match (11/11): likewise off unless a test turns it on.
+let glattCodeMatch = false;
+vi.mock('@/lib/scanner-flags', () => ({ noHandCodesOn: async () => noHandCodes, glattCodeMatchOn: async () => glattCodeMatch }));
 vi.mock('next/server', async (orig) => ({
   ...(await orig<typeof import('next/server')>()),
   after: (fn: () => unknown) => { void fn(); },
@@ -71,6 +73,7 @@ beforeEach(() => {
   process.env.TELEGRAM_BOT_WEBHOOK_URL = 'http://bot.test';
   botCalls.length = 0;
   noHandCodes = false;
+  glattCodeMatch = false;
   sessions.clear();
   sessions.set(`pallet:multi:${TOKEN}`, {
     token: TOKEN, chat_id: '1', pallet_count: 2, loose_box_count: 0, current_pallet: 1,
@@ -264,5 +267,113 @@ describe('multi-pallet-complete: no_hand_codes (05/11)', () => {
     const sent = botCalls[0].body;
     const json = JSON.stringify(sent);
     expect(json.includes('MANUAL-')).toBe(false);
+  });
+});
+
+describe('multi-pallet-complete: glatt_code_match (11/11, MB Glatt 261064790)', () => {
+  const L1510 = { item_code: '1510', item_name_hebrew: 'שניצל עוף פרוס 100-מוסדי-קפוא', item_name_english: '', quantity_kg: 100 };
+  const L5035 = { item_code: '5035', item_name_hebrew: 'שניצל עוף אמיתי-120 גרם', item_name_english: '', quantity_kg: 100 };
+  const L5086 = { item_code: '5086', item_name_hebrew: 'כדורי עוף-ת. הזנה', item_name_english: '', quantity_kg: 100 };
+  const glatt = (code: string, name: string, kg: number, over: Record<string, unknown> = {}) =>
+    box(code, { item_name_hebrew: name, weight: kg, expiry: '2027-02-26', ...over });
+  // Two real 05086 cartons, sent under the 1510 line's name (what the page
+  // snapped them to by name), beside a real 05035 carton.
+  const wrong = [
+    glatt('1050861100101014067939346', L1510.item_name_hebrew, 10.14),
+    glatt('1050861100101011067939359', L1510.item_name_hebrew, 10.11),
+  ];
+  const seed = () => sessions.set(`pallet:multi:${TOKEN}`, {
+    ...(sessions.get(`pallet:multi:${TOKEN}`) as Record<string, unknown>),
+    ocr_data: [L1510, L5035, L5086],
+  });
+  const items = () => (botCalls[0].body.items as Item[]) ?? [{ item_code: botCalls[0].body.item_code as string } as Item];
+
+  it('off: the group goes by its name, as before (1510)', async () => {
+    seed();
+    const { status } = await complete([...wrong, glatt('1050351100101011067952479', L5035.item_name_hebrew, 10.11)]);
+    expect(status).toBe(200);
+    expect(items().map((i) => i.item_code).sort()).toEqual(['1510', '5035']);
+  });
+
+  it("on: the group's own Glatt code names its line (5086)", async () => {
+    seed();
+    glattCodeMatch = true;
+    const { status } = await complete([...wrong, glatt('1050351100101011067952479', L5035.item_name_hebrew, 10.11)]);
+    expect(status).toBe(200);
+    expect(items().map((i) => i.item_code).sort()).toEqual(['5035', '5086']);
+  });
+
+  it("on: a carton the worker settled himself (named_by_worker) keeps its name's line", async () => {
+    seed();
+    glattCodeMatch = true;
+    const settled = wrong.map((b) => ({ ...b, named_by_worker: true }));
+    const { status } = await complete([...settled, glatt('1050351100101011067952479', L5035.item_name_hebrew, 10.11)]);
+    expect(status).toBe(200);
+    expect(items().map((i) => i.item_code).sort()).toEqual(['1510', '5035']);
+  });
+
+  // The whole note (lines and real cartons of 261064790): 05076 is the
+  // 5075 line's product (32 of its cartons were booked there), so a 05076
+  // carton named as another schnitzel line belongs on 5075 once the other
+  // lines' cartons are counted.
+  const L1565 = { item_code: '1565', item_name_hebrew: 'שניצל עוף פרוס 120-מוסדי-קפוא', item_name_english: '', quantity_kg: 100 };
+  const L5075 = { item_code: '5075', item_name_hebrew: 'שניצלון הודו-ת. הזנה', item_name_english: '', quantity_kg: 100 };
+  const NOTE = [L1510, L1565, L5035, L5086, L5075];
+  const C01510 = ['1015101100100976069559252', '1015101100101005069559265'];
+  const C01565 = '1015651100101200069572563';
+  const C05035 = '1050351100101011067952479';
+  const C05086 = '1050861100101011067939359';
+  const C05076 = '1050761100101017067924891';
+  // The session as beforeEach left it, read once per test: a completion
+  // marks its pallet done, and a second one on top would be refused (409).
+  let fresh: Record<string, unknown> | undefined;
+  const withBooked = (barcodes: string[]) => {
+    fresh ??= sessions.get(`pallet:multi:${TOKEN}`) as Record<string, unknown>;
+    sessions.set(`pallet:multi:${TOKEN}`, {
+      ...fresh, ocr_data: NOTE,
+      completed_pallets: [{ pallet_number: 2, lpn: 'LPN-X-P2', pallet_type: 'mix', box_count: barcodes.length, barcodes }],
+    });
+  };
+  const lines = () => items().map((i) => `${i.item_code}:${i.box_count}`).sort();
+
+  it('on: a 05076 carton (no line) named as 5035 goes to 5075, the one schnitzel line no other carton carries', async () => {
+    fresh = undefined;
+    const c05076 = () => [glatt(C05076, L5035.item_name_hebrew, 10.17)];
+    withBooked([C01510[0], C01565, C05035, C05086]);
+    await complete(c05076());
+    expect(items()[0].item_code).toBe('5035'); // off: by the name, as before
+    botCalls.length = 0;
+    glattCodeMatch = true;
+    withBooked([C01510[0], C01565, C05035, C05086]);
+    const { status } = await complete(c05076());
+    expect(status).toBe(200);
+    expect(items()[0].item_code).toBe('5075');
+  });
+
+  // Review 11/11: the page names a carton once, when its read comes back. A
+  // 05076 carton read before any 01510 carton was on the session was named
+  // as 1510; the 01510 cartons scanned after it share its name. The group's
+  // pooled codes {1510, 5076} gave 1510 for all three.
+  it('on: a 05076 carton named as 1510 before the 01510 cartons were scanned is not booked with them', async () => {
+    fresh = undefined;
+    const pallet = () => [
+      glatt(C05076, L1510.item_name_hebrew, 10.17),
+      glatt(C01510[0], L1510.item_name_hebrew, 9.76),
+      glatt(C01510[1], L1510.item_name_hebrew, 10.05),
+    ];
+    withBooked([C01565, C05035, C05086]);
+    await complete(pallet());
+    expect(lines()).toEqual(['1510:3']); // off: one name, one line, as before
+    botCalls.length = 0;
+    glattCodeMatch = true;
+    withBooked([C01565, C05035, C05086]);
+    const { status } = await complete(pallet());
+    expect(status).toBe(200);
+    expect(lines()).toEqual(['1510:2', '5075:1']);
+    // Each box travels under its own line's name, so the bot hangs it there.
+    const boxes = botCalls[0].body.scanned_boxes as Array<{ barcode: string; item_name_hebrew: string; name_key: string }>;
+    const b05076 = boxes.find((b) => b.barcode === C05076)!;
+    expect(b05076.item_name_hebrew).toBe(L5075.item_name_hebrew);
+    expect((botCalls[0].body.items as Item[]).find((i) => i.item_code === '5075')?.name_key).toBe(b05076.name_key);
   });
 });

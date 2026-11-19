@@ -21,10 +21,12 @@ import {
   V3,
   addSplitRowPatch,
   checkV3BeforeSend,
+  dateJustCompleted,
   dottedToIso,
   expState,
   expandDate,
   initialV3Draft,
+  kbViewportStep,
   lineStatusV3,
   mergeV3Draft,
   palletOf,
@@ -42,9 +44,11 @@ import {
   typeDate,
   v3DraftStorageKey,
   v3DraftToAnswers,
+  type KbViewport,
   type ReceiveFormV3Props,
   type V3Draft,
   type V3LineDraft,
+  type V3SplitRow,
   type V3LineStatus,
   type V3NoticeKind,
   type V3SaveProblems,
@@ -249,6 +253,59 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
     [emit],
   );
 
+  // Every error sheet and notice screen the worker saw (2026-11-10): the
+  // trail showed the save outcome but not what was on his screen.
+  useEffect(() => {
+    if (error) emit('receive_error_shown', { v: 3, text: error.text, retry: error.retry });
+  }, [error, emit]);
+  useEffect(() => {
+    if (screen === 'notice') emit('receive_notice', { v: 3, notice });
+  }, [screen, notice, emit]);
+
+  // Split (several expiry dates on one line) edits, once the typing settles:
+  // the classic trace has no field for them, so they were not recorded.
+  const splitTimers = useRef(new Map<number, { timer: number; fire: () => void }>());
+  const traceSplit = useCallback(
+    (index: number, rows: V3SplitRow[] | null) => {
+      const timers = splitTimers.current;
+      const prev = timers.get(index);
+      if (prev !== undefined) window.clearTimeout(prev.timer);
+      const fire = () => {
+        timers.delete(index);
+        step('split_edit', {
+          line: index,
+          rows: rows ? rows.length : 0,
+          split: rows ? rows.slice(0, 12).map((r) => ({ qty: r.qty, date: r.date })) : null,
+        });
+      };
+      if (!rows) return fire();
+      timers.set(index, { timer: window.setTimeout(fire, 1200), fire });
+    },
+    [step],
+  );
+  // A pending edit is sent, not dropped, when the phone locks or the page
+  // goes (registered before the trace hook's own listeners, so it rides
+  // their beacon).
+  useEffect(() => {
+    const timers = splitTimers.current;
+    const flush = () => {
+      for (const p of [...timers.values()]) {
+        window.clearTimeout(p.timer);
+        p.fire();
+      }
+    };
+    const onHidden = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    document.addEventListener('visibilitychange', onHidden);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onHidden);
+      window.removeEventListener('pagehide', flush);
+      flush();
+    };
+  }, []);
+
   // ── Derived ──
   const byIndex = useMemo(() => new Map(draft.lines.map((d) => [d.index, d])), [draft.lines]);
   const statuses = useMemo(() => {
@@ -363,6 +420,13 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
       const patch = typeof p === 'function' ? p(x) : p;
       if (!Object.keys(patch).length) return;
       commit({ ...cur, lines: cur.lines.map((l) => (l.index === index ? { ...l, ...patch } : l)) });
+      if (patch.split !== undefined) {
+        try {
+          traceSplit(index, patch.split);
+        } catch {
+          /* tracing only */
+        }
+      }
       const lp = legacyPatch(patch);
       if (Object.keys(lp).length) {
         try {
@@ -372,7 +436,7 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
         }
       }
     },
-    [commit],
+    [commit, traceSplit],
   );
 
   const setPallets = useCallback(
@@ -570,6 +634,32 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
     [],
   );
 
+  /** Close the phone's keyboard now: the focused number field loses focus and the pallet step shows. */
+  const closeKeyboard = useCallback(() => {
+    const a = document.activeElement as HTMLElement | null;
+    if (a && a.dataset?.keyboard) a.blur();
+    if (kbTimer.current !== null) window.clearTimeout(kbTimer.current);
+    kbTimer.current = null;
+    setKbOpen(false);
+  }, []);
+
+  // Android's "hide keyboard" keeps the field focused: when the viewport is back to full height, let go of it.
+  const kbView = useRef<KbViewport>({ base: 0, shrunk: false, width: 0 });
+  useEffect(() => {
+    const vv = typeof window === 'undefined' ? null : window.visualViewport;
+    if (!vv) return;
+    kbView.current = { base: vv.height, shrunk: false, width: vv.width };
+    const onResize = () => {
+      const a = document.activeElement as HTMLElement | null;
+      const typing = !!(a && a.dataset?.keyboard && listRef.current?.contains(a));
+      const r = kbViewportStep(kbView.current, vv.height, vv.width, typing);
+      kbView.current = r.next;
+      if (r.closed) closeKeyboard();
+    };
+    vv.addEventListener('resize', onResize);
+    return () => vv.removeEventListener('resize', onResize);
+  }, [closeKeyboard]);
+
   // ── Pallets ──
   const pickPallet = useCallback(
     (index: number, v: PalletPick) => {
@@ -635,7 +725,8 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
     setLooseSnap(null);
     setLooseQuery('');
     setScreen(looseFrom);
-    step('loose_confirm', { lines: Object.keys(draftRef.current.loose).length });
+    const loose = draftRef.current.loose;
+    step('loose_confirm', { lines: Object.keys(loose).length, loose: Object.fromEntries(Object.entries(loose).slice(0, 60)) });
   }, [looseFrom, step]);
 
   const cancelPalletsSheet = useCallback(() => {
@@ -1010,7 +1101,12 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
               const dx = draftRef.current.lines.find((l) => l.index === o);
               if (dx && lineStatusV3(line, dx, draftRef.current, today) === 'ready') maybeCollapse();
             },
-            onDateType: (raw: string, caret: number | null) => patchLine(o, (x) => ({ expiry: typeDate(raw, x.expiry, caret) })),
+            onDateType: (raw: string, caret: number | null) => {
+              const before = draftRef.current.lines.find((l) => l.index === o)?.expiry ?? '';
+              const after = typeDate(raw, before, caret);
+              patchLine(o, { expiry: after });
+              if (dateJustCompleted(before, after, today)) closeKeyboard();
+            },
             onDatePick: (dotted: string) => patchLine(o, { expiry: dotted, noExpiry: false }),
             onDateFocus: (e: FocusEvent<HTMLInputElement>) => {
               patchLine(o, (x) => (x.ack ? {} : { ack: true }));
@@ -1026,8 +1122,16 @@ export function ReceiveFormV3(props: ReceiveFormV3AllProps) {
             onToggleNoExpiry: () => patchLine(o, (x) => ({ noExpiry: !x.noExpiry })),
             onStartSplit: () => patchLine(o, (x) => startSplitPatch(line, x)),
             onSplitQty: (k: number, v: string) => patchLine(o, (x) => setSplitQtyPatch(line, x, k, v.replace(/[^\d.,]/g, '').slice(0, 12))),
-            onSplitType: (k: number, raw: string, caret: number | null) =>
-              patchLine(o, (x) => ({ split: (x.split ?? []).map((r, j) => (j === k ? { ...r, date: typeDate(raw, r.date, caret) } : r)) })),
+            onSplitType: (k: number, raw: string, caret: number | null) => {
+              const x = draftRef.current.lines.find((l) => l.index === o);
+              if (!x) return;
+              const before = x.split?.[k]?.date ?? '';
+              const after = typeDate(raw, before, caret);
+              const split = (x.split ?? []).map((r, j) => (j === k ? { ...r, date: after } : r));
+              patchLine(o, { split });
+              // The date that makes the whole split add up closes the keyboard, as a single date does.
+              if (dateJustCompleted(before, after, today) && expState(line, { ...x, split }, today) === 'ok') closeKeyboard();
+            },
             onSplitBlur: (k: number) => {
               patchLine(o, (x) => {
                 const rows = x.split ?? [];

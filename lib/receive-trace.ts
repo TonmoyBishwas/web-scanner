@@ -56,6 +56,11 @@ export const RECEIVE_EVENTS = [
   'receive_save_ok',
   'receive_save_error',
   'receive_outcome',
+  // 2026-11-10 (Mevaser: "we must have a record of everything he does in the new UI"):
+  // a browser error on the page, an error sheet / notice screen the worker saw.
+  'receive_client_error',
+  'receive_error_shown',
+  'receive_notice',
 ] as const;
 export type ReceiveEventName = (typeof RECEIVE_EVENTS)[number];
 export const RECEIVE_EVENT_SET: ReadonlySet<string> = new Set(RECEIVE_EVENTS);
@@ -463,4 +468,45 @@ export class ReceiveTracker {
     rows.sort((a, b) => b.ms - a.ms);
     return { lines_visited: rows.length, done_during_session: this.doneCount, slowest: rows.slice(0, 30) };
   }
+}
+
+/** Browser errors recorded per page load (a render loop must not flood the table). */
+export const CLIENT_ERROR_CAP = 20;
+
+/** The file name of a script URL, without host or query (`.../chunks/abc.js?x` → `abc.js`). */
+function scriptName(url: unknown): string | null {
+  if (typeof url !== 'string' || !url) return null;
+  const path = url.split(/[?#]/)[0];
+  return path.slice(path.lastIndexOf('/') + 1).slice(0, 80) || null;
+}
+
+/**
+ * A browser error on the receive page as a `receive_client_error` payload
+ * (2026-11-10): window `error` (type 'error') or an unhandled promise
+ * rejection (type 'rejection'). Message and stack are cut short; the stack
+ * keeps its first frames only. `form` is which form was on screen.
+ */
+export function clientErrorPayload(
+  type: 'error' | 'rejection',
+  err: { message?: unknown; filename?: unknown; lineno?: unknown; colno?: unknown; error?: unknown; reason?: unknown },
+  form: 'v3' | 'classic',
+  nth: number,
+): Record<string, unknown> {
+  const cause = type === 'error' ? err.error : err.reason;
+  const asErr = cause instanceof Error ? cause : null;
+  const message = String(
+    (type === 'error' ? err.message : null) || asErr?.message || (typeof cause === 'string' ? cause : '') || 'unknown',
+  ).slice(0, 300);
+  const stack = asErr?.stack ? asErr.stack.split('\n').slice(0, 6).join('\n').slice(0, 800) : null;
+  return {
+    type,
+    form,
+    nth,
+    message,
+    name: asErr?.name ?? null,
+    source: scriptName(err.filename),
+    line: typeof err.lineno === 'number' ? err.lineno : null,
+    col: typeof err.colno === 'number' ? err.colno : null,
+    stack,
+  };
 }

@@ -11,8 +11,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { initialDraft, type FormDraft, type FormLine, type LineDraft, type LineError } from '@/lib/receipt-form';
 import {
+  CLIENT_ERROR_CAP,
   ReceiveTracker,
   areaOfId,
+  clientErrorPayload,
   changedLineCount,
   errorCounts,
   searchPayload,
@@ -89,8 +91,12 @@ export function useReceiveTrace(opts: {
   restored: boolean;
   query: string;
   search: { active: boolean; fuzzy?: boolean; lines: readonly Pick<FormLine, 'index'>[] };
+  /** Which form is on screen (recorded on receive_load and every browser error). Default 'classic'. */
+  form?: 'v3' | 'classic';
 }): ReceiveTraceApi {
   const { formId, exp, sig, lines, draft, lineErrors, formErrors, restored, query, search } = opts;
+  const formKind = opts.form ?? 'classic';
+  const formRef = useRef(formKind);
   // The latest render's values for the handlers and timers below (updated
   // after commit, before any event handler runs).
   const linesRef = useRef(lines);
@@ -105,6 +111,7 @@ export function useReceiveTrace(opts: {
     errorsRef.current = lineErrors;
     formErrorsRef.current = formErrors;
     searchRef.current = search;
+    formRef.current = formKind;
   });
 
   const sinkRef = useRef<ReceiveTraceSink | null>(null);
@@ -197,6 +204,7 @@ export function useReceiveTrace(opts: {
           event: 'receive_load',
           data: {
             load_id: s.loadId,
+            form: formRef.current,
             lines: ls.length,
             needs_expiry: ls.filter((l) => l.needs_expiry).length,
             navigation: navigationType(),
@@ -242,6 +250,20 @@ export function useReceiveTrace(opts: {
         lastScrollY = y;
       }), SCROLL_SETTLE_MS);
     };
+    // Browser errors on the page (2026-11-10): what broke, where, on which form.
+    let clientErrors = 0;
+    const onClientError = (type: 'error' | 'rejection', ev: Event) => safe(() => {
+      if (clientErrors >= CLIENT_ERROR_CAP) return;
+      clientErrors += 1;
+      sink.push({
+        kind: 'error',
+        event: 'receive_client_error',
+        data: clientErrorPayload(type, ev as unknown as Parameters<typeof clientErrorPayload>[1], formRef.current, clientErrors),
+      });
+      sink.flush();
+    });
+    const onError = (ev: Event) => onClientError('error', ev);
+    const onRejection = (ev: Event) => onClientError('rejection', ev);
     const tick = window.setInterval(() => safe(() => {
       if (tracker.hasPending()) tracker.tick(Date.now());
     }), TICK_MS);
@@ -252,7 +274,11 @@ export function useReceiveTrace(opts: {
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('pagehide', onPageHide);
     window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRejection);
     return () => {
+      window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
       window.clearInterval(tick);
       if (scrollTimer !== null) window.clearTimeout(scrollTimer);
       document.removeEventListener('focusin', onInteract, true);

@@ -56,6 +56,8 @@ import {
   asNewCartonRows,
   groupSkuMismatch,
   sourceSku,
+  sourceTakesFormWeight,
+  sourceTakesNoteChoice,
   type IdenticalForm,
 } from '@/lib/identical-boxes';
 import { weightChanged } from '@/lib/weight-source';
@@ -76,7 +78,7 @@ import { startScannerTrace, trace } from '@/lib/scanner-trace';
 import { LanguageContext, useLangDir, t } from '@/lib/i18n';
 import type { Language, MultiPalletSession, MultiPalletBoxScan, ParsedBarcode } from '@/types';
 import { groupKeyForBox, groupBoxesByName } from '@/lib/group-key';
-import { cartonOwnCodes, invoiceNameConflict, matchInvoiceItem } from '@/lib/invoice-match';
+import { cartonOwnCodes, invoiceNameConflict, matchInvoiceItem, rowCartonCodes, type InvoiceMatchOptions } from '@/lib/invoice-match';
 import { labelPrintsWeight, uniformAfterEditAllowed, uniformCandidate, uniformListSettled } from '@/lib/uniform-candidate';
 import { typedNearMatch } from '@/lib/typed-near-match';
 import { endOcrOutage, newOcrOutageLatch, takeOcrOutageNotice } from '@/lib/ocr-network-notice';
@@ -87,11 +89,14 @@ import type { ReadPolicy } from '@/lib/barcode-frame';
 import { countPrefill, type CountPrefill } from '@/lib/count-prefill';
 import { cartonsOnListFor, listAboveTotal, newCartonQuantity, type ListAboveTotal } from '@/lib/count-check';
 import { freeNoBarcodeId, isNoBarcodeId, provisionalAtBooking, unreadDigitsOutcome } from '@/lib/no-barcode';
+import { decodePhotoReads, nobcPhotoDecision } from '@/lib/nobc-photo-decode';
+import { creatorExpiryPrefill } from '@/lib/creator-expiry';
 import { firstRealCodeMissingWeight, realCodeMissingWeight } from '@/lib/no-hand-codes';
 import { manualTargetDigits, noteShortRead, targetVerdict, type ShortReadNote } from '@/lib/manual-target';
 import { resolveEditIdentity } from '@/lib/edit-identity';
 import { useBackClose } from '@/lib/use-back-close';
-import { findWeightSuspects } from '@/lib/weight-sanity';
+import { flagSuspectWeights, replaceIdenticalSample, weightCheckOpts } from '@/lib/weight-check';
+import { noteCartonKgForCode } from '@/lib/copy-note-weight';
 import { acceptDoubts, releaseDoubtHold, sharedDoubt, weightDoubts } from '@/lib/weight-review';
 import { useSettingsStore } from '@/stores/settings-store';
 import { scanSuccessFeedback, scanDuplicateFeedback, scanAlreadyCountedFeedback } from '@/lib/scan-feedback';
@@ -240,32 +245,6 @@ interface BoxScan extends MultiPalletBoxScan {
 // Digits-only normaliser for comparing the full printed barcode number across
 // bar-scanned and OCR-captured boxes (NOT the 13-digit SKU, which repeats
 // across every box of one product).
-/**
- * Flag every carton on the list whose weight looks wrong (lib/weight-sanity.ts)
- * — a new read can also expose an earlier one, e.g. a first carton read as
- * 120 kg once three real 12 kg ones are in. Only ever ADDS a doubt, and never
- * touches needs_review (lib/weight-review.ts); a ratio doubt holds through
- * blocksConfirm instead (lib/failed-read.ts).
- */
-function flagSuspectWeights(
-  list: BoxScan[],
-  extraNames: Record<string, Array<string | null | undefined>> = {},
-): BoxScan[] {
-  // A weight read from the carton's barcode is not a guess from the sticker:
-  // it still counts towards the item's median, it is never itself doubted.
-  const suspects = findWeightSuspects(
-    list.map((b) => (b.barcode_filled && 'weight' in b.barcode_filled ? { ...b, weight_checked: true } : b)),
-    extraNames,
-  );
-  if (!suspects.length) return list;
-  const by = new Map(suspects.map((x) => [x.barcode, x]));
-  return list.map((b) => {
-    const x = by.get(b.barcode);
-    if (!x || b.weight_suspect) return b;
-    return { ...b, weight_suspect: { typical: x.typical, reason: x.reason, name: x.name } };
-  });
-}
-
 type Tr = (k: Parameters<typeof t>[1], v?: Parameters<typeof t>[2]) => string;
 
 /**
@@ -592,6 +571,26 @@ export default function PalletVerifyPage({
     for (const b of scannedBoxes) if (parseGlattCode(b.barcode)) sessionCodesRef.current.add(b.barcode);
     for (const b of looseBoxes) if (parseGlattCode(b.barcode)) sessionCodesRef.current.add(b.barcode);
   }, [scannedBoxes, looseBoxes]);
+  /**
+   * glatt_code_match (11/11): what every carton → invoice line lookup passes
+   * (lib/invoice-match.ts InvoiceMatchOptions) — a Glatt carton's own item
+   * code decides its line, and one on no line never falls back by name to a
+   * line other cartons' codes already are (booked pallets, both open lists).
+   * Flag off: undefined, the lookups exactly as before.
+   */
+  function invoiceMatchOpts(): InvoiceMatchOptions | undefined {
+    const s = sessionRef.current;
+    if (!s?.features?.glatt_code_match) return undefined;
+    return {
+      glattCodeMatch: true,
+      sessionCodes: [
+        ...sessionCodesRef.current,
+        ...sessionBookedBarcodes(s),
+        ...rowCartonCodes(scannedBoxesRef.current),
+        ...rowCartonCodes(looseBoxesRef.current),
+      ],
+    };
+  }
   // The supplier's own shipping-pallet number, when its label was scanned on
   // this pallet. Pallet identity — never a carton (MEV-10).
   const [supplierPalletRef, setSupplierPalletRef] = useState<string>('');
@@ -1934,8 +1933,9 @@ export default function PalletVerifyPage({
     if (!line) return false;
     const lang = sessionRef.current?.language || 'English';
     const list = loose ? looseBoxesRef.current : scannedBoxesRef.current;
+    const matchOpts = invoiceMatchOpts();
     const counted = list.filter(
-      (b) => matchInvoiceItem(b.item_name_hebrew, b.item_name, lines, ownCodes(b))?.item_code === line.item_code,
+      (b) => matchInvoiceItem(b.item_name_hebrew, b.item_name, lines, ownCodes(b), matchOpts)?.item_code === line.item_code,
     ).length;
     // The open list is all `counted` sees: when the line can also sit on
     // another pallet, the loose pile, or New-carton labels already saved for
@@ -2251,6 +2251,7 @@ export default function PalletVerifyPage({
     const { patch, events } = failedReadPrefill(row, invoiceItemsRef.current, {
       receivedIso: localIsoDate(),
       typicalKg: typicalWeightFor(row.barcode, list),
+      match: invoiceMatchOpts(),
     });
     traceBarcodeEvents(row.barcode, events, where, 'ocr');
     if (Object.keys(patch).length) {
@@ -2337,13 +2338,23 @@ export default function PalletVerifyPage({
     // manual_target_hint: the label this capture was meant to show (none
     // with the flag off — the body is then exactly as before).
     const target = manual ? manualTargetRef.current.get(lookupKey) ?? null : null;
+    // nobc_photo_decode (18/11, Well Done 48971): a photo capture is read by
+    // the Code 128 reader beside the label reader, so a capture that would
+    // be booked NOBC- can be booked under its one serial instead. Null with
+    // the flag off: the photo is never decoded. Only where camera_short_serial
+    // is on too: elsewhere no read could be accepted (serialAccepted), so the
+    // decode would only spend the phone's time.
+    const photoDecode = manual && sessionRef.current?.features?.nobc_photo_decode && sessionRef.current?.features?.camera_short_serial
+      ? decodePhotoReads(imageData) : null;
     return fetch('/api/multi-pallet-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey, candidates, token, target_digits: target ?? undefined }),
     })
       .then((r) => r.json())
-      .then((data) => {
+      .then((json) => (photoDecode ? photoDecode.then((reads) => ({ json, reads: reads as string[] | null })) : { json, reads: null as string[] | null }))
+      .then(({ json, reads: photoReads }) => {
+        let data = json;
         // A read came back: a label-read outage is over (ocr_network_notice).
         if (data?.success) endOcrOutage(ocrOutageRef.current);
         if (lateReadDropped(lookupKey, 'pallet', !!(data?.success && data.ocr_data))) return;
@@ -2363,12 +2374,42 @@ export default function PalletVerifyPage({
         // the decoder read too (Wall Dan 408274, 25/10 — it used to become
         // NOBC-…, and a second photo of it a second carton). Decided once,
         // out here, so the notice and the updater below agree.
-        const ownDigits = manual && data?.success && data.ocr_data
+        const digitsIdentify = manual && data?.success && data.ocr_data
           ? targetCheck === 'match' || (targetCheck === 'none' && printedDigitsIdentifyCarton(
               digitsOnly(data.ocr_data.barcode_digits), decodedShortRef.current,
               sessionRef.current?.ocr_data, scannedBoxesRef.current.map((b) => b.barcode),
             ))
           : false;
+        // nobc_photo_decode (18/11): a capture about to be booked NOBC- whose
+        // photo shows exactly one serial the camera would accept is booked
+        // under it, as if the label reader had printed it — so the camera's
+        // later read of the same sticker is "already on the list"
+        // (lib/nobc-photo-decode.ts). Anything else: NOBC- as today.
+        const photoSerial = photoReads && !digitsIdentify && targetCheck === 'none' && data?.success && data.ocr_data
+          && unreadDigitsOutcome({
+            nameHebrew: data.ocr_data.product_name_hebrew,
+            nameEnglish: data.ocr_data.product_name_english,
+            weightKg: data.ocr_data.weight_kg,
+          }, { holdForReview: !!sessionRef.current?.features?.manual_capture_review }) === 'book_without_barcode'
+          // A serial already on this pallet's list (or a teammate's pallet)
+          // is taken only when the label reader printed it too: otherwise it
+          // is most likely a neighbour's sticker in the photo, and booking
+          // under it would drop this carton as "already counted".
+          ? nobcPhotoDecision(photoReads, (v) => serialAccepted(v, false), data.ocr_data.barcode_digits, (v) => {
+              const s = sessionRef.current;
+              return processedRef.current.has(v)
+                || findCountedCartonByDigits(scannedBoxesRef.current, v, lookupKey) !== null
+                || (!!s && findDuplicateOwner(s, v, currentPalletRef.current) !== null);
+            })
+          : null;
+        if (photoSerial) {
+          trace('ui', 'nobc_photo_decode', {
+            provisional: lookupKey, reads: photoReads, digits: digitsOnly(data.ocr_data.barcode_digits),
+            serial: photoSerial.serial ?? undefined, outcome: photoSerial.outcome,
+          });
+          if (photoSerial.serial) data = { ...data, ocr_data: { ...data.ocr_data, barcode_digits: photoSerial.serial } };
+        }
+        const ownDigits = digitsIdentify || !!photoSerial?.serial;
         // A manual capture whose printed digits are a carton already on the
         // list: drop the provisional row and SAY so, naming the carton the
         // photo actually shows. Decided out here, not in the updater below (a
@@ -2409,10 +2450,13 @@ export default function PalletVerifyPage({
         const codesRead = data?.ocr_data
           ? [manual ? digitsOnly(data.ocr_data.barcode_digits) : lookupKey]
           : [];
+        // glatt_code_match (11/11): read here, out of the updater, with the
+        // lists as they are now. Undefined when off.
+        const matchOpts = invoiceMatchOpts();
         const nameConflict = data?.ocr_data
           ? invoiceNameConflict(
               data.ocr_data.product_name_hebrew || '', data.ocr_data.product_name_english || '',
-              invoiceItemsRef.current, codesRead,
+              invoiceItemsRef.current, codesRead, matchOpts,
             )
           : null;
         // A failed read keeps what the barcode and the invoice already say
@@ -2458,7 +2502,7 @@ export default function PalletVerifyPage({
           // Snap the OCR'd name to the closest invoice item so drift
           // ("כדורי עוף" vs "כדורי עוף-ת. הזנה") groups as one canonical
           // item. No confident match (e.g. loose/unlisted box) → keep raw.
-          const match = matchInvoiceItem(rawHe, rawEn, invoiceItemsRef.current, codesRead);
+          const match = matchInvoiceItem(rawHe, rawEn, invoiceItemsRef.current, codesRead, matchOpts);
 
           // Manual capture: there was no decoded barcode, so resolve this box's
           // dedupe identity from the OCR'd printed digit string.
@@ -2587,7 +2631,7 @@ export default function PalletVerifyPage({
                 : undefined,
             };
           });
-          const checked = flagSuspectWeights(updated, { [resolvedBarcode]: [rawHe, rawEn] });
+          const checked = flagSuspectWeights(updated, { [resolvedBarcode]: [rawHe, rawEn] }, weightCheckOpts(sessionRef.current));
           setDetectedType(detectType(checked, acceptedMerges));
           // Check if the box that just finished OCR triggers a uniform-pair prompt.
           maybeTriggerUniformPrompt(checked, resolvedBarcode);
@@ -3358,25 +3402,37 @@ export default function PalletVerifyPage({
     ).map((r) => ({ ...r, twin: target.anotherOf ? true : undefined }));
     // Q5: a New carton stands in for no supplier code (its sample is empty).
     const rows: BoxScan[] = target.newCarton ? asNewCartonRows(expanded) : expanded;
-    const replaceSample = (prevAll: BoxScan[]): BoxScan[] => {
-      // The photo row a twin from the edit panel takes the place of.
-      const prev = target.replaces ? prevAll.filter((b) => b.barcode !== target.replaces) : prevAll;
-      // "Different carton?": the carton it was copied from is a counted
-      // carton of its own and stays; the new one joins the end of the list.
-      // The form showed that carton's doubted weight and the worker saved it
-      // unchanged: the doubt is settled for it too.
-      if (target.anotherOf) {
-        const settled = form.weight_confirmed
-          ? acceptDoubts(prev, new Set(prev.filter((b) => b.barcode === target.box.barcode
-              && Math.abs(b.weight - form.weight) < 0.001).map((b) => b.barcode)))
-          : prev;
-        return flagSuspectWeights([...settled, ...rows]);
-      }
-      const idx = prev.findIndex((b) => b.barcode === target.box.barcode);
-      return flagSuspectWeights(
-        idx === -1 ? [...prev, ...rows] : [...prev.slice(0, idx), ...rows, ...prev.slice(idx + 1)],
-      );
-    };
+    // identical_source_weight (11/11, IN26014927): "Different carton?" saved
+    // at a weight he typed over the source carton's label reading (2.5 kg
+    // inner-bag label, 10 kg typed for 80) — the source takes it too, as
+    // typed, for a batch or an implausible reading, never one he reviewed
+    // (lib/identical-boxes.ts sourceTakesFormWeight). Decided out here,
+    // not in the updater, so the trace is not doubled. Off: as before.
+    const sourceRow = target.anotherOf && sessionRef.current?.features?.identical_source_weight
+      ? (target.loose ? looseBoxesRef.current : scannedBoxesRef.current).find((b) => b.barcode === target.box.barcode)
+      : undefined;
+    const reweighSource = !!sourceRow && sourceTakesFormWeight(sourceRow, form, labels.length);
+    // copy_note_weight_check (15/11, IN264207398): the save was held against
+    // the note and he settled on the note's weight or typed one — the source
+    // carton takes it too (lib/identical-boxes.ts sourceTakesNoteChoice), so
+    // the pallet does not keep its 10.5 kg reading among cartons at 10.
+    const noteSourceRow = target.anotherOf && form.note_choice && sessionRef.current?.features?.copy_note_weight_check
+      ? (target.loose ? looseBoxesRef.current : scannedBoxesRef.current).find((b) => b.barcode === target.box.barcode)
+      : undefined;
+    const reweighByNote = !!noteSourceRow && sourceTakesNoteChoice(noteSourceRow, form);
+    if (reweighByNote && noteSourceRow) {
+      trace('ui', 'copy_note_weight_source', {
+        barcode: noteSourceRow.barcode, from: noteSourceRow.weight, to: form.weight, choice: form.note_choice, loose: target.loose,
+      });
+    } else if (reweighSource && sourceRow) {
+      trace('ui', 'identical_source_weight', { barcode: sourceRow.barcode, from: sourceRow.weight, to: form.weight, loose: target.loose });
+    }
+    // The sample row replaced by the new rows, then the weight check over the
+    // list (lib/weight-check.ts); the switch is read when the updater runs.
+    const replaceSample = (prevAll: BoxScan[]): BoxScan[] => replaceIdenticalSample(prevAll, {
+      sourceBarcode: target.box.barcode, anotherOf: !!target.anotherOf, replaces: target.replaces,
+      rows, form, saved: labels.length, reweighSource, reweighByNote, opts: weightCheckOpts(sessionRef.current),
+    });
     if (target.replaces) (target.loose ? looseProcessedRef : processedRef).current.delete(target.replaces);
     if (target.loose) {
       for (const r of rows) looseProcessedRef.current.add(r.barcode);
@@ -3532,7 +3588,7 @@ export default function PalletVerifyPage({
       const payload = identicalLabelPayload({
         sourceBarcode: d.box.barcode,
         palletNumber: d.loose ? 0 : startPallet,
-        itemCode: matchInvoiceItem(d.box.item_name_hebrew, d.box.item_name, sessionRef.current?.ocr_data, ownCodes(d.box))?.item_code ?? null,
+        itemCode: matchInvoiceItem(d.box.item_name_hebrew, d.box.item_name, sessionRef.current?.ocr_data, ownCodes(d.box), invoiceMatchOpts())?.item_code ?? null,
         itemNameHebrew: d.box.item_name_hebrew,
         itemNameEnglish: d.box.item_name,
         weightKg: weight,
@@ -3877,7 +3933,7 @@ export default function PalletVerifyPage({
       const payload = identicalLabelPayload({
         sourceBarcode: template.source_barcode || '',
         palletNumber: loose ? 0 : startPallet,
-        itemCode: matchInvoiceItem(template.item_name_hebrew, template.item_name, sessionRef.current?.ocr_data, ownCodes(template))?.item_code ?? null,
+        itemCode: matchInvoiceItem(template.item_name_hebrew, template.item_name, sessionRef.current?.ocr_data, ownCodes(template), invoiceMatchOpts())?.item_code ?? null,
         itemNameHebrew: template.item_name_hebrew,
         itemNameEnglish: template.item_name,
         weightKg: template.weight,
@@ -4129,6 +4185,21 @@ export default function PalletVerifyPage({
   }
 
   /**
+   * creator_expiry_prefill (18/11, Well Done 48936): New carton's expiry
+   * opens on the expiry of the item's cartons on the open list — the most
+   * common, on a tie the last scanned (lib/creator-expiry.ts). Never the
+   * weight. Undefined with the flag off: the expiry opens blank as today.
+   */
+  const cartonExpiryFor = session?.features?.creator_expiry_prefill
+    ? (item: CartonItemOption) => creatorExpiryPrefill(
+        item.item_code,
+        looseCartonPhase ? looseBoxes : scannedBoxes,
+        session?.ocr_data ?? [],
+        localIsoDate(),
+      )
+    : undefined;
+
+  /**
    * New carton in units (lib/units-cartons.ts): the loose pile only, and only
    * while the session's chat has `units_mode` on. Off, the creator is the kg
    * one it always was.
@@ -4305,6 +4376,8 @@ export default function PalletVerifyPage({
           // Q5 (client 2026-10-13): counted now, at the typed weight.
           countOnSave
           onList={cartonOnList}
+          // creator_expiry_prefill (18/11): absent with the flag off.
+          expiryFor={cartonExpiryFor}
           // carton_labels off (05/11): no label wording on the form.
           cartonLabels={cartonLabels}
           units={cartonUnits}
@@ -4365,7 +4438,7 @@ export default function PalletVerifyPage({
         const lines = session?.ocr_data ?? [];
         // The carton's OWN code first (19/10): never a line taken from a
         // name read beside it.
-        const line = matchInvoiceItem(box.item_name_hebrew, box.item_name, lines, ownCodes(box));
+        const line = matchInvoiceItem(box.item_name_hebrew, box.item_name, lines, ownCodes(box), invoiceMatchOpts());
         const list = identicalFor.loose ? looseBoxes : scannedBoxes;
         const keyOf = (b: BoxScan) => acceptedMerges.get(groupKeyForBox(b)) ?? groupKeyForBox(b);
         // The invoice line's carton count, as a tap-to-use hint — only when
@@ -4376,6 +4449,13 @@ export default function PalletVerifyPage({
           ? Number(lines.find((l) => line && String(l.item_code ?? '') === String(line.item_code ?? ''))?.box_count) || null
           : null;
         const other = groupSkuMismatch(box, list, keyOf);
+        // copy_note_weight_check (15/11, IN264207398): the note's weight of
+        // one carton of the line the save books on (the "which product?"
+        // pick's own line; a code on two lines that disagree: none). Absent
+        // with the switch off: the save as before.
+        const noteCartonKgOf = session?.features?.copy_note_weight_check
+          ? (code: string | null) => noteCartonKgForCode(lines, code)
+          : undefined;
         return (
           <IdenticalBoxesForm
             token={token}
@@ -4393,6 +4473,7 @@ export default function PalletVerifyPage({
             anotherOf={identicalFor.anotherOf}
             listed={identicalFor.listed}
             lineBoxes={lineBoxes}
+            noteCartonKgOf={noteCartonKgOf}
             skuMismatch={other ? { own: sourceSku(box.barcode), other } : undefined}
             productChoice={box.name_conflict
               ? {
@@ -4850,13 +4931,18 @@ export default function PalletVerifyPage({
   function runLooseOcr(lookupKey: string, imageData: string, manual = false): Promise<void> {
     // manual_target_hint — see runOcr.
     const target = manual ? manualTargetRef.current.get(lookupKey) ?? null : null;
+    // nobc_photo_decode — see runOcr.
+    const photoDecode = manual && sessionRef.current?.features?.nobc_photo_decode && sessionRef.current?.features?.camera_short_serial
+      ? decodePhotoReads(imageData) : null;
     return fetch('/api/multi-pallet-ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image: imageData, barcode: manual ? '' : lookupKey, token, target_digits: target ?? undefined }),
     })
       .then((r) => r.json())
-      .then((data) => {
+      .then((json) => (photoDecode ? photoDecode.then((reads) => ({ json, reads: reads as string[] | null })) : { json, reads: null as string[] | null }))
+      .then(({ json, reads: photoReads }) => {
+        let data = json;
         // A read came back — see runOcr.
         if (data?.success) endOcrOutage(ocrOutageRef.current);
         if (lateReadDropped(lookupKey, 'loose', !!(data?.success && data.ocr_data))) return;
@@ -4870,12 +4956,33 @@ export default function PalletVerifyPage({
           });
         }
         // Printed digits that identify the carton — see runOcr.
-        const ownDigits = manual && data?.success && data.ocr_data
+        const digitsIdentify = manual && data?.success && data.ocr_data
           ? targetCheck === 'match' || (targetCheck === 'none' && printedDigitsIdentifyCarton(
               digitsOnly(data.ocr_data.barcode_digits), decodedShortRef.current,
               sessionRef.current?.ocr_data, looseBoxesRef.current.map((b) => b.barcode),
             ))
           : false;
+        // nobc_photo_decode — see runOcr (the loose list's serials).
+        const photoSerial = photoReads && !digitsIdentify && targetCheck === 'none' && data?.success && data.ocr_data
+          && unreadDigitsOutcome({
+            nameHebrew: data.ocr_data.product_name_hebrew,
+            nameEnglish: data.ocr_data.product_name_english,
+            weightKg: data.ocr_data.weight_kg,
+          }, { holdForReview: !!sessionRef.current?.features?.manual_capture_review }) === 'book_without_barcode'
+          // A serial already on the loose list — see runOcr.
+          ? nobcPhotoDecision(photoReads, (v) => serialAccepted(v, true), data.ocr_data.barcode_digits, (v) => (
+              looseProcessedRef.current.has(v)
+              || findCountedCartonByDigits(looseBoxesRef.current, v, lookupKey) !== null
+            ))
+          : null;
+        if (photoSerial) {
+          trace('ui', 'nobc_photo_decode', {
+            provisional: lookupKey, reads: photoReads, digits: digitsOnly(data.ocr_data.barcode_digits),
+            serial: photoSerial.serial ?? undefined, outcome: photoSerial.outcome, loose: true,
+          });
+          if (photoSerial.serial) data = { ...data, ocr_data: { ...data.ocr_data, barcode_digits: photoSerial.serial } };
+        }
+        const ownDigits = digitsIdentify || !!photoSerial?.serial;
         // A capture of a carton already on the loose list — see runOcr.
         if (manual && data?.success && data.ocr_data) {
           const digits = digitsOnly(data.ocr_data.barcode_digits);
@@ -5002,7 +5109,7 @@ export default function PalletVerifyPage({
               // See the pallet phase: the OCR's own weight, set here only.
               ocr_weight: rawOcrWeightKg(data.ocr_data.ocr_weight_kg),
             };
-          }), { [resolvedBarcode]: [data.ocr_data.product_name_hebrew, data.ocr_data.product_name_english] });
+          }), { [resolvedBarcode]: [data.ocr_data.product_name_hebrew, data.ocr_data.product_name_english] }, weightCheckOpts(sessionRef.current));
         });
       })
       .catch((err) => {
@@ -6230,6 +6337,7 @@ export default function PalletVerifyPage({
           <BottomSheet
             ref={looseSheetRef}
             traceName="loose"
+            riseOnListPull={!!session?.features?.sheet_list_rise}
             toolbar={
               <ToolDock
                 chips={buildDockChips({
@@ -6821,6 +6929,7 @@ export default function PalletVerifyPage({
         <BottomSheet
           ref={sheetRef}
           traceName="pallet"
+          riseOnListPull={!!session?.features?.sheet_list_rise}
           toolbar={
             <ToolDock
               chips={buildDockChips({

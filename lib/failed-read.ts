@@ -33,7 +33,7 @@
 
 import { reconcileWithBarcode, type BarcodeEvent, type BarcodeFilled } from './barcode-reconcile';
 import { barcodeWeight } from './barcode-weight';
-import { cartonOwnCodes, matchInvoiceItemByCode, type InvoiceItem } from './invoice-match';
+import { cartonOwnCodes, matchInvoiceItemByCode, type InvoiceItem, type InvoiceMatchOptions } from './invoice-match';
 
 /** How long a confirm waits for label reads still in flight before it books. */
 export const READ_WAIT_BEFORE_BOOK_MS = 30_000;
@@ -171,7 +171,11 @@ const blank = (v: string | null | undefined) => !(v || '').trim();
 export function failedReadPrefill(
   row: FailedReadRow,
   invoiceItems: InvoiceItem[] | undefined,
-  opts: { receivedIso: string; typicalKg?: number | null },
+  opts: {
+    receivedIso: string; typicalKg?: number | null;
+    /** glatt_code_match (11/11): a Glatt code's item code names the line too. Absent: as before. */
+    match?: InvoiceMatchOptions;
+  },
 ): { patch: FailedReadPatch; events: BarcodeEvent[] } {
   const patch: FailedReadPatch = {};
   if (row.captured_via === 'manual') return { patch, events: [] };
@@ -205,7 +209,7 @@ export function failedReadPrefill(
   }
 
   if (blank(row.item_name) && blank(row.item_name_hebrew)) {
-    const line = matchInvoiceItemByCode(cartonOwnCodes(row), invoiceItems);
+    const line = matchInvoiceItemByCode(cartonOwnCodes(row), invoiceItems, opts.match);
     if (line) {
       patch.item_name = line.item_name_english || '';
       patch.item_name_hebrew = line.item_name_hebrew || '';
@@ -242,11 +246,13 @@ export function fillBarcodeWeights<T extends { barcode: string; weight: number; 
 export function snapNamelessByCode<T extends { barcode: string; item_name?: string; item_name_hebrew?: string }>(
   boxes: T[],
   invoiceItems: InvoiceItem[] | undefined,
+  /** glatt_code_match (11/11), as failedReadPrefill's `match`. */
+  match?: InvoiceMatchOptions,
 ): { boxes: T[]; snapped: string[] } {
   const snapped: string[] = [];
   const out = boxes.map((b) => {
     if (!blank(b.item_name) || !blank(b.item_name_hebrew)) return b;
-    const line = matchInvoiceItemByCode(cartonOwnCodes(b), invoiceItems);
+    const line = matchInvoiceItemByCode(cartonOwnCodes(b), invoiceItems, match);
     if (!line) return b;
     snapped.push(b.barcode);
     return { ...b, item_name: line.item_name_english || '', item_name_hebrew: line.item_name_hebrew || '' };

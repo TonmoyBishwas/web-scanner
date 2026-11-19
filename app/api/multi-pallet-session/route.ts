@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nanoid } from 'nanoid';
 import { getRedisClient, touchSession } from '@/lib/redis';
-import { cameraShortSerialOn, cartonLabelsOn, identicalNoSerialOn, lpnLabelsOn, manualCaptureReviewOn, manualTargetHintOn, noHandCodesOn, ocrNetworkNoticeOn, topBarDeleteOnlyOn, typedNearMatchOn, uniformAfterCountOn, unitsModeOn } from '@/lib/scanner-flags';
+import { cameraShortSerialOn, cartonLabelsOn, copyNoteWeightCheckOn, creatorExpiryPrefillOn, glattCodeMatchOn, identicalNoSerialOn, identicalSourceWeightOn, lpnLabelsOn, manualCaptureReviewOn, manualTargetHintOn, noHandCodesOn, nobcPhotoDecodeOn, ocrNetworkNoticeOn, sheetListRiseOn, topBarDeleteOnlyOn, typedNearMatchOn, uniformAfterCountOn, unitsModeOn, weightRatioOverKgNameOn } from '@/lib/scanner-flags';
 import type { MultiPalletSession } from '@/types';
 
 const SESSION_TTL = 7200; // 2 hours
@@ -144,6 +144,18 @@ export async function GET(request: NextRequest) {
       ...((await lpnLabelsOn(session.chat_id)) ? {} : { lpn_labels: false }),
       // top_bar_delete_only (05/11): an ordinary flag, present only when on.
       ...((await topBarDeleteOnlyOn(session.chat_id)) ? { top_bar_delete_only: true } : {}),
+      // glatt_code_match and identical_source_weight (11/11): present only when on.
+      ...((await glattCodeMatchOn(session.chat_id)) ? { glatt_code_match: true } : {}),
+      ...((await identicalSourceWeightOn(session.chat_id)) ? { identical_source_weight: true } : {}),
+      // weight_ratio_over_kg_name (12/11): present only when on.
+      ...((await weightRatioOverKgNameOn(session.chat_id)) ? { weight_ratio_over_kg_name: true } : {}),
+      // copy_note_weight_check (15/11): present only when on.
+      ...((await copyNoteWeightCheckOn(session.chat_id)) ? { copy_note_weight_check: true } : {}),
+      // sheet_list_rise (16/11): present only when on.
+      ...((await sheetListRiseOn(session.chat_id)) ? { sheet_list_rise: true } : {}),
+      // nobc_photo_decode and creator_expiry_prefill (18/11): present only when on.
+      ...((await nobcPhotoDecodeOn(session.chat_id)) ? { nobc_photo_decode: true } : {}),
+      ...((await creatorExpiryPrefillOn(session.chat_id)) ? { creator_expiry_prefill: true } : {}),
     };
     return NextResponse.json({ ...session, features });
   } catch (error) {
